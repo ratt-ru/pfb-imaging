@@ -429,11 +429,211 @@ def print_result(label, times_old, times_new, max_diff):
     print(f"  {label:40s}  {med_old:7.2f}ms  {med_new:7.2f}ms  {speedup:5.2f}x  {max_diff:.1e}")
 
 
+def inspect_simd(func, sig, label):
+    """Inspect a numba dispatcher's ASM for SIMD instructions.
+
+    Returns a dict mapping instruction class to count.
+    """
+    import re
+
+    # x86 SIMD instruction prefixes/patterns (SSE, AVX, AVX-512)
+    simd_patterns = {
+        "SSE (scalar double)": re.compile(r"\b(addsd|mulsd|subsd|divsd|sqrtsd|maxsd|minsd|fmasd)\b"),
+        "SSE (packed double)": re.compile(r"\b(addpd|mulpd|subpd|divpd|sqrtpd|maxpd|minpd)\b"),
+        "SSE (packed single)": re.compile(r"\b(addps|mulps|subps|divps|sqrtps|maxps|minps)\b"),
+        "AVX (v-prefix double)": re.compile(
+            r"\bv(addpd|mulpd|subpd|divpd|sqrtpd|maxpd|minpd|fmadd[0-9]*pd|fmsub[0-9]*pd|fnmadd[0-9]*pd)\b"
+        ),
+        "AVX (v-prefix single)": re.compile(
+            r"\bv(addps|mulps|subps|divps|sqrtps|maxps|minps|fmadd[0-9]*ps|fmsub[0-9]*ps|fnmadd[0-9]*ps)\b"
+        ),
+        "AVX scalar double": re.compile(
+            r"\bv(addsd|mulsd|subsd|divsd|sqrtsd|fmadd[0-9]*sd|fmsub[0-9]*sd|fnmadd[0-9]*sd)\b"
+        ),
+        "AVX-512 (zmm)": re.compile(r"\bzmm\d+\b"),
+        "FMA": re.compile(r"\bv?fmadd[0-9]*(sd|ss|pd|ps)\b"),
+        "FMA (fmsub)": re.compile(r"\bv?fmsub[0-9]*(sd|ss|pd|ps)\b"),
+        "FMA (fnmadd)": re.compile(r"\bv?fnmadd[0-9]*(sd|ss|pd|ps)\b"),
+    }
+
+    # LLVM IR vectorization hints
+    llvm_vec_patterns = {
+        "LLVM vector ops": re.compile(r"<\d+ x double>"),
+        "LLVM FMA intrinsic": re.compile(r"@llvm\.fma\."),
+        "LLVM fmuladd": re.compile(r"@llvm\.fmuladd\."),
+        "LLVM vector shuffle": re.compile(r"shufflevector"),
+    }
+
+    results = {}
+
+    # get ASM
+    try:
+        func.compile(sig)
+        asm_dict = func.inspect_asm()
+        asm_text = "\n".join(asm_dict.values())
+
+        for name, pat in simd_patterns.items():
+            count = len(pat.findall(asm_text))
+            if count > 0:
+                results[name] = count
+
+        # count register usage to gauge vector width
+        ymm_count = len(re.findall(r"\bymm\d+\b", asm_text))
+        xmm_count = len(re.findall(r"\bxmm\d+\b", asm_text))
+        zmm_count = len(re.findall(r"\bzmm\d+\b", asm_text))
+        results["xmm register refs"] = xmm_count
+        results["ymm register refs"] = ymm_count
+        results["zmm register refs"] = zmm_count
+
+    except Exception as e:
+        results["ASM error"] = str(e)
+
+    # get LLVM IR
+    llvm_results = {}
+    try:
+        llvm_dict = func.inspect_llvm()
+        llvm_text = "\n".join(llvm_dict.values())
+
+        for name, pat in llvm_vec_patterns.items():
+            count = len(pat.findall(llvm_text))
+            if count > 0:
+                llvm_results[name] = count
+
+    except Exception as e:
+        llvm_results["LLVM error"] = str(e)
+
+    return results, llvm_results
+
+
+def print_simd_report():
+    """Compile all key convolution functions and report SIMD usage."""
+    f64_1d = numba.types.Array(numba.float64, 1, "C")
+
+    # trigger compilation with real data
+    n = 64
+    arr1d = np.zeros(n)
+    out1d = np.zeros(n)
+    filt = np.array([0.5, 0.5])
+
+    new_downsampling_convolution(arr1d, out1d[:32], filt, 2)
+    new_upsampling_convolution_valid_sf(arr1d[:32], filt, out1d)
+    old_downsampling_convolution(arr1d, out1d[:32], filt, 2)
+    old_upsampling_convolution_valid_sf(arr1d[:32], filt, out1d)
+
+    # also compile with longer filters to see if vectorization kicks in
+    filt8 = np.zeros(8)  # db4 filter length
+    filt10 = np.zeros(10)  # db5 filter length
+    new_downsampling_convolution(arr1d, out1d[:32], filt8, 2)
+    old_downsampling_convolution(arr1d, out1d[:32], filt8, 2)
+    new_downsampling_convolution(arr1d, out1d[:32], filt10, 2)
+    old_downsampling_convolution(arr1d, out1d[:32], filt10, 2)
+
+    functions_to_inspect = [
+        (
+            "NEW downsampling_convolution (fastmath)",
+            new_downsampling_convolution,
+            (f64_1d, f64_1d, f64_1d, numba.int64),
+        ),
+        (
+            "OLD downsampling_convolution (no fastmath)",
+            old_downsampling_convolution,
+            (f64_1d, f64_1d, f64_1d, numba.int64),
+        ),
+        (
+            "NEW upsampling_convolution_valid_sf (fastmath)",
+            new_upsampling_convolution_valid_sf,
+            (f64_1d, f64_1d, f64_1d),
+        ),
+        (
+            "OLD upsampling_convolution_valid_sf (no fastmath)",
+            old_upsampling_convolution_valid_sf,
+            (f64_1d, f64_1d, f64_1d),
+        ),
+    ]
+
+    from llvmlite import binding as llvm
+
+    print(f"\n{'=' * 72}")
+    print("  SIMD / Vectorization Analysis")
+    print(f"{'=' * 72}")
+    cpu_name = llvm.get_host_cpu_name()
+    print(f"  CPU target: {cpu_name}")
+
+    try:
+        features = llvm.get_host_cpu_features()
+        simd_features = sorted(
+            k for k, v in features.items() if v and any(s in k for s in ["sse", "avx", "fma", "mmx"])
+        )
+        print(f"  SIMD features: {', '.join(simd_features)}")
+    except Exception:
+        pass
+
+    print(f"  Numba version: {numba.__version__}")
+    print()
+
+    for label, func, sig in functions_to_inspect:
+        asm_results, llvm_results = inspect_simd(func, sig, label)
+
+        print(f"  {label}")
+        print(f"  {'─' * 60}")
+
+        if not asm_results and not llvm_results:
+            print("    No SIMD instructions detected")
+        else:
+            if asm_results:
+                print("    ASM:")
+                for k, v in sorted(asm_results.items(), key=lambda x: -x[1]):
+                    if v > 0:
+                        print(f"      {k:35s}  {v:5d}")
+            if llvm_results:
+                print("    LLVM IR:")
+                for k, v in sorted(llvm_results.items(), key=lambda x: -x[1]):
+                    if v > 0:
+                        print(f"      {k:35s}  {v:5d}")
+        print()
+
+    # Summary comparison
+    print(f"  {'─' * 60}")
+    print("  Key takeaways:")
+
+    new_asm_results, _ = inspect_simd(
+        new_downsampling_convolution,
+        (f64_1d, f64_1d, f64_1d, numba.int64),
+        "new_ds",
+    )
+    old_asm_results, _ = inspect_simd(
+        old_downsampling_convolution,
+        (f64_1d, f64_1d, f64_1d, numba.int64),
+        "old_ds",
+    )
+
+    new_fma = (
+        new_asm_results.get("FMA", 0) + new_asm_results.get("FMA (fmsub)", 0) + new_asm_results.get("FMA (fnmadd)", 0)
+    )
+    old_fma = (
+        old_asm_results.get("FMA", 0) + old_asm_results.get("FMA (fmsub)", 0) + old_asm_results.get("FMA (fnmadd)", 0)
+    )
+    new_ymm = new_asm_results.get("ymm register refs", 0)
+    old_ymm = old_asm_results.get("ymm register refs", 0)
+    new_packed = new_asm_results.get("SSE (packed double)", 0) + new_asm_results.get("AVX (v-prefix double)", 0)
+    old_packed = old_asm_results.get("SSE (packed double)", 0) + old_asm_results.get("AVX (v-prefix double)", 0)
+
+    print(
+        f"    FMA instructions:  OLD={old_fma}  NEW={new_fma}  {'✓ fastmath enables FMA' if new_fma > old_fma else '✗ no FMA difference'}"
+    )
+    print(
+        f"    Packed SIMD ops:   OLD={old_packed}  NEW={new_packed}  {'✓ vectorized' if new_packed > 0 else '✗ scalar only'}"
+    )
+    print(f"    YMM (256-bit) use: OLD={old_ymm}  NEW={new_ymm}  {'✓ AVX width' if new_ymm > old_ymm else '—'}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Profile DWT convolution kernels")
     parser.add_argument("--size", type=int, default=2048, help="Square image dimension")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup iterations")
     parser.add_argument("--repeats", type=int, default=30, help="Timed iterations")
+    parser.add_argument("--simd-only", action="store_true", help="Only run SIMD analysis, skip timing")
     args = parser.parse_args()
 
     size = args.size
@@ -445,6 +645,12 @@ def main():
     print(f"Image: ({size}, {size}),  warmup={warmup},  repeats={repeats}")
     print(f"Numba {numba.__version__},  threads={numba.config.NUMBA_NUM_THREADS}")
     print()
+
+    # ── SIMD analysis ──────────────────────────────────────────────────
+    print_simd_report()
+
+    if args.simd_only:
+        return
 
     # ── Downsampling convolution ───────────────────────────────────────
     print(f"{'=' * 80}")

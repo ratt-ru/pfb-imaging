@@ -22,6 +22,8 @@ Usage:
 
 import argparse
 import gc
+import shutil
+from pathlib import Path
 from time import time
 
 import numba

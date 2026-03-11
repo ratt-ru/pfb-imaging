@@ -1,21 +1,25 @@
 # ruff: noqa
 """
-Profile wavelet DWT optimizations: old (dict-based, no fastmath, .T.copy())
-vs new (array-based, fastmath, pre-allocated approx buffer).
+Profile the full Psi operator: Psi (copyt) vs PsiNocopyt (polyphase)
+vs PsiNocopytRay (Ray actor pool).
 
-Measures both execution time and peak memory for:
-  1. Low-level dwt2d + idwt2d round-trip
-  2. Full Psi operator dot + hdot
+Measures execution time for dot, hdot, and round-trip (dot+hdot)
+across multiple frequency bands, plus memory (RSS and USS) for each variant.
+
+For lower-level profiling see:
+  - profile_dwt_convolutions.py  (convolution kernels + SIMD analysis)
+  - profile_polyphase.py         (row-wise vs polyphase axis-0 convolutions)
+  - profile_dwt2d.py             (dwt2d copyt vs nocopyt)
 
 Usage:
-    python scripts/profile_wavelets.py [--nx 1024] [--ny 1024] [--nband 1] [--warmup 3] [--repeats 10]
+    python scripts/profile_wavelets.py [--nx 512] [--ny 512] [--nband 4] [--warmup 3] [--repeats 10]
 """
 
 import ctypes
 import importlib.metadata
 import os
 
-# parse --psi-nthreads early so we can set NUMBA_NUM_THREADS before import
+# set NUMBA_NUM_THREADS before importing numba
 _nthreads = os.cpu_count() or 1
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 os.environ["NUMBA_NUM_THREADS"] = str(_nthreads)
@@ -31,695 +35,169 @@ if tbb_path is None:
 
 import argparse
 import gc
-import tracemalloc
 from time import time
 
 import numba
 import numpy as np
+import psutil
 import pywt
+import ray
 
-# ── old implementation (dict-based, no fastmath, .T.copy()) ─────────────
-
-
-@numba.njit(nogil=True, cache=False, inline="always", fastmath=False, error_model="numpy")
-def _old_downsampling_convolution(input, output, filter, step):
-    i = step - 1
-    o = 0
-    input_size = input.shape[0]
-    filter_size = filter.shape[0]
-
-    while i < filter_size and i < input_size:
-        fsum = input.dtype.type(0)
-        j = 0
-        while j <= i:
-            fsum += filter[j] * input[i - j]
-            j += 1
-        output[o] = fsum
-        i += step
-        o += 1
-
-    while i < input_size:
-        fsum = input.dtype.type(0)
-        j = 0
-        while j < filter_size:
-            fsum += input[i - j] * filter[j]
-            j += 1
-        output[o] = fsum
-        i += step
-        o += 1
-
-    while i < filter_size:
-        fsum = input.dtype.type(0)
-        j = i - input_size + 1
-        while j <= i:
-            fsum += filter[j] * input[i - j]
-            j += 1
-        output[o] = fsum
-        i += step
-        o += 1
-
-    while i < input_size + filter_size - 1:
-        fsum = input.dtype.type(0)
-        j = i - input_size + 1
-        while j < filter_size:
-            fsum += filter[j] * input[i - j]
-            j += 1
-        output[o] = fsum
-        i += step
-        o += 1
+from pfb_imaging.operators.psi import Psi, PsiNocopyt, PsiNocopytRay
 
 
-@numba.njit(nogil=True, cache=False, inline="always", fastmath=False, error_model="numpy")
-def _old_upsampling_convolution_valid_sf(input, filter, output):
-    input_size = input.shape[0]
-    filter_size = filter.shape[0]
-    output_size = output.shape[0]
-
-    o = 0
-    i = (filter_size // 2) - 1
-    stopping_criteria = filter_size // 2
-
-    while i < input_size and o < output_size:
-        sum_even = input.dtype.type(0)
-        sum_odd = input.dtype.type(0)
-        j = 0
-        j2 = 0
-        while j < stopping_criteria:
-            input_element = input[i - j]
-            sum_even += filter[j2] * input_element
-            sum_odd += filter[j2 + 1] * input_element
-            j += 1
-            j2 += 2
-        output[o] += sum_even
-        output[o + 1] += sum_odd
-        i += 1
-        o += 2
+def get_rss_mb():
+    """Return RSS of the current process in MB."""
+    return psutil.Process().memory_info().rss / 1e6
 
 
-@numba.njit(nogil=True, cache=False, parallel=True, inline="always")
-def _old_copyt(mat, out):
-    block_size, tile_size = 256, 32
-    n, m = mat.shape
-    for tmp in numba.prange((m + block_size - 1) // block_size):
-        i = tmp * block_size
-        for j in range(0, n, block_size):
-            timin, timax = i, min(i + block_size, m)
-            tjmin, tjmax = j, min(j + block_size, n)
-            for ti in range(timin, timax, tile_size):
-                for tj in range(tjmin, tjmax, tile_size):
-                    out[ti : ti + tile_size, tj : tj + tile_size] = mat[tj : tj + tile_size, ti : ti + tile_size].T
+def get_system_used_mb():
+    """Return system-wide physical memory used in MB."""
+    vm = psutil.virtual_memory()
+    return vm.used / 1e6
 
 
-@numba.njit(nogil=True, cache=False)
-def _old_coeff_size(nsignal, nfilter):
-    return (nsignal + nfilter - 1) // 2
-
-
-@numba.njit(nogil=True, cache=False)
-def _old_signal_size(ncoeff, nfilter):
-    return 2 * ncoeff - nfilter + 2
-
-
-@numba.njit(nogil=True, cache=False, parallel=True)
-def _old_dwt2d_level(image, coeffs, cbuff, cbufft, dec_lo, dec_hi):
-    nx, ny = image.shape
-    nay, nax = coeffs.shape
-
-    midy = nay // 2
-    for i in numba.prange(nx):
-        _old_downsampling_convolution(image[i, :], cbuff[i, 0:midy], dec_lo, 2)
-        _old_downsampling_convolution(image[i, :], cbuff[i, midy:], dec_hi, 2)
-
-    _old_copyt(cbuff, cbufft)
-
-    midx = nax // 2
-    for i in numba.prange(nay):
-        _old_downsampling_convolution(cbufft[i, 0:nx], coeffs[i, 0:midx], dec_lo, 2)
-        _old_downsampling_convolution(cbufft[i, 0:nx], coeffs[i, midx:], dec_hi, 2)
-
-    return coeffs[0:midy, 0:midx].T.copy()
-
-
-@numba.njit(nogil=True, cache=False)
-def _old_dwt2d(image, coeffs, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel):
-    approx = image
-    for i in range(nlevel):
-        _, highx = ix[i]
-        lowx = highx - 2 * sx[i]
-        _, highy = iy[i]
-        lowy = highy - 2 * sy[i]
-        approx = _old_dwt2d_level(
-            approx,
-            coeffs[lowy:highy, lowx:highx],
-            cbuff[lowx:highx, lowy:highy],
-            cbufft[lowy:highy, lowx:highx],
-            dec_lo,
-            dec_hi,
-        )
-
-
-@numba.njit(nogil=True, cache=False, parallel=True)
-def _old_idwt2d_level(coeffs, image, cbuff, cbufft, rec_lo, rec_hi):
-    nay, nax = coeffs.shape
-    nx, ny = image.shape
-
-    cbufft[...] = 0.0
-    image[...] = 0.0
-
-    midx = nax // 2
-    for i in numba.prange(nay):
-        _old_upsampling_convolution_valid_sf(coeffs[i, 0:midx], rec_lo, cbufft[i, :])
-        _old_upsampling_convolution_valid_sf(coeffs[i, midx:], rec_hi, cbufft[i, :])
-
-    _old_copyt(cbufft, cbuff)
-
-    midy = nay // 2
-    for i in numba.prange(nx):
-        _old_upsampling_convolution_valid_sf(cbuff[i, 0:midy], rec_lo, image[i, :])
-        _old_upsampling_convolution_valid_sf(cbuff[i, midy:], rec_hi, image[i, :])
-
-
-@numba.njit(nogil=True, cache=False)
-def _old_idwt2d(coeffs, image, alpha, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel):
-    nx, ny = image.shape
-    alpha[...] = coeffs
-    for i in range(nlevel - 1, -1, -1):
-        nax = sx[i]
-        nay = sy[i]
-        _, highx = ix[i]
-        lowx = highx - 2 * nax
-        _, highy = iy[i]
-        lowy = highy - 2 * nay
-        nxo = spx[i]
-        nyo = spy[i]
-        if i < nlevel - 1:
-            _old_copyt(image[0:nax, 0:nay], alpha[lowy : lowy + nay, lowx : lowx + nax])
-        _old_idwt2d_level(
-            alpha[lowy:highy, lowx:highx],
-            image[0:nxo, 0:nyo],
-            cbuff[0 : 2 * nax, 0 : 2 * nay],
-            cbufft[0 : 2 * nay, 0 : 2 * nax],
-            rec_lo,
-            rec_hi,
-        )
-
-
-# ── bookkeeping helpers ─────────────────────────────────────────────────
-
-
-def build_old_bookkeeping(nxi, nyi, wavelet, nlevel):
-    """Build dict-based bookkeeping for old dwt2d/idwt2d."""
-    filter_length = int(wavelet[-1]) * 2
-    n2cx = {}
-    n2cy = {}
-    nx, ny = nxi, nyi
-    ntotx = ntoty = 0
-    sx = ()
-    sy = ()
-    spx = ()
-    spy = ()
-    for k in range(nlevel):
-        cx = _old_coeff_size(nx, filter_length)
-        cy = _old_coeff_size(ny, filter_length)
-        n2cx[k] = (_old_signal_size(cx, filter_length), cx)
-        n2cy[k] = (_old_signal_size(cy, filter_length), cy)
-        ntotx += cx
-        ntoty += cy
-        sx += (cx,)
-        sy += (cy,)
-        nx = cx + cx % 2
-        ny = cy + cy % 2
-        spx += (_old_signal_size(cx, filter_length),)
-        spy += (_old_signal_size(cy, filter_length),)
-    ntotx += cx
-    ntoty += cy
-
-    ix = numba.typed.Dict()
-    iy = numba.typed.Dict()
-    lowx = n2cx[nlevel - 1][1]
-    lowy = n2cy[nlevel - 1][1]
-    ix[nlevel - 1] = (lowx, 2 * lowx)
-    iy[nlevel - 1] = (lowy, 2 * lowy)
-    lowx *= 2
-    lowy *= 2
-    for k in reversed(range(nlevel - 1)):
-        highx = n2cx[k][1]
-        highy = n2cy[k][1]
-        ix[k] = (lowx, lowx + highx)
-        iy[k] = (lowy, lowy + highy)
-        lowx += highx
-        lowy += highy
-    return ix, iy, sx, sy, spx, spy, ntotx, ntoty
-
-
-def build_new_bookkeeping(nxi, nyi, wavelet, nlevel):
-    """Build array-based bookkeeping for new dwt2d/idwt2d."""
-    from pfb_imaging.wavelets import coeff_size, signal_size
-
-    filter_length = int(wavelet[-1]) * 2
-    n2cx = {}
-    n2cy = {}
-    nx, ny = nxi, nyi
-    ntotx = ntoty = 0
-    sx = np.zeros(nlevel, dtype=np.int64)
-    sy = np.zeros(nlevel, dtype=np.int64)
-    spx = np.zeros(nlevel, dtype=np.int64)
-    spy = np.zeros(nlevel, dtype=np.int64)
-    for k in range(nlevel):
-        cx = coeff_size(nx, filter_length)
-        cy = coeff_size(ny, filter_length)
-        n2cx[k] = (signal_size(cx, filter_length), cx)
-        n2cy[k] = (signal_size(cy, filter_length), cy)
-        ntotx += cx
-        ntoty += cy
-        sx[k] = cx
-        sy[k] = cy
-        nx = cx + cx % 2
-        ny = cy + cy % 2
-        spx[k] = signal_size(cx, filter_length)
-        spy[k] = signal_size(cy, filter_length)
-    ntotx += cx
-    ntoty += cy
-
-    ix = np.zeros((nlevel, 2), dtype=np.int64)
-    iy = np.zeros((nlevel, 2), dtype=np.int64)
-    lowx = n2cx[nlevel - 1][1]
-    lowy = n2cy[nlevel - 1][1]
-    ix[nlevel - 1, 0] = lowx
-    ix[nlevel - 1, 1] = 2 * lowx
-    iy[nlevel - 1, 0] = lowy
-    iy[nlevel - 1, 1] = 2 * lowy
-    lowx *= 2
-    lowy *= 2
-    for k in reversed(range(nlevel - 1)):
-        highx = n2cx[k][1]
-        highy = n2cy[k][1]
-        ix[k, 0] = lowx
-        ix[k, 1] = lowx + highx
-        iy[k, 0] = lowy
-        iy[k, 1] = lowy + highy
-        lowx += highx
-        lowy += highy
-    return ix, iy, sx, sy, spx, spy, ntotx, ntoty
-
-
-# ── profiling helpers ───────────────────────────────────────────────────
-
-
-def profile_old_dwt(data, wavelet, nlevel, warmup, repeats):
-    """Time the old dict-based dwt2d + idwt2d."""
-    nxi, nyi = data.shape
-    wvlt = pywt.Wavelet(wavelet)
-    dec_lo = np.array(wvlt.filter_bank[0])
-    dec_hi = np.array(wvlt.filter_bank[1])
-    rec_lo = np.array(wvlt.filter_bank[2])
-    rec_hi = np.array(wvlt.filter_bank[3])
-
-    ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_old_bookkeeping(nxi, nyi, wavelet, nlevel)
-
-    alpha = np.zeros((ntoty, ntotx))
-    cbuff = np.zeros((ntotx, ntoty))
-    cbufft = np.zeros((ntoty, ntotx))
-
-    # warmup (triggers JIT compilation)
+def profile_psi(psi_op, data, alpha, xrec, warmup, repeats):
+    """Profile dot and hdot separately, track peak RSS."""
     for _ in range(warmup):
-        _old_dwt2d(data, alpha, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
-        xrec = np.zeros((nxi, nyi))
-        alpha_buf = np.zeros((ntoty, ntotx))
-        _old_idwt2d(alpha, xrec, alpha_buf, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
+        psi_op.dot(data, alpha)
+        psi_op.hdot(alpha, xrec)
 
-    # timed run
     gc.collect()
-    tracemalloc.start()
-    times = []
+    rss_before = get_rss_mb()
+
+    dot_times = []
+    hdot_times = []
+    rss_peak = rss_before
     for _ in range(repeats):
         t0 = time()
-        _old_dwt2d(data, alpha, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
-        xrec = np.zeros((nxi, nyi))
-        alpha_buf = np.zeros((ntoty, ntotx))
-        _old_idwt2d(alpha, xrec, alpha_buf, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
-        times.append(time() - t0)
-    _, mem_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+        psi_op.dot(data, alpha)
+        t1 = time()
+        psi_op.hdot(alpha, xrec)
+        t2 = time()
+        dot_times.append(t1 - t0)
+        hdot_times.append(t2 - t1)
+        rss_peak = max(rss_peak, get_rss_mb())
 
-    return np.array(times), mem_peak
+    rss_delta = rss_peak - rss_before
 
+    # round-trip error
+    psi_op.dot(data, alpha)
+    psi_op.hdot(alpha, xrec)
 
-def profile_new_dwt(data, wavelet, nlevel, warmup, repeats):
-    """Time the new array-based dwt2d_seq + idwt2d_seq (serial, for kernel comparison)."""
-    from pfb_imaging.wavelets import dwt2d, idwt2d
-
-    nxi, nyi = data.shape
-    wvlt = pywt.Wavelet(wavelet)
-    dec_lo = np.array(wvlt.filter_bank[0])
-    dec_hi = np.array(wvlt.filter_bank[1])
-    rec_lo = np.array(wvlt.filter_bank[2])
-    rec_hi = np.array(wvlt.filter_bank[3])
-
-    ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_new_bookkeeping(nxi, nyi, wavelet, nlevel)
-
-    alpha = np.zeros((ntoty, ntotx))
-    cbuff = np.zeros((ntotx, ntoty))
-    cbufft = np.zeros((ntoty, ntotx))
-    approx = np.zeros((ntotx, ntoty))
-
-    # warmup
-    for _ in range(warmup):
-        dwt2d(data, alpha, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel, approx)
-        xrec = np.zeros((nxi, nyi))
-        alpha_buf = np.zeros((ntoty, ntotx))
-        idwt2d(alpha, xrec, alpha_buf, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
-
-    # timed run
-    gc.collect()
-    tracemalloc.start()
-    times = []
-    for _ in range(repeats):
-        t0 = time()
-        dwt2d(data, alpha, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel, approx)
-        xrec = np.zeros((nxi, nyi))
-        alpha_buf = np.zeros((ntoty, ntotx))
-        idwt2d(alpha, xrec, alpha_buf, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
-        times.append(time() - t0)
-    _, mem_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    return np.array(times), mem_peak
+    return np.array(dot_times), np.array(hdot_times), rss_delta
 
 
-def print_comparison(label, times_old, mem_old, times_new, mem_new):
-    med_old = np.median(times_old)
-    med_new = np.median(times_new)
-    min_old = np.min(times_old)
-    min_new = np.min(times_new)
+def print_results(label, entries):
+    """Print a comparison table for multiple operator variants.
 
-    print(f"\n{'=' * 64}")
-    print(f"  {label}")
-    print(f"{'=' * 64}")
-    print(f"  {'':30s}  {'OLD':>10s}  {'NEW':>10s}")
-    print(f"  {'─' * 54}")
-    print(f"  {'Median time':30s}  {med_old * 1000:8.1f}ms  {med_new * 1000:8.1f}ms")
-    print(f"  {'Best time':30s}  {min_old * 1000:8.1f}ms  {min_new * 1000:8.1f}ms")
-    print(f"  {'Peak memory':30s}  {mem_old / 1e6:8.1f}MB  {mem_new / 1e6:8.1f}MB")
-    print(f"  {'─' * 54}")
-
-    speedup = med_old / med_new if med_new > 0 else float("inf")
-    if speedup > 1:
-        print(f"  Speedup (median): {speedup:.2f}x faster")
-    else:
-        print(f"  Slowdown (median): {1 / speedup:.2f}x slower")
-
-    if mem_old > 0 and mem_new > 0:
-        mem_ratio = mem_old / mem_new
-        if mem_ratio > 1:
-            print(f"  Memory reduction:  {mem_ratio:.2f}x less peak memory")
-        elif mem_ratio < 1:
-            print(f"  Memory increase:   {1 / mem_ratio:.2f}x more peak memory")
-        else:
-            print("  Memory: same")
-
-
-def inspect_simd(func, sig, label):
-    """Inspect a numba dispatcher's ASM for SIMD instructions.
-
-    Returns a dict mapping instruction class to count.
+    entries: list of (name, dot_times, hdot_times, roundtrip_error, rss_delta, extra_mem_info)
     """
-    import re
+    print(f"\n{'=' * 78}")
+    print(f"  {label}")
+    print(f"{'=' * 78}")
 
-    # x86 SIMD instruction prefixes/patterns (SSE, AVX, AVX-512)
-    simd_patterns = {
-        "SSE (scalar double)": re.compile(r"\b(addsd|mulsd|subsd|divsd|sqrtsd|maxsd|minsd|fmasd)\b"),
-        "SSE (packed double)": re.compile(r"\b(addpd|mulpd|subpd|divpd|sqrtpd|maxpd|minpd)\b"),
-        "SSE (packed single)": re.compile(r"\b(addps|mulps|subps|divps|sqrtps|maxps|minps)\b"),
-        "AVX (v-prefix double)": re.compile(
-            r"\bv(addpd|mulpd|subpd|divpd|sqrtpd|maxpd|minpd|fmadd[0-9]*pd|fmsub[0-9]*pd|fnmadd[0-9]*pd)\b"
-        ),
-        "AVX (v-prefix single)": re.compile(
-            r"\bv(addps|mulps|subps|divps|sqrtps|maxps|minps|fmadd[0-9]*ps|fmsub[0-9]*ps|fnmadd[0-9]*ps)\b"
-        ),
-        "AVX scalar double": re.compile(
-            r"\bv(addsd|mulsd|subsd|divsd|sqrtsd|fmadd[0-9]*sd|fmsub[0-9]*sd|fnmadd[0-9]*sd)\b"
-        ),
-        "AVX-512 (zmm)": re.compile(r"\bzmm\d+\b"),
-        "FMA": re.compile(r"\bv?fmadd[0-9]*(sd|ss|pd|ps)\b"),
-        "FMA (fmsub)": re.compile(r"\bv?fmsub[0-9]*(sd|ss|pd|ps)\b"),
-        "FMA (fnmadd)": re.compile(r"\bv?fnmadd[0-9]*(sd|ss|pd|ps)\b"),
-    }
+    col_w = 16
+    header = f"  {'':22s}"
+    for name, _, _, _, _, _ in entries:
+        header += f"  {name:>{col_w}s}"
+    print(header)
+    print(f"  {'─' * (22 + (col_w + 2) * len(entries))}")
 
-    # Also check LLVM IR for vectorization hints
-    llvm_vec_patterns = {
-        "LLVM vector ops": re.compile(r"<\d+ x double>"),
-        "LLVM FMA intrinsic": re.compile(r"@llvm\.fma\."),
-        "LLVM fmuladd": re.compile(r"@llvm\.fmuladd\."),
-        "LLVM vector shuffle": re.compile(r"shufflevector"),
-    }
+    row_dot_med = f"  {'dot median':22s}"
+    row_dot_best = f"  {'dot best':22s}"
+    row_hdot_med = f"  {'hdot median':22s}"
+    row_hdot_best = f"  {'hdot best':22s}"
+    row_rt_med = f"  {'round-trip median':22s}"
+    row_rt_best = f"  {'round-trip best':22s}"
+    row_err = f"  {'round-trip error':22s}"
+    row_rss = f"  {'main RSS delta':22s}"
+    for _, dt, ht, err, rss_delta, _ in entries:
+        rt = dt + ht
+        row_dot_med += f"  {np.median(dt) * 1000:{col_w - 2}.1f}ms"
+        row_dot_best += f"  {np.min(dt) * 1000:{col_w - 2}.1f}ms"
+        row_hdot_med += f"  {np.median(ht) * 1000:{col_w - 2}.1f}ms"
+        row_hdot_best += f"  {np.min(ht) * 1000:{col_w - 2}.1f}ms"
+        row_rt_med += f"  {np.median(rt) * 1000:{col_w - 2}.1f}ms"
+        row_rt_best += f"  {np.min(rt) * 1000:{col_w - 2}.1f}ms"
+        row_err += f"  {err:{col_w}.2e}"
+        row_rss += f"  {rss_delta:{col_w - 2}.1f}MB"
+    print(row_dot_med)
+    print(row_dot_best)
+    print(row_hdot_med)
+    print(row_hdot_best)
+    print(row_rt_med)
+    print(row_rt_best)
+    print(row_err)
+    print(row_rss)
 
-    results = {}
+    # extra memory info
+    for name, _, _, _, _, extra in entries:
+        if extra:
+            print(f"  {name}: {extra}")
 
-    # get ASM
-    try:
-        func.compile(sig)
-        asm_dict = func.inspect_asm()
-        # inspect_asm returns dict keyed by signature
-        asm_text = "\n".join(asm_dict.values())
-
-        for name, pat in simd_patterns.items():
-            count = len(pat.findall(asm_text))
-            if count > 0:
-                results[name] = count
-
-        # count register usage to gauge vector width
-        ymm_count = len(re.findall(r"\bymm\d+\b", asm_text))
-        xmm_count = len(re.findall(r"\bxmm\d+\b", asm_text))
-        zmm_count = len(re.findall(r"\bzmm\d+\b", asm_text))
-        results["xmm register refs"] = xmm_count
-        results["ymm register refs"] = ymm_count
-        results["zmm register refs"] = zmm_count
-
-    except Exception as e:
-        results["ASM error"] = str(e)
-
-    # get LLVM IR
-    llvm_results = {}
-    try:
-        llvm_dict = func.inspect_llvm()
-        llvm_text = "\n".join(llvm_dict.values())
-
-        for name, pat in llvm_vec_patterns.items():
-            count = len(pat.findall(llvm_text))
-            if count > 0:
-                llvm_results[name] = count
-
-    except Exception as e:
-        llvm_results["LLVM error"] = str(e)
-
-    return results, llvm_results
-
-
-def _get_conv_source():
-    """Return the source code for convolution functions to recompile without cache."""
-    # We re-define the NEW convolution functions with cache=False so that
-    # numba's inspect_asm/inspect_llvm work. The production code uses cache=True
-    # which disables inspection.
-
-    @numba.njit(nogil=True, cache=False, inline="never", fastmath=True)
-    def new_downsampling_convolution(input, output, filter, step):
-        i = step - 1
-        o = 0
-        input_size = input.shape[0]
-        filter_size = filter.shape[0]
-        while i < filter_size and i < input_size:
-            fsum = input.dtype.type(0)
-            j = 0
-            while j <= i:
-                fsum += filter[j] * input[i - j]
-                j += 1
-            output[o] = fsum
-            i += step
-            o += 1
-        while i < input_size:
-            fsum = input.dtype.type(0)
-            j = 0
-            while j < filter_size:
-                fsum += input[i - j] * filter[j]
-                j += 1
-            output[o] = fsum
-            i += step
-            o += 1
-        while i < filter_size:
-            fsum = input.dtype.type(0)
-            j = i - input_size + 1
-            while j <= i:
-                fsum += filter[j] * input[i - j]
-                j += 1
-            output[o] = fsum
-            i += step
-            o += 1
-        while i < input_size + filter_size - 1:
-            fsum = input.dtype.type(0)
-            j = i - input_size + 1
-            while j < filter_size:
-                fsum += filter[j] * input[i - j]
-                j += 1
-            output[o] = fsum
-            i += step
-            o += 1
-
-    @numba.njit(nogil=True, cache=False, inline="never", fastmath=True)
-    def new_upsampling_convolution_valid_sf(input, filter, output):
-        input_size = input.shape[0]
-        filter_size = filter.shape[0]
-        output_size = output.shape[0]
-        o = 0
-        i = (filter_size // 2) - 1
-        stopping_criteria = filter_size // 2
-        while i < input_size and o < output_size:
-            sum_even = input.dtype.type(0)
-            sum_odd = input.dtype.type(0)
-            j = 0
-            j2 = 0
-            while j < stopping_criteria:
-                input_element = input[i - j]
-                sum_even += filter[j2] * input_element
-                sum_odd += filter[j2 + 1] * input_element
-                j += 1
-                j2 += 2
-            output[o] += sum_even
-            output[o + 1] += sum_odd
-            i += 1
-            o += 2
-
-    return new_downsampling_convolution, new_upsampling_convolution_valid_sf
-
-
-def print_simd_report():
-    """Compile all key wavelet functions and report SIMD usage."""
-    # Re-create new functions with cache=False and inline="never" for inspection
-    new_ds, new_us = _get_conv_source()
-
-    f64_1d = numba.types.Array(numba.float64, 1, "C")
-
-    # trigger compilation with real data
-    n = 64
-    arr1d = np.zeros(n)
-    out1d = np.zeros(n)
-    filt = np.array([0.5, 0.5])
-
-    new_ds(arr1d, out1d[:32], filt, 2)
-    new_us(arr1d[:32], filt, out1d)
-    _old_downsampling_convolution(arr1d, out1d[:32], filt, 2)
-    _old_upsampling_convolution_valid_sf(arr1d[:32], filt, out1d)
-
-    # also compile with longer filters to see if vectorization kicks in
-    filt8 = np.zeros(8)  # db4 filter length
-    filt10 = np.zeros(10)  # db5 filter length
-    new_ds(arr1d, out1d[:32], filt8, 2)
-    _old_downsampling_convolution(arr1d, out1d[:32], filt8, 2)
-    new_ds(arr1d, out1d[:32], filt10, 2)
-    _old_downsampling_convolution(arr1d, out1d[:32], filt10, 2)
-
-    functions_to_inspect = [
-        ("NEW downsampling_convolution (fastmath)", new_ds, (f64_1d, f64_1d, f64_1d, numba.int64)),
-        (
-            "OLD downsampling_convolution (no fastmath)",
-            _old_downsampling_convolution,
-            (f64_1d, f64_1d, f64_1d, numba.int64),
-        ),
-        ("NEW upsampling_convolution_valid_sf (fastmath)", new_us, (f64_1d, f64_1d, f64_1d)),
-        (
-            "OLD upsampling_convolution_valid_sf (no fastmath)",
-            _old_upsampling_convolution_valid_sf,
-            (f64_1d, f64_1d, f64_1d),
-        ),
-    ]
-
-    from llvmlite import binding as llvm
-
-    print(f"\n{'=' * 72}")
-    print("  SIMD / Vectorization Analysis")
-    print(f"{'=' * 72}")
-    cpu_name = llvm.get_host_cpu_name()
-    print(f"  CPU target: {cpu_name}")
-
-    try:
-        features = llvm.get_host_cpu_features()
-        simd_features = sorted(
-            k for k, v in features.items() if v and any(s in k for s in ["sse", "avx", "fma", "mmx"])
-        )
-        print(f"  SIMD features: {', '.join(simd_features)}")
-    except Exception:
-        pass
-
-    print(f"  Numba version: {numba.__version__}")
-    print()
-
-    for label, func, sig in functions_to_inspect:
-        asm_results, llvm_results = inspect_simd(func, sig, label)
-
-        print(f"  {label}")
-        print(f"  {'─' * 60}")
-
-        if not asm_results and not llvm_results:
-            print("    No SIMD instructions detected")
+    # speedup relative to first entry
+    print(f"  {'─' * (22 + (col_w + 2) * len(entries))}")
+    base_rt = np.median(entries[0][1] + entries[0][2])
+    base_name = entries[0][0]
+    for name, dt, ht, _, _, _ in entries[1:]:
+        med = np.median(dt + ht)
+        speedup = base_rt / med if med > 0 else float("inf")
+        if speedup > 1:
+            print(f"  {name} is {speedup:.2f}x faster than {base_name}")
         else:
-            if asm_results:
-                print("    ASM:")
-                for k, v in sorted(asm_results.items(), key=lambda x: -x[1]):
-                    if v > 0:
-                        print(f"      {k:35s}  {v:5d}")
-            if llvm_results:
-                print("    LLVM IR:")
-                for k, v in sorted(llvm_results.items(), key=lambda x: -x[1]):
-                    if v > 0:
-                        print(f"      {k:35s}  {v:5d}")
-        print()
+            print(f"  {name} is {1 / speedup:.2f}x slower than {base_name}")
 
-    # Summary comparison
-    print(f"  {'─' * 60}")
-    print("  Key takeaways:")
 
-    new_asm_results, _ = inspect_simd(
-        new_ds,
-        (f64_1d, f64_1d, f64_1d, numba.int64),
-        "new_ds",
-    )
-    old_asm_results, _ = inspect_simd(
-        _old_downsampling_convolution,
-        (f64_1d, f64_1d, f64_1d, numba.int64),
-        "old_ds",
-    )
+def query_actor_memory(actors):
+    """Query RSS and USS from all actors, return list of dicts."""
+    return ray.get([a.get_memory_mb.remote() for a in actors])
 
-    new_fma = (
-        new_asm_results.get("FMA", 0) + new_asm_results.get("FMA (fmsub)", 0) + new_asm_results.get("FMA (fnmadd)", 0)
-    )
-    old_fma = (
-        old_asm_results.get("FMA", 0) + old_asm_results.get("FMA (fmsub)", 0) + old_asm_results.get("FMA (fnmadd)", 0)
-    )
-    new_ymm = new_asm_results.get("ymm register refs", 0)
-    old_ymm = old_asm_results.get("ymm register refs", 0)
-    new_packed = new_asm_results.get("SSE (packed double)", 0) + new_asm_results.get("AVX (v-prefix double)", 0)
-    old_packed = old_asm_results.get("SSE (packed double)", 0) + old_asm_results.get("AVX (v-prefix double)", 0)
 
-    print(
-        f"    FMA instructions:  OLD={old_fma}  NEW={new_fma}  {'✓ fastmath enables FMA' if new_fma > old_fma else '✗ no FMA difference'}"
-    )
-    print(
-        f"    Packed SIMD ops:   OLD={old_packed}  NEW={new_packed}  {'✓ vectorized' if new_packed > 0 else '✗ scalar only'}"
-    )
-    print(f"    YMM (256-bit) use: OLD={old_ymm}  NEW={new_ymm}  {'✓ AVX width' if new_ymm > old_ymm else '—'}")
+def print_memory_breakdown(nx, ny, nband, psi_ray):
+    """Print detailed memory breakdown including actor USS vs RSS."""
+    print(f"\n{'=' * 78}")
+    print("  Memory breakdown")
+    print(f"{'=' * 78}")
+    print(f"  System memory used: {get_system_used_mb():.0f}MB")
+    print(f"  Main process RSS:   {get_rss_mb():.0f}MB")
+    print(f"  Data arrays:        {nband} x ({nx},{ny}) x 8 bytes = {nband * nx * ny * 8 / 1e6:.0f}MB")
+
+    actor_mem = query_actor_memory(psi_ray._actors)
+    nactors = len(actor_mem)
+    total_rss = sum(m["rss"] for m in actor_mem)
+    total_uss = sum(m["uss"] for m in actor_mem)
+    mean_rss = total_rss / nactors
+    mean_uss = total_uss / nactors
+
+    print(f"\n  Ray actors: {nactors} processes")
+    print(f"  {'actor':>8s}  {'RSS':>8s}  {'USS':>8s}  {'shared':>8s}")
+    print(f"  {'─' * 38}")
+    for i, m in enumerate(actor_mem):
+        shared = m["rss"] - m["uss"]
+        print(f"  {i:>8d}  {m['rss']:7.0f}MB  {m['uss']:7.0f}MB  {shared:7.0f}MB")
+    print(f"  {'─' * 38}")
+    shared_total = total_rss - total_uss
+    print(f"  {'total':>8s}  {total_rss:7.0f}MB  {total_uss:7.0f}MB  {shared_total:7.0f}MB")
+    print(f"  {'mean':>8s}  {mean_rss:7.0f}MB  {mean_uss:7.0f}MB")
     print()
+    print(f"  RSS  = Resident Set Size (includes shared pages — inflated)")
+    print(f"  USS  = Unique Set Size (private pages only — true per-actor cost)")
+    print(f"  shared = RSS - USS (memory-mapped object store, shared libs, etc.)")
+    print(f"  Actual memory cost of actors: ~{total_uss:.0f}MB USS + shared pages (counted once)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Profile wavelet DWT optimizations")
-    parser.add_argument("--nx", type=int, default=1024, help="Image x dimension")
-    parser.add_argument("--ny", type=int, default=1024, help="Image y dimension")
-    parser.add_argument("--nband", type=int, default=1, help="Number of frequency bands for Psi test")
+    parser = argparse.ArgumentParser(description="Profile Psi operator variants")
+    parser.add_argument("--nx", type=int, default=512, help="Image x dimension")
+    parser.add_argument("--ny", type=int, default=512, help="Image y dimension")
+    parser.add_argument("--nband", type=int, default=4, help="Number of frequency bands")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations (includes JIT)")
     parser.add_argument("--repeats", type=int, default=10, help="Timed iterations")
     parser.add_argument("--nlevel", type=int, default=3, help="Wavelet decomposition levels")
-    parser.add_argument("--simd-only", action="store_true", help="Only run SIMD analysis, skip timing")
-    parser.add_argument("--psi-nthreads", type=int, default=1, help="Threads for Psi operator (overrides numba config)")
+    parser.add_argument("--psi-nthreads", type=int, default=1, help="Threads for Psi operators")
+    parser.add_argument("--nactors", type=int, default=None, help="Number of Ray actors (default: nband)")
+    parser.add_argument("--no-ray", action="store_true", help="Skip PsiNocopytRay benchmark")
     args = parser.parse_args()
 
     nx, ny = args.nx, args.ny
@@ -728,176 +206,103 @@ def main():
     warmup = args.warmup
     repeats = args.repeats
 
-    print(f"Numba threads: {numba.config.NUMBA_NUM_THREADS}")
-
-    # ── 0. SIMD analysis ────────────────────────────────────────────
-
-    print_simd_report()
-
-    if args.simd_only:
-        return
-
-    print(f"Image shape: ({nx}, {ny})")
-    print(f"Decomposition levels: {nlevel}")
-    print(f"Warmup: {warmup}, Repeats: {repeats}")
-
-    rng = np.random.default_rng(42)
-    data = rng.standard_normal((nx, ny))
-
-    # ── 1. Low-level DWT round-trip ──────────────────────────────────
-
-    for wavelet in ["db1", "db2", "db3", "db4", "db5"]:
-        max_level = pywt.dwt_max_level(min(nx, ny), wavelet)
-        nlev = min(nlevel, max_level)
-
-        print(f"\nCompiling & warming up for {wavelet}, {nlev} levels...")
-        times_old, mem_old = profile_old_dwt(data, wavelet, nlev, warmup, repeats)
-        times_new, mem_new = profile_new_dwt(data, wavelet, nlev, warmup, repeats)
-
-        print_comparison(
-            f"dwt2d + idwt2d  |  {wavelet}  |  ({nx},{ny})  |  {nlev} levels",
-            times_old,
-            mem_old,
-            times_new,
-            mem_new,
-        )
-
-    # ── 2. Full Psi operator ─────────────────────────────────────────
-
     bases = ["self", "db1", "db2", "db3", "db4", "db5"]
     nbasis = len(bases)
+    nlev = min(nlevel, pywt.dwt_max_level(min(nx, ny), "db1"))
 
-    print(f"\n\nPsi operator: bases={bases}, nband={nband}")
-    data_multi = rng.standard_normal((nband, nx, ny))
+    # ── Init Ray early, before any numba work, to avoid fork-after-TBB warnings
+    if not args.no_ray and not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
 
-    from pfb_imaging.operators.psi import Psi, PsiBasis
+    sys_mem_start = get_system_used_mb()
+    print(f"Numba threads: {numba.config.NUMBA_NUM_THREADS}")
+    print(f"Image shape: ({nx}, {ny})")
+    print(f"Decomposition levels: {nlev}")
+    print(f"Bases: {bases}")
+    print(f"Bands: {nband}, Psi threads: {args.psi_nthreads}")
+    print(f"Warmup: {warmup}, Repeats: {repeats}")
+    print(f"System memory used: {sys_mem_start:.0f}MB")
 
-    nlev_psi = min(nlevel, pywt.dwt_max_level(min(nx, ny), "db1"))
+    rng = np.random.default_rng(42)
+    data = rng.standard_normal((nband, nx, ny))
 
-    # --- PsiBand (row-parallel within each level) ---
-    psi = Psi(nband, nx, ny, bases, nlev_psi, nthreads=args.psi_nthreads)
-    nxmax = psi.nxmax
-    nymax = psi.nymax
-    alpha = np.zeros((nband, nbasis, nymax, nxmax))
-    xrec = np.zeros_like(data_multi)
+    entries = []
 
-    for _ in range(warmup):
-        psi.dot(data_multi, alpha)
-        psi.hdot(alpha, xrec)
+    # ── Psi (copyt) ─────────────────────────────────────────────────
+    sys_pre = get_system_used_mb()
+    psi = Psi(nband, nx, ny, bases, nlev, nthreads=args.psi_nthreads)
+    alpha_old = np.zeros((nband, nbasis, psi.nymax, psi.nxmax))
+    xrec_old = np.zeros_like(data)
 
-    gc.collect()
-    tracemalloc.start()
-    times_psi = []
-    for _ in range(repeats):
-        t0 = time()
-        psi.dot(data_multi, alpha)
-        psi.hdot(alpha, xrec)
-        times_psi.append(time() - t0)
-    _, mem_psi = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    print(f"\nCompiling Psi (copyt) ...")
+    dt_old, ht_old, rss_d_old = profile_psi(psi, data, alpha_old, xrec_old, warmup, repeats)
+    sys_post = get_system_used_mb()
+    err_old = np.max(np.abs(nbasis * data - xrec_old))
+    extra_old = f"system +{sys_post - sys_pre:.0f}MB"
+    entries.append(("Psi", dt_old, ht_old, err_old, rss_d_old, extra_old))
 
-    psi.dot(data_multi, alpha)
-    psi.hdot(alpha, xrec)
-    err = np.max(np.abs(nbasis * data_multi - xrec))
+    # ── PsiNocopyt ──────────────────────────────────────────────────
+    sys_pre = get_system_used_mb()
+    psi_nc = PsiNocopyt(nband, nx, ny, bases, nlev, nthreads=args.psi_nthreads)
+    alpha_nc = np.zeros((nband, nbasis, psi_nc.nxmax, psi_nc.nymax))
+    xrec_nc = np.zeros_like(data)
 
-    print(f"\n{'=' * 64}")
-    print(f"  PsiBand dot+hdot  |  {nbasis} bases  |  ({nband},{nx},{ny})  |  {nlev_psi} levels")
-    print(f"{'=' * 64}")
-    print("  Strategy: prange over rows within each level (many fork/join)")
-    print(f"  Median time:  {np.median(times_psi) * 1000:.1f}ms")
-    print(f"  Best time:    {np.min(times_psi) * 1000:.1f}ms")
-    print(f"  Peak memory:  {mem_psi / 1e6:.1f}MB")
-    print(f"  Round-trip max error: {err:.2e}")
+    print(f"Compiling PsiNocopyt ...")
+    dt_nc, ht_nc, rss_d_nc = profile_psi(psi_nc, data, alpha_nc, xrec_nc, warmup, repeats)
+    sys_post = get_system_used_mb()
+    err_nc = np.max(np.abs(nbasis * data - xrec_nc))
+    extra_nc = f"system +{sys_post - sys_pre:.0f}MB"
+    entries.append(("PsiNocopyt", dt_nc, ht_nc, err_nc, rss_d_nc, extra_nc))
 
-    # --- PsiBasis (basis-parallel with per-basis buffers) ---
-    psi_b = PsiBasis(nband, nx, ny, bases, nlev_psi, nthreads=args.psi_nthreads)
-    alpha_b = np.zeros((nband, nbasis, psi_b.nymax, psi_b.nxmax))
-    xrec_b = np.zeros_like(data_multi)
+    # ── PsiNocopytRay ───────────────────────────────────────────────
+    if not args.no_ray:
+        sys_pre = get_system_used_mb()
+        nactors = args.nactors
+        nact_str = f"{nactors} actors" if nactors else f"{nband} actors (default)"
+        print(f"Setting up PsiNocopytRay ({nact_str}) ...")
+        psi_ray = PsiNocopytRay(
+            nband,
+            nx,
+            ny,
+            bases,
+            nlev,
+            nthreads=args.psi_nthreads,
+            nactors=nactors,
+        )
+        # Verify threading in actor processes
+        threading_info = ray.get([a.get_threading_info.remote() for a in psi_ray._actors])
+        for i, info in enumerate(threading_info):
+            print(
+                f"  actor {i}: pid={info['pid']}  layer={info['threading_layer']}  "
+                f"threads={info['num_threads']}/{info['NUMBA_NUM_THREADS']}"
+            )
 
-    for _ in range(warmup):
-        psi_b.dot(data_multi, alpha_b)
-        psi_b.hdot(alpha_b, xrec_b)
+        alpha_ray = np.zeros((nband, nbasis, psi_ray.nxmax, psi_ray.nymax))
+        xrec_ray = np.zeros_like(data)
 
-    gc.collect()
-    tracemalloc.start()
-    times_psi_b = []
-    for _ in range(repeats):
-        t0 = time()
-        psi_b.dot(data_multi, alpha_b)
-        psi_b.hdot(alpha_b, xrec_b)
-        times_psi_b.append(time() - t0)
-    _, mem_psi_b = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+        dt_ray, ht_ray, rss_d_ray = profile_psi(psi_ray, data, alpha_ray, xrec_ray, warmup, repeats)
+        sys_post = get_system_used_mb()
+        err_ray = np.max(np.abs(nbasis * data - xrec_ray))
 
-    psi_b.dot(data_multi, alpha_b)
-    psi_b.hdot(alpha_b, xrec_b)
-    err_b = np.max(np.abs(nbasis * data_multi - xrec_b))
+        actor_mem = query_actor_memory(psi_ray._actors)
+        total_uss = sum(m["uss"] for m in actor_mem)
+        total_rss = sum(m["rss"] for m in actor_mem)
+        extra_ray = (
+            f"system +{sys_post - sys_pre:.0f}MB, "
+            f"{psi_ray._nactors} actors: "
+            f"USS {total_uss:.0f}MB total, RSS {total_rss:.0f}MB total"
+        )
+        entries.append(("PsiNocopytRay", dt_ray, ht_ray, err_ray, rss_d_ray, extra_ray))
 
-    print(f"\n{'=' * 64}")
-    print(f"  PsiBasis dot+hdot  |  {nbasis} bases  |  ({nband},{nx},{ny})  |  {nlev_psi} levels")
-    print(f"{'=' * 64}")
-    print("  Strategy: prange over bases (single fork/join per call)")
-    print(f"  Median time:  {np.median(times_psi_b) * 1000:.1f}ms")
-    print(f"  Best time:    {np.min(times_psi_b) * 1000:.1f}ms")
-    print(f"  Peak memory:  {mem_psi_b / 1e6:.1f}MB")
-    print(f"  Round-trip max error: {err_b:.2e}")
+    # ── Results ─────────────────────────────────────────────────────
+    print_results(
+        f"Psi operators  |  {nbasis} bases  |  ({nband},{nx},{ny})  |  {nlev} levels",
+        entries,
+    )
 
-    # --- Comparison ---
-    med_band = np.median(times_psi)
-    med_basis = np.median(times_psi_b)
-    if med_basis < med_band:
-        print(f"\n  PsiBasis is {med_band / med_basis:.2f}x faster than PsiBand")
-    else:
-        print(f"\n  PsiBand is {med_basis / med_band:.2f}x faster than PsiBasis")
-
-    # ── 3. Memory analysis (.T.copy() elimination) ─────────────────
-
-    print(f"\n{'=' * 64}")
-    print("  Memory savings from .T.copy() elimination")
-    print("  (per dwt2d call, per basis — not visible to tracemalloc)")
-    print(f"{'=' * 64}")
-
-    for wavelet in ["db1", "db4", "db5"]:
-        max_level = pywt.dwt_max_level(min(nx, ny), wavelet)
-        nlev = min(nlevel, max_level)
-        _, _, sx, sy, _, _, _, _ = build_new_bookkeeping(nx, ny, wavelet, nlev)
-
-        alloc_bytes = 0
-        for k in range(nlev):
-            # old code: coeffs[0:midy, 0:midx].T.copy() at each level
-            alloc_bytes += int(sx[k]) * int(sy[k]) * 8  # float64
-
-        # new code: one pre-allocated approx buffer reused across levels
-        ix_n, _, sx_n, sy_n, _, _, ntotx_n, ntoty_n = build_new_bookkeeping(nx, ny, wavelet, nlev)
-        approx_bytes = ntotx_n * ntoty_n * 8
-
-        print(f"  {wavelet} {nlev}L:")
-        print(f"    Old: {nlev} allocations totalling {alloc_bytes / 1024:.1f} KB per dwt2d call")
-        print(f"    New: 1 buffer of {approx_bytes / 1024:.1f} KB (reused, amortized to zero)")
-
-    # ── 4. PyWavelets comparison ─────────────────────────────────────
-
-    print(f"\n{'=' * 64}")
-    print(f"  PyWavelets reference timing  |  ({nx},{ny})")
-    print(f"{'=' * 64}")
-
-    for wavelet in ["db1", "db4", "db5"]:
-        max_level = pywt.dwt_max_level(min(nx, ny), wavelet)
-        nlev = min(nlevel, max_level)
-
-        # warmup
-        for _ in range(warmup):
-            c = pywt.wavedec2(data, wavelet, mode="zero", level=nlev)
-            pywt.waverec2(c, wavelet, mode="zero")
-
-        times_pw = []
-        for _ in range(repeats):
-            t0 = time()
-            c = pywt.wavedec2(data, wavelet, mode="zero", level=nlev)
-            pywt.waverec2(c, wavelet, mode="zero")
-            times_pw.append(time() - t0)
-
-        print(f"  {wavelet} {nlev}L:  median {np.median(times_pw) * 1000:.1f}ms  best {np.min(times_pw) * 1000:.1f}ms")
+    # ── Memory breakdown ────────────────────────────────────────────
+    if not args.no_ray:
+        print_memory_breakdown(nx, ny, nband, psi_ray)
 
 
 if __name__ == "__main__":

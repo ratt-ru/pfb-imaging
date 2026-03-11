@@ -1,4 +1,5 @@
 import concurrent.futures as cf
+import os
 from collections import OrderedDict
 from typing import Protocol, runtime_checkable
 
@@ -506,8 +507,8 @@ class PsiBandNocopyt(object):
         xo[...] = 0.0
         for i in range(self.nbasis):
             if self.is_self[i]:
-                self.image[:, :] = alpha[i, 0 : self.nx, 0 : self.ny]
-                xo += self.image
+                # nocopyt layout matches image layout — add directly
+                xo += alpha[i, 0 : self.nx, 0 : self.ny]
                 continue
             wi = self.wavelet_map[i]
             ntotx = self.ntotx[wi]
@@ -661,6 +662,163 @@ class PsiNocopyt(object):
 
         for f in cf.as_completed(futures):
             f.result()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Ray-parallelized PsiNocopyt — process pool via Ray actors
+# ══════════════════════════════════════════════════════════════════════
+
+
+class _PsiBandActorImpl:
+    """Ray actor that holds a PsiBandNocopyt jitclass.
+
+    The jitclass is created inside the actor process, avoiding the need
+    to pickle it.  Large numpy arrays are passed through Ray's object
+    store automatically (zero-copy for reads on the same node).
+
+    Output buffers are pre-allocated once and reused across calls to
+    avoid repeated allocation + zeroing (the jitclass zeros internally).
+    """
+
+    def __init__(self, nx, ny, bases, nlevel, nthreads):
+        # Load TBB in this actor process — ctypes.CDLL in the main
+        # process does not carry over to forked/spawned Ray workers.
+        import ctypes
+        import importlib.metadata
+
+        dist = importlib.metadata.distribution("tbb")
+        for f in dist.files:
+            if str(f).endswith("/libtbb.so"):
+                ctypes.CDLL(str(dist.locate_file(f).resolve()))
+                break
+
+        effective = min(nthreads, numba.config.NUMBA_NUM_THREADS)
+        numba.set_num_threads(effective)
+        self._psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
+        self._nx = nx
+        self._ny = ny
+        # pre-allocate output buffers (reused every call)
+        nbasis = self._psib.nbasis
+        nxmax = self._psib.nxmax
+        nymax = self._psib.nymax
+        self._alphao = np.empty((nbasis, nxmax, nymax))
+        self._xo = np.empty((nx, ny))
+
+    def dot(self, x):
+        self._psib.dot(x, self._alphao)
+        return self._alphao
+
+    def hdot(self, alpha):
+        self._psib.hdot(alpha, self._xo)
+        return self._xo
+
+    def warmup(self):
+        """Trigger JIT compilation so first real call is fast."""
+        x = np.zeros((self._nx, self._ny))
+        self._psib.dot(x, self._alphao)
+        self._psib.hdot(self._alphao, self._xo)
+
+    def get_shape(self):
+        return int(self._psib.nxmax), int(self._psib.nymax)
+
+    def get_threading_info(self):
+        """Return threading diagnostics for this actor process."""
+        return {
+            "threading_layer": numba.threading_layer(),
+            "num_threads": numba.get_num_threads(),
+            "NUMBA_NUM_THREADS": numba.config.NUMBA_NUM_THREADS,
+            "pid": os.getpid(),
+        }
+
+    def get_memory_mb(self):
+        """Return memory stats for this actor process in MB.
+
+        Returns dict with:
+          rss  - Resident Set Size (includes shared pages, inflated)
+          uss  - Unique Set Size (private pages only, true per-process cost)
+        """
+        import psutil
+
+        info = psutil.Process().memory_full_info()
+        return {"rss": info.rss / 1e6, "uss": info.uss / 1e6}
+
+
+class PsiNocopytRay:
+    """Ray-parallelized Psi operator using actor processes.
+
+    Bands are distributed round-robin across ``nactors`` actor processes.
+    Each actor holds a PsiBandNocopyt jitclass created in-process (avoids
+    pickling).  Using fewer actors than bands saves memory (each actor
+    carries ~300MB of Python/numba/TBB runtime) at the cost of some
+    bands being processed sequentially within an actor.
+
+    For nband=1, falls back to a local jitclass (no Ray overhead).
+    """
+
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, nactors=None):
+        import ray
+
+        self.nband = nband
+        self.nx = nx
+        self.ny = ny
+        self.nbasis = len(bases)
+        self.nthreads = nthreads
+
+        if nband == 1:
+            # single band: local jitclass, no Ray overhead
+            effective = min(nthreads, numba.config.NUMBA_NUM_THREADS)
+            numba.set_num_threads(effective)
+            self._local_psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
+            self.nxmax = self._local_psib.nxmax
+            self.nymax = self._local_psib.nymax
+            self._actors = None
+            self._nactors = 0
+        else:
+            self._local_psib = None
+            if nactors is None:
+                nactors = nband
+            nactors = min(nactors, nband)
+            self._nactors = nactors
+            # distribute threads across actors to avoid oversubscription
+            cpus_per_actor = max(1, nthreads // nactors)
+            actorband = ray.remote(
+                num_cpus=cpus_per_actor,
+            )(_PsiBandActorImpl)
+            self._actors = [actorband.remote(nx, ny, bases, nlevel, cpus_per_actor) for _ in range(nactors)]
+            # trigger JIT compilation in all actors in parallel
+            ray.get([a.warmup.remote() for a in self._actors])
+            self.nxmax, self.nymax = ray.get(self._actors[0].get_shape.remote())
+
+    def dot(self, x, alphao):
+        """
+        image to coeffs
+        """
+        if self._actors is None:
+            self._local_psib.dot(x[0], alphao[0])
+            return
+
+        import ray
+
+        # distribute bands round-robin across actors
+        refs = [self._actors[b % self._nactors].dot.remote(x[b]) for b in range(self.nband)]
+        results = ray.get(refs)
+        for b, result in enumerate(results):
+            alphao[b] = result
+
+    def hdot(self, alpha, xo):
+        """
+        coeffs to image
+        """
+        if self._actors is None:
+            self._local_psib.hdot(alpha[0], xo[0])
+            return
+
+        import ray
+
+        refs = [self._actors[b % self._nactors].hdot.remote(alpha[b]) for b in range(self.nband)]
+        results = ray.get(refs)
+        for b, result in enumerate(results):
+            xo[b] = result
 
 
 @runtime_checkable

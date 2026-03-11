@@ -190,19 +190,23 @@ param: Annotated[str | None, typer.Option(help="...")] = None
 - Optional with default: `Annotated[Type, typer.Option(help="...")] = default`
 - Optional None: `Annotated[Type | None, typer.Option(help="...")] = None`
 
-### Lazy Imports Pattern
+### Import Style
 
-CLI modules must be lightweight. Import heavy dependencies only when executing:
+**Prefer top-level imports.** Put imports at the top of the file whenever possible.
 
-```python
-def my_command(...):
-    """Command description."""
-    # Import here, not at top of file
-    from pfb_imaging.core.my_command import my_command as my_command_core
-    return my_command_core(...)
-```
+Lazy (in-function) imports are only acceptable in two cases:
 
-This keeps CLI startup fast and allows lightweight installation for cab definitions only.
+1. **CLI modules** (`src/pfb_imaging/cli/`): these must stay lightweight so that `pfb --help` and Stimela cab generation don't pull in the full scientific stack:
+   ```python
+   def my_command(...):
+       """Command description."""
+       from pfb_imaging.core.my_command import my_command as my_command_core
+       return my_command_core(...)
+   ```
+
+2. **Optional heavy runtimes** (e.g. `ray`) in library modules that are also usable without that runtime. For example, `psi.py` defines `Psi` and `PsiNocopyt` (thread-pool, no Ray needed) alongside `PsiNocopytRay` (requires Ray). Importing `ray` at module level would force it on all users of the module, so `import ray` is deferred to `PsiNocopytRay` methods only.
+
+Scripts, tests, and core modules should use top-level imports.
 
 ## Processing Pipeline
 
