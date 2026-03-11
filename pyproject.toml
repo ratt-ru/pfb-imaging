@@ -48,7 +48,7 @@ full = [
     "regions>=0.9",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed<2024.11.0",  # because dask-ms pins dask
+    "distributed<2026.2.0",  # because dask-ms pins dask
 ]
 
 dev = [
