@@ -11,7 +11,7 @@ URI = NewType("URI", Path)
 @stimela_cab(
     name="hci",
     info="High cadence imaging algorithm.",
-    image="ghcr.io/ratt-ru/pfb-imaging:typer",
+    image="ghcr.io/ratt-ru/pfb-imaging:dependabotprs",
 )
 @stimela_output(
     dtype="Directory",

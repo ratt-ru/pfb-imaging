@@ -2,10 +2,10 @@ cabs:
   deconv:
     flavour: python
     command: pfb_imaging.core.deconv.deconv
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: deconv
     info:
       pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:

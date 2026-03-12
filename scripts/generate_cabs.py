@@ -2,6 +2,7 @@
 """Generate Stimela cab definitions from CLI functions."""
 
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,17 @@ def get_image_tag():
         return "latest"
 
 
+def update_cli_image_tags(cli_modules: list[Path], image_name: str) -> None:
+    """Update image= values in @stimela_cab decorators to match the current tag."""
+    pattern = re.compile(r'(image=")[^"]*(")')
+    for module_path in cli_modules:
+        content = module_path.read_text()
+        updated = pattern.sub(rf"\g<1>{image_name}\2", content)
+        if updated != content:
+            module_path.write_text(updated)
+            print(f"✓ Updated image tag in {module_path}")
+
+
 def main():
     """Generate cabs for all CLI functions in src/hip_cargo/cli."""
     parser = argparse.ArgumentParser(description="Generate Stimela cab definitions")
@@ -68,6 +80,9 @@ def main():
         image_tag = get_image_tag()
 
     image_name = f"ghcr.io/ratt-ru/pfb-imaging:{image_tag}"
+
+    # Update image tags in CLI decorator source files
+    update_cli_image_tags(cli_modules, image_name)
 
     # Generate cabs
     generate_cabs(cli_modules, image=image_name, output_dir=cabs_dir)

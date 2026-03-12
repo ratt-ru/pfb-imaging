@@ -2,10 +2,10 @@ cabs:
   sara:
     flavour: python
     command: pfb_imaging.core.sara.sara
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: sara
     info:
       pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:
