@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb_imaging:dependabotprs
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       ms:
         info:

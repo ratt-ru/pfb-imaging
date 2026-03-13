@@ -5,7 +5,7 @@ cabs:
     name: grid
     info:
       Initialise image data products.
-    image: ghcr.io/ratt-ru/pfb_imaging:dependabotprs
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:

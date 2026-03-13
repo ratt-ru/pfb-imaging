@@ -5,7 +5,7 @@ cabs:
     name: init
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb_imaging:dependabotprs
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       ms:
         info:

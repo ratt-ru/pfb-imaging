@@ -69,7 +69,7 @@ requires = ["uv_build>=0.8.3,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.hip-cargo]
-image = "ghcr.io/ratt-ru/pfb_imaging"
+image = "ghcr.io/ratt-ru/pfb-imaging"
 
 [tool.ruff]
 line-length = 120
