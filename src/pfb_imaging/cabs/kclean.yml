@@ -5,7 +5,7 @@ cabs:
     name: kclean
     info:
       Modified single scale clean algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:useapptoupdatecabs2
+    image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       output-filename:
         info:

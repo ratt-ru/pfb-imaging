@@ -5,7 +5,7 @@ cabs:
     name: init
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:useapptoupdatecabs2
+    image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       ms:
         info:
