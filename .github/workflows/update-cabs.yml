@@ -31,7 +31,7 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet src/pfb_imaging/cabs/*.yml; then
+          if git diff --quiet src/pfb_imaging/cabs/*.yml src/pfb_imaging/cli/*.py; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -42,6 +42,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/pfb_imaging/cabs/*.yml
+          git add src/pfb_imaging/cabs/*.yml src/pfb_imaging/cli/*.py
           git commit -m "chore: update cab image tags to latest [skip ci]"
           git push

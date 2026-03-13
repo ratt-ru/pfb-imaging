@@ -10,7 +10,6 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="kclean",
     info="Modified single scale clean algorithm.",
-    image="ghcr.io/ratt-ru/pfb-imaging:dependabotprs",
 )
 @stimela_output(
     dtype="Directory",

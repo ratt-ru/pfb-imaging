@@ -10,7 +10,6 @@ File = NewType("File", Path)
 @stimela_cab(
     name="restore",
     info="Restore model images and.or convolved images to common resolution.",
-    image="ghcr.io/ratt-ru/pfb-imaging:dependabotprs",
 )
 @stimela_output(
     dtype="File",

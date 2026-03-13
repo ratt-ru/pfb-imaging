@@ -10,7 +10,6 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="fluxtractor",
     info="Otherwise knows as the fluxmop.",
-    image="ghcr.io/ratt-ru/pfb-imaging:dependabotprs",
 )
 @stimela_output(
     dtype="Directory",

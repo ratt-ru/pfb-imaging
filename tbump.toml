@@ -26,16 +26,10 @@ tag_template = "v{new_version}"
 src = "pyproject.toml"
 search = 'version = "{current_version}"'
 
-# You can specify a list of commands to
-# run after the files have been patched
-# and before the git commit is made
+[[before_commit]]
+name = "Update uv.lock"
+cmd = "uv lock"
 
-#  [[before_commit]]
-#  name = "check changelog"
-#  cmd = "grep -q {new_version} Changelog.rst"
-
-# Or run some commands after the git tag and the branch
-# have been pushed:
-#  [[after_push]]
-#  name = "publish"
-#  cmd = "./publish.sh"
+[[before_commit]]
+name = "Stage uv.lock"
+cmd = "git add uv.lock"

@@ -10,7 +10,6 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="grid",
     info="Initialise image data products.",
-    image="ghcr.io/ratt-ru/pfb-imaging:dependabotprs",
 )
 @stimela_output(
     dtype="Directory",
