@@ -5,7 +5,7 @@ cabs:
     name: grid
     info:
       Initialise image data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:hopefullyfinalfiddle
+    image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       output-filename:
         info:
