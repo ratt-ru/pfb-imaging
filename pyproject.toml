@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.1.5",
+    "hip-cargo>=0.1.6",
 ]
 
 [project.urls]
@@ -48,7 +48,7 @@ full = [
     "regions>=0.9",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed<2024.11.0",  # because dask-ms pins dask
+    "distributed<2026.2.0",  # because dask-ms pins dask
 ]
 
 dev = [
@@ -65,8 +65,11 @@ dev = [
 pfb = "pfb_imaging.cli:app"
 
 [build-system]
-requires = ["uv_build>=0.8.3,<0.10.0"]
+requires = ["uv_build>=0.8.3,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.hip-cargo]
+image = "ghcr.io/ratt-ru/pfb-imaging"
 
 [tool.ruff]
 line-length = 120

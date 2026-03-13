@@ -2,10 +2,10 @@ cabs:
   kclean:
     flavour: python
     command: pfb_imaging.core.kclean.kclean
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: kclean
     info:
       Modified single scale clean algorithm.
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:

@@ -19,23 +19,35 @@ regex = '''
 message_template = "Bump to {new_version}"
 tag_template = "v{new_version}"
 
-# For each file to patch, add a [[file]] config
-# section containing the path of the file, relative to the
-# tbump.toml location.
+# before_commit hooks run before tbump's version-bump commit.
+# The sentinel must exist when pre-commit's generate-cabs hook fires during
+# the commit, so we write it here and generate + stage the cabs upfront.
+[[before_commit]]
+name = "Write release version sentinel"
+cmd = "python -c \"from pathlib import Path; Path('.tbump_version').write_text('{new_version}')\""
+
+[[before_commit]]
+name = "Regenerate cab definitions with release version"
+cmd = "hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs"
+
+[[before_commit]]
+name = "Stage updated cab definitions"
+cmd = "git add src/pfb_imaging/cabs/*.yml"
+
+[[before_commit]]
+name = "Update uv.lock"
+cmd = "uv lock"
+
+[[before_commit]]
+name = "Stage uv.lock"
+cmd = "git add uv.lock"
+
+# Clean up the sentinel after the commit succeeds
+[[before_push]]
+name = "Remove version sentinel"
+cmd = "python -c \"from pathlib import Path; p = Path('.tbump_version'); p.unlink() if p.exists() else None\""
+
+# Files to update with the new version
 [[file]]
 src = "pyproject.toml"
 search = 'version = "{current_version}"'
-
-# You can specify a list of commands to
-# run after the files have been patched
-# and before the git commit is made
-
-#  [[before_commit]]
-#  name = "check changelog"
-#  cmd = "grep -q {new_version} Changelog.rst"
-
-# Or run some commands after the git tag and the branch
-# have been pushed:
-#  [[after_push]]
-#  name = "publish"
-#  cmd = "./publish.sh"

@@ -2,10 +2,10 @@ cabs:
   grid:
     flavour: python
     command: pfb_imaging.core.grid.grid
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: grid
     info:
       Initialise image data products.
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:

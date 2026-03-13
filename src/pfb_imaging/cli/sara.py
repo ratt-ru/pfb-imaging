@@ -10,7 +10,6 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="sara",
     info="pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.",
-    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",

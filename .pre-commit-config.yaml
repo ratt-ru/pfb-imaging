@@ -32,7 +32,7 @@ repos:
 
       - id: generate-cabs
         name: Generate Stimela cab definitions
-        entry: python scripts/generate_cabs.py
+        entry: hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs
         language: system
         always_run: true
         pass_filenames: false

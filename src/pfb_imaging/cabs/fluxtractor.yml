@@ -2,10 +2,10 @@ cabs:
   fluxtractor:
     flavour: python
     command: pfb_imaging.core.fluxtractor.fluxtractor
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: fluxtractor
     info:
       Otherwise knows as the fluxmop.
+    image: ghcr.io/ratt-ru/pfb-imaging:dependabotprs
     inputs:
       output-filename:
         info:
