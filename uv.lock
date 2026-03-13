@@ -1127,13 +1127,18 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.1.5"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#d3a283e12fa7c840c0fbf84f26d6effc16196e55" }
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "libcst" },
     { name = "pyyaml" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/01/4fd40e536b7f777fad4255e30f4fe8744a9b4d930b45b39a20462314b52f/hip_cargo-0.1.6.tar.gz", hash = "sha256:201f2394c4a6f0f371e38c626d793d2011b0414b4572c3423afbe4f8d539ee19", size = 52299, upload-time = "2026-03-13T12:01:38.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/c7/1fb669e49e587b430160d53c73ee5381cb7e2a33387dced44ca163dcb8a2/hip_cargo-0.1.6-py3-none-any.whl", hash = "sha256:d785107089299b26de12c08c631da344094d94a91f4a033008f628cda786e4e3", size = 68946, upload-time = "2026-03-13T12:01:37.306Z" },
 ]
 
 [[package]]
@@ -2535,9 +2540,9 @@ requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", git = "https://github.com/ratt-ru/codex-africanus.git?rev=master" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
-    { name = "distributed", marker = "extra == 'full'", specifier = "<2024.11.0" },
+    { name = "distributed", marker = "extra == 'full'", specifier = "<2026.2.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
+    { name = "hip-cargo", specifier = ">=0.1.6" },
     { name = "ipdb", marker = "extra == 'dev'" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
