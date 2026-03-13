@@ -2,25 +2,48 @@
 pfb-imaging
 ===========
 
-Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm.
+Radio interferometric imaging suite based on the preconditioned forward-backward algorithm.
+The project follows the `hip-cargo <https://github.com/landmanbester/hip-cargo>`_ package format:
+lightweight CLI installation with auto-generated `stimela <https://github.com/caracal-pipeline/stimela>`_ cab definitions and containerised execution.
 
 Installation
 ~~~~~~~~~~~~
 
-It is best to install the packahe in a fresh virtual environment.
-With the environment activated, update pip etc.
+**Lightweight (CLI + cabs only):**
 
-:code:`pip install -U pip setuptools wheel`
+.. code-block:: bash
 
-Now install the package
+   pip install pfb-imaging
 
-:code:`pip install pfb-imaging`
+This installs the CLI and stimela cab definitions without the full scientific stack.
+The cabs can be included in stimela recipes using:
 
-For maximum performance it is strongly recommended to install ducc in no binary mode e.g.
+.. code-block:: yaml
 
-:code:`pip install ducc0 --no-binary ducc0`
+   _include:
+     - (pfb_imaging.cabs)init.yml
 
-This might take some time to compile.
+**Full scientific stack:**
+
+.. code-block:: bash
+
+   pip install "pfb-imaging[full]"
+
+Or for development:
+
+.. code-block:: bash
+
+   git clone https://github.com/ratt-ru/pfb-imaging.git
+   cd pfb-imaging
+   uv sync --extra full --extra dev
+   uv run pre-commit install
+
+For maximum performance it is strongly recommended to install ducc in no-binary mode:
+
+.. code-block:: bash
+
+   pip install ducc0 --no-binary ducc0
+
 
 Quick start
 ~~~~~~~~~~~
@@ -29,93 +52,184 @@ The easiest way to use ``pfb-imaging`` is via the stimela recipes given in the `
 Once the package is installed, a recipe can be queried for its input and output parameters using the ``stimela doc`` command.
 For example, to see the inputs and outputs of the ``sara`` recipe, simply run
 
-:code:`stimela doc 'pfb_imaging.recipes::sara.yaml'`
+.. code-block:: bash
 
-The recipe can then be run with the ``stimela run`` command.
-For example, to run the recipe with all parameters set to the defaults, use
+   stimela doc 'pfb_imaging.recipes::sara.yaml'
 
-:code:`stimela run 'pfb_imaging.recipes::sara.yaml' sara ms=path/to/data.ms base-dir=path/to/base/output/directory image-name=saraout`
+The recipe can then be run with the ``stimela run`` command:
+
+.. code-block:: bash
+
+   stimela run 'pfb_imaging.recipes::sara.yaml' sara \
+     ms=path/to/data.ms \
+     base-dir=path/to/base/output/directory \
+     image-name=saraout
 
 The recipe should contain sensible defaults for MeerKAT data at L-band.
-Note that the recipe exposes a minimal set of functional parameters.
-More exotic parameters appear lower down in the list and some parameters are not exposed at all.
-These can be exposed by passing the ``--obscure`` flag to `stimela doc`
 
-:code:`stimela doc --obscure 'pfb_imaging.recipes::sara.yaml'`
 
-These can be specified explicitly either by setting it from the command line or by adding (or adjusting) it in the recipe schema.
-Usage through stimela is still a bit limited as the structure of the recipe is fixed (although steps can be run in isolation if required, see `stimela run --help` for further details).
-Keep reading if you want to interacting directly with the applications from the command line.
-Note that cabs for all the applications are also available through `cult-cargo <https://github.com/caracal-pipeline/cult-cargo/>`_.
+CLI documentation
+~~~~~~~~~~~~~~~~~
 
-Module of workers
-~~~~~~~~~~~~~~~~~~~
+The CLI is built with `Typer <https://typer.tiangolo.com/>`_ and provides rich, auto-generated documentation.
+To list all available commands:
 
-Each worker module can be run as a standalone program.
-Run
+.. code-block:: bash
 
-:code:`pfb --help`
+   pfb --help
 
-for a list of available workers.
+To get detailed documentation for a specific command including all parameters, types, and defaults:
 
-Documentation for each worker is listed under
+.. code-block:: bash
 
-:code:`pfb workername --help`
+   pfb init --help
+
+This is often more useful than ``stimela doc`` as it shows the full parameter documentation with types and defaults directly in the terminal.
+
+
+CLI commands
+~~~~~~~~~~~~
+
+The processing pipeline follows a modular pattern where each step is a separate command:
+
+1. ``pfb init`` -- Parse measurement sets into xarray datasets
+2. ``pfb grid`` -- Create dirty images, PSFs, and weights
+3. ``pfb kclean`` -- Classical deconvolution (Hogbom/Clark)
+4. ``pfb sara`` -- Advanced deconvolution with sparsity constraints
+5. ``pfb restore`` -- Restore clean components to final image
+6. ``pfb degrid`` -- Subtract model from visibilities
+
+Additional commands:
+
+* ``pfb deconv`` -- General deconvolution (replaces individual algorithm apps)
+* ``pfb hci`` -- High cadence imaging
+* ``pfb fluxtractor`` -- Flux extraction
+* ``pfb model2comps`` -- Convert model to components
+
+
+Execution backends
+~~~~~~~~~~~~~~~~~~
+
+Every command supports a ``--backend`` option that controls how the command is executed.
+This is provided by `hip-cargo <https://github.com/landmanbester/hip-cargo>`_ and enables container fallback execution: when the full scientific stack is not installed locally, commands automatically run inside a container.
+
+Available backends:
+
+* ``auto`` (default) -- Try native execution first; if the core module import fails (lightweight install), fall back to the best available container runtime.
+* ``native`` -- Run natively using the locally installed Python environment. Fails with ``ImportError`` if dependencies are missing.
+* ``docker`` -- Run inside a Docker container.
+* ``podman`` -- Run inside a Podman container (daemonless, rootless).
+* ``apptainer`` -- Run inside an Apptainer container (HPC-friendly, formerly Singularity).
+* ``singularity`` -- Run inside a Singularity container.
+
+An additional ``--always-pull-images`` flag forces re-pulling the container image before execution, useful for ensuring you have the latest version.
+
+Example usage:
+
+.. code-block:: bash
+
+   # Run natively (requires full install)
+   pfb init --ms data.ms --output-filename out --backend native
+
+   # Run in a Docker container (lightweight install only)
+   pfb init --ms data.ms --output-filename out --backend docker
+
+   # Auto-detect: native if available, otherwise container
+   pfb init --ms data.ms --output-filename out
+
+Volume mounts are resolved automatically from the command's type hints: input paths are mounted read-only, output paths read-write.
+Docker and Podman run as the current user to avoid root-owned output files.
+
 
 Default naming conventions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The default outputs are named using a conbination of the following parameters
+Output files follow consistent naming patterns using ``--output-filename``, ``--product``, and ``--suffix``:
 
-* ``--output-filename``
-* ``--product``
-* ``--suffix``
+* XDS datasets: ``{output_filename}_{product}.xds``
+* DDS datasets: ``{output_filename}_{product}_{suffix}.dds``
+* Models: ``{output_filename}_{product}_{suffix}_model.mds``
+* FITS files: same convention with appropriate extensions
 
-The output dataset of the ``init`` application (viz. the ``xds``) will be called
+The ``--suffix`` parameter (default ``main``) allows imaging multiple fields from a single set of corrected Stokes visibilities.
+For example, the sun can be imaged by setting ``--target sun --suffix sun``.
+The ``--target`` parameter accepts any object recognised by ``astropy`` or ``HH:MM:SS,DD:MM:SS`` format.
 
-:code:`f"{output_filename}_{product}.xds"`
-
-with standard python string substitutions. The grid worker creates another dataset (viz. the ``dds``) called
-
-:code:`f"{output_filename}_{product}_{suffix}.dds"`
-
-i.e. with the suffix appended (the default suffix being ``main``) which contains imaging data products such as the dirty and PSF images etc.
-This is to allow imaging multiple fields from a single set of (possibly averaged) corrected Stokes visibilities produced by the ``init`` applcation.
-For example, the sun can be imaged from and ``xds`` prepared for the main field by setting ``--target sun`` and, for example, ``--suffix sun``.
-The ``--target`` parameter can be any object recognised by ``astropy`` and can also be specified using the ``HH:MM:SS,DD:MM:SS`` format.
-All deconvolution algorithms interact with the ``dds`` produced by the ``grid`` application and will produce a component model called
-
-:code:`f"{output_filename}_{product}_{suffix}_model.mds"`
-
-as well as standard pixelated images which are stored in the ``dds``.
-They also produce fits images but these are mainly for inspection with fits viewers.
-By default logs and fits files are stored in the directory specifed by ``--output-filename`` but these can be overwritten with the
-
-* ``--fits-output-folder`` and
-* ``--log-directory``
-
-parameters. Fits files are stored with the same naming convention but with the base output directory set to ``--fits-output-folder``.
-Logs are stored by application name with a time stamp to prevent inadvertently overwriting them.
-The output paths for all files are reported in the log.
 
 Parallelism settings
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 
-There are two settings controlling parallelism viz.
+Two settings control parallelism:
 
-* ``--nworkers`` which controls how many chunks (usually corresponding to imaging bands) will be processed in parallel and
-* ``--nthreads`` which specifies the number of threads available to each worker (eg. for gridding, FFT's and wavelet transforms).
+* ``--nworkers`` controls how many chunks (usually imaging bands) are processed in parallel.
+* ``--nthreads`` specifies threads available to each worker (gridding, FFTs, wavelet transforms).
 
-By default only a single worker is used so that datasets will be processed one at a time.
-This results in the smallest memory footprint but won't always result in optimal resource utilisation.
-It also allows for easy debugging as there is no Dask cluster involved in this case.
-However, for better resource utilisation and or distributing computations over a cluster, you may wish to set ``--nworkers`` larger than one.
-This uses multiple Dask workers (processes) to process chunks in parallel and is especially useful for the ``init``, ``grid`` and ``fluxtractor`` applications.
-It is usually advisable to set ``--nworkers`` to the number of desired imaging bands which is set by the ``--channels-per-image`` parameter when initialising corrected Stokes visibilities with the ``init`` application.
-The product of ``--nworkers`` and ``--nthreads`` should not exceed the available resources.
+By default a single worker is used for the smallest memory footprint and easy debugging.
+Set ``--nworkers`` larger than one to use multiple Dask workers for parallel chunk processing.
+The product of ``--nworkers`` and ``--nthreads`` should not exceed available resources.
+
+
+Package structure
+~~~~~~~~~~~~~~~~~
+
+The project follows the hip-cargo src layout:
+
+.. code-block::
+
+   pfb-imaging/
+   ├── src/pfb_imaging/
+   │   ├── cli/          # Lightweight CLI wrappers (Typer)
+   │   ├── core/         # Core implementations (lazy-loaded)
+   │   ├── cabs/         # Generated Stimela cab definitions (YAML)
+   │   ├── deconv/       # Deconvolution algorithms
+   │   ├── operators/    # Mathematical operators (gridding, PSF, Psi)
+   │   ├── opt/          # Optimization algorithms (PCG, FISTA, primal-dual)
+   │   ├── prox/         # Proximal operators
+   │   ├── utils/        # Utility functions
+   │   └── wavelets/     # Wavelet transform implementations
+   ├── scripts/          # Profiling and automation scripts
+   ├── tests/
+   ├── Dockerfile
+   └── pyproject.toml
+
+**Key separation:** CLI modules (``cli/``) are lightweight with lazy imports so that ``pfb --help`` and cab generation don't pull in the full scientific stack.
+Core implementations live in ``core/`` and are imported only when a command is executed.
+
+
+Container images
+~~~~~~~~~~~~~~~~
+
+Container images are published to GitHub Container Registry at ``ghcr.io/ratt-ru/pfb-imaging``.
+The image tag is managed automatically:
+
+* Releases: semantic version (e.g. ``0.0.8``)
+* Main branch: ``latest``
+* Feature branches: branch name
+
+Cab definitions are auto-generated with the correct image tag via pre-commit hooks and the ``update-cabs.yml`` GitHub Action.
+The image base URL is configured in ``pyproject.toml`` under ``[tool.hip-cargo].image``.
+
+
+Development
+~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Install with full and dev dependencies
+   uv sync --extra full --extra dev
+
+   # Install pre-commit hooks
+   uv run pre-commit install
+
+   # Run tests
+   uv run pytest -v tests/
+
+   # Format and lint
+   uv run ruff format .
+   uv run ruff check . --fix
 
 
 Acknowledgement
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 If you find any of this useful please cite the `pfb-imaging paper <https://arxiv.org/abs/2412.10073/>`_.
