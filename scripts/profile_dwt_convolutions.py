@@ -17,7 +17,7 @@ from time import time
 import numba
 import numpy as np
 
-# ── OLD convolutions: generic loop, no fastmath, no unrolling ──────────
+# ── OLD convolutions: generic loop, no fastmath, no unrolling, inlined ──────────
 
 
 @numba.njit(nogil=True, cache=False, inline="never", fastmath=False)
