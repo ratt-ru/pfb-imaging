@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**pfb-imaging** is a radio interferometric imaging suite based on the preconditioned forward-backward algorithm. It's designed for high-performance astronomical data processing with distributed computing capabilities. The project prioritizes **simplicity and minimalism** over feature completeness. When in doubt, consult the principles outlined in [The Twelve Factor App](https://12factor.net/) for guidance.
+**pfb-imaging** is a radio interferometric imaging suite based on the preconditioned forward-backward algorithm. It follows the [hip-cargo](https://github.com/landmanbester/hip-cargo) package format: lightweight CLI installation with auto-generated [stimela](https://github.com/caracal-pipeline/stimela) cab definitions and containerised execution. The project prioritizes **simplicity and minimalism** over feature completeness. When in doubt, consult [The Twelve Factor App](https://12factor.net/) for guidance.
 
 ## Core Philosophy
 
@@ -15,7 +15,7 @@
 ### 2. Lightweight Dependencies
 - Minimize external dependencies
 - Only add dependencies when absolutely necessary
-- The lightweight install provides CLI and cab definitions only
+- The lightweight install provides CLI and cab definitions only (sole dependency: `hip-cargo`)
 - Full scientific stack is optional via `pip install pfb-imaging[full]`
 
 ### 3. Modern Python Best Practices
@@ -41,8 +41,7 @@ uv sync --extra full --extra dev
 uv run pre-commit install
 
 # For maximum performance, install ducc in no-binary mode
-git clone https://gitlab.mpcdf.mpg.de/mtr/ducc.git
-pip install -e ducc
+pip install ducc0 --no-binary ducc0
 ```
 
 ### Running Tests
@@ -77,37 +76,27 @@ pfb-imaging/
 ├── src/pfb_imaging/
 │   ├── __init__.py
 │   ├── cabs/                 # Generated Stimela cab definitions (YAML)
-│   │   ├── __init__.py
-│   │   ├── init.yaml
-│   │   ├── grid.yaml
-│   │   └── ...
 │   ├── cli/                  # Lightweight CLI wrappers (Typer)
-│   │   ├── __init__.py       # Main Typer app, registers commands
-│   │   ├── init.py
-│   │   ├── grid.py
-│   │   └── ...
-│   ├── core/                 # Core implementations (lazy-loaded)
-│   │   ├── __init__.py
-│   │   ├── init.py
-│   │   ├── grid.py
-│   │   └── ...
+│   │   └── __init__.py       # Main Typer app, registers commands
+│   ├── core/                 # Core implementations (lazy-loaded from CLI)
 │   ├── deconv/               # Deconvolution algorithms (SARA, Hogbom, Clark)
-│   ├── operators/            # Mathematical operators (gridding, PSF, FFT)
+│   ├── operators/            # Mathematical operators (gridding, PSF, Psi)
 │   ├── opt/                  # Optimization algorithms (PCG, FISTA, primal-dual)
 │   ├── prox/                 # Proximal operators
 │   ├── utils/                # Utility functions (FITS I/O, naming, weighting)
 │   └── wavelets/             # Wavelet transform implementations
-├── scripts/                  # Automation scripts
-│   └── generate_cabs.py
+├── scripts/                  # Profiling and automation scripts
 ├── tests/
 ├── Dockerfile
 ├── pyproject.toml
+├── tbump.toml
+├── .pre-commit-config.yaml
 └── README.rst
 ```
 
 ## CLI Architecture
 
-### Typer-Based Commands
+### hip-cargo Format
 
 The CLI uses Typer with hip-cargo decorators for Stimela cab generation:
 
@@ -116,7 +105,7 @@ from pathlib import Path
 from typing import Annotated, NewType
 
 import typer
-from hip_cargo.utils.decorators import stimela_cab, stimela_output
+from hip_cargo import stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -208,6 +197,68 @@ Lazy (in-function) imports are only acceptable in two cases:
 
 Scripts, tests, and core modules should use top-level imports.
 
+## Cab Generation and Container Workflow
+
+### Auto-generated Cabs
+
+Stimela cab definitions in `src/pfb_imaging/cabs/*.yml` are auto-generated from CLI functions using hip-cargo. **Never edit these files manually.**
+
+Generation happens automatically via:
+- **Pre-commit hook**: regenerates cabs on every commit
+- **GitHub Action** (`update-cabs.yml`): updates cabs on push to `main` with the correct image tag
+- **Manual**: `hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs`
+
+### Image Resolution
+
+The container image base URL is configured in `pyproject.toml`:
+
+```toml
+[tool.hip-cargo]
+image = "ghcr.io/ratt-ru/pfb-imaging"
+```
+
+The tag is derived automatically at runtime:
+- During `tbump` release: semantic version (e.g. `0.0.8`)
+- On `main` branch: `latest`
+- On feature branches: branch name
+
+CLI source files are never modified during cab generation — only the YAML cab files are updated.
+
+### Container Images
+
+Container images are built and published via GitHub Actions (`.github/workflows/publish-container.yml`). The `Dockerfile` installs the full scientific stack so stimela can run any command inside the container.
+
+### Execution Backends
+
+Every CLI command has a `--backend` option (provided by hip-cargo) that controls execution:
+
+- `auto` (default): try native, fall back to container if imports fail
+- `native`: run natively, fail if dependencies missing
+- `docker`: run inside Docker container
+- `podman`: run inside Podman container (daemonless, rootless)
+- `apptainer`: run inside Apptainer container (HPC-friendly)
+- `singularity`: run inside Singularity container
+
+The `--always-pull-images` flag forces re-pulling the container image.
+
+Both `--backend` and `--always-pull-images` are marked `{"stimela": {"skip": True}}` so they don't appear in the cab YAML — they are infrastructure parameters for local CLI execution only.
+
+Volume mounts are resolved automatically from the function's type hints: input paths mounted read-only, output paths read-write.
+
+## CLI Documentation
+
+The CLI is built with Typer and provides rich, auto-generated documentation:
+
+```bash
+# List all commands
+pfb --help
+
+# Detailed parameter docs for a command
+pfb init --help
+```
+
+This shows full parameter documentation with types and defaults directly in the terminal, and is generally more useful than `stimela doc` for exploring available options.
+
 ## Processing Pipeline
 
 The system follows a modular command pattern where each processing step is a separate CLI command:
@@ -224,14 +275,6 @@ The system follows a modular command pattern where each processing step is a sep
 - **Input**: Measurement Sets (MS) → **Intermediate**: Xarray datasets (.xds/.dds) → **Output**: FITS files
 - **Storage**: Zarr-based distributed arrays for chunked processing
 - **Processing**: Dask graphs for lazy evaluation and distributed execution
-
-### Default Naming Conventions
-
-Output files follow consistent naming patterns:
-- XDS datasets: `{output_filename}_{product}.xds`
-- DDS datasets: `{output_filename}_{product}_{suffix}.dds`
-- Models: `{output_filename}_{product}_{suffix}_model.mds`
-- FITS files: Same convention with appropriate extensions
 
 ## Coding Standards
 
@@ -257,14 +300,14 @@ class MyOperator:
     def __init__(self, ...):
         # Setup
 
-    def __call__(self, x):
-        # Forward operation
+    def dot(self, x, out):
+        # Forward operation (analysis)
 
-    def adjoint(self, x):
-        # Adjoint operation
+    def hdot(self, x, out):
+        # Adjoint operation (synthesis)
 ```
 
-This pattern is appropriate for linear algebra operators that require both forward and adjoint computations.
+This pattern is appropriate for linear algebra operators that require both forward and adjoint computations. The Psi wavelet operator family (`Psi`, `PsiNocopyt`, `PsiNocopytRay`) follows this convention.
 
 ### Error Handling
 - Be explicit about error cases
@@ -325,19 +368,25 @@ if scans is not None:
 scans_list = AutoParser.infer_and_parse(scans)
 ```
 
-## Distributed Computing
+## Performance
 
-- Built around Dask for scalability
-- Use `--nworkers` for parallel chunk processing
-- Use `--nthreads` for thread-level parallelism (FFTs, gridding)
-- Core functions handle Dask client initialization and cleanup
-
-## Performance Optimization
-
-- Critical loops use Numba JIT compilation
-- Memory-efficient chunked processing for large datasets
+### Compute Stack
+- Critical loops use Numba JIT compilation with TBB threading
 - DUCC0 for high-performance gridding and FFT operations
-- Designed for datasets that may not fit in memory
+- Memory-efficient chunked processing for large datasets
+
+### Wavelet Operators
+- `Psi`: original copyt implementation with thread pool
+- `PsiNocopyt`: polyphase nocopyt DWT, ~1.4x faster round-trip
+- `PsiNocopytRay`: Ray actor processes for true parallelism across bands, ~1.6x faster
+
+### Profiling
+See `scripts/profiling.md` for a guide to the profiling scripts (convolution kernels, polyphase, DWT, full Psi operator).
+
+### Distributed Computing
+- Dask for parallel chunk processing (`--nworkers`)
+- Thread-level parallelism for FFTs/gridding (`--nthreads`)
+- Ray actors for process-level parallelism in wavelet operators
 
 ## Testing Guidelines
 
@@ -351,63 +400,22 @@ scans_list = AutoParser.infer_and_parse(scans)
 - Large datasets (MS files) downloaded automatically from Google Drive
 - Session-scoped fixtures for efficient test data reuse
 
-## Special Considerations
+## CI/CD
 
-### Astronomy-Specific Requirements
-- Requires CASA measures data for coordinate transformations
-- Handles large radio astronomy datasets (measurement sets)
-- Supports full Stokes polarization processing
-- Integrates with radio astronomy software ecosystem
+### GitHub Actions Workflows
+- **`ci.yml`**: Code quality (ruff) and tests across Python 3.10-3.12
+- **`publish.yml`**: PyPI publishing on version tags
+- **`publish-container.yml`**: Build and push container images to GHCR
+- **`update-cabs.yml`**: Regenerate cab definitions on push to `main` (uses `landman-ci-bot` GitHub App for auth)
 
-### Dependencies
-- Heavy reliance on scientific Python stack (NumPy, SciPy, Xarray)
-- Dask for distributed computing
-- JAX for automatic differentiation
-- Specialized astronomy libraries (codex-africanus, dask-ms, katbeam)
-
-## CLI Usage
-
-### Basic Commands
+### Releases
+Version bumping is managed with `tbump`:
 
 ```bash
-# List available commands
-pfb --help
-
-# Get help for specific command
-pfb init --help
-
-# Basic pipeline example
-pfb init --ms my_data.ms --output-filename my_output
-pfb grid --output-filename my_output
-pfb kclean --output-filename my_output
-pfb restore --output-filename my_output
+tbump 0.0.9
 ```
 
-### Parallelism Control
-
-```bash
-# Process with multiple workers
-pfb init --nworkers 4 --nthreads 2
-
-# Single worker for debugging
-pfb init --nworkers 1
-```
-
-## Cab Generation
-
-Stimela cab definitions are auto-generated from CLI functions using hip-cargo:
-
-```bash
-# Generate cabs for all CLI commands
-uv run python scripts/generate_cabs.py
-```
-
-Cabs are stored in `src/pfb_imaging/cabs/` and can be included in Stimela recipes:
-
-```yaml
-_include:
-  - (pfb_imaging.cabs)init.yaml
-```
+This updates version strings, creates a git tag, and triggers the publish workflows.
 
 ## Questions to Ask Before Implementing
 
