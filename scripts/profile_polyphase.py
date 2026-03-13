@@ -43,7 +43,7 @@ from pfb_imaging.wavelets.convolutions import (
 # Functions decorated with `inline="always"` get compiled into their callers,
 # but Numba does NOT track this cross-function dependency.  If an inlined
 # function changes while the caller's source stays the same, the caller's
-# cached machine code is stale and loading it can segfault.
+# cached machine code is stale and loading it can segfault. Dirt!
 #
 # Clearing __pycache__ dirs on every session start is cheap (~ms) and
 # eliminates the problem entirely during development.
