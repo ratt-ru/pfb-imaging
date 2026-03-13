@@ -26,7 +26,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ghcr.io/landmanbester/hip-cargo:latest \
-            python scripts/generate_cabs.py
+            hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs
 
       - name: Check for changes
         id: check_changes
