@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:gendeconv
     inputs:
       output-filename:
         info:
