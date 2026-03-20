@@ -332,13 +332,8 @@ def stokes_image(
 
     cell_deg = np.rad2deg(cell_rad)
 
-    # make sure ra is in (0, 2pi)
     # need a copy since write only
     radec = radec.copy()
-    if radec[0] < 0:
-        radec[0] += 2 * np.pi
-    elif radec[0] > 2 * np.pi:
-        radec[0] -= 2 * np.pi
 
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     signu = -1.0 if flip_u else 1.0
@@ -699,7 +694,7 @@ def stokes_image(
 
         residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
 
-    else:
+    elif beam_model is not None:
         residual *= pbeam / (pbeam**2 + eta)
 
     unix_time = quantity(f"{time_out}s").to_unix_time()

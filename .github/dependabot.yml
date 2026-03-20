@@ -1,21 +1,5 @@
 version: 2
 updates:
-  # Monitor GitHub Actions
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "@landmanbester"
-    assignees:
-      - "@landmanbester"
-    commit-message:
-      prefix: "ci"
-      include: "scope"
-
   # Monitor Python dependencies
   - package-ecosystem: "pip"
     directory: "/"
@@ -23,11 +7,39 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     reviewers:
-      - "@landmanbester"
-    assignees:
-      - "@landmanbester"
+      - "landmanbester"
     commit-message:
       prefix: "deps"
-      include: "scope"
+      prefix-development: "deps-dev"
+    groups:
+      development-dependencies:
+        dependency-type: "development"
+        patterns:
+          - "pytest*"
+          - "ruff*"
+          - "coverage*"
+      production-dependencies:
+        dependency-type: "production"
+        patterns:
+          - "typer*"
+          - "pyyaml*"
+          - "typing-extensions*"
+
+  # Monitor GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "landmanbester"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

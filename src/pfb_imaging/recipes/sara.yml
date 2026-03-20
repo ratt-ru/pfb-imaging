@@ -176,6 +176,11 @@ gosara:
       aliases: ['*.product']
       info:
         Imaging products to produce.
+    wgt-mode:
+      default: minvar
+      info:
+        Weighting mode to use in gridder.
+        Options are 'minvar' or 'l2'.
 
   steps:
     initialize:
@@ -200,6 +205,7 @@ gosara:
         fields: =IFSET(recipe.fields)
         scans: =IFSET(recipe.scans)
         product: =recipe.product
+        wgt-mode: =recipe.wgt-mode
 
     gridimage:
       cab: grid
