@@ -192,7 +192,7 @@ kclean:
       default: minvar
       info:
         Weighting mode to use in gridder.
-        Options are minvar, sensitivity, or none.
+        Options are 'minvar' or 'l2'.
 
   steps:
     init:
@@ -217,6 +217,7 @@ kclean:
         fields: =IFSET(recipe.fields)
         scans: =IFSET(recipe.scans)
         product: =recipe.product
+        wgt-mode: =recipe.wgt-mode
 
     grid:
       cab: grid

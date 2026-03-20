@@ -180,7 +180,7 @@ gosara:
       default: minvar
       info:
         Weighting mode to use in gridder.
-        Options are minvar, sensitivity, or none.
+        Options are 'minvar' or 'l2'.
 
   steps:
     initialize:
