@@ -188,6 +188,11 @@ kclean:
       aliases: ['*.product']
       info:
         Imaging products to produce.
+    wgt-mode:
+      default: minvar
+      info:
+        Weighting mode to use in gridder.
+        Options are minvar, sensitivity, or none.
 
   steps:
     init:

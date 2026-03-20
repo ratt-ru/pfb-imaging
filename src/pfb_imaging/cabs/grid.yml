@@ -5,7 +5,7 @@ cabs:
     name: grid
     info:
       Initialise image data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:gendeconv
+    image: ghcr.io/ratt-ru/pfb-imaging:issue214
     inputs:
       output-filename:
         info:

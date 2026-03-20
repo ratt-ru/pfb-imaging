@@ -699,7 +699,7 @@ def stokes_image(
 
         residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
 
-    else:
+    elif beam_model is not None:
         residual *= pbeam / (pbeam**2 + eta)
 
     unix_time = quantity(f"{time_out}s").to_unix_time()
