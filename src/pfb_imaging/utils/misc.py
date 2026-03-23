@@ -527,7 +527,7 @@ def psf_errorsq(x, data, xy):
     qvec = jnp.einsum("nb,bc,cn->n", xy.T, bmat, xy)
     # gausspar should corresponds to FWHM
     fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
-    model = jnp.exp(-fwhm_conv * qvec)
+    model = jnp.exp(-0.5 * fwhm_conv**2 * qvec)
     res = data - model
     return jnp.vdot(res, res)
 
@@ -609,7 +609,11 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
             # pa0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(
-            dfunc, np.array((emaj0, emin0, pa0)), args=(psfv, xy), bounds=((0, None), (0, None), (0, np.pi)), factr=1e7
+            dfunc,
+            np.array((emaj0, emin0, pa0)),
+            args=(psfv, xy),
+            bounds=((0, None), (0, None), (0, np.pi)),
+            factr=1e7
         )
         if d["warnflag"] != 0:
             print("WARNING - warning flag raised during psf fit")
