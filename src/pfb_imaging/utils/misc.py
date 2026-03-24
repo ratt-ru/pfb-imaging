@@ -485,9 +485,9 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     # R = np.array([[np.cos(pa), -np.sin(pa)],
     #               [np.sin(pa), np.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = np.array([[np.sin(pa), -np.cos(pa)], [np.cos(pa), np.sin(pa)]])
+    rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
     amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
     # only compute the result out to 5 * emaj
@@ -520,9 +520,9 @@ def psf_errorsq(x, data, xy):
     # R = jnp.array([[jnp.cos(pa), -jnp.sin(pa)],
     #                 [jnp.sin(pa), jnp.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = jnp.array([[jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), jnp.sin(pa)]])
+    rmat = jnp.array([[-jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), -jnp.sin(pa)]])
     bmat = jnp.dot(jnp.dot(rmat, amat), rmat.T)
     qvec = jnp.einsum("nb,bc,cn->n", xy.T, bmat, xy)
     # gausspar should corresponds to FWHM

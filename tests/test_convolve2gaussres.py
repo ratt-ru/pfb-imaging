@@ -58,8 +58,8 @@ def test_gaussian_pfb_vs_astropy(nx, ny, gpars):
     xx, yy = np.meshgrid(x, y, indexing="ij")
 
     # gpars = (emaj, emin, pa), where emaj and emin are the expected FWHM values of the major
-    # and minor axes respectively. pa is the position angle in radians and is given as a clockwise
-    # (North through East) rotation of the major axis from the positive vertical axis. These are
+    # and minor axes respectively. pa is the position angle in radians and is given as an
+    # anticlockwise rotation of the major axis from the positive vertical axis. These are
     # consistent with the manner in which the beam information is stored in FITS files.
     pfb_gauss = gaussian2d(xx, yy, gausspar=gpars, normalise=False)
 
@@ -71,11 +71,11 @@ def test_gaussian_pfb_vs_astropy(nx, ny, gpars):
     sigma_min = emin / fwhm_conv
 
     # The position angle in astropy follows the standard conventions i.e. it is an anti-clockwise
-    # rotation (East through North) of the major axis from the positive horizontal axis. The
-    # discrepancy between the two conventions means we need to add pi / 2 to shift the major
-    # axis to align with North, then subtract the pa such that the rotation is clockwise from
-    # North.
-    theta = np.pi / 2 - pa
+    # rotation of the major axis from the positive horizontal axis. The discrepancy between the
+    # two conventions means we need to add pi / 2 to shift the major axis to align with the
+    # positive vertical axis, then add the pa such that the rotation is anti-clockwise from the
+    # positive vertical axis.
+    theta = np.pi / 2 + pa
 
     astropy_gauss = Gaussian2D(
         amplitude=1.0,
@@ -103,7 +103,7 @@ def test_fitcleanbeam_vs_astropy(nx, ny, gpars):
     fwhm_conv = 2 * np.sqrt(2 * np.log(2))
     sigma_maj = emaj / fwhm_conv
     sigma_min = emin / fwhm_conv
-    theta = np.pi / 2 - pa
+    theta = np.pi / 2 + pa
 
     x = -(nx // 2) + np.arange(nx)
     y = -(ny // 2) + np.arange(ny)
