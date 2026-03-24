@@ -50,7 +50,7 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
 @pmp("nx", [128, 256])
 @pmp("ny", [128, 256])
 @pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0), (7.5, 3.0, 2.0), (7.0, 1.1, 3.0)])
-def test_gaussian2d_vs_astropy(nx, ny, gpars):
+def test_gaussian_pfb_vs_astropy(nx, ny, gpars):
     emaj, emin, pa = gpars
 
     x = -(nx // 2) + np.arange(nx)
@@ -90,6 +90,40 @@ def test_gaussian2d_vs_astropy(nx, ny, gpars):
     mask = pfb_gauss > 1e-12
     assert mask.any(), "No significant values in gaussian2d output"
     assert_allclose(pfb_gauss[mask], astropy_gauss[mask], atol=1e-12, rtol=1e-12)
+
+
+@pmp("nx", [128, 256])
+@pmp("ny", [128, 256])
+@pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0), (7.5, 3.0, 2.0), (7.0, 1.1, 3.0)])
+def test_fitcleanbeam_vs_astropy(nx, ny, gpars):
+    """Fit an astropy Gaussian2D with fitcleanbeam and check parameter recovery."""
+    emaj, emin, pa = gpars
+
+    # Convert (emaj, emin, pa) to astropy parameters - see test_gaussian_pfb_vs_astropy.
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    sigma_maj = emaj / fwhm_conv
+    sigma_min = emin / fwhm_conv
+    theta = np.pi / 2 - pa
+
+    x = -(nx // 2) + np.arange(nx)
+    y = -(ny // 2) + np.arange(ny)
+    xx, yy = np.meshgrid(x, y, indexing="ij")
+
+    gauss = Gaussian2D(
+        amplitude=1.0,
+        x_mean=0.0,
+        y_mean=0.0,
+        x_stddev=sigma_maj,
+        y_stddev=sigma_min,
+        theta=theta,
+    )(xx, yy)
+
+    gpars_fit = fitcleanbeam(gauss[None, :, :])[0]
+
+    assert np.abs(emaj - gpars_fit[0]) < 1e-4
+    assert np.abs(emin - gpars_fit[1]) < 1e-4
+    padiff = np.abs(pa - gpars_fit[2])
+    assert np.sin(padiff) < 1e-4
 
 
 @pmp("nx", [128, 256])
