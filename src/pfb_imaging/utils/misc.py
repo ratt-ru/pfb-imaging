@@ -613,7 +613,7 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
             np.array((emaj0, emin0, pa0)),
             args=(psfv, xy),
             bounds=((0, None), (0, None), (0, np.pi)),
-            factr=1e7
+            factr=1e7,
         )
         if d["warnflag"] != 0:
             print("WARNING - warning flag raised during psf fit")
