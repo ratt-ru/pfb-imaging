@@ -488,7 +488,7 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     # t = np.pi/2 - pa
     # use this for compatibility with fits
     rmat = np.array([[np.sin(pa), -np.cos(pa)], [np.cos(pa), np.sin(pa)]])
-    amat = np.dot(np.dot(rmat.T, amat), rmat)
+    amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
     # only compute the result out to 5 * emaj
     extent = (nsigma * smaj) ** 2
@@ -499,7 +499,7 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     rmat = np.einsum("nb,bc,cn->n", x.T, amat, x)
     # need to adjust for the fact that gausspar corresponds to FWHM
     fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-    tmp = np.exp(-fwhm_conv * rmat)
+    tmp = np.exp(-0.5 * fwhm_conv**2 * rmat)
     gausskern = np.zeros(xflat.shape, dtype=np.float64)
     gausskern[idx, idy] = tmp
 
@@ -523,7 +523,7 @@ def psf_errorsq(x, data, xy):
     # t = np.pi/2 - pa
     # use this for compatibility with fits
     rmat = jnp.array([[jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), jnp.sin(pa)]])
-    bmat = jnp.dot(jnp.dot(rmat.T, amat), rmat)
+    bmat = jnp.dot(jnp.dot(rmat, amat), rmat.T)
     qvec = jnp.einsum("nb,bc,cn->n", xy.T, bmat, xy)
     # gausspar should corresponds to FWHM
     fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
