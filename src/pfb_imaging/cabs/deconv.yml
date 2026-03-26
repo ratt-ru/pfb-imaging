@@ -27,21 +27,21 @@ cabs:
         info:
           Directory to write logs and performance reports to.
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Output
       fits-mfs:
         info:
           Output MFS fits files
@@ -214,7 +214,7 @@ cabs:
           Defaults to half the total number available.
         dtype: int
         metadata:
-          rich_help_panel: WGridder
+          rich_help_panel: Performance
       epsilon:
         info:
           Gridder accuracy.

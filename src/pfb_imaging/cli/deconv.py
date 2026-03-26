@@ -47,14 +47,14 @@ def deconv(
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
-            rich_help_panel="Naming",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
-            rich_help_panel="Naming",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     fits_output_folder: Annotated[
@@ -63,7 +63,7 @@ def deconv(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
-            rich_help_panel="Naming",
+            rich_help_panel="Output",
         ),
     ] = None,
     fits_mfs: Annotated[
@@ -229,7 +229,7 @@ def deconv(
         int | None,
         typer.Option(
             help="Total number of threads to use. Defaults to half the total number available.",
-            rich_help_panel="WGridder",
+            rich_help_panel="Performance",
         ),
     ] = None,
     epsilon: Annotated[

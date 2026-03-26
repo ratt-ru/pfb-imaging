@@ -14,44 +14,62 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Input
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       scans:
         info:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       ddids:
         info:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       fields:
         info:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       freq-range:
         info:
           Frequency range to image in Hz.
           Specify as a string with colon delimiter ('1e9:1.1e9').
+        metadata:
+          rich_help_panel: Data Selection
       overwrite:
         info:
           Allow overwrite of output xds
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       transfer-model-from:
         info:
           Name of dataset to use for model initialisation
+        metadata:
+          rich_help_panel: Input
       data-column:
         info:
           Data column to image.
@@ -59,52 +77,72 @@ cabs:
           Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA').
           When gains are present this column will be corrected.
         default: DATA
+        metadata:
+          rich_help_panel: Data Selection
       model-column:
         info:
           Model column to subtract from corrected data column.
           Useful to avoid high time res degridding.
+        metadata:
+          rich_help_panel: Data Selection
       weight-column:
         info:
           Column containing natural weights.
           Must be the same across MSs
+        metadata:
+          rich_help_panel: Data Selection
       sigma-column:
         info:
           Column containing standard devations.
           Will be used to initialise natural weights if detected.
           Must be the same across MSs
+        metadata:
+          rich_help_panel: Data Selection
       flag-column:
         info:
           Column containing data flags.
           Must be the same across MSs
         default: FLAG
+        metadata:
+          rich_help_panel: Data Selection
       gain-table:
         info:
           Path to Quartical gain table containing NET gains.
           There must be a table for each MS.
           glob(ms) and glob(gt) should match up when running from CLI.
         dtype: List[URI]
+        metadata:
+          rich_help_panel: Input
       max-simul-chunks:
         info:
           Maximum number of chunks to process simultaneously.
         dtype: int
         default: 4
+        metadata:
+          rich_help_panel: Performance
       images-per-chunk:
         info:
           Number of images per chunk.
         dtype: int
         default: 16
+        metadata:
+          rich_help_panel: Performance
       integrations-per-image:
         info:
           Number of time integrations per image.
           Default (-1, 0, None) -> dataset per scan.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Imaging
       channels-per-image:
         info:
           Number of channels per image for gridding resolution.
           Default of (-1, 0, None) implies a single dataset per spw.
         dtype: int
         default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision
@@ -112,32 +150,46 @@ cabs:
         - single
         - double
         default: double
+        metadata:
+          rich_help_panel: Imaging
       beam-model:
         info:
           Path to beam model as an xarray dataset backed by zarr
         dtype: URI
+        metadata:
+          rich_help_panel: Input
       field-of-view:
         info:
           Field of view in degrees
         dtype: float
         default: 1.0
+        metadata:
+          rich_help_panel: Imaging
       super-resolution-factor:
         info:
           Will over-sample Nyquist by this factor at max frequency
         dtype: float
         default: 1
+        metadata:
+          rich_help_panel: Imaging
       cell-size:
         info:
           Cell size in arc-seconds
         dtype: float
+        metadata:
+          rich_help_panel: Imaging
       nx:
         info:
           Number of x pixels
         dtype: int
+        metadata:
+          rich_help_panel: Imaging
       ny:
         info:
           Number of y pixels
         dtype: int
+        metadata:
+          rich_help_panel: Imaging
       psf-relative-size:
         info:
           Relative size of the PSF in pixels.
@@ -145,15 +197,21 @@ cabs:
           The default is to make the PSF just big enough to extract the PSF parameters.
           Ideally requires double sized PSF.
         dtype: float
+        metadata:
+          rich_help_panel: Imaging
       robustness:
         info:
           Robustness factor for Briggs weighting.
           None means natural
         dtype: float
+        metadata:
+          rich_help_panel: Weighting
       target:
         info:
           Predefined celestial objects known to astropy.
           Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        metadata:
+          rich_help_panel: Imaging
       l2-reweight-dof:
         info:
           The degrees of freedom parameter for L2 reweighting.
@@ -162,97 +220,135 @@ cabs:
           Small values result in aggressive reweighting.
           This should be avoided if the model is still incomplete.
         dtype: float
+        metadata:
+          rich_help_panel: Weighting
       eta:
         info:
           Value to add to Hessian to make it invertible.
           Smaller values tend to fit more noise and make the inversion less stable.
         dtype: float
         default: 1.0e-05
+        metadata:
+          rich_help_panel: Imaging
       psf-out:
         info:
           Whether to produce output PSF's or not.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Output
       weight-grid-out:
         info:
           Whether to produce an image of the weighted grid or not.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Output
       natural-grad:
         info:
           Compute naural gradient
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Imaging
       check-ants:
         info:
           Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       inject-transients:
         info:
           YAML file containing transients to inject into the data.
+        metadata:
+          rich_help_panel: Imaging
       filter-counts-level:
         info:
           Set minimum counts in the uniform weighting grid to the median divided by this value.
           This is useful to avoid artificially up-weighting nearly empty uv-cells.
         dtype: float
         default: 10.0
+        metadata:
+          rich_help_panel: Weighting
       min-padding:
         info:
           Minimum padding to be applied during gridding.
         dtype: float
         default: 2.0
+        metadata:
+          rich_help_panel: Imaging
       phase-dir:
         info:
           Rephase visibilities to this phase center.
           Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        metadata:
+          rich_help_panel: Imaging
       epsilon:
         info:
           Gridder accuracy
         dtype: float
         default: 1.0e-07
+        metadata:
+          rich_help_panel: WGridder
       do-wgridding:
         info:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       double-accum:
         info:
           Accumulate onto grid using double precision.
           Only has an affect when using single precision.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       nworkers:
         info:
           Number of worker processes.
           Use with distributed scheduler.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Performance
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
+        metadata:
+          rich_help_panel: Performance
       cg-tol:
         info:
           Tolerance of conjugate gradient algorithm
         dtype: float
         default: 0.001
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-maxit:
         info:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 150
+        metadata:
+          rich_help_panel: ConjugateGradient
       object-store-memory:
         info:
           Object store memory (in GB) when using the distributed scheduler.
         dtype: float
+        metadata:
+          rich_help_panel: Performance
       cube-to-fits:
         info:
           Whether to convert the output cube to FITS format.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Output
       wgt-mode:
         info:
           Controls how the Stokes weights are computed.
@@ -262,14 +358,20 @@ cabs:
         - l2
         - minvar
         default: l2
+        metadata:
+          rich_help_panel: Weighting
       obs-label:
         info:
           Optional observation label to include in the stacked cube.
+        metadata:
+          rich_help_panel: Output
       flag-excess-rms:
         info:
           Flag data with RMS values exceeding the median by this factor.
         dtype: float
         default: 1.5
+        metadata:
+          rich_help_panel: Imaging
     outputs:
       output-dataset:
         dtype: Directory

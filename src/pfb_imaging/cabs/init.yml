@@ -14,39 +14,53 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Input
       output-filename:
         info:
           Basename of output
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       scans:
         info:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       ddids:
         info:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       fields:
         info:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
         dtype: List[int]
+        metadata:
+          rich_help_panel: Data Selection
       freq-range:
         info:
           Frequency range to image in Hz.
           Specify as a string with colon delimiter ('1e9:1.1e9').
+        metadata:
+          rich_help_panel: Data Selection
       overwrite:
         info:
           Allow overwrite of output xds
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       data-column:
         info:
           Data column to image.
@@ -54,37 +68,51 @@ cabs:
           Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA').
           When gains are present this column will be corrected.
         default: DATA
+        metadata:
+          rich_help_panel: Data Selection
       weight-column:
         info:
           Column containing natural weights.
           Must be the same across MSs
+        metadata:
+          rich_help_panel: Data Selection
       sigma-column:
         info:
           Column containing standard devations.
           Will be used to initialise natural weights if detected.
           Must be the same across MSs
+        metadata:
+          rich_help_panel: Data Selection
       flag-column:
         info:
           Column containing data flags.
           Must be the same across MSs
         default: FLAG
+        metadata:
+          rich_help_panel: Data Selection
       gain-table:
         info:
           Path to Quartical gain table containing NET gains.
           There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.
         dtype: List[URI]
+        metadata:
+          rich_help_panel: Input
       integrations-per-image:
         info:
           Number of time integrations per image.
           Default (-1, 0, None) -> dataset per scan.
         dtype: int
         default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       channels-per-image:
         info:
           Number of channels per image for degridding resolution.
           Any of (-1, 0, None) implies single dataset per spw.
         dtype: int
         default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision
@@ -92,58 +120,80 @@ cabs:
         - single
         - double
         default: double
+        metadata:
+          rich_help_panel: Imaging
       bda-decorr:
         info:
           BDA decorrelation factor.
           Only has an effect if less than one
         dtype: float
         default: 1.0
+        metadata:
+          rich_help_panel: Averaging
       max-field-of-view:
         info:
           The maximum field of view that will be considered.
           Used to compute decorrelation due to BDA.
         dtype: float
         default: 3.0
+        metadata:
+          rich_help_panel: Averaging
       beam-model:
         info:
           Beam model to use.
           Only katbeam currently supported.
+        metadata:
+          rich_help_panel: Input
       chan-average:
         info:
           Average this number if channels together
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Averaging
       progressbar:
         info:
           Display progress.
           Use --no-progressbar to deactivate.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Reporting
       check-ants:
         info:
           Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       nworkers:
         info:
           Number of worker processes.
           Use with distributed scheduler.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Performance
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
+        metadata:
+          rich_help_panel: Performance
       wgt-mode:
         info:
           Controls how the Stokes weights are computed.
@@ -153,6 +203,8 @@ cabs:
         - l2
         - minvar
         default: l2
+        metadata:
+          rich_help_panel: Weighting
     outputs:
       xds-out:
         dtype: Directory
