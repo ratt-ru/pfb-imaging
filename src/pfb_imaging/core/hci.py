@@ -29,6 +29,12 @@ from pfb_imaging.utils.transients import generate_transient_spectra
 
 log = pfb_logging.get_logger("HCI")
 
+# FITS axis keywords that must be removed/renumbered when changing dimensionality
+_FITS_AXIS_KEYWORDS = ("CTYPE", "CRVAL", "CRPIX", "CDELT", "CUNIT", "NAXIS")
+
+# FITS Stokes parameter indices (FITS standard)
+_STOKES_FITS_INDEX = {"I": 1, "Q": 2, "U": 3, "V": 4}
+
 
 def hci(
     ms: list[Path],
@@ -584,21 +590,149 @@ def hci(
         wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
         wsumsqc = wsumsq.compute()[:, None, None]
         weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=(n_stokes, y_chunk, x_chunk)))
+        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=(1, y_chunk, x_chunk)))
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)
-    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean.rechunk(chunks=(n_stokes, 1, y_chunk, x_chunk)))
+    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean.rechunk(chunks=(1, 1, y_chunk, x_chunk)))
     ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
-    ds["flag"] = (("STOKES", "FREQ", "TIME"), da.from_array(flag, chunks=(n_stokes, 1, images_per_chunk)))
+    ds["flag"] = (("STOKES", "FREQ", "TIME"), da.from_array(flag, chunks=(1, 1, images_per_chunk)))
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(fds_store.url, mode="r+")
     log.info("Reduction complete")
+
+    if cube_to_fits:
+        if "://" in str(output_dataset) and not str(output_dataset).startswith("file://"):
+            log.warning("cube_to_fits is only supported for local filesystems, skipping FITS export")
+        else:
+            local_path = str(output_dataset).removeprefix("file://").removesuffix(".zarr")
+            # reopen with chunking aligned to zarr layout for efficient streaming
+            cds = xr.open_zarr(fds_store.url, chunks={"TIME": images_per_chunk})
+            cube = cds.cube.data  # (STOKES, FREQ, TIME, Y, X)
+            cube_mean = cds.cube_mean.data  # (STOKES, FREQ, Y, X)
+            n_stokes, n_freqs, n_time, ny_cube, nx_cube = cube.shape
+            stokes_params = list(cds.coords["STOKES"].values)
+
+            # reconstruct the base header from stored attrs
+            base_hdr = dict(cds.attrs["fits_header"])
+
+            # --- per-band time cubes via StreamingHDU ---
+            # target shape per band: (STOKES, TIME, Y, X)
+            # FITS axes: NAXIS1=X, NAXIS2=Y, NAXIS3=TIME, NAXIS4=STOKES
+            # drop FITS axis 4 (FREQ) from the 5-axis header
+            band_shape = (n_stokes, n_time, ny_cube, nx_cube)
+            for f in range(n_freqs):
+                band_hdr = _make_fits_header(base_hdr, band_shape, stokes_params, drop_axes={4})
+
+                filename = f"{local_path}.band{f:04d}.fits"
+                if Path(filename).exists():
+                    Path(filename).unlink()
+                log.info(f"Streaming cube band {f} to {filename}")
+
+                shdu = fits.StreamingHDU(filename, band_hdr)
+                for s in range(n_stokes):
+                    for t in range(0, n_time, images_per_chunk):
+                        tend = min(t + images_per_chunk, n_time)
+                        chunk = cube[s, f, t:tend, :, :].compute()
+                        shdu.write(chunk)
+                shdu.close()
+
+            # --- mean image (small enough to write at once) ---
+            # target shape: (STOKES, FREQ, Y, X)
+            # drop FITS axis 3 (TIME/INTEGRATION) from the 5-axis header
+            mean_hdr = _make_fits_header(base_hdr, cube_mean.shape, stokes_params, drop_axes={3})
+
+            mean_filename = f"{local_path}.cube_mean.fits"
+            log.info(f"Writing mean image to {mean_filename}")
+            mean_data = cube_mean.compute()
+            hdu = fits.PrimaryHDU(mean_data, mean_hdr)
+            hdu.writeto(mean_filename, overwrite=True)
+
+            log.info("FITS export complete")
 
     log.info(f"All done after {time.time() - time_start}s")
 
     if not keep_ray_alive:
         ray.shutdown()
+
+
+def _make_fits_header(base_hdr, data_shape, stokes_params, drop_axes):
+    """Build an ordered FITS header from the stored 5-axis header.
+
+    Drops the specified axes, renumbers the remaining ones, explicitly sets
+    the STOKES axis from the coordinate values, and ensures mandatory
+    keywords appear first (required by StreamingHDU).
+
+    Args:
+        base_hdr: dict of FITS header keyword-value pairs (from attrs["fits_header"]).
+        data_shape: tuple of the target array shape in numpy order
+            e.g. (STOKES, TIME, Y, X) or (STOKES, FREQ, Y, X).
+        stokes_params: list of Stokes parameter strings e.g. ["I"] or ["I", "Q"].
+        drop_axes: set of 1-based FITS axis numbers to drop from the 5-axis header.
+
+    Returns:
+        astropy.io.fits.Header with correct ordering and keywords.
+    """
+    hdr = base_hdr.copy()
+    orig_naxis = hdr["NAXIS"]
+    ndim = len(data_shape)
+    # FITS shape is reversed from numpy shape
+    fits_shape = data_shape[::-1]
+
+    # remove WCSAXES early — we'll set it at the end
+    hdr.pop("WCSAXES", None)
+
+    # collect which original axes survive (1-based, in order)
+    kept_axes = [ax for ax in range(1, orig_naxis + 1) if ax not in drop_axes]
+
+    # build the new axis keywords: new axis i gets old axis kept_axes[i-1]
+    # first, collect the new values
+    new_axis_kws = {}
+    for new_ax, old_ax in enumerate(kept_axes, 1):
+        for kw in _FITS_AXIS_KEYWORDS:
+            old_key = f"{kw}{old_ax}"
+            if old_key in hdr:
+                new_axis_kws[f"{kw}{new_ax}"] = hdr[old_key]
+
+    # remove all old axis keywords
+    for ax in range(1, orig_naxis + 1):
+        for kw in _FITS_AXIS_KEYWORDS:
+            hdr.pop(f"{kw}{ax}", None)
+
+    # set NAXIS and NAXISn
+    hdr["NAXIS"] = ndim
+    for i, size in enumerate(fits_shape, 1):
+        new_axis_kws[f"NAXIS{i}"] = size
+
+    # find which new axis is STOKES and set it explicitly
+    stokes_rvals = [_STOKES_FITS_INDEX[s] for s in stokes_params]
+    stokes_delta = stokes_rvals[1] - stokes_rvals[0] if len(stokes_rvals) > 1 else 1
+    stokes_ax = ndim  # STOKES is always the last (slowest) FITS axis
+    new_axis_kws[f"CTYPE{stokes_ax}"] = "STOKES"
+    new_axis_kws[f"CRPIX{stokes_ax}"] = 1
+    new_axis_kws[f"CRVAL{stokes_ax}"] = stokes_rvals[0]
+    new_axis_kws[f"CDELT{stokes_ax}"] = stokes_delta
+    new_axis_kws[f"CUNIT{stokes_ax}"] = ""
+
+    # build ordered header: mandatory keywords first
+    mandatory = ["SIMPLE", "BITPIX", "NAXIS"] + [f"NAXIS{i}" for i in range(1, ndim + 1)]
+    ordered = {}
+    for kw in mandatory:
+        if kw in hdr:
+            ordered[kw] = hdr.pop(kw)
+        elif kw in new_axis_kws:
+            ordered[kw] = new_axis_kws.pop(kw)
+
+    # then the rest of the original header (EXTEND, BSCALE, BZERO, etc.)
+    ordered.update(hdr)
+
+    # then the WCS axis keywords
+    ordered.update(new_axis_kws)
+
+    # set WCSAXES at the end
+    ordered["WCSAXES"] = ndim
+
+    return fits.Header(ordered)
 
 
 def make_dummy_dataset(
