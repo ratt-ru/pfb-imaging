@@ -533,7 +533,7 @@ def psf_errorsq(x, data, xy):
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 5.0):
+def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
@@ -573,38 +573,36 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsig
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
 
-        # initial guess for emaj and emin
-        # x and y are reversed because of the parametrisation
-        # of the 2D Gaussian (for fits)
-        xdiff = np.maximum(y.max() - y.min(), 1)
-        ydiff = np.maximum(x.max() - x.min(), 1)
-
-        # initial guess for pa
-        dx = x - np.mean(x)
-        dy = y - np.mean(y)
+        # initial guess for pa via weighted second moments
         psftmp = psfv[islands == ncenter]
-        mxx = np.mean(psftmp * dx**2)
-        myy = np.mean(psftmp * dy**2)
-        mxy = np.mean(psftmp * dx * dy)
+        wsum = psftmp.sum()
+        dx = x - np.sum(psftmp * x) / wsum
+        dy = y - np.sum(psftmp * y) / wsum
+        mxx = np.sum(psftmp * dx**2) / wsum
+        myy = np.sum(psftmp * dy**2) / wsum
+        mxy = np.sum(psftmp * dx * dy) / wsum
         pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
         # ensure pa is in (0, pi)
-        pa0 = np.maximum(pa0, 0.0)
-        pa0 = np.minimum(pa0, np.pi)
+        pa0 = float(np.clip(pa0, 0.0, np.pi))
 
-        if xdiff > ydiff:  # x is major axis
-            emaj0 = xdiff
-            emin0 = ydiff
-            # pa0 = 0.0
-        else:  # y is the major axis
-            emaj0 = ydiff
-            emin0 = xdiff
-            # pa0 = np.pi/2
+        # rotate main lobe coordinates to zero PA to estimate axis extents.
+        # PA is anticlockwise from positive y-axis, so the rotation angle
+        # to align the major axis with the y-axis is -pa0
+        t = np.pi / 2 + pa0
+        ct, st = np.cos(t), np.sin(t)
+        dx_rot = ct * dx + st * dy
+        dy_rot = -st * dx + ct * dy
+        # bounding box in the rotated frame gives FWHM estimates
+        emaj0 = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
+        emin0 = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
 
-        # select psf in fit region out to nsigma standard deviations
+        # select psf in fit region out to nsigma standard deviations.
+        # the main lobe above level extends to ~FWHM/2 from center,
+        # so use emaj0 as a proxy for the FWHM of the major axis
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-        sigma_maj = emaj0 / fwhm_conv
+        sigma_est = emaj0 / fwhm_conv
         rrsq = xx**2 + yy**2
-        idxs = rrsq < (nsigma * sigma_maj) ** 2
+        idxs = rrsq < (nsigma * sigma_est) ** 2
         psfv = psfv[idxs]
         x = xx[idxs]
         y = yy[idxs]

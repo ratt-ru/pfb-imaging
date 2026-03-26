@@ -126,6 +126,93 @@ def test_fitcleanbeam_vs_astropy(nx, ny, gpars):
     assert np.sin(padiff) < 1e-4
 
 
+@pmp("sidelobe_amp", [0.0, 0.3])
+def test_init_rotated_bbox_vs_axis_aligned(sidelobe_amp):
+    """Compare the rotated bounding box initialization against the old
+    axis-aligned bounding box method. Both methods share the same PA
+    estimate from weighted second moments; the difference is how
+    emaj0/emin0 are derived from the main lobe shape.
+
+    We test on clean Gaussians and on Gaussians with synthetic sidelobes
+    to simulate a realistic PSF. The rotated method should produce lower
+    total error across a sweep of position angles and eccentricities.
+    """
+    from scipy.ndimage import label
+
+    nx = 128
+    x = -(nx // 2) + np.arange(nx)
+    xx, yy = np.meshgrid(x, x, indexing="ij")
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    level = 0.5
+
+    # place here instead of using pmp so we can look at aggregate error across all cases
+    gpars_list = [
+        (10.0, 5.0, 0.0),
+        (7.0, 4.0, 1.0),
+        (7.5, 3.0, 2.0),
+        (7.0, 1.1, 3.0),
+        (8.0, 2.0, 0.5),
+        (9.0, 3.0, 1.5),
+        (6.0, 1.5, 2.5),
+        (10.0, 2.0, 0.8),
+    ]
+
+    total_err_old = 0.0
+    total_err_new = 0.0
+
+    for gpars in gpars_list:
+        emaj, emin, pa = gpars
+        gauss = gaussian2d(xx, yy, gausspar=gpars, normalise=False)
+
+        if sidelobe_amp > 0:
+            rr = np.sqrt(xx**2 + yy**2)
+            ring_radius = 1.5 * emaj / fwhm_conv
+            ring = sidelobe_amp * np.exp(-0.5 * ((rr - ring_radius) / 1.0) ** 2)
+            gauss = gauss + ring
+            gauss /= gauss.max()
+
+        psfv = gauss / gauss.max()
+        mask = np.where(psfv > level, 1.0, 0)
+        islands, _ = label(mask)
+        ncenter = islands[nx // 2, nx // 2]
+
+        xl = xx[islands == ncenter]
+        yl = yy[islands == ncenter]
+        psftmp = psfv[islands == ncenter]
+        wsum = psftmp.sum()
+        dxl = xl - np.sum(psftmp * xl) / wsum
+        dyl = yl - np.sum(psftmp * yl) / wsum
+        mxx = np.sum(psftmp * dxl**2) / wsum
+        myy = np.sum(psftmp * dyl**2) / wsum
+        mxy = np.sum(psftmp * dxl * dyl) / wsum
+        pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
+        pa0 = float(np.clip(pa0, 0.0, np.pi))
+
+        # old method: axis-aligned bounding box
+        xdiff_old = np.maximum(yl.max() - yl.min(), 1)
+        ydiff_old = np.maximum(xl.max() - xl.min(), 1)
+        if xdiff_old > ydiff_old:
+            emaj_old, emin_old = xdiff_old, ydiff_old
+        else:
+            emaj_old, emin_old = ydiff_old, xdiff_old
+
+        # new method: rotated bounding box
+        t = np.pi / 2 + pa0
+        ct, st = np.cos(t), np.sin(t)
+        dx_rot = ct * dxl + st * dyl
+        dy_rot = -st * dxl + ct * dyl
+        emaj_new = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
+        emin_new = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
+
+        total_err_old += (emaj_old - emaj) ** 2 + (emin_old - emin) ** 2
+        total_err_new += (emaj_new - emaj) ** 2 + (emin_new - emin) ** 2
+
+    assert total_err_new < total_err_old, (
+        f"rotated bbox total SSE ({total_err_new:.4f}) not better than "
+        f"axis-aligned ({total_err_old:.4f}), sidelobe_amp={sidelobe_amp}"
+    )
+
+
 @pmp("nx", [128, 256])
 @pmp("ny", [80, 220])
 @pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0), (7.5, 3.0, 2.0), (7.0, 1.1, 3.0)])
