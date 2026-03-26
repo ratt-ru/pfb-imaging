@@ -476,11 +476,12 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     """
     xin         - grid of x coordinates
     yin         - grid of y coordinates
-    gausspar    - (emaj, emin, pa) with emaj/emin in units of xin/yin and pa in radians.
+    gausspar    - (emaj, emin, pa) with emaj/emin as FWHM in units of xin/yin and pa in radians.
     normalise   - normalise kernel to have volume 1
-    nsigma      - compute kernel out to this many sigmas
+    nsigma      - compute kernel out to this many standard deviations of the major axis
     """
     smaj, smin, pa = gausspar
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
     amat = np.array([[1.0 / smaj**2, 0], [0, 1.0 / smin**2]])
     # R = np.array([[np.cos(pa), -np.sin(pa)],
     #               [np.sin(pa), np.cos(pa)]])
@@ -490,15 +491,15 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
     amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
-    # only compute the result out to 5 * emaj
-    extent = (nsigma * smaj) ** 2
+    # only compute the result out to nsigma standard deviations
+    sigma_maj = smaj / fwhm_conv
+    extent = (nsigma * sigma_maj) ** 2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
     idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     rmat = np.einsum("nb,bc,cn->n", x.T, amat, x)
-    # need to adjust for the fact that gausspar corresponds to FWHM
-    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    # adjust for the fact that gausspar corresponds to FWHM
     tmp = np.exp(-0.5 * fwhm_conv**2 * rmat)
     gausskern = np.zeros(xflat.shape, dtype=np.float64)
     gausskern[idx, idy] = tmp
@@ -532,18 +533,18 @@ def psf_errorsq(x, data, xy):
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, extent: float = 5.0):
+def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 5.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
-    then fit Gaussian out to a radius of extent * max(x, y) where
-    x and y are the coordinates where PSF > level.
+    then fit Gaussian out to a radius of nsigma standard deviations
+    of the initial beam estimate.
 
     Args:
         psf     - (nband, nx, ny) array containing the PSF for each band.
         level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
         pixsize - pixel size in same units as desired Gaussian parameters.
-        extent   - fit Gaussian out to this many times the radius of the main lobe. Should be a positive number.
+        nsigma  - fit Gaussian out to this many standard deviations of the estimated major axis.
     Returns:
         Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
@@ -590,15 +591,6 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
         pa0 = np.maximum(pa0, 0.0)
         pa0 = np.minimum(pa0, np.pi)
 
-        rsq = np.abs(x).max() ** 2 + np.abs(y).max() ** 2
-        rrsq = xx**2 + yy**2
-        idxs = rrsq < extent * rsq
-
-        # select psf in fit region
-        psfv = psfv[idxs]
-        x = xx[idxs]
-        y = yy[idxs]
-        xy = np.vstack((x, y))
         if xdiff > ydiff:  # x is major axis
             emaj0 = xdiff
             emin0 = ydiff
@@ -607,6 +599,16 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
             emaj0 = ydiff
             emin0 = xdiff
             # pa0 = np.pi/2
+
+        # select psf in fit region out to nsigma standard deviations
+        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+        sigma_maj = emaj0 / fwhm_conv
+        rrsq = xx**2 + yy**2
+        idxs = rrsq < (nsigma * sigma_maj) ** 2
+        psfv = psfv[idxs]
+        x = xx[idxs]
+        y = yy[idxs]
+        xy = np.vstack((x, y))
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(
             dfunc,
