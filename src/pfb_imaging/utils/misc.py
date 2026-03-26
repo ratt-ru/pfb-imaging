@@ -476,30 +476,31 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     """
     xin         - grid of x coordinates
     yin         - grid of y coordinates
-    gausspar    - (emaj, emin, pa) with emaj/emin in units of xin/yin and pa in radians.
+    gausspar    - (emaj, emin, pa) with emaj/emin as FWHM in units of xin/yin and pa in radians.
     normalise   - normalise kernel to have volume 1
-    nsigma      - compute kernel out to this many sigmas
+    nsigma      - compute kernel out to this many standard deviations of the major axis
     """
     smaj, smin, pa = gausspar
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
     amat = np.array([[1.0 / smaj**2, 0], [0, 1.0 / smin**2]])
     # R = np.array([[np.cos(pa), -np.sin(pa)],
     #               [np.sin(pa), np.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = np.array([[np.sin(pa), -np.cos(pa)], [np.cos(pa), np.sin(pa)]])
-    amat = np.dot(np.dot(rmat.T, amat), rmat)
+    rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
+    amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
-    # only compute the result out to 5 * emaj
-    extent = (nsigma * smaj) ** 2
+    # only compute the result out to nsigma standard deviations
+    sigma_maj = smaj / fwhm_conv
+    extent = (nsigma * sigma_maj) ** 2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
     idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     rmat = np.einsum("nb,bc,cn->n", x.T, amat, x)
-    # need to adjust for the fact that gausspar corresponds to FWHM
-    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-    tmp = np.exp(-fwhm_conv * rmat)
+    # adjust for the fact that gausspar corresponds to FWHM
+    tmp = np.exp(-0.5 * fwhm_conv**2 * rmat)
     gausskern = np.zeros(xflat.shape, dtype=np.float64)
     gausskern[idx, idy] = tmp
 
@@ -520,30 +521,30 @@ def psf_errorsq(x, data, xy):
     # R = jnp.array([[jnp.cos(pa), -jnp.sin(pa)],
     #                 [jnp.sin(pa), jnp.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = jnp.array([[jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), jnp.sin(pa)]])
-    bmat = jnp.dot(jnp.dot(rmat.T, amat), rmat)
+    rmat = jnp.array([[-jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), -jnp.sin(pa)]])
+    bmat = jnp.dot(jnp.dot(rmat, amat), rmat.T)
     qvec = jnp.einsum("nb,bc,cn->n", xy.T, bmat, xy)
     # gausspar should corresponds to FWHM
     fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
-    model = jnp.exp(-fwhm_conv * qvec)
+    model = jnp.exp(-0.5 * fwhm_conv**2 * qvec)
     res = data - model
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, extent: float = 5.0):
+def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
-    then fit Gaussian out to a radius of extent * max(x, y) where
-    x and y are the coordinates where PSF > level.
+    then fit Gaussian out to a radius of nsigma standard deviations
+    of the initial beam estimate.
 
     Args:
         psf     - (nband, nx, ny) array containing the PSF for each band.
         level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
         pixsize - pixel size in same units as desired Gaussian parameters.
-        extent   - fit Gaussian out to this many times the radius of the main lobe. Should be a positive number.
+        nsigma  - fit Gaussian out to this many standard deviations of the estimated major axis.
     Returns:
         Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
@@ -572,44 +573,48 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
 
-        # initial guess for emaj and emin
-        # x and y are reversed because of the parametrisation
-        # of the 2D Gaussian (for fits)
-        xdiff = np.maximum(y.max() - y.min(), 1)
-        ydiff = np.maximum(x.max() - x.min(), 1)
-
-        # initial guess for pa
-        dx = x - np.mean(x)
-        dy = y - np.mean(y)
+        # initial guess for pa via weighted second moments
         psftmp = psfv[islands == ncenter]
-        mxx = np.mean(psftmp * dx**2)
-        myy = np.mean(psftmp * dy**2)
-        mxy = np.mean(psftmp * dx * dy)
+        wsum = psftmp.sum()
+        dx = x - np.sum(psftmp * x) / wsum
+        dy = y - np.sum(psftmp * y) / wsum
+        mxx = np.sum(psftmp * dx**2) / wsum
+        myy = np.sum(psftmp * dy**2) / wsum
+        mxy = np.sum(psftmp * dx * dy) / wsum
         pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
         # ensure pa is in (0, pi)
-        pa0 = np.maximum(pa0, 0.0)
-        pa0 = np.minimum(pa0, np.pi)
+        pa0 = float(np.clip(pa0, 0.0, np.pi))
 
-        rsq = np.abs(x).max() ** 2 + np.abs(y).max() ** 2
+        # rotate main lobe coordinates to estimate axis extents.
+        # PA is anticlockwise from the positive y-axis so the major axis
+        # is at angle (pi/2 + pa0) from the positive x-axis. Rotating
+        # by -(pi/2 + pa0) aligns the major axis with the x-axis.
+        t = np.pi / 2 + pa0
+        ct, st = np.cos(t), np.sin(t)
+        dx_rot = ct * dx + st * dy
+        dy_rot = -st * dx + ct * dy
+        # bounding box in the rotated frame gives FWHM estimates
+        emaj0 = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
+        emin0 = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
+
+        # select psf in fit region out to nsigma standard deviations.
+        # the main lobe above level extends to ~FWHM/2 from center,
+        # so use emaj0 as a proxy for the FWHM of the major axis
+        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+        sigma_est = emaj0 / fwhm_conv
         rrsq = xx**2 + yy**2
-        idxs = rrsq < extent * rsq
-
-        # select psf in fit region
+        idxs = rrsq < (nsigma * sigma_est) ** 2
         psfv = psfv[idxs]
         x = xx[idxs]
         y = yy[idxs]
         xy = np.vstack((x, y))
-        if xdiff > ydiff:  # x is major axis
-            emaj0 = xdiff
-            emin0 = ydiff
-            # pa0 = 0.0
-        else:  # y is the major axis
-            emaj0 = ydiff
-            emin0 = xdiff
-            # pa0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(
-            dfunc, np.array((emaj0, emin0, pa0)), args=(psfv, xy), bounds=((0, None), (0, None), (0, np.pi)), factr=1e7
+            dfunc,
+            np.array((emaj0, emin0, pa0)),
+            args=(psfv, xy),
+            bounds=((0, None), (0, None), (0, np.pi)),
+            factr=1e7,
         )
         if d["warnflag"] != 0:
             print("WARNING - warning flag raised during psf fit")
