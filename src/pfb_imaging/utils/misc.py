@@ -585,9 +585,10 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsig
         # ensure pa is in (0, pi)
         pa0 = float(np.clip(pa0, 0.0, np.pi))
 
-        # rotate main lobe coordinates to zero PA to estimate axis extents.
-        # PA is anticlockwise from positive y-axis, so the rotation angle
-        # to align the major axis with the y-axis is -pa0
+        # rotate main lobe coordinates to estimate axis extents.
+        # PA is anticlockwise from the positive y-axis so the major axis
+        # is at angle (pi/2 + pa0) from the positive x-axis. Rotating
+        # by -(pi/2 + pa0) aligns the major axis with the x-axis.
         t = np.pi / 2 + pa0
         ct, st = np.cos(t), np.sin(t)
         dx_rot = ct * dx + st * dy

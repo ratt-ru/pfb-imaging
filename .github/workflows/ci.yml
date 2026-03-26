@@ -16,7 +16,7 @@ jobs:
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -47,7 +47,7 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
