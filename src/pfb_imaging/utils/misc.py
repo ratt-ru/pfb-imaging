@@ -275,7 +275,7 @@ def construct_mappings(
     radecs = {}
     antpos = {}
     poltype = {}
-    uv_maxs = []
+    max_blengths = []
     idts = {}
     for ims, ms in enumerate(ms_name):
         xds = xds_from_ms(
@@ -314,16 +314,14 @@ def construct_mappings(
             chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
-            u_max = abs(uvw[:, 0]).max()
-            v_max = abs(uvw[:, 1]).max()
-            uv_maxs.append(da.maximum(u_max, v_max))
+            max_blengths.append(da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
 
     # Early compute to get metadata
-    times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype = dask.compute(
-        times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype
+    times, freqs, radecs, chan_widths, max_blengths, antpos, poltype = dask.compute(
+        times, freqs, radecs, chan_widths, max_blengths, antpos, poltype
     )
 
-    uv_max = max(uv_maxs)
+    max_blength = max(max_blengths)
     all_times = []
     freq_mapping = {}
     row_mapping = {}
@@ -466,7 +464,7 @@ def construct_mappings(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     )
@@ -890,7 +888,7 @@ def combine_columns(x, y, dc, dc1, dc2):
 
 
 def set_image_size(
-    uv_max,
+    max_blength,
     max_freq,
     field_of_view,
     super_resolution_factor,
@@ -904,7 +902,7 @@ def set_image_size(
         log = logging.getLogger(__name__)
 
     # max cell size
-    cell_n = 1.0 / (2 * uv_max * max_freq / lightspeed)
+    cell_n = 1.0 / (2 * max_blength * max_freq / lightspeed)
 
     if cell_size is not None:
         cell_rad = cell_size * np.pi / 60 / 60 / 180

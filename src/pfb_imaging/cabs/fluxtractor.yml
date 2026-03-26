@@ -5,7 +5,7 @@ cabs:
     name: fluxtractor
     info:
       Otherwise knows as the fluxmop.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:

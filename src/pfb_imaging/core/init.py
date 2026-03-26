@@ -168,7 +168,7 @@ def init(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     ) = construct_mappings(

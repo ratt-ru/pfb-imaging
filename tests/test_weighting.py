@@ -28,12 +28,10 @@ def test_counts(ms_name, srf, fov):
 
     uvw = xds.UVW.values
     nrow = uvw.shape[0]
-    u_max = abs(uvw[:, 0]).max()
-    v_max = abs(uvw[:, 1]).max()
-    uv_max = np.maximum(u_max, v_max)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
 
     # image size
-    cell_n = 1.0 / (2 * uv_max * freq.max() / lightspeed)
+    cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
     cell_rad = cell_n / srf
     cell_deg = cell_rad * 180 / np.pi
     cell_size = cell_deg * 3600

@@ -234,7 +234,7 @@ def hci(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     ) = construct_mappings(
@@ -267,7 +267,7 @@ def hci(
 
     # image size
     nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
-        uv_max,
+        max_blength,
         max_freq,
         field_of_view,
         super_resolution_factor,
