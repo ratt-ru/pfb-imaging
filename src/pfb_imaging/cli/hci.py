@@ -21,11 +21,13 @@ URI = NewType("URI", Path)
     must_exist=True,
     mkdir=False,
     path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
 )
 @stimela_output(
     dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
+    metadata={"rich_help_panel": "Output"},
 )
 def hci(
     ms: Annotated[
@@ -449,7 +451,6 @@ def hci(
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
             help="Execution backend.",
-            rich_help_panel="Execution",
         ),
         {"stimela": {"skip": True}},
     ] = "auto",
@@ -457,7 +458,6 @@ def hci(
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
-            rich_help_panel="Execution",
         ),
         {"stimela": {"skip": True}},
     ] = False,

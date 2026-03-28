@@ -2540,7 +2540,7 @@ requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", git = "https://github.com/ratt-ru/codex-africanus.git?rev=master" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
-    { name = "distributed", marker = "extra == 'full'", specifier = "<2026.2.0" },
+    { name = "distributed", marker = "extra == 'full'", specifier = "<2026.4.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = ">=0.1.6" },
     { name = "ipdb", marker = "extra == 'dev'" },

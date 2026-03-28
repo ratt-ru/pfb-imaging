@@ -384,7 +384,11 @@ cabs:
         mkdir: false
         path_policies:
           write_parent: true
+        metadata:
+          rich_help_panel: Output
       temp-dir:
         dtype: Directory
         info:
           A temporary directory to store ephemeral files.
+        metadata:
+          rich_help_panel: Output
