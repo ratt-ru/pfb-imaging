@@ -49,13 +49,13 @@ cabs:
           The default resolution is the native resolution in each imaging band.
           This parameter can be used to homogenise the resolution of the cubes.
           Set to (0,0,0) to use the resolution of the lowest band.
-        dtype: Tuple[float, float, float]
+        dtype: Optional[Tuple[float, float, float]]
         metadata:
           rich_help_panel: Restoration
       drop-bands:
         info:
           List of bands to discard.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       nworkers:
@@ -71,12 +71,13 @@ cabs:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -91,6 +92,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Naming
     outputs:

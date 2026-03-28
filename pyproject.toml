@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.1.6",
+    "hip-cargo>=0.1.7",
 ]
 
 [project.urls]
@@ -40,7 +40,6 @@ full = [
     "numexpr>=2.10.1",
     "ducc0>=0.35.0",
     "sympy>=1.9",
-    "stimela>=2.0.2",
     "tbb>=2021.13.1",
     "jax[cpu]>=0.4.31",
     "lz4>=4.3.3",

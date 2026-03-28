@@ -26,6 +26,7 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -40,6 +41,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       fits-mfs:
@@ -109,7 +111,7 @@ cabs:
       hess-norm:
         info:
           Spectral norm of hessian approximation.
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Hessian
       hess-approx:
@@ -150,7 +152,7 @@ cabs:
         info:
           Number of basis functions to use while fitting the frequency axis.
           Default is to use the number of non-null imaging bands (interpolation).
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: PFB
       positivity:
@@ -212,7 +214,7 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       epsilon:

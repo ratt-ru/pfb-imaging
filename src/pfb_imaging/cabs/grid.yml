@@ -19,6 +19,7 @@ cabs:
         info:
           Optional explicit path to xds.
           Set using output-filename and suffix by default.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       suffix:
@@ -47,6 +48,7 @@ cabs:
       transfer-model-from:
         info:
           Name of dataset to use for model initialisation
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       use-best-model:
@@ -61,7 +63,7 @@ cabs:
         info:
           Robustness factor for Briggs weighting.
           None means natural
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Weighting
       dirty:
@@ -116,7 +118,7 @@ cabs:
       field-of-view:
         info:
           Field of view in degrees
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Imaging
       super-resolution-factor:
@@ -129,19 +131,19 @@ cabs:
       cell-size:
         info:
           Cell size in arc-seconds
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Imaging
       nx:
         info:
           Number of x pixels
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Imaging
       ny:
         info:
           Number of y pixels
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Imaging
       filter-counts-level:
@@ -156,6 +158,7 @@ cabs:
         info:
           Predefined celestial objects known to astropy.
           Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Imaging
       l2-reweight-dof:
@@ -165,7 +168,7 @@ cabs:
           A sensible value for this parameter depends on the level of RFI in the data.
           Small values result in aggressive reweighting.
           This should be avoided if the model is still incomplete.
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Weighting
       epsilon:
@@ -203,12 +206,13 @@ cabs:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -223,6 +227,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Naming
       fits-mfs:

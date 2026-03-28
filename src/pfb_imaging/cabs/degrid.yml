@@ -31,7 +31,7 @@ cabs:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated string '0,2' if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       ddids:
@@ -39,7 +39,7 @@ cabs:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated string '0,2' if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       fields:
@@ -47,7 +47,7 @@ cabs:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated string '0,2' if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       suffix:
@@ -62,6 +62,7 @@ cabs:
         info:
           Optional path to mds to use for degridding.
           By default mds is inferred from output-filename.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       model-column:
@@ -81,6 +82,7 @@ cabs:
         info:
           Frequency range to image in Hz.
           Specify as a string with colon delimiter ('1e9:1.1e9').
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
       integrations-per-image:
@@ -96,7 +98,7 @@ cabs:
           Number of channels per image.
           Default (None) -> read mapping from dds.
           (-1, 0) -> one band per SPW.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Imaging
       accumulate:
@@ -111,6 +113,7 @@ cabs:
           A region file containing regions that need to be converted to separate measurement set columns.
           Each region in the file will end up in a separate column labelled as model-column{#}.
           The remainder of the fields goes into model-column.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       epsilon:
@@ -131,6 +134,7 @@ cabs:
         info:
           Address where the distributed client lives.
           Uses LocalCluster if no address is provided.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Distribution
       nworkers:
@@ -146,12 +150,13 @@ cabs:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
     outputs: {}

@@ -26,6 +26,7 @@ cabs:
       mask:
         info:
           Path to mask.fits
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       dirosion:
@@ -62,14 +63,14 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       threshold:
         info:
           Absolute threshold at which to stop cleaning.
           By default it is set automatically using rmsfactor parameter
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: PFB
       rmsfactor:
@@ -190,6 +191,7 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -204,6 +206,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Naming
       fits-mfs:

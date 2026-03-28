@@ -29,7 +29,7 @@ cabs:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       ddids:
@@ -37,7 +37,7 @@ cabs:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       fields:
@@ -45,13 +45,14 @@ cabs:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: List[int]
+        dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
       freq-range:
         info:
           Frequency range to image in Hz.
           Specify as a string with colon delimiter ('1e9:1.1e9').
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
       overwrite:
@@ -74,6 +75,7 @@ cabs:
         info:
           Column containing natural weights.
           Must be the same across MSs
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
       sigma-column:
@@ -81,6 +83,7 @@ cabs:
           Column containing standard devations.
           Will be used to initialise natural weights if detected.
           Must be the same across MSs
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
       flag-column:
@@ -94,7 +97,7 @@ cabs:
         info:
           Path to Quartical gain table containing NET gains.
           There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.
-        dtype: List[URI]
+        dtype: Optional[List[URI]]
         metadata:
           rich_help_panel: Input
       integrations-per-image:
@@ -142,6 +145,7 @@ cabs:
         info:
           Beam model to use.
           Only katbeam currently supported.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       chan-average:
@@ -169,6 +173,7 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -191,7 +196,7 @@ cabs:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       wgt-mode:

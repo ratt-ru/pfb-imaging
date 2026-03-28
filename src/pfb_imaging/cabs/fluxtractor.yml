@@ -26,6 +26,7 @@ cabs:
       mask:
         info:
           Either path to mask.fits or set to model to construct from model
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       zero-model-outside-mask:
@@ -141,12 +142,13 @@ cabs:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Output
       product:
@@ -161,6 +163,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Naming
       fits-mfs:
