@@ -1,12 +1,13 @@
-# Uncomment this if your project is hosted on GitHub:
+# tbump configuration for pfb-imaging
+# See https://github.com/your-tools/tbump for usage
+
 github_url = "https://github.com/ratt-ru/pfb-imaging/"
 
 [version]
 current = "0.0.8"
 
 # Example of a semver regexp.
-# Make sure this matches current_version before
-# using tbump
+# Make sure this matches current_version before using tbump.
 regex = '''
   (?P<major>\d+)
   \.
@@ -20,11 +21,14 @@ message_template = "Bump to {new_version}"
 tag_template = "v{new_version}"
 
 # before_commit hooks run before tbump's version-bump commit.
-# The sentinel must exist when pre-commit's generate-cabs hook fires during
-# the commit, so we write it here and generate + stage the cabs upfront.
+# Update the `container-image` entry in pyproject.toml and regenerate cabs with the release version.
 [[before_commit]]
-name = "Write release version sentinel"
-cmd = "python -c \"from pathlib import Path; Path('.tbump_version').write_text('{new_version}')\""
+name = "Update container image tag to release version"
+cmd = "python -c \"import re; p = 'pyproject.toml'; t = open(p).read(); t = re.sub(r'(container-image\\s*=\\s*\\\".*:)[^\\\"]+', r'\\g<1>{new_version}', t); open(p, 'w').write(t)\""
+
+[[before_commit]]
+name = "Sync environment to refresh package metadata"
+cmd = "uv sync"
 
 [[before_commit]]
 name = "Regenerate cab definitions with release version"
@@ -35,6 +39,10 @@ name = "Stage updated cab definitions"
 cmd = "git add src/pfb_imaging/cabs/*.yml"
 
 [[before_commit]]
+name = "Stage pyproject.toml with updated container image tag"
+cmd = "git add pyproject.toml"
+
+[[before_commit]]
 name = "Update uv.lock"
 cmd = "uv lock"
 
@@ -42,12 +50,11 @@ cmd = "uv lock"
 name = "Stage uv.lock"
 cmd = "git add uv.lock"
 
-# Clean up the sentinel after the commit succeeds
-[[before_push]]
-name = "Remove version sentinel"
-cmd = "python -c \"from pathlib import Path; p = Path('.tbump_version'); p.unlink() if p.exists() else None\""
-
 # Files to update with the new version
 [[file]]
 src = "pyproject.toml"
 search = 'version = "{current_version}"'
+
+[[file]]
+src = "src/pfb_imaging/__init__.py"
+search = '__version__ = "{current_version}"'

@@ -43,12 +43,10 @@ def test_sara(ms_name):
 
     uvw = xds.UVW.values
     nrow = uvw.shape[0]
-    u_max = abs(uvw[:, 0]).max()
-    v_max = abs(uvw[:, 1]).max()
-    uv_max = np.maximum(u_max, v_max)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
 
     # image size
-    cell_n = 1.0 / (2 * uv_max * freq.max() / lightspeed)
+    cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
 
     srf = 2.0
     cell_rad = cell_n / srf

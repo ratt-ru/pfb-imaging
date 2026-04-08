@@ -29,18 +29,21 @@ def restore(
         typer.Option(
             ...,
             help="Basename of output",
+            rich_help_panel="Naming",
         ),
     ],
     model_name: Annotated[
         str,
         typer.Option(
             help="Name of model in dds",
+            rich_help_panel="Input",
         ),
     ] = "MODEL",
     residual_name: Annotated[
         str,
         typer.Option(
             help="Name of residual in dds",
+            rich_help_panel="Input",
         ),
     ] = "RESIDUAL",
     suffix: Annotated[
@@ -49,6 +52,7 @@ def restore(
             help="Can be used to specify a custom name for the image space data products. "
             "This is useful for distinguishing runs with different imaging paramaters. "
             "For example, different image sizes of robustness factors.",
+            rich_help_panel="Naming",
         ),
     ] = "main",
     outputs: Annotated[
@@ -56,6 +60,7 @@ def restore(
         typer.Option(
             help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals. "
             "Use capitals to produce corresponding cubes.",
+            rich_help_panel="Output",
         ),
     ] = "iI",
     gausspar: Annotated[
@@ -66,6 +71,7 @@ def restore(
             "The default resolution is the native resolution in each imaging band. "
             "This parameter can be used to homogenise the resolution of the cubes. "
             "Set to (0,0,0) to use the resolution of the lowest band.",
+            rich_help_panel="Restoration",
         ),
     ] = None,
     drop_bands: Annotated[
@@ -73,12 +79,14 @@ def restore(
         typer.Option(
             parser=parse_list_int,
             help="List of bands to discard.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     nworkers: Annotated[
         int,
         typer.Option(
             help="Number of worker processes. Use with distributed scheduler.",
+            rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
@@ -87,18 +95,21 @@ def restore(
             help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
+            rich_help_panel="Performance",
         ),
     ] = None,
     log_directory: Annotated[
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     fits_output_folder: Annotated[
@@ -107,6 +118,7 @@ def restore(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
+            rich_help_panel="Naming",
         ),
     ] = None,
     backend: Annotated[
@@ -152,8 +164,13 @@ def restore(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         restore,
@@ -171,6 +188,7 @@ def restore(
             product=product,
             fits_output_folder=fits_output_folder,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

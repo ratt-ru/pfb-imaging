@@ -31,6 +31,7 @@ def fluxtractor(
         typer.Option(
             ...,
             help="Basename of output",
+            rich_help_panel="Naming",
         ),
     ],
     suffix: Annotated[
@@ -39,12 +40,14 @@ def fluxtractor(
             help="Can be used to specify a custom name for the image space data products. "
             "This is useful for distinguishing runs with different imaging paramaters. "
             "For example, different image sizes of robustness factors.",
+            rich_help_panel="Naming",
         ),
     ] = "main",
     mask: Annotated[
         str | None,
         typer.Option(
             help="Either path to mask.fits or set to model to construct from model",
+            rich_help_panel="Input",
         ),
     ] = None,
     zero_model_outside_mask: Annotated[
@@ -53,90 +56,105 @@ def fluxtractor(
             help="Make sure the input model is zero outside the mask. "
             "Only has an effect if an external mask has been passed in. "
             "A major cycle will be triggered to recompute the residual after zeroing.",
+            rich_help_panel="Masking",
         ),
     ] = False,
     or_mask_with_model: Annotated[
         bool,
         typer.Option(
             help="Make a new mask consisting of the union of input mask and where the MFS model is larger than zero.",
+            rich_help_panel="Masking",
         ),
     ] = False,
     min_model: Annotated[
         float,
         typer.Option(
             help="If using mask to construct model construct it where model > min-model",
+            rich_help_panel="Masking",
         ),
     ] = 1e-05,
     eta: Annotated[
         float,
         typer.Option(
             help="Standard deviation of assumed GRF prior",
+            rich_help_panel="Imaging",
         ),
     ] = 1e-05,
     model_name: Annotated[
         str,
         typer.Option(
             help="Name of the model to update",
+            rich_help_panel="Input",
         ),
     ] = "MODEL",
     residual_name: Annotated[
         str,
         typer.Option(
             help="Name of the residual to use",
+            rich_help_panel="Input",
         ),
     ] = "RESIDUAL",
     use_psf: Annotated[
         bool,
         typer.Option(
             help="Whether to approximate the Hessian as a convolution by the PSF",
+            rich_help_panel="Imaging",
         ),
     ] = True,
     epsilon: Annotated[
         float,
         typer.Option(
             help="Gridder accuracy",
+            rich_help_panel="WGridder",
         ),
     ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
             help="Perform w-correction via improved w-stacking",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     double_accum: Annotated[
         bool,
         typer.Option(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     cg_tol: Annotated[
         float,
         typer.Option(
             help="Tolreance of conjugate gradient algorithm",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 0.001,
     cg_maxit: Annotated[
         int,
         typer.Option(
             help="Maximum iterations for conjugate gradient algorithm",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 150,
     cg_verbose: Annotated[
         int,
         typer.Option(
             help="Verbosity of conjugate gradient algorithm. Set to > 1 for debugging, 0 for silence",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 1,
     cg_report_freq: Annotated[
         int,
         typer.Option(
             help="Report frequency of conjugate gradient algorithm",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 10,
     nworkers: Annotated[
         int,
         typer.Option(
             help="Number of worker processes. Use with distributed scheduler.",
+            rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
@@ -145,18 +163,21 @@ def fluxtractor(
             help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
+            rich_help_panel="Performance",
         ),
     ] = None,
     log_directory: Annotated[
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     fits_output_folder: Annotated[
@@ -165,18 +186,21 @@ def fluxtractor(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
+            rich_help_panel="Naming",
         ),
     ] = None,
     fits_mfs: Annotated[
         bool,
         typer.Option(
             help="Output MFS fits files",
+            rich_help_panel="Fits",
         ),
     ] = True,
     fits_cubes: Annotated[
         bool,
         typer.Option(
             help="Output fits cubes",
+            rich_help_panel="Fits",
         ),
     ] = True,
     backend: Annotated[
@@ -234,8 +258,13 @@ def fluxtractor(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         fluxtractor,
@@ -265,6 +294,7 @@ def fluxtractor(
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

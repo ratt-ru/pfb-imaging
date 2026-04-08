@@ -171,7 +171,7 @@ def degrid(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     ) = construct_mappings(ms, None, ipi=integrations_per_image, cpi=cpi, freq_min=freq_min, freq_max=freq_max)

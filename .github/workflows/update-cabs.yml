@@ -11,7 +11,7 @@ jobs:
     name: Update cab image tags to latest
     runs-on: ubuntu-latest
     # Prevents loops if the App or the bot pushes
-    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip ci]')
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip checks]')
 
     steps:
       - name: Generate Token
@@ -26,18 +26,47 @@ jobs:
         with:
           token: ${{ steps.generate_token.outputs.token }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Update container image tag to latest in pyproject.toml
+        run: |
+          python -c "
+          import re
+          p = 'pyproject.toml'
+          t = open(p).read()
+          t = re.sub(r'(container-image\s*=\s*\".*:)[^\"]+', r'\g<1>latest', t)
+          open(p, 'w').write(t)
+          "
+
+      - name: Sync environment to refresh package metadata
+        run: uv sync
+
       - name: Regenerate cab definitions with latest tag
         run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/landmanbester/hip-cargo:latest \
-            hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs
+          uv run hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' \
+                                         --output-dir src/pfb_imaging/cabs
 
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet src/pfb_imaging/cabs/*.yml; then
+          if git diff --quiet src/pfb_imaging/cabs/*.yml pyproject.toml uv.lock; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -47,7 +76,7 @@ jobs:
         if: steps.check_changes.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/pfb_imaging/cabs/*.yml
-          git commit -m "chore: update cab image tags to latest [skip ci]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pfb_imaging/cabs/*.yml pyproject.toml uv.lock
+          git commit -m "chore: update cab definitions [skip checks]"
           git push

@@ -24,12 +24,14 @@ def grid(
         typer.Option(
             ...,
             help="Basename of output",
+            rich_help_panel="Naming",
         ),
     ],
     xds: Annotated[
         str | None,
         typer.Option(
             help="Optional explicit path to xds. Set using output-filename and suffix by default.",
+            rich_help_panel="Input",
         ),
     ] = None,
     suffix: Annotated[
@@ -38,24 +40,28 @@ def grid(
             help="Can be used to specify a custom name for the image space data products. "
             "This is useful for distinguishing runs with different imaging paramaters. "
             "For example, different image sizes of robustness factors.",
+            rich_help_panel="Naming",
         ),
     ] = "main",
     concat_row: Annotated[
         bool,
         typer.Option(
             help="Concatenate datasets by row",
+            rich_help_panel="Imaging",
         ),
     ] = True,
     overwrite: Annotated[
         bool,
         typer.Option(
             help="Allow overwriting of image space data products. Specify suffix to create a new data set.",
+            rich_help_panel="Control",
         ),
     ] = False,
     transfer_model_from: Annotated[
         str | None,
         typer.Option(
             help="Name of dataset to use for model initialisation",
+            rich_help_panel="Input",
         ),
     ] = None,
     use_best_model: Annotated[
@@ -63,84 +69,98 @@ def grid(
         typer.Option(
             help="If this flag is set MODEL_BEST will be used as the model unless transfer-model-from is specified. "
             "By default MODEL will be used as the model.",
+            rich_help_panel="Control",
         ),
     ] = False,
     robustness: Annotated[
         float | None,
         typer.Option(
             help="Robustness factor for Briggs weighting. None means natural",
+            rich_help_panel="Weighting",
         ),
     ] = None,
     dirty: Annotated[
         bool,
         typer.Option(
             help="Compute the dirty image",
+            rich_help_panel="Output",
         ),
     ] = True,
     psf: Annotated[
         bool,
         typer.Option(
             help="Compute the PSF",
+            rich_help_panel="Output",
         ),
     ] = True,
     residual: Annotated[
         bool,
         typer.Option(
             help="Compute the residual (only if model is present)",
+            rich_help_panel="Output",
         ),
     ] = True,
     noise: Annotated[
         bool,
         typer.Option(
             help="Compute noise map by sampling from weights",
+            rich_help_panel="Output",
         ),
     ] = True,
     beam: Annotated[
         bool,
         typer.Option(
             help="Interpolate average beam pattern",
+            rich_help_panel="Output",
         ),
     ] = True,
     weight: Annotated[
         bool,
         typer.Option(
             help="Compute effectve image space weights",
+            rich_help_panel="Output",
         ),
     ] = True,
     psf_oversize: Annotated[
         float,
         typer.Option(
             help="Size of PSF relative to dirty image",
+            rich_help_panel="Imaging",
         ),
     ] = 1.4,
     field_of_view: Annotated[
         float | None,
         typer.Option(
             help="Field of view in degrees",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     super_resolution_factor: Annotated[
         float,
         typer.Option(
             help="Will over-sample Nyquist by this factor at max frequency",
+            rich_help_panel="Imaging",
         ),
     ] = 2,
     cell_size: Annotated[
         float | None,
         typer.Option(
             help="Cell size in arc-seconds",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     nx: Annotated[
         int | None,
         typer.Option(
             help="Number of x pixels",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     ny: Annotated[
         int | None,
         typer.Option(
             help="Number of y pixels",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     filter_counts_level: Annotated[
@@ -148,6 +168,7 @@ def grid(
         typer.Option(
             help="Set minimum counts in the uniform weighting grid to the median divided by this value. "
             "This is useful to avoid artificially up-weighting nearly empty uv-cells.",
+            rich_help_panel="Weighting",
         ),
     ] = 5.0,
     target: Annotated[
@@ -155,6 +176,7 @@ def grid(
         typer.Option(
             help="Predefined celestial objects known to astropy. "
             "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     l2_reweight_dof: Annotated[
@@ -165,30 +187,35 @@ def grid(
             "A sensible value for this parameter depends on the level of RFI in the data. "
             "Small values result in aggressive reweighting. "
             "This should be avoided if the model is still incomplete.",
+            rich_help_panel="Weighting",
         ),
     ] = None,
     epsilon: Annotated[
         float,
         typer.Option(
             help="Gridder accuracy",
+            rich_help_panel="WGridder",
         ),
     ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
             help="Perform w-correction via improved w-stacking",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     double_accum: Annotated[
         bool,
         typer.Option(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     nworkers: Annotated[
         int,
         typer.Option(
             help="Number of worker processes. Use with distributed scheduler.",
+            rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
@@ -197,18 +224,21 @@ def grid(
             help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
+            rich_help_panel="Performance",
         ),
     ] = None,
     log_directory: Annotated[
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     fits_output_folder: Annotated[
@@ -217,18 +247,21 @@ def grid(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
+            rich_help_panel="Naming",
         ),
     ] = None,
     fits_mfs: Annotated[
         bool,
         typer.Option(
             help="Output MFS fits files",
+            rich_help_panel="Fits",
         ),
     ] = True,
     fits_cubes: Annotated[
         bool,
         typer.Option(
             help="Output fits cubes",
+            rich_help_panel="Fits",
         ),
     ] = True,
     backend: Annotated[
@@ -295,8 +328,13 @@ def grid(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         grid,
@@ -335,6 +373,7 @@ def grid(
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

@@ -24,12 +24,14 @@ def model2comps(
         typer.Option(
             ...,
             help="Basename of output",
+            rich_help_panel="Naming",
         ),
     ],
     overwrite: Annotated[
         bool,
         typer.Option(
             help="Allow overwrite of existing model",
+            rich_help_panel="Control",
         ),
     ] = False,
     mds: Annotated[
@@ -37,36 +39,42 @@ def model2comps(
         typer.Option(
             help="An optional input model to append to the model. "
             "Will be rendered to the same resolution as the model in the dds.",
+            rich_help_panel="Input",
         ),
     ] = None,
     from_fits: Annotated[
         str | None,
         typer.Option(
             help="An optional fits input model. An mds will be created that matches the model resolution.",
+            rich_help_panel="Input",
         ),
     ] = None,
     nbasisf: Annotated[
         int | None,
         typer.Option(
             help="Order of interpolating polynomial for frequency axis. One less than the number of bands by default.",
+            rich_help_panel="Fitting",
         ),
     ] = None,
     nthreads: Annotated[
         int | None,
         typer.Option(
             help="Number of threads",
+            rich_help_panel="Performance",
         ),
     ] = None,
     fit_mode: Annotated[
         str,
         typer.Option(
             help="",
+            rich_help_panel="Fitting",
         ),
     ] = "Legendre",
     min_val: Annotated[
         float | None,
         typer.Option(
             help="Only fit components above this flux level",
+            rich_help_panel="Fitting",
         ),
     ] = None,
     suffix: Annotated[
@@ -75,54 +83,63 @@ def model2comps(
             help="Can be used to specify a custom name for the image space data products. "
             "This is useful for distinguishing runs with different imaging paramaters. "
             "For example, different image sizes of robustness factors.",
+            rich_help_panel="Naming",
         ),
     ] = "main",
     model_name: Annotated[
         str,
         typer.Option(
             help="Name of model in mds",
+            rich_help_panel="Input",
         ),
     ] = "MODEL",
     use_wsum: Annotated[
         bool,
         typer.Option(
             help="Use wsum as weights during fit",
+            rich_help_panel="Fitting",
         ),
     ] = True,
     sigmasq: Annotated[
         float,
         typer.Option(
             help="Multiple of the identity to add to the hessian for stability",
+            rich_help_panel="Fitting",
         ),
     ] = 1e-10,
     model_out: Annotated[
         str | None,
         typer.Option(
             help="Optional explicit output name. Otherwise the default naming convention is used.",
+            rich_help_panel="Output",
         ),
     ] = None,
     out_format: Annotated[
         Literal["zarr", "json"],
         typer.Option(
             help="Format to dump model to.",
+            rich_help_panel="Output",
         ),
     ] = "zarr",
     out_freqs: Annotated[
         str | None,
         typer.Option(
             help="A string flow:fhigh:step of frequencies in hertz where the output cube needs to be evaluated.",
+            rich_help_panel="Output",
         ),
     ] = None,
     log_directory: Annotated[
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     fits_output_folder: Annotated[
@@ -131,6 +148,7 @@ def model2comps(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
+            rich_help_panel="Naming",
         ),
     ] = None,
     backend: Annotated[
@@ -182,8 +200,13 @@ def model2comps(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         model2comps,
@@ -207,6 +230,7 @@ def model2comps(
             product=product,
             fits_output_folder=fits_output_folder,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

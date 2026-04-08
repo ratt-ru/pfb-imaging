@@ -102,8 +102,8 @@ if __name__ == "__main__":
     freq = np.array([1e9])
 
     lightspeed = 299792458.0
-    uv_max = 2.0  # in (-1, 1)
-    cell_n = 1.0 / (2 * uv_max * freq[0] / lightspeed)
+    max_blength = np.sqrt(u**2 + v**2).max()
+    cell_n = 1.0 / (2 * max_blength * freq[0] / lightspeed)
     epsilon = 1e-6  # gridding precision
 
     # convert Stokes to vis

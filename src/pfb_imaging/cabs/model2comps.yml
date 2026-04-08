@@ -5,7 +5,7 @@ cabs:
     name: model2comps
     info:
       Convert model image to components.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -13,58 +13,87 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       overwrite:
         info:
           Allow overwrite of existing model
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       mds:
         info:
           An optional input model to append to the model.
           Will be rendered to the same resolution as the model in the dds.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       from-fits:
         info:
           An optional fits input model.
           An mds will be created that matches the model resolution.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       nbasisf:
         info:
           Order of interpolating polynomial for frequency axis.
           One less than the number of bands by default.
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Fitting
       nthreads:
         info:
           Number of threads
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
       fit-mode:
         default: Legendre
+        metadata:
+          rich_help_panel: Fitting
       min-val:
         info:
           Only fit components above this flux level
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Fitting
       suffix:
         info:
           Can be used to specify a custom name for the image space data products.
           This is useful for distinguishing runs with different imaging paramaters.
           For example, different image sizes of robustness factors.
         default: main
+        metadata:
+          rich_help_panel: Naming
       model-name:
         info:
           Name of model in mds
         default: MODEL
+        metadata:
+          rich_help_panel: Input
       use-wsum:
         info:
           Use wsum as weights during fit
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fitting
       sigmasq:
         info:
           Multiple of the identity to add to the hessian for stability
         dtype: float
         default: 1.0e-10
+        metadata:
+          rich_help_panel: Fitting
       model-out:
         info:
           Optional explicit output name.
           Otherwise the default naming convention is used.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       out-format:
         info:
           Format to dump model to.
@@ -72,22 +101,35 @@ cabs:
         - zarr
         - json
         default: zarr
+        metadata:
+          rich_help_panel: Output
       out-freqs:
         info:
           A string flow:fhigh:step of frequencies in hertz where the output cube needs to be evaluated.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Naming
     outputs:
       mds-out:
         dtype: Directory

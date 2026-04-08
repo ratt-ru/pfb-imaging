@@ -5,7 +5,7 @@ cabs:
     name: restore
     info:
       Restore model images and.or convolved images to common resolution.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -13,25 +13,35 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       model-name:
         info:
           Name of model in dds
         default: MODEL
+        metadata:
+          rich_help_panel: Input
       residual-name:
         info:
           Name of residual in dds
         default: RESIDUAL
+        metadata:
+          rich_help_panel: Input
       suffix:
         info:
           Can be used to specify a custom name for the image space data products.
           This is useful for distinguishing runs with different imaging paramaters.
           For example, different image sizes of robustness factors.
         default: main
+        metadata:
+          rich_help_panel: Naming
       outputs:
         info:
           Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals.
           Use capitals to produce corresponding cubes.
         default: iI
+        metadata:
+          rich_help_panel: Output
       gausspar:
         info:
           Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution.
@@ -39,36 +49,52 @@ cabs:
           The default resolution is the native resolution in each imaging band.
           This parameter can be used to homogenise the resolution of the cubes.
           Set to (0,0,0) to use the resolution of the lowest band.
-        dtype: Tuple[float, float, float]
+        dtype: Optional[Tuple[float, float, float]]
+        metadata:
+          rich_help_panel: Restoration
       drop-bands:
         info:
           List of bands to discard.
-        dtype: List[int]
+        dtype: Optional[List[int]]
+        metadata:
+          rich_help_panel: Data Selection
       nworkers:
         info:
           Number of worker processes.
           Use with distributed scheduler.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Performance
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Naming
     outputs:
       mfs-image:
         dtype: File

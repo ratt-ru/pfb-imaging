@@ -193,12 +193,10 @@ def test_psfvis(center_offset, ms_name):
     uvw = xds.UVW.values
     freq = spw.CHAN_FREQ.values.squeeze()
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
     max_freq = freq.max()
 
-    nx, ny, _, _, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 2.0)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 2.0)
     x0, y0 = center_offset
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -247,13 +245,11 @@ def test_hessian(center_offset, ms_name):
     nrow = uvw.shape[0]
     nchan = freq.size
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
     max_freq = freq.max()
 
     x0, y0 = center_offset
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -325,13 +321,11 @@ def test_hessian_jax(ms_name):
     uvw = xds.UVW.values
     freq = spw.CHAN_FREQ.values.squeeze()
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -390,13 +384,11 @@ def test_hessian_inv_jax(ms_name):
     uvw = xds.UVW.values
     freq = spw.CHAN_FREQ.values.squeeze()
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -458,13 +450,11 @@ def test_complex_convolve(ms_name):
     uvw = xds.UVW.values
     freq = spw.CHAN_FREQ.values.squeeze()
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
