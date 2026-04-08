@@ -200,14 +200,18 @@ Container images
 ~~~~~~~~~~~~~~~~
 
 Container images are published to GitHub Container Registry at ``ghcr.io/ratt-ru/pfb-imaging``.
-The image tag is managed automatically:
+The full image URL (including tag) is the single source of truth and lives in ``pyproject.toml`` as a hip-cargo entry point::
 
-* Releases: semantic version (e.g. ``0.0.8``)
-* Main branch: ``latest``
-* Feature branches: branch name
+    [project.entry-points."hip.cargo"]
+    container-image = "ghcr.io/ratt-ru/pfb-imaging:<tag>"
 
-Cab definitions are auto-generated with the correct image tag via pre-commit hooks and the ``update-cabs.yml`` GitHub Action.
-The image base URL is configured in ``pyproject.toml`` under ``[tool.hip-cargo].image``.
+The ``<tag>`` is managed by three mechanisms:
+
+* **Feature branches:** the developer manually updates the tag to match the branch name and runs ``uv sync`` before committing.
+* **Merge to main:** the ``update-cabs.yml`` GitHub Action rewrites the tag to ``latest``, regenerates cab definitions, and commits the updated ``pyproject.toml``, ``uv.lock``, and cab YAML files.
+* **Releases:** ``tbump`` rewrites the tag to the semantic version (e.g. ``0.0.9``) via ``before_commit`` hooks in ``tbump.toml``.
+
+Cab definitions are auto-generated with the correct image tag via pre-commit hooks and the ``update-cabs.yml`` GitHub Action — the image URL is read from the entry point at generation time, so the ``--image`` flag is not needed.
 
 
 Development
