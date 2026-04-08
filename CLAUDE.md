@@ -210,19 +210,22 @@ Generation happens automatically via:
 
 ### Image Resolution
 
-The container image base URL is configured in `pyproject.toml`:
+The container image URL (including the tag) is the single source of truth and lives in `pyproject.toml` as a hip-cargo entry point:
 
 ```toml
-[tool.hip-cargo]
-image = "ghcr.io/ratt-ru/pfb-imaging"
+[project.entry-points."hip.cargo"]
+container-image = "ghcr.io/ratt-ru/pfb-imaging:<tag>"
 ```
 
-The tag is derived automatically at runtime:
-- During `tbump` release: semantic version (e.g. `0.0.8`)
-- On `main` branch: `latest`
-- On feature branches: branch name
+This is read by `hip-cargo` at runtime via `importlib.metadata` (see `hip_cargo.utils.config.get_container_image`). Both cab generation and container fallback execution use this single value, so the tag portion must stay in sync with your current context.
 
-CLI source files are never modified during cab generation — only the YAML cab files are updated.
+The tag is managed by three mechanisms:
+
+1. **Feature branches (manual):** When you create a feature branch, edit the `container-image` tag in `pyproject.toml` to match the branch name and run `uv sync` to refresh the installed package metadata. Pre-commit's `generate-cabs` hook then writes cab YAML with the correct branch tag.
+2. **Merge to `main` (`update-cabs` workflow):** Resets the `container-image` tag to `latest`, runs `uv sync`, regenerates cab YAML, and commits `pyproject.toml`, `uv.lock`, and `src/pfb_imaging/cabs/*.yml`. The workflow uses `[skip checks]` in its commit messages.
+3. **Releases (`tbump`):** Before-commit hooks in `tbump.toml` rewrite the `container-image` tag to the new semver, run `uv sync`, regenerate cab YAML, and stage everything as part of the version-bump commit.
+
+CLI source files are never modified during cab generation — only the YAML cab files and `pyproject.toml` are updated.
 
 ### Container Images
 
