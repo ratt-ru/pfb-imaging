@@ -450,8 +450,13 @@ def deconv(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         deconv,
@@ -504,6 +509,7 @@ def deconv(
             cg_verbose=cg_verbose,
             cg_report_freq=cg_report_freq,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

@@ -377,6 +377,13 @@ def construct_mappings(
                 freq_mapping[ms][idt]["counts"] = np.array((nchan,), dtype=int)
 
             time = times[ms][idt]
+            if not np.all(time[1:] >= time[:-1]):
+                raise NotImplementedError(
+                    f"Time column in {ms} for {idt} is not monotonically "
+                    f"non-decreasing. pfb-imaging currently requires "
+                    f"time-ordered measurement sets. See "
+                    f"https://github.com/ratt-ru/pfb-imaging/issues/153"
+                )
             utime = np.unique(time)
             utimes[ms][idt] = utime
             all_times.append(utime)
