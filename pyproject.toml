@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.1.7",
+    "hip-cargo>=0.1.8",
 ]
 
 [project.urls]
@@ -65,12 +65,12 @@ dev = [
 [project.scripts]
 pfb = "pfb_imaging.cli:app"
 
+[project.entry-points."hip.cargo"]
+container-image = "ghcr.io/ratt-ru/pfb-imaging:prep009"
+
 [build-system]
 requires = ["uv_build>=0.8.3,<0.11.0"]
 build-backend = "uv_build"
-
-[tool.hip-cargo]
-image = "ghcr.io/ratt-ru/pfb-imaging"
 
 [tool.ruff]
 line-length = 120
