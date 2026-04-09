@@ -4,7 +4,7 @@ from time import time
 import numpy as np
 from numba import njit, prange
 
-from pfb_imaging.operators.psi import PsiOperatorProtocol
+from pfb_imaging.operators import PsiOperatorProtocol
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
 from pfb_imaging.utils import logging as pfb_logging
 
