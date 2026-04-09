@@ -29,6 +29,8 @@ SOFTWARE.
 
 """
 
+# defines deconvolution solver protocol for use within the PFB loop
+
 from typing import Protocol, runtime_checkable
 
 import numpy as np
