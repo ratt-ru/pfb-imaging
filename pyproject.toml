@@ -6,7 +6,7 @@ authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
 license = {text = "MIT"}
-readme = "README.rst"
+readme = "README.md"
 requires-python = ">=3.10, <3.13"
 classifiers = [
     "Development Status :: 4 - Beta",
