@@ -66,6 +66,7 @@ instance/
 # Sphinx and documentation
 docs/_build/
 docs-env
+docs
 
 # PyBuilder
 target/
@@ -108,3 +109,15 @@ ENV/
 
 # test data
 tests/data/
+
+# AI
+.claude
+.claude-code
+
+# random
+rich_help_panels.md
+setup-docs.sh
+docs-deploy.sh
+src/pfb_imaging/wavelets/convolutions_jax.py
+src/pfb_imaging/deconv/fskclean.py
+src/pfb_imaging/cabs/pfb.yml
