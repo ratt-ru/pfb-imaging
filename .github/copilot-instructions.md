@@ -61,13 +61,13 @@ class MyOperator:
 
 ## Container Workflow
 
-Full container image URL (including tag) lives in `pyproject.toml` under `[project.entry-points."hip.cargo"] container-image`. This is the single source of truth — cab generation and container fallback both read it via `importlib.metadata`. The tag is managed three ways:
+Full container image URL (including tag) lives in `src/pfb_imaging/_container_image.py` as the `CONTAINER_IMAGE` variable. This is the single source of truth — cab generation and container fallback both read it via `importlib`. The tag is managed three ways:
 
-- **Feature branches:** developer manually rewrites the tag to the branch name and runs `uv sync` before committing.
-- **Main branch:** the `update-cabs.yml` GitHub Action rewrites it to `latest` on merge, regenerates cabs, and commits `pyproject.toml`, `uv.lock`, and the cab YAMLs together.
+- **Feature branches:** developer manually rewrites the tag in `_container_image.py` to the branch name.
+- **Main branch:** the `update-cabs.yml` GitHub Action rewrites it to `latest` on merge, regenerates cabs, and commits the changes.
 - **Releases:** `tbump` rewrites it to the semantic version via before-commit hooks.
 
-**Do not** suggest changing image tags in cab YAML files directly, or flag non-`:latest` tags as issues — cab YAML reflects whatever is in the `container-image` entry at generation time, and the tag management is intentional and automated.
+**Do not** suggest changing image tags in cab YAML files directly, or flag non-`:latest` tags as issues — cab YAML reflects whatever is in `_container_image.py` at generation time, and the tag management is intentional and automated.
 
 ## Generated Files
 

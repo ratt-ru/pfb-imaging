@@ -181,20 +181,19 @@ Core implementations live in `core/` and are imported only when a command is exe
 ## Container images
 
 Container images are published to GitHub Container Registry at `ghcr.io/ratt-ru/pfb-imaging`.
-The full image URL (including tag) is the single source of truth and lives in `pyproject.toml` as a hip-cargo entry point:
+The full image URL (including tag) is the single source of truth and lives in `src/pfb_imaging/_container_image.py` as the `CONTAINER_IMAGE` variable, loaded via `importlib` (no CWD dependency, no `uv sync` needed).
 
-```toml
-[project.entry-points."hip.cargo"]
-container-image = "ghcr.io/ratt-ru/pfb-imaging:<tag>"
+```python
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:<tag>"
 ```
 
 The `<tag>` is managed by three mechanisms:
 
-- **Feature branches:** the developer manually updates the tag to match the branch name and runs `uv sync` before committing.
-- **Merge to main:** the `update-cabs.yml` GitHub Action rewrites the tag to `latest`, regenerates cab definitions, and commits the updated `pyproject.toml`, `uv.lock`, and cab YAML files.
+- **Feature branches:** the developer manually updates the tag in `_container_image.py` to match the branch name.
+- **Merge to main:** the `update-cabs.yml` GitHub Action rewrites the tag to `latest`, regenerates cab definitions, and commits the changes.
 - **Releases:** `tbump` rewrites the tag to the semantic version (e.g. `0.0.9`) via `before_commit` hooks in `tbump.toml`.
 
-Cab definitions are auto-generated with the correct image tag via pre-commit hooks and the `update-cabs.yml` GitHub Action -- the image URL is read from the entry point at generation time, so the `--image` flag is not needed.
+Cab definitions are auto-generated with the correct image tag via pre-commit hooks and the `update-cabs.yml` GitHub Action -- the image URL is read from `_container_image.py` at generation time, so the `--image` flag is not needed.
 
 ## Development
 

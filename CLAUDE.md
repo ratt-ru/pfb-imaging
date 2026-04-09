@@ -43,5 +43,5 @@ pfb-imaging/
 ├── pyproject.toml
 ├── tbump.toml
 ├── .pre-commit-config.yaml
-└── README.rst
+└── README.md
 ```
