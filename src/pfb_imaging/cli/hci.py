@@ -21,11 +21,13 @@ URI = NewType("URI", Path)
     must_exist=True,
     mkdir=False,
     path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
 )
 @stimela_output(
     dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
+    metadata={"rich_help_panel": "Output"},
 )
 def hci(
     ms: Annotated[
@@ -34,6 +36,7 @@ def hci(
             ...,
             parser=Path,
             help="Path to measurement set",
+            rich_help_panel="Input",
         ),
     ],
     output_dataset: Annotated[
@@ -42,6 +45,7 @@ def hci(
             ...,
             parser=Path,
             help="Basename of output.",
+            rich_help_panel="Output",
         ),
         {
             "stimela": {
@@ -57,12 +61,14 @@ def hci(
         str | None,
         typer.Option(
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
         ),
     ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
     scans: Annotated[
@@ -72,6 +78,7 @@ def hci(
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     ddids: Annotated[
@@ -81,6 +88,7 @@ def hci(
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     fields: Annotated[
@@ -88,24 +96,28 @@ def hci(
         typer.Option(
             parser=parse_list_int,
             help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     freq_range: Annotated[
         str | None,
         typer.Option(
             help="Frequency range to image in Hz. Specify as a string with colon delimiter ('1e9:1.1e9').",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     overwrite: Annotated[
         bool,
         typer.Option(
             help="Allow overwrite of output xds",
+            rich_help_panel="Control",
         ),
     ] = False,
     transfer_model_from: Annotated[
         str | None,
         typer.Option(
             help="Name of dataset to use for model initialisation",
+            rich_help_panel="Input",
         ),
     ] = None,
     data_column: Annotated[
@@ -115,18 +127,21 @@ def hci(
             "Must be the same across MSs. "
             "Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA'). "
             "When gains are present this column will be corrected.",
+            rich_help_panel="Data Selection",
         ),
     ] = "DATA",
     model_column: Annotated[
         str | None,
         typer.Option(
             help="Model column to subtract from corrected data column. Useful to avoid high time res degridding.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     weight_column: Annotated[
         str | None,
         typer.Option(
             help="Column containing natural weights. Must be the same across MSs",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     sigma_column: Annotated[
@@ -135,12 +150,14 @@ def hci(
             help="Column containing standard devations. "
             "Will be used to initialise natural weights if detected. "
             "Must be the same across MSs",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     flag_column: Annotated[
         str,
         typer.Option(
             help="Column containing data flags. Must be the same across MSs",
+            rich_help_panel="Data Selection",
         ),
     ] = "FLAG",
     gain_table: Annotated[
@@ -150,24 +167,28 @@ def hci(
             help="Path to Quartical gain table containing NET gains. "
             "There must be a table for each MS. "
             "glob(ms) and glob(gt) should match up when running from CLI.",
+            rich_help_panel="Input",
         ),
     ] = None,
     max_simul_chunks: Annotated[
         int,
         typer.Option(
             help="Maximum number of chunks to process simultaneously.",
+            rich_help_panel="Performance",
         ),
     ] = 4,
     images_per_chunk: Annotated[
         int,
         typer.Option(
             help="Number of images per chunk.",
+            rich_help_panel="Performance",
         ),
     ] = 16,
     integrations_per_image: Annotated[
         int,
         typer.Option(
             help="Number of time integrations per image. Default (-1, 0, None) -> dataset per scan.",
+            rich_help_panel="Imaging",
         ),
     ] = 1,
     channels_per_image: Annotated[
@@ -175,12 +196,14 @@ def hci(
         typer.Option(
             help="Number of channels per image for gridding resolution. "
             "Default of (-1, 0, None) implies a single dataset per spw.",
+            rich_help_panel="Imaging",
         ),
     ] = -1,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
             help="Gridding precision",
+            rich_help_panel="Imaging",
         ),
     ] = "double",
     beam_model: Annotated[
@@ -188,36 +211,42 @@ def hci(
         typer.Option(
             parser=Path,
             help="Path to beam model as an xarray dataset backed by zarr",
+            rich_help_panel="Input",
         ),
     ] = None,
     field_of_view: Annotated[
         float,
         typer.Option(
             help="Field of view in degrees",
+            rich_help_panel="Imaging",
         ),
     ] = 1.0,
     super_resolution_factor: Annotated[
         float,
         typer.Option(
             help="Will over-sample Nyquist by this factor at max frequency",
+            rich_help_panel="Imaging",
         ),
     ] = 1,
     cell_size: Annotated[
         float | None,
         typer.Option(
             help="Cell size in arc-seconds",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     nx: Annotated[
         int | None,
         typer.Option(
             help="Number of x pixels",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     ny: Annotated[
         int | None,
         typer.Option(
             help="Number of y pixels",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     psf_relative_size: Annotated[
@@ -227,12 +256,14 @@ def hci(
             "A value of 1.0 means the PSF will be the same size as the image. "
             "The default is to make the PSF just big enough to extract the PSF parameters. "
             "Ideally requires double sized PSF.",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     robustness: Annotated[
         float | None,
         typer.Option(
             help="Robustness factor for Briggs weighting. None means natural",
+            rich_help_panel="Weighting",
         ),
     ] = None,
     target: Annotated[
@@ -240,6 +271,7 @@ def hci(
         typer.Option(
             help="Predefined celestial objects known to astropy. "
             "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     l2_reweight_dof: Annotated[
@@ -250,6 +282,7 @@ def hci(
             "A sensible value for this parameter depends on the level of RFI in the data. "
             "Small values result in aggressive reweighting. "
             "This should be avoided if the model is still incomplete.",
+            rich_help_panel="Weighting",
         ),
     ] = None,
     eta: Annotated[
@@ -257,36 +290,42 @@ def hci(
         typer.Option(
             help="Value to add to Hessian to make it invertible. "
             "Smaller values tend to fit more noise and make the inversion less stable.",
+            rich_help_panel="Imaging",
         ),
     ] = 1e-05,
     psf_out: Annotated[
         bool,
         typer.Option(
             help="Whether to produce output PSF's or not.",
+            rich_help_panel="Output",
         ),
     ] = False,
     weight_grid_out: Annotated[
         bool,
         typer.Option(
             help="Whether to produce an image of the weighted grid or not.",
+            rich_help_panel="Output",
         ),
     ] = False,
     natural_grad: Annotated[
         bool,
         typer.Option(
             help="Compute naural gradient",
+            rich_help_panel="Imaging",
         ),
     ] = False,
     check_ants: Annotated[
         bool,
         typer.Option(
             help="Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.",
+            rich_help_panel="Control",
         ),
     ] = False,
     inject_transients: Annotated[
         str | None,
         typer.Option(
             help="YAML file containing transients to inject into the data.",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     filter_counts_level: Annotated[
@@ -294,12 +333,14 @@ def hci(
         typer.Option(
             help="Set minimum counts in the uniform weighting grid to the median divided by this value. "
             "This is useful to avoid artificially up-weighting nearly empty uv-cells.",
+            rich_help_panel="Weighting",
         ),
     ] = 10.0,
     min_padding: Annotated[
         float,
         typer.Option(
             help="Minimum padding to be applied during gridding.",
+            rich_help_panel="Imaging",
         ),
     ] = 2.0,
     phase_dir: Annotated[
@@ -307,30 +348,35 @@ def hci(
         typer.Option(
             help="Rephase visibilities to this phase center. "
             "Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     epsilon: Annotated[
         float,
         typer.Option(
             help="Gridder accuracy",
+            rich_help_panel="WGridder",
         ),
     ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
             help="Perform w-correction via improved w-stacking",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     double_accum: Annotated[
         bool,
         typer.Option(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
+            rich_help_panel="WGridder",
         ),
     ] = True,
     nworkers: Annotated[
         int,
         typer.Option(
             help="Number of worker processes. Use with distributed scheduler.",
+            rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
@@ -339,30 +385,35 @@ def hci(
             help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
+            rich_help_panel="Performance",
         ),
     ] = None,
     cg_tol: Annotated[
         float,
         typer.Option(
             help="Tolerance of conjugate gradient algorithm",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 0.001,
     cg_maxit: Annotated[
         int,
         typer.Option(
             help="Maximum iterations for conjugate gradient algorithm",
+            rich_help_panel="ConjugateGradient",
         ),
     ] = 150,
     object_store_memory: Annotated[
         float | None,
         typer.Option(
             help="Object store memory (in GB) when using the distributed scheduler.",
+            rich_help_panel="Performance",
         ),
     ] = None,
     cube_to_fits: Annotated[
         bool,
         typer.Option(
             help="Whether to convert the output cube to FITS format.",
+            rich_help_panel="Output",
         ),
     ] = False,
     wgt_mode: Annotated[
@@ -371,18 +422,21 @@ def hci(
             help="Controls how the Stokes weights are computed. "
             "l2 -> use standard Gaussian formula. "
             "minvar -> use minimum between correlations (wsclean Stokes I style).",
+            rich_help_panel="Weighting",
         ),
     ] = "l2",
     obs_label: Annotated[
         str | None,
         typer.Option(
             help="Optional observation label to include in the stacked cube.",
+            rich_help_panel="Output",
         ),
     ] = None,
     flag_excess_rms: Annotated[
         float,
         typer.Option(
             help="Flag data with RMS values exceeding the median by this factor.",
+            rich_help_panel="Imaging",
         ),
     ] = 1.5,
     temp_dir: Annotated[
@@ -390,6 +444,7 @@ def hci(
         typer.Option(
             parser=Path,
             help="A temporary directory to store ephemeral files.",
+            rich_help_panel="Output",
         ),
     ] = None,
     backend: Annotated[
@@ -476,8 +531,13 @@ def hci(
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         hci,
@@ -536,6 +596,7 @@ def hci(
             output_dataset=output_dataset,
             temp_dir=temp_dir,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

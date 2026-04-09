@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -26,22 +26,24 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
         metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Output
       fits-mfs:
         info:
           Output MFS fits files
@@ -109,7 +111,7 @@ cabs:
       hess-norm:
         info:
           Spectral norm of hessian approximation.
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Hessian
       hess-approx:
@@ -150,7 +152,7 @@ cabs:
         info:
           Number of basis functions to use while fitting the frequency axis.
           Default is to use the number of non-null imaging bands (interpolation).
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: PFB
       positivity:
@@ -212,9 +214,9 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: int
+        dtype: Optional[int]
         metadata:
-          rich_help_panel: WGridder
+          rich_help_panel: Performance
       epsilon:
         info:
           Gridder accuracy.

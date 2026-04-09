@@ -5,7 +5,7 @@ cabs:
     name: grid
     info:
       Initialise image data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -13,107 +13,154 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       xds:
         info:
           Optional explicit path to xds.
           Set using output-filename and suffix by default.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       suffix:
         info:
           Can be used to specify a custom name for the image space data products.
           This is useful for distinguishing runs with different imaging paramaters.
           For example, different image sizes of robustness factors.
         default: main
+        metadata:
+          rich_help_panel: Naming
       concat-row:
         info:
           Concatenate datasets by row
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Imaging
       overwrite:
         info:
           Allow overwriting of image space data products.
           Specify suffix to create a new data set.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       transfer-model-from:
         info:
           Name of dataset to use for model initialisation
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       use-best-model:
         info:
           If this flag is set MODEL_BEST will be used as the model unless transfer-model-from is specified.
           By default MODEL will be used as the model.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Control
       robustness:
         info:
           Robustness factor for Briggs weighting.
           None means natural
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Weighting
       dirty:
         info:
           Compute the dirty image
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       psf:
         info:
           Compute the PSF
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       residual:
         info:
           Compute the residual (only if model is present)
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       noise:
         info:
           Compute noise map by sampling from weights
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       beam:
         info:
           Interpolate average beam pattern
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       weight:
         info:
           Compute effectve image space weights
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Output
       psf-oversize:
         info:
           Size of PSF relative to dirty image
         dtype: float
         default: 1.4
+        metadata:
+          rich_help_panel: Imaging
       field-of-view:
         info:
           Field of view in degrees
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Imaging
       super-resolution-factor:
         info:
           Will over-sample Nyquist by this factor at max frequency
         dtype: float
         default: 2
+        metadata:
+          rich_help_panel: Imaging
       cell-size:
         info:
           Cell size in arc-seconds
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Imaging
       nx:
         info:
           Number of x pixels
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Imaging
       ny:
         info:
           Number of y pixels
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Imaging
       filter-counts-level:
         info:
           Set minimum counts in the uniform weighting grid to the median divided by this value.
           This is useful to avoid artificially up-weighting nearly empty uv-cells.
         dtype: float
         default: 5.0
+        metadata:
+          rich_help_panel: Weighting
       target:
         info:
           Predefined celestial objects known to astropy.
           Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
       l2-reweight-dof:
         info:
           The degrees of freedom parameter for L2 reweighting.
@@ -121,58 +168,82 @@ cabs:
           A sensible value for this parameter depends on the level of RFI in the data.
           Small values result in aggressive reweighting.
           This should be avoided if the model is still incomplete.
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Weighting
       epsilon:
         info:
           Gridder accuracy
         dtype: float
         default: 1.0e-07
+        metadata:
+          rich_help_panel: WGridder
       do-wgridding:
         info:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       double-accum:
         info:
           Accumulate onto grid using double precision.
           Only has an affect when using single precision.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       nworkers:
         info:
           Number of worker processes.
           Use with distributed scheduler.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Performance
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Naming
       fits-mfs:
         info:
           Output MFS fits files
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
       fits-cubes:
         info:
           Output fits cubes
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
     outputs:
       dds-out:
         dtype: Directory

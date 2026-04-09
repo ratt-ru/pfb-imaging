@@ -5,7 +5,7 @@ cabs:
     name: fluxtractor
     info:
       Otherwise knows as the fluxmop.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -13,15 +13,22 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       suffix:
         info:
           Can be used to specify a custom name for the image space data products.
           This is useful for distinguishing runs with different imaging paramaters.
           For example, different image sizes of robustness factors.
         default: main
+        metadata:
+          rich_help_panel: Naming
       mask:
         info:
           Either path to mask.fits or set to model to construct from model
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       zero-model-outside-mask:
         info:
           Make sure the input model is zero outside the mask.
@@ -29,106 +36,150 @@ cabs:
           A major cycle will be triggered to recompute the residual after zeroing.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Masking
       or-mask-with-model:
         info:
           Make a new mask consisting of the union of input mask and where the MFS model is larger than zero.
         dtype: bool
         default: false
+        metadata:
+          rich_help_panel: Masking
       min-model:
         info:
           If using mask to construct model construct it where model > min-model
         dtype: float
         default: 1.0e-05
+        metadata:
+          rich_help_panel: Masking
       eta:
         info:
           Standard deviation of assumed GRF prior
         dtype: float
         default: 1.0e-05
+        metadata:
+          rich_help_panel: Imaging
       model-name:
         info:
           Name of the model to update
         default: MODEL
+        metadata:
+          rich_help_panel: Input
       residual-name:
         info:
           Name of the residual to use
         default: RESIDUAL
+        metadata:
+          rich_help_panel: Input
       use-psf:
         info:
           Whether to approximate the Hessian as a convolution by the PSF
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Imaging
       epsilon:
         info:
           Gridder accuracy
         dtype: float
         default: 1.0e-07
+        metadata:
+          rich_help_panel: WGridder
       do-wgridding:
         info:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       double-accum:
         info:
           Accumulate onto grid using double precision.
           Only has an affect when using single precision.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       cg-tol:
         info:
           Tolreance of conjugate gradient algorithm
         dtype: float
         default: 0.001
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-maxit:
         info:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 150
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
           Set to > 1 for debugging, 0 for silence
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-report-freq:
         info:
           Report frequency of conjugate gradient algorithm
         dtype: int
         default: 10
+        metadata:
+          rich_help_panel: ConjugateGradient
       nworkers:
         info:
           Number of worker processes.
           Use with distributed scheduler.
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Performance
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Naming
       fits-mfs:
         info:
           Output MFS fits files
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
       fits-cubes:
         info:
           Output fits cubes
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
     outputs:
       dds-out:
         dtype: Directory

@@ -29,6 +29,8 @@ SOFTWARE.
 
 """
 
+# defines deconvolution solver protocol for use within the PFB loop
+
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -42,7 +44,7 @@ class DeconvSolver(Protocol):
     ``__init__`` and implements the forward/backward split of the
     preconditioned forward-backward (PFB) algorithm.
 
-    The outer loop calls these methods in order each major iteration::
+    The outer loop calls these methods in order at each major iteration::
 
         solver.first(residual)
         update = solver.forward(residual)

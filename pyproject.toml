@@ -6,7 +6,7 @@ authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
 license = {text = "MIT"}
-readme = "README.rst"
+readme = "README.md"
 requires-python = ">=3.10, <3.13"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.1.6",
+    "hip-cargo == 0.2.0rc1",
 ]
 
 [project.urls]
@@ -40,7 +40,6 @@ full = [
     "numexpr>=2.10.1",
     "ducc0>=0.35.0",
     "sympy>=1.9",
-    "stimela>=2.0.2",
     "tbb>=2021.13.1",
     "jax[cpu]>=0.4.31",
     "lz4>=4.3.3",
@@ -48,28 +47,18 @@ full = [
     "regions>=0.9",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed<2026.2.0",  # because dask-ms pins dask
+    "distributed<2026.4.0",  # because dask-ms pins dask
+    "pydantic>=2",
+    "omegaconf>=2.3",
 ]
-
-dev = [
-    "pytest>=8.0.0",
-    "tbump>=6.11.0",
-    "ruff>=0.8.0",
-    "pre-commit>=4.0.0",
-    "mypy>=1.0.0",
-    "ipdb",
-]
-
 
 [project.scripts]
 pfb = "pfb_imaging.cli:app"
 
-[build-system]
-requires = ["uv_build>=0.8.3,<0.11.0"]
-build-backend = "uv_build"
 
-[tool.hip-cargo]
-image = "ghcr.io/ratt-ru/pfb-imaging"
+[build-system]
+requires = ["uv_build>=0.8.3,<0.12.0"]
+build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 120
@@ -100,4 +89,16 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "slow: Tests that take more time to run",
+]
+
+[dependency-groups]
+dev = [
+    "tbump>=6.11.0",
+    "ruff>=0.8.0",
+    "pre-commit>=4.0.0",
+    "mypy>=1.0.0",
+    "ipdb",
+]
+test = [
+    "pytest>=8.0.0",
 ]

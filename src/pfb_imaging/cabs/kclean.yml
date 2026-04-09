@@ -5,7 +5,7 @@ cabs:
     name: kclean
     info:
       Modified single scale clean algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:prep009
     inputs:
       output-filename:
         info:
@@ -13,25 +13,36 @@ cabs:
         required: true
         policies:
           positional: true
+        metadata:
+          rich_help_panel: Naming
       suffix:
         info:
           Can be used to specify a custom name for the image space data products.
           This is useful for distinguishing runs with different imaging paramaters.
           For example, different image sizes of robustness factors.
         default: main
+        metadata:
+          rich_help_panel: Naming
       mask:
         info:
           Path to mask.fits
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Input
       dirosion:
         info:
           Perform dilation followed by erosion with structure element of this width
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Masking
       mop-flux:
         info:
           Use PCG based flux mop.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: PFB
       mop-gamma:
         info:
           Step size for flux mop.
@@ -39,127 +50,179 @@ cabs:
           A value of 1 is most aggressive.
         dtype: float
         default: 0.65
+        metadata:
+          rich_help_panel: PFB
       niter:
         info:
           Number of major iterations
         dtype: int
         default: 5
+        metadata:
+          rich_help_panel: PFB
       nthreads:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: int
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
       threshold:
         info:
           Absolute threshold at which to stop cleaning.
           By default it is set automatically using rmsfactor parameter
-        dtype: float
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: PFB
       rmsfactor:
         info:
           Multiple of the rms at which to stop cleaning
         dtype: float
         default: 3.0
+        metadata:
+          rich_help_panel: PFB
       eta:
         info:
           Will use eta*wsum to regularise the inversion of the Hessian approximation.
         dtype: float
         default: 0.001
+        metadata:
+          rich_help_panel: PFB
       gamma:
         info:
           Minor loop gain
         dtype: float
         default: 0.1
+        metadata:
+          rich_help_panel: PFB
       peak-factor:
         info:
           Peak factor
         dtype: float
         default: 0.15
+        metadata:
+          rich_help_panel: Clean
       sub-peak-factor:
         info:
           Peak factor of sub-minor loop
         dtype: float
         default: 0.75
+        metadata:
+          rich_help_panel: Clean
       minor-maxit:
         info:
           Maximum number of PSF convolutions between major cycles
         dtype: int
         default: 50
+        metadata:
+          rich_help_panel: Clean
       subminor-maxit:
         info:
           Maximum number of iterations for the sub-minor cycle
         dtype: int
         default: 1000
+        metadata:
+          rich_help_panel: Clean
       verbose:
         info:
           Verbosity level.
           Set to 2 for maximum verbosity, 0 for silence
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: Reporting
       report-freq:
         info:
           Report frequency for minor cycles
         dtype: int
         default: 10
+        metadata:
+          rich_help_panel: Reporting
       cg-tol:
         info:
           Tolreance of conjugate gradient algorithm
         dtype: float
         default: 0.01
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-maxit:
         info:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 100
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
           Set to > 1 for debugging, 0 for silence
         dtype: int
         default: 1
+        metadata:
+          rich_help_panel: ConjugateGradient
       cg-report-freq:
         info:
           Report frequency of conjugate gradient algorithm
         dtype: int
         default: 100
+        metadata:
+          rich_help_panel: ConjugateGradient
       epsilon:
         info:
           Gridder accuracy
         dtype: float
         default: 1.0e-07
+        metadata:
+          rich_help_panel: WGridder
       do-wgridding:
         info:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       double-accum:
         info:
           Accumulate onto grid using double precision.
           Only has an affect when using single precision.
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
       log-directory:
         info:
           Directory to write logs and performance reports to.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
+        metadata:
+          rich_help_panel: Data Selection
       fits-output-folder:
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Naming
       fits-mfs:
         info:
           Output MFS fits files
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
       fits-cubes:
         info:
           Output fits cubes
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: Fits
     outputs:
       dds-out:
         dtype: Directory
