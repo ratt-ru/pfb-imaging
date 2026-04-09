@@ -1129,19 +1129,14 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.1.8"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#e6e27787b71ba791ef633d1b5cfd1e66d4355c94" }
 dependencies = [
-    { name = "importlib-metadata", version = "9.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "libcst" },
     { name = "pyyaml" },
     { name = "ruff" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/05/bf/88c99b2cf8cca243af12ab0e588ace4712767cd3ab700d271f2246395e4e/hip_cargo-0.1.8.tar.gz", hash = "sha256:d102560a956c5c73f76a5a54f1ab46ce2de9ee007960e766a1e50315b7bc2485", size = 52050, upload-time = "2026-04-08T15:50:34.884Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/78/07e03e3f35e26287a8711e625f3e3bcb59193353ca39f7abd5daa731f9d3/hip_cargo-0.1.8-py3-none-any.whl", hash = "sha256:cdf725e1975ae776dd25e5fe191d89f45dc26b9e60032c02554b80c765c5741b", size = 68522, upload-time = "2026-04-08T15:50:33.627Z" },
 ]
 
 [[package]]
@@ -2609,14 +2604,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "ipdb" },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "tbump" },
-]
 full = [
     { name = "bokeh" },
     { name = "codex-africanus", extra = ["astropy", "dask", "python-casacore", "scipy"] },
@@ -2646,6 +2633,18 @@ full = [
     { name = "tbb" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipdb" },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "ruff" },
+    { name = "tbump" },
+]
+test = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
@@ -2653,30 +2652,34 @@ requires-dist = [
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "distributed", marker = "extra == 'full'", specifier = "<2026.4.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", specifier = ">=0.1.8" },
-    { name = "ipdb", marker = "extra == 'dev'" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "omegaconf", marker = "extra == 'full'", specifier = ">=2.3" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pywavelets", marker = "extra == 'full'", specifier = ">=1.7.0" },
     { name = "ray", extras = ["default"], marker = "extra == 'full'" },
     { name = "regions", marker = "extra == 'full'", specifier = ">=0.9" },
     { name = "reproject", marker = "extra == 'full'" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "scikit-image", marker = "extra == 'full'", specifier = ">=0.24.0" },
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
     { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
-    { name = "tbump", marker = "extra == 'dev'", specifier = ">=6.11.0" },
 ]
-provides-extras = ["full", "dev"]
+provides-extras = ["full"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipdb" },
+    { name = "mypy", specifier = ">=1.0.0" },
+    { name = "pre-commit", specifier = ">=4.0.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
+    { name = "tbump", specifier = ">=6.11.0" },
+]
+test = [{ name = "pytest", specifier = ">=8.0.0" }]
 
 [[package]]
 name = "pillow"

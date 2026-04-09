@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.1.8",
+    "hip-cargo  @ git+https://github.com/landmanbester/hip-cargo.git@main",
 ]
 
 [project.urls]
@@ -51,16 +51,6 @@ full = [
     "pydantic>=2",
     "omegaconf>=2.3",
 ]
-
-dev = [
-    "pytest>=8.0.0",
-    "tbump>=6.11.0",
-    "ruff>=0.8.0",
-    "pre-commit>=4.0.0",
-    "mypy>=1.0.0",
-    "ipdb",
-]
-
 
 [project.scripts]
 pfb = "pfb_imaging.cli:app"
@@ -99,4 +89,16 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "slow: Tests that take more time to run",
+]
+
+[dependency-groups]
+dev = [
+    "tbump>=6.11.0",
+    "ruff>=0.8.0",
+    "pre-commit>=4.0.0",
+    "mypy>=1.0.0",
+    "ipdb",
+]
+test = [
+    "pytest>=8.0.0",
 ]

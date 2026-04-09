@@ -45,18 +45,15 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Update container image tag to latest in pyproject.toml
+      - name: Update container image tag to latest
         run: |
           python -c "
           import re
-          p = 'pyproject.toml'
+          p = 'src/pfb_imaging/_container_image.py'
           t = open(p).read()
-          t = re.sub(r'(container-image\s*=\s*\".*:)[^\"]+', r'\g<1>latest', t)
+          t = re.sub(r'(CONTAINER_IMAGE\s*=\s*\".*:)[^\"]+', r'\g<1>latest', t)
           open(p, 'w').write(t)
           "
-
-      - name: Sync environment to refresh package metadata
-        run: uv sync
 
       - name: Regenerate cab definitions with latest tag
         run: |
@@ -66,7 +63,7 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet src/pfb_imaging/cabs/*.yml pyproject.toml uv.lock; then
+          if git diff --quiet src/pfb_imaging/cabs/*.yml src/pfb_imaging/_container_image.py; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -77,6 +74,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pfb_imaging/cabs/*.yml pyproject.toml uv.lock
+          git add src/pfb_imaging/cabs/*.yml src/pfb_imaging/_container_image.py
           git commit -m "chore: update cab definitions [skip checks]"
           git push
