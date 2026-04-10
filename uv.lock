@@ -2601,7 +2601,7 @@ wheels = [
 
 [[package]]
 name = "pfb-imaging"
-version = "0.0.8"
+version = "0.0.9rc1"
 source = { editable = "." }
 dependencies = [
     { name = "hip-cargo" },
