@@ -5,7 +5,7 @@ cabs:
     name: sara
     info:
       pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:prep009
+    image: ghcr.io/ratt-ru/pfb-imaging:fixpublishcontainer
     inputs:
       output-filename:
         info:
