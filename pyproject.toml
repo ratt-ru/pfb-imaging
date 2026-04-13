@@ -1,6 +1,6 @@
 [project]
 name = "pfb-imaging"
-version = "0.0.9rc1"
+version = "0.0.8"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
@@ -47,7 +47,7 @@ full = [
     "regions>=0.9",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed<2026.4.0",  # because dask-ms pins dask
+    "distributed<2024.11.0",
     "pydantic>=2",
     "omegaconf>=2.3",
 ]
@@ -62,7 +62,7 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
