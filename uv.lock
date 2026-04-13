@@ -2605,7 +2605,7 @@ wheels = [
 
 [[package]]
 name = "pfb-imaging"
-version = "0.0.9rc1"
+version = "0.0.8"
 source = { editable = "." }
 dependencies = [
     { name = "hip-cargo" },
@@ -2658,7 +2658,7 @@ requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
-    { name = "distributed", marker = "extra == 'full'", specifier = "<2026.4.0" },
+    { name = "distributed", marker = "extra == 'full'", specifier = "<2024.11.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = "==0.2.0rc2" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
