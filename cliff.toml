@@ -67,6 +67,8 @@ commit_parsers = [
     { message = "^ci", group = "CI" },
     { message = "^style", skip = true },
     { message = "^test", group = "Testing" },
+    { message = "^build", group = "Build" },
+    { message = "^chore: bump version", skip = true },
     { message = "^Bump version", skip = true },
     { message = "^Bump to", skip = true },
     { message = "^Merge", skip = true },

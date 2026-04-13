@@ -513,14 +513,18 @@ wheels = [
 
 [[package]]
 name = "codex-africanus"
-version = "0.4.3"
-source = { git = "https://github.com/ratt-ru/codex-africanus.git?rev=master#80152a2304691a3c8a38a933763865d51f9ae677" }
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "appdirs" },
     { name = "decorator" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/dc/49af44aa12dbdd751b661d6cda121d3f7c59bf946e85ff6670dbd879f3a0/codex_africanus-0.4.4.tar.gz", hash = "sha256:a2bb6a4b39a4cbec9acb275b5eb85ef0fa2451f6a65b8928124fcabf8fe2433a", size = 298160, upload-time = "2026-04-13T07:14:00.589Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/f4/d604337f04199741c93833502c8b3d880a44e04033931145af80a188d0b1/codex_africanus-0.4.4-py3-none-any.whl", hash = "sha256:535f98fdf9676d7e6f1fdb7cad94eff19e57dbf1e625f68aa3a0e321f64a9212", size = 375667, upload-time = "2026-04-13T07:13:58.941Z" },
 ]
 
 [package.optional-dependencies]
@@ -1128,7 +1132,7 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "libcst" },
@@ -1138,9 +1142,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/05/b157a9103bb0ddb646aaeb8a6c674df768b2670fd4a0b3be4df4deb878d7/hip_cargo-0.2.0rc1.tar.gz", hash = "sha256:7ac9280cb453b6e90a669cfe0bf871affbb7fb76b72d3918a464f33fa02eca20", size = 53617, upload-time = "2026-04-09T13:29:51.04Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/06/5b2f46eb6fa4fdc8250ebe650d7c7a7df3efc81e130eec4e49b781485637/hip_cargo-0.2.0rc2.tar.gz", hash = "sha256:4ed8c46b198daec9916fadf08ae7423aa7fa7f7152b3a9cc32989a930c7bc3f1", size = 53610, upload-time = "2026-04-10T13:21:36.877Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/7b/29cff35c418cabcd37823fe90fbda2e4ec42bed8d38685ee6e81cf084a27/hip_cargo-0.2.0rc1-py3-none-any.whl", hash = "sha256:8ae96245885691f68c3c8ece096f4efb22dac72eca7a0fc458d33feed96d5c00", size = 70384, upload-time = "2026-04-09T13:29:49.559Z" },
+    { url = "https://files.pythonhosted.org/packages/15/f8/d625ca8caa8b16d4e1d55faf216af687405c68823ec7c707be82a143d13e/hip_cargo-0.2.0rc2-py3-none-any.whl", hash = "sha256:6ff15f7ed563265af928cd680faab1cf8c8e9462821974fa330c42f5c54c3b3f", size = 70380, upload-time = "2026-04-10T13:21:35.236Z" },
 ]
 
 [[package]]
@@ -2652,11 +2656,11 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
-    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", git = "https://github.com/ratt-ru/codex-africanus.git?rev=master" },
+    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "distributed", marker = "extra == 'full'", specifier = "<2026.4.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", specifier = "==0.2.0rc1" },
+    { name = "hip-cargo", specifier = "==0.2.0rc2" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
