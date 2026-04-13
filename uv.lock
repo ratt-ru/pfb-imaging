@@ -513,7 +513,7 @@ wheels = [
 
 [[package]]
 name = "codex-africanus"
-version = "0.4.3"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "appdirs" },
@@ -522,9 +522,9 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/50/731235cfa214b7958ed9a79869325c21a19b486f5df8a771cb70cd4e096f/codex_africanus-0.4.3.tar.gz", hash = "sha256:5b05e5df7f66c3af78828d0c871481b113b957f7656c7bb2308e0164f9e146c8", size = 298114, upload-time = "2025-10-10T10:05:10.456Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/dc/49af44aa12dbdd751b661d6cda121d3f7c59bf946e85ff6670dbd879f3a0/codex_africanus-0.4.4.tar.gz", hash = "sha256:a2bb6a4b39a4cbec9acb275b5eb85ef0fa2451f6a65b8928124fcabf8fe2433a", size = 298160, upload-time = "2026-04-13T07:14:00.589Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/f7/6377a03cae58b3ae65990f89c5ea3b7027f65bdd55f9cc4760af7c9940d4/codex_africanus-0.4.3-py3-none-any.whl", hash = "sha256:97e9e60553b5cd9c7ec7faa85f18d87231191b99b861c77eb5dfedbbc7beefbf", size = 375707, upload-time = "2025-10-10T10:05:08.492Z" },
+    { url = "https://files.pythonhosted.org/packages/07/f4/d604337f04199741c93833502c8b3d880a44e04033931145af80a188d0b1/codex_africanus-0.4.4-py3-none-any.whl", hash = "sha256:535f98fdf9676d7e6f1fdb7cad94eff19e57dbf1e625f68aa3a0e321f64a9212", size = 375667, upload-time = "2026-04-13T07:13:58.941Z" },
 ]
 
 [package.optional-dependencies]
@@ -2656,7 +2656,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
-    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.3" },
+    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "distributed", marker = "extra == 'full'", specifier = "<2026.4.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
