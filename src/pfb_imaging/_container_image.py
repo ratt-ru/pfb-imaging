@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:009dev"
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:latest"

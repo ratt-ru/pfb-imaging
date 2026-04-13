@@ -5,7 +5,7 @@ cabs:
     name: model2comps
     info:
       Convert model image to components.
-    image: ghcr.io/ratt-ru/pfb-imaging:009dev
+    image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       output-filename:
         info:
