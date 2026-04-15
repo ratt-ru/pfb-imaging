@@ -4,8 +4,8 @@ from typing import Annotated, Literal, NewType
 import typer
 from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
 
-File = NewType("File", Path)
 Directory = NewType("Directory", Path)
+File = NewType("File", Path)
 
 
 @stimela_cab(
