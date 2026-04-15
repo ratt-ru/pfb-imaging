@@ -19,6 +19,7 @@ from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
+from meerkat_beams.utils import BeamWizard
 from zarr import ProcessSynchronizer
 
 from pfb_imaging import pfb_version, set_envs, setup_ray_worker
@@ -392,6 +393,12 @@ def hci(
 
     log.info("Scaffolding complete")
 
+    log.info("Initialising BeamWizard")
+    if beam_model is not None:
+        beam_wizard = BeamWizard(beam_model, output_dataset)
+    else:
+        beam_wizard = None
+
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))
     while nx_pad % 2:
@@ -512,7 +519,7 @@ def hci(
                             product=product,
                             check_ants=check_ants,
                             phase_dir=phase_dir,
-                            beam_model=beam_model,
+                            beam_model=beam_wizard,
                             target=target,
                             robustness=robustness,
                             min_padding=min_padding,

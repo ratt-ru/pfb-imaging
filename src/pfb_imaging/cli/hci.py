@@ -211,7 +211,7 @@ def hci(
         URI | None,
         typer.Option(
             parser=Path,
-            help="Path to beam model as an xarray dataset backed by zarr",
+            help="Path to beam model (bds produced by suricat-beams).",
             rich_help_panel="Input",
         ),
     ] = None,

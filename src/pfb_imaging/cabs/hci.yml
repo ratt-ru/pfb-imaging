@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
     inputs:
       ms:
         info:
@@ -160,7 +160,7 @@ cabs:
           rich_help_panel: Imaging
       beam-model:
         info:
-          Path to beam model as an xarray dataset backed by zarr
+          Path to beam model (bds produced by suricat-beams).
         dtype: Optional[URI]
         metadata:
           rich_help_panel: Input

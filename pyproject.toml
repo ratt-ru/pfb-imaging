@@ -5,13 +5,12 @@ description = "Radio interferometric imaging suite based on a preconditioned for
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -51,6 +50,7 @@ full = [
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
+    "meerkat-beams[full] @ git+https://github.com/landmanbester/meerkat-beams.git@dev001",
 ]
 
 [project.scripts]

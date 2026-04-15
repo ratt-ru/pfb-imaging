@@ -122,7 +122,6 @@ def batch_stokes_image(
             timeid=timeid,
             msid=msid,
             attrs=attrs,
-            # Parameters previously from opts:
             nthreads=nthreads,
             precision=precision,
             sigma_column=sigma_column,
@@ -184,7 +183,6 @@ def stokes_image(
     timeid=None,
     msid=None,
     attrs=None,
-    # Parameters previously from opts:
     nthreads=1,
     precision="double",
     sigma_column=None,
