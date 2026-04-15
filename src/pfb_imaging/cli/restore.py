@@ -5,6 +5,7 @@ import typer
 from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
 
 File = NewType("File", Path)
+Directory = NewType("Directory", Path)
 
 
 @stimela_cab(
@@ -99,8 +100,9 @@ def restore(
         ),
     ] = None,
     log_directory: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
@@ -113,8 +115,9 @@ def restore(
         ),
     ] = "I",
     fits_output_folder: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",

@@ -206,8 +206,9 @@ def kclean(
         ),
     ] = True,
     log_directory: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
@@ -220,8 +221,9 @@ def kclean(
         ),
     ] = "I",
     fits_output_folder: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",

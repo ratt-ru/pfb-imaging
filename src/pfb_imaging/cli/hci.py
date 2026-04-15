@@ -58,8 +58,9 @@ def hci(
         },
     ],
     log_directory: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),

@@ -5,7 +5,7 @@ cabs:
     name: restore
     info:
       Restore model images and.or convolved images to common resolution.
-    image: ghcr.io/ratt-ru/pfb-imaging:0.0.9rc1
+    image: ghcr.io/ratt-ru/pfb-imaging:issue232
     inputs:
       output-filename:
         info:
@@ -77,7 +77,7 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
-        dtype: Optional[str]
+        dtype: Optional[Directory]
         metadata:
           rich_help_panel: Output
       product:
@@ -92,7 +92,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
-        dtype: Optional[str]
+        dtype: Optional[Directory]
         metadata:
           rich_help_panel: Naming
     outputs:
