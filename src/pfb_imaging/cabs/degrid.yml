@@ -6,7 +6,7 @@ cabs:
     info:
       Degrid visibilities from model image(s) into measurement set.
       The model image needs to be in component format.
-    image: ghcr.io/ratt-ru/pfb-imaging:issue232
+    image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       ms:
         info:
