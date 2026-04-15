@@ -4,6 +4,7 @@ from typing import Annotated, Literal, NewType
 import typer
 from hip_cargo import ListInt, parse_list_int, stimela_cab
 
+Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
 
 
@@ -171,8 +172,9 @@ def degrid(
         ),
     ] = None,
     log_directory: Annotated[
-        str | None,
+        Directory | None,
         typer.Option(
+            parser=Path,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),

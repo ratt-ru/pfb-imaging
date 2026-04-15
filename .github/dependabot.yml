@@ -26,6 +26,8 @@ updates:
           - "typer*"
           - "pyyaml*"
           - "typing-extensions*"
+    ignore:
+      - dependency-name: "distributed"
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"

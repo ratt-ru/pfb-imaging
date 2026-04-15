@@ -34,7 +34,7 @@ full = [
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr]>=0.2.23",
     "reproject",
-    "ray[default]",
+    "ray[default]>=2.54.0",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -50,6 +50,7 @@ full = [
     "distributed<2024.11.0",
     "pydantic>=2",
     "omegaconf>=2.3",
+    "pillow>=12.2.0",
 ]
 
 [project.scripts]
@@ -100,5 +101,5 @@ dev = [
     "ipdb",
 ]
 test = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
 ]

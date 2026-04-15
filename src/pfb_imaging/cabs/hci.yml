@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue232
     inputs:
       ms:
         info:
@@ -19,7 +19,7 @@ cabs:
       log-directory:
         info:
           Directory to write logs and performance reports to.
-        dtype: Optional[str]
+        dtype: Optional[Directory]
         metadata:
           rich_help_panel: Output
       product:
