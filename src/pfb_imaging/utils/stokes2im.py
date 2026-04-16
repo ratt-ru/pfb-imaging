@@ -9,16 +9,18 @@ import xarray as xr
 from africanus.coordinates import radec_to_lm
 from astropy import units
 from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from casacore.quanta import quantity
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
+from meerkat_beams.utils import BeamWizard
 from numba import set_num_threads
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
-from pfb_imaging.utils.beam import reproject_and_interp_beam
+from pfb_imaging.utils.beam import reproject_and_interp_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
@@ -367,7 +369,43 @@ def stokes_image(
         uvw_old = uvw
         radec_new = radec
 
-    if beam_model is not None:
+    if isinstance(beam_model, BeamWizard):
+        # should we compute a weighted mean over freq instead of interpolating here?
+        bds = beam_model.bds
+        l_beam = bds.X.values
+        m_beam = bds.Y.values
+        t_beam = Time(utime / (24 * 3600), format="mjd")
+        beam = np.zeros((len(product), l_beam.size, m_beam.size), dtype=real_type)
+        for i, p in enumerate(set(product)):  # set to sort IQUV
+            beam[i], _ = beam_model.get_rotation_averaged_beam(
+                l=l_beam,
+                m=m_beam,
+                times=t_beam,
+                freq=np.array([freq_out]),
+                time_stepping=1,
+                pixel_stepping=1,
+                var="nstokes",
+                i=p,
+                j=p,
+                verbose=0,
+            )
+        cell_deg_in = l_beam[1] - l_beam[0]
+        pbeam = reproject_and_interp_scat_beam(
+            beam,
+            radec,
+            radec_new,
+            cell_deg_in,
+            cell_deg,
+            nx,
+            ny,
+            product,
+        )
+
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+
+    elif beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here?
         bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
         l_beam = bds.l_beam.values
