@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -17,6 +17,24 @@ Directory = NewType("Directory", Path)
     info="Output component model.",
     implicit="=IFSET(current.model-out, current.model-out, {current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds)",  # noqa: E501
     must_exist=False,
+)
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Set to output-filename if not provided. "
+    "The same naming conventions apply.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
 )
 def model2comps(
     output_filename: Annotated[
@@ -128,14 +146,6 @@ def model2comps(
             rich_help_panel="Output",
         ),
     ] = None,
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -143,6 +153,20 @@ def model2comps(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
@@ -150,7 +174,13 @@ def model2comps(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
-            rich_help_panel="Naming",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
         ),
     ] = None,
     backend: Annotated[
@@ -158,14 +188,18 @@ def model2comps(
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
@@ -193,8 +227,8 @@ def model2comps(
                 model_out=model_out,
                 out_format=out_format,
                 out_freqs=out_freqs,
-                log_directory=log_directory,
                 product=product,
+                log_directory=log_directory,
                 fits_output_folder=fits_output_folder,
             )
             return
@@ -228,8 +262,8 @@ def model2comps(
             model_out=model_out,
             out_format=out_format,
             out_freqs=out_freqs,
-            log_directory=log_directory,
             product=product,
+            log_directory=log_directory,
             fits_output_folder=fits_output_folder,
         ),
         image=image,

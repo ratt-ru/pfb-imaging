@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, parse_list_int, stimela_cab
+from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -13,6 +13,14 @@ URI = NewType("URI", Path)
     info="Degrid visibilities from model image(s) into measurement set. "
     "The model image needs to be in component format.",
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
 def degrid(
     ms: Annotated[
         list[URI],
@@ -22,11 +30,9 @@ def degrid(
             help="Path to measurement set.",
             rich_help_panel="Input",
         ),
-        {
-            "stimela": {
-                "writable": True,
-            },
-        },
+        StimelaMeta(
+            writable=True,
+        ),
     ],
     output_filename: Annotated[
         str,
@@ -178,20 +184,30 @@ def degrid(
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
     ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """

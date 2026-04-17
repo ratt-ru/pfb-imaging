@@ -6,7 +6,7 @@ cabs:
     info:
       Degrid visibilities from model image(s) into measurement set.
       The model image needs to be in component format.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue232v2
     inputs:
       ms:
         info:
@@ -153,10 +153,13 @@ cabs:
         dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
+    outputs:
       log-directory:
+        dtype: Directory
         info:
           Directory to write logs and performance reports to.
-        dtype: Optional[Directory]
+        mkdir: false
+        path_policies:
+          write_parent: true
         metadata:
           rich_help_panel: Output
-    outputs: {}

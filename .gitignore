@@ -70,6 +70,7 @@ docs
 
 # PyBuilder
 target/
+scripts/genfuncs.sh
 
 # Jupyter Notebook
 .ipynb_checkpoints

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -19,6 +19,14 @@ URI = NewType("URI", Path)
     required=True,
     policies={"positional": True},
     must_exist=True,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -47,24 +55,14 @@ def hci(
             help="Basename of output.",
             rich_help_panel="Output",
         ),
-        {
-            "stimela": {
-                "must_exist": True,
-                "mkdir": False,
-                "path_policies": {
-                    "write_parent": True,
-                },
+        StimelaMeta(
+            must_exist=True,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
             },
-        },
-    ],
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
         ),
-    ] = None,
+    ],
     product: Annotated[
         str,
         typer.Option(
@@ -440,6 +438,20 @@ def hci(
             rich_help_panel="Imaging",
         ),
     ] = 1.5,
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
@@ -453,14 +465,18 @@ def hci(
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
@@ -475,7 +491,6 @@ def hci(
             hci_core(
                 ms,
                 output_dataset,
-                log_directory=log_directory,
                 product=product,
                 scans=scans,
                 ddids=ddids,
@@ -525,6 +540,7 @@ def hci(
                 wgt_mode=wgt_mode,
                 obs_label=obs_label,
                 flag_excess_rms=flag_excess_rms,
+                log_directory=log_directory,
                 temp_dir=temp_dir,
             )
             return
@@ -544,7 +560,6 @@ def hci(
         hci,
         dict(
             ms=ms,
-            log_directory=log_directory,
             product=product,
             scans=scans,
             ddids=ddids,
@@ -595,6 +610,7 @@ def hci(
             obs_label=obs_label,
             flag_excess_rms=flag_excess_rms,
             output_dataset=output_dataset,
+            log_directory=log_directory,
             temp_dir=temp_dir,
         ),
         image=image,

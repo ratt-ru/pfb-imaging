@@ -5,7 +5,7 @@ cabs:
     name: init
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue232v2
     inputs:
       ms:
         info:
@@ -170,12 +170,6 @@ cabs:
         default: false
         metadata:
           rich_help_panel: Control
-      log-directory:
-        info:
-          Directory to write logs and performance reports to.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
@@ -217,3 +211,12 @@ cabs:
           Output dataset directory.
         implicit: '{current.output-filename}_{current.product}.xds'
         must_exist: false
+      log-directory:
+        dtype: Directory
+        info:
+          Directory to write logs and performance reports to.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output

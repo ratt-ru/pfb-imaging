@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo == 0.2.0rc2",
+    "hip-cargo >= 0.2.0",
 ]
 
 [project.urls]
