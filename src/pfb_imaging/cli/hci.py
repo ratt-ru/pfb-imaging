@@ -25,6 +25,23 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="File",
+    name="fits-cube",
+    info="Fits cube produced when cube-to-fits is set.",
+    implicit='=STRIPEXT(current.output-dataset) + ".fits"',
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
     metadata={"rich_help_panel": "Output"},
@@ -64,6 +81,14 @@ def hci(
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
     ] = None,
     product: Annotated[
         str,

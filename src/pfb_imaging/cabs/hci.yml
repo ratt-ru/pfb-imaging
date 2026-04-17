@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue232v2
     inputs:
       ms:
         info:
@@ -16,12 +16,6 @@ cabs:
           positional: true
         metadata:
           rich_help_panel: Input
-      log-directory:
-        info:
-          Directory to write logs and performance reports to.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
@@ -391,6 +385,25 @@ cabs:
         policies:
           positional: true
         must_exist: true
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      log-directory:
+        dtype: Directory
+        info:
+          Directory to write logs and performance reports to.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      fits-cube:
+        dtype: File
+        info:
+          Fits cube produced when cube-to-fits is set.
+        implicit: '=STRIPEXT(current.output-dataset) + ".fits'
         mkdir: false
         path_policies:
           write_parent: true
