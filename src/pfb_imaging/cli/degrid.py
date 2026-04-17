@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, parse_list_int, stimela_cab
+from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -12,6 +12,14 @@ URI = NewType("URI", Path)
     name="degrid",
     info="Degrid visibilities from model image(s) into measurement set. "
     "The model image needs to be in component format.",
+)
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
 )
 def degrid(
     ms: Annotated[
@@ -178,6 +186,14 @@ def degrid(
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
     ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],

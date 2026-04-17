@@ -399,16 +399,6 @@ cabs:
           write_parent: true
         metadata:
           rich_help_panel: Output
-      fits-cube:
-        dtype: File
-        info:
-          Fits cube produced when cube-to-fits is set.
-        implicit: '=STRIPEXT(current.output-dataset) + ".fits'
-        mkdir: false
-        path_policies:
-          write_parent: true
-        metadata:
-          rich_help_panel: Output
       temp-dir:
         dtype: Directory
         info:

@@ -19,6 +19,14 @@ URI = NewType("URI", Path)
     implicit="{current.output-filename}_{current.product}.xds",
     must_exist=False,
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
 def init(
     ms: Annotated[
         list[URI],
@@ -185,14 +193,6 @@ def init(
             rich_help_panel="Control",
         ),
     ] = False,
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -225,6 +225,22 @@ def init(
             rich_help_panel="Weighting",
         ),
     ] = "l2",
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
+    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
@@ -271,11 +287,11 @@ def init(
                 chan_average=chan_average,
                 progressbar=progressbar,
                 check_ants=check_ants,
-                log_directory=log_directory,
                 product=product,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
+                log_directory=log_directory,
             )
             return
         except ImportError:
@@ -314,11 +330,11 @@ def init(
             chan_average=chan_average,
             progressbar=progressbar,
             check_ants=check_ants,
-            log_directory=log_directory,
             product=product,
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,
+            log_directory=log_directory,
         ),
         image=image,
         backend=backend,

@@ -32,15 +32,6 @@ URI = NewType("URI", Path)
     metadata={"rich_help_panel": "Output"},
 )
 @stimela_output(
-    dtype="File",
-    name="fits-cube",
-    info="Fits cube produced when cube-to-fits is set.",
-    implicit='=STRIPEXT(current.output-dataset) + ".fits"',
-    mkdir=False,
-    path_policies={"write_parent": True},
-    metadata={"rich_help_panel": "Output"},
-)
-@stimela_output(
     dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
@@ -74,22 +65,6 @@ def hci(
             },
         },
     ],
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-        {
-            "stimela": {
-                "mkdir": False,
-                "path_policies": {
-                    "write_parent": True,
-                },
-            },
-        },
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -465,6 +440,22 @@ def hci(
             rich_help_panel="Imaging",
         ),
     ] = 1.5,
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
+    ] = None,
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
@@ -500,7 +491,6 @@ def hci(
             hci_core(
                 ms,
                 output_dataset,
-                log_directory=log_directory,
                 product=product,
                 scans=scans,
                 ddids=ddids,
@@ -550,6 +540,7 @@ def hci(
                 wgt_mode=wgt_mode,
                 obs_label=obs_label,
                 flag_excess_rms=flag_excess_rms,
+                log_directory=log_directory,
                 temp_dir=temp_dir,
             )
             return
@@ -569,7 +560,6 @@ def hci(
         hci,
         dict(
             ms=ms,
-            log_directory=log_directory,
             product=product,
             scans=scans,
             ddids=ddids,
@@ -620,6 +610,7 @@ def hci(
             obs_label=obs_label,
             flag_excess_rms=flag_excess_rms,
             output_dataset=output_dataset,
+            log_directory=log_directory,
             temp_dir=temp_dir,
         ),
         image=image,

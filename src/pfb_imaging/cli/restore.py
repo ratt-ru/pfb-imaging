@@ -24,6 +24,24 @@ File = NewType("File", Path)
     info="",
     implicit="{current.output-filename}_{current.product}_{current.suffix}_image.fits",
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Set to output-filename if not provided. "
+    "The same naming conventions apply.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
 def restore(
     output_filename: Annotated[
         str,
@@ -99,14 +117,6 @@ def restore(
             rich_help_panel="Performance",
         ),
     ] = None,
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -114,6 +124,22 @@ def restore(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
+    ] = None,
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
@@ -121,8 +147,16 @@ def restore(
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
-            rich_help_panel="Naming",
+            rich_help_panel="Output",
         ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
     ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
@@ -158,8 +192,8 @@ def restore(
                 drop_bands=drop_bands,
                 nworkers=nworkers,
                 nthreads=nthreads,
-                log_directory=log_directory,
                 product=product,
+                log_directory=log_directory,
                 fits_output_folder=fits_output_folder,
             )
             return
@@ -187,8 +221,8 @@ def restore(
             drop_bands=drop_bands,
             nworkers=nworkers,
             nthreads=nthreads,
-            log_directory=log_directory,
             product=product,
+            log_directory=log_directory,
             fits_output_folder=fits_output_folder,
         ),
         image=image,

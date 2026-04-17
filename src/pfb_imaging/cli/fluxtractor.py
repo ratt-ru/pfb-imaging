@@ -25,6 +25,24 @@ Directory = NewType("Directory", Path)
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
     must_exist=False,
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Set to output-filename if not provided. "
+    "The same naming conventions apply.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
 def fluxtractor(
     output_filename: Annotated[
         str,
@@ -166,14 +184,6 @@ def fluxtractor(
             rich_help_panel="Performance",
         ),
     ] = None,
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -181,16 +191,6 @@ def fluxtractor(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
-    fits_output_folder: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Optional path to write fits files to. "
-            "Set to output-filename if not provided. "
-            "The same naming conventions apply.",
-            rich_help_panel="Naming",
-        ),
-    ] = None,
     fits_mfs: Annotated[
         bool,
         typer.Option(
@@ -205,6 +205,40 @@ def fluxtractor(
             rich_help_panel="Fits",
         ),
     ] = True,
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
+    ] = None,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Optional path to write fits files to. "
+            "Set to output-filename if not provided. "
+            "The same naming conventions apply.",
+            rich_help_panel="Output",
+        ),
+        {
+            "stimela": {
+                "mkdir": False,
+                "path_policies": {
+                    "write_parent": True,
+                },
+            },
+        },
+    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
@@ -249,11 +283,11 @@ def fluxtractor(
                 cg_report_freq=cg_report_freq,
                 nworkers=nworkers,
                 nthreads=nthreads,
-                log_directory=log_directory,
                 product=product,
-                fits_output_folder=fits_output_folder,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                log_directory=log_directory,
+                fits_output_folder=fits_output_folder,
             )
             return
         except ImportError:
@@ -290,11 +324,11 @@ def fluxtractor(
             cg_report_freq=cg_report_freq,
             nworkers=nworkers,
             nthreads=nthreads,
-            log_directory=log_directory,
             product=product,
-            fits_output_folder=fits_output_folder,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            log_directory=log_directory,
+            fits_output_folder=fits_output_folder,
         ),
         image=image,
         backend=backend,

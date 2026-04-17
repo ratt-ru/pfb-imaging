@@ -1,0 +1,42 @@
+_include:
+  - (pfb_imaging.cabs)hci.yml
+
+cabs:
+  hci:
+    image:
+      path: /home/bester/.singularity/pfb-imaging_local.sif
+
+test:
+  name: test-hci
+  info: Runs the HCI CAB on a small test dataset.
+  inputs:
+    ms:
+      info: Path to measurement set.
+      dtype: MS
+      default: "~/data/test_ascii_1h60.0s.MS"
+  outputs:
+    output-dataset:
+      info: Basename of output dataset.
+      dtype: Directory
+      default: "~/testing/pfb/out/test_hci.zarr"
+    log-directory:
+      info: Directory to write logs and performance reports to.
+      dtype: Directory
+      default: =DIRNAME('{recipe.output-dataset}') + "/logs"
+
+  steps:
+    run:
+      cab: hci
+      params:
+        ms: =recipe.ms
+        output-dataset: =recipe.output-dataset
+        log-directory: =recipe.log-directory
+        field-of-view: 1.0
+        super-resolution-factor: 2.0
+        robustness: 0.0
+        cube-to-fits: true
+        epsilon: 1e-5
+        nworkers: 4
+        nthreads: 2
+        wgt-mode: minvar
+        obs-label: test_hci
