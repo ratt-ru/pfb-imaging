@@ -8,7 +8,7 @@ pmp = pytest.mark.parametrize
 
 @pmp("srf", [1.0, 2.0, 3.2])
 @pmp("fov", [0.1, 0.33, 1.0])
-def test_counts(ms_name, srf, fov):
+def test_counts(ms_meta, srf, fov):
     """
     Compares _compute_counts to memory greedy numpy implementation
     """
@@ -17,18 +17,13 @@ def test_counts(ms_name, srf, fov):
 
     np.random.seed(420)
     from africanus.constants import c as lightspeed
-    from daskms import xds_from_ms, xds_from_table
 
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    nchan = freq.size
-    ncorr = xds.corr.size
-
-    uvw = xds.UVW.values
-    nrow = uvw.shape[0]
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
+    freq = ms_meta.freq
+    nchan = ms_meta.nchan
+    ncorr = ms_meta.ncorr
+    uvw = ms_meta.uvw
+    nrow = ms_meta.nrow
+    max_blength = ms_meta.max_blength
 
     # image size
     cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
