@@ -5,6 +5,14 @@ All notable changes to pfb-imaging are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.9] - 2026-04-17
+
+### Other
+
+- Add log-directory and fits-output-folder outputs (#234) ([#234](https://github.com/ratt-ru/pfb-imaging/pull/234))
+- Correct Directory types (#233) ([#233](https://github.com/ratt-ru/pfb-imaging/pull/233))
+
+
 ## [0.0.9rc1] - 2026-04-13
 
 ### Build
@@ -177,6 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial commit
 
 
+[0.0.9]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.9rc1...v0.0.9
 [0.0.9rc1]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.8...v0.0.9rc1
 [0.0.8]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.6...v0.0.7
