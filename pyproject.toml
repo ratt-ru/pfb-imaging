@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo == 0.2.0rc2",
+    "hip-cargo @ git+https://github.com/landmanbester/hip-cargo.git@cosmetictweaks",
 ]
 
 [project.urls]

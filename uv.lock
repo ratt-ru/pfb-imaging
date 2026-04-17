@@ -1132,7 +1132,7 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.2.0rc2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=cosmetictweaks#01d05c013cf2915364c57dbe8212903911dc7ac1" }
 dependencies = [
     { name = "libcst" },
     { name = "pyyaml" },
@@ -1140,10 +1140,6 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/06/5b2f46eb6fa4fdc8250ebe650d7c7a7df3efc81e130eec4e49b781485637/hip_cargo-0.2.0rc2.tar.gz", hash = "sha256:4ed8c46b198daec9916fadf08ae7423aa7fa7f7152b3a9cc32989a930c7bc3f1", size = 53610, upload-time = "2026-04-10T13:21:36.877Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/f8/d625ca8caa8b16d4e1d55faf216af687405c68823ec7c707be82a143d13e/hip_cargo-0.2.0rc2-py3-none-any.whl", hash = "sha256:6ff15f7ed563265af928cd680faab1cf8c8e9462821974fa330c42f5c54c3b3f", size = 70380, upload-time = "2026-04-10T13:21:35.236Z" },
 ]
 
 [[package]]
@@ -2566,7 +2562,7 @@ requires-dist = [
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "distributed", marker = "extra == 'full'", specifier = "<2024.11.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", specifier = "==0.2.0rc2" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=cosmetictweaks" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },

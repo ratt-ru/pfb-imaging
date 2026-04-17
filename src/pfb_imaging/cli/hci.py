@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -55,15 +55,13 @@ def hci(
             help="Basename of output.",
             rich_help_panel="Output",
         ),
-        {
-            "stimela": {
-                "must_exist": True,
-                "mkdir": False,
-                "path_policies": {
-                    "write_parent": True,
-                },
+        StimelaMeta(
+            must_exist=True,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
             },
-        },
+        ),
     ],
     product: Annotated[
         str,
@@ -447,14 +445,12 @@ def hci(
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
-        {
-            "stimela": {
-                "mkdir": False,
-                "path_policies": {
-                    "write_parent": True,
-                },
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
             },
-        },
+        ),
     ] = None,
     temp_dir: Annotated[
         Directory | None,
@@ -469,14 +465,18 @@ def hci(
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
