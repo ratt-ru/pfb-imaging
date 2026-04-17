@@ -5,7 +5,7 @@ cabs:
     name: restore
     info:
       Restore model images and.or convolved images to common resolution.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:fixtures
     inputs:
       output-filename:
         info:

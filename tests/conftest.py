@@ -9,20 +9,28 @@ import pytest
 import ray
 import requests
 
-from pfb_imaging import set_envs, setup_ray_worker
-
-# ── Clear stale Numba caches ────────────────────────────────────────
-# Numba's file cache (`cache=True`) is keyed per-function by source hash.
-# Functions decorated with `inline="always"` get compiled into their callers,
-# but Numba does NOT track this cross-function dependency.  If an inlined
-# function changes while the caller's source stays the same, the caller's
-# cached machine code is stale and loading it can segfault.
+# ── Numba cache location ────────────────────────────────────────────
+# Pin Numba's file cache to <repo>/.numba_cache so it survives across
+# pytest sessions (by default Numba writes .nbi/.nbc into __pycache__
+# alongside the .py files, which mixes build artefacts with source state).
 #
-# Clearing __pycache__ dirs on every session start is cheap (~ms) and
-# eliminates the problem entirely during development.
-_src_root = Path(__file__).resolve().parent.parent / "src" / "pfb_imaging"
-for _cache_dir in _src_root.rglob("__pycache__"):
-    shutil.rmtree(_cache_dir, ignore_errors=True)
+# Numba's cache is keyed per-function by source hash, but functions
+# decorated with `inline="always"` get compiled into their callers and
+# the cross-function dependency is NOT tracked.  If an inlined function
+# changes while the caller's source stays the same, the caller's cached
+# machine code is stale and loading it can segfault.  Set
+# PFB_FRESH_NUMBA_CACHE=1 to force a clean rebuild when iterating on
+# inline-decorated functions.
+_repo_root = Path(__file__).resolve().parent.parent
+_numba_cache = _repo_root / ".numba_cache"
+_numba_cache.mkdir(exist_ok=True)
+os.environ.setdefault("NUMBA_CACHE_DIR", str(_numba_cache))
+
+if os.environ.get("PFB_FRESH_NUMBA_CACHE"):
+    shutil.rmtree(_numba_cache, ignore_errors=True)
+    _numba_cache.mkdir(exist_ok=True)
+
+from pfb_imaging import set_envs, setup_ray_worker  # noqa: E402
 
 test_root_path = Path(__file__).resolve().parent
 test_data_path = Path(test_root_path, "data")
