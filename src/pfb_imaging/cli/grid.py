@@ -193,10 +193,9 @@ def grid(
         int,
         typer.Option(
             help="Half-size in pixels of the box used for super-uniform weighting. "
-            "Each visibility is normalised by the sum of counts over a "
-            "(2*npix_super+1)^2 box around its uv-cell. 0 (default) recovers "
-            "standard uniform weighting. Combines with robustness to give "
-            "super-robust weighting.",
+            "Each visibility is normalised by the sum of counts over a (2*npix_super+1)^2 box around its uv-cell. "
+            "0 (default) recovers standard uniform weighting. "
+            "Combines with robustness to give super-robust weighting.",
             rich_help_panel="Weighting",
         ),
     ] = 0,
