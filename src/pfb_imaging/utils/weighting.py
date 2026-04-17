@@ -243,6 +243,9 @@ def box_sum_counts(counts, npix_super):
         return counts
     from scipy.ndimage import uniform_filter
 
+    assert np.issubdtype(counts.dtype, np.floating), (
+        f"box_sum_counts requires a floating-point counts array; got dtype={counts.dtype}"
+    )
     size = 2 * npix_super + 1
     out = np.empty_like(counts)
     for c in range(counts.shape[0]):
