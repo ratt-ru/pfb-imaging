@@ -820,10 +820,20 @@ def make_dummy_dataset(
 
     # spatial coordinates
     if phase_dir is None:
-        out_ra_deg = np.rad2deg(np.unique(out_ra))
-        out_dec_deg = np.rad2deg(np.unique(out_dec))
-        if out_ra_deg.size > 1 or out_dec_deg.size > 1:
-            raise ValueError("phase-dir must be specified when stacking multiple fields")
+        # these are in radians
+        out_ra = np.unique(out_ra)
+        out_dec = np.unique(out_dec)
+        if out_ra.size > 1 or out_dec.size > 1:
+            # just compute the barycenter
+            log.info("Using barycenter as phase center since no phase-dir was specified")
+            cos_dec = np.cos(out_dec)
+            x = np.mean(cos_dec * np.cos(out_ra))
+            y = np.mean(cos_dec * np.sin(out_ra))
+            z = np.mean(np.sin(out_dec))
+            ra0 = np.arctan2(y, x) % (2.0 * np.pi)
+            dec0 = np.arctan2(z, np.hypot(x, y))
+        out_ra_deg = np.rad2deg(ra0)
+        out_dec_deg = np.rad2deg(dec0)
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))

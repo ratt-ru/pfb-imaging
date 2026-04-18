@@ -588,7 +588,7 @@ def stokes_image(
             phase += signu * uvw_old[:, 0:1] * x0t * signx
             phase += signv * uvw_old[:, 1:2] * y0t * signy
             phase -= uvw_old[:, 2:] * (n0t - 1)
-            dspec *= np.exp(freqfactor * phase)
+            dspec = dspec * np.exp(freqfactor * phase)
 
             # currently Stokes I only
             data[:, :, 0] += dspec
