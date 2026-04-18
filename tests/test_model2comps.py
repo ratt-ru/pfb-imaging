@@ -1,8 +1,5 @@
 import numpy as np
 import pytest
-from africanus.constants import c as lightspeed
-from daskms import xds_from_ms, xds_from_table
-from ducc0.fft import good_size
 from numpy.testing import assert_allclose
 
 from pfb_imaging.utils.misc import gaussian2d, give_edges
@@ -11,43 +8,22 @@ from pfb_imaging.utils.modelspec import eval_coeffs_to_cube, eval_coeffs_to_slic
 pmp = pytest.mark.parametrize
 
 
-def test_model2comps(ms_name):
+def test_model2comps(ms_meta, image_geometry):
     """
     TODO - This only tests the separate function implementations
     not the workers. Tested by spotless workflow?
     """
     np.random.seed(420)
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
+    utime = ms_meta.utime
+    freq = ms_meta.freq
+    freq0 = ms_meta.freq0
+    nchan = ms_meta.nchan
 
-    utime = np.unique(xds.TIME.values)
-    freq = spw.CHAN_FREQ.values.squeeze()
-    freq0 = np.mean(freq)
-
-    nchan = freq.size
-
-    uvw = xds.UVW.values
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
-
-    # image size
-    cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
-
-    srf = 2.0
-    cell_rad = cell_n / srf
-    cell_deg = cell_rad * 180 / np.pi
-    cell_size = cell_deg * 3600
-    print("Cell size set to %5.5e arcseconds" % cell_size)
-
-    # the test will fail in intrinsic if sources fall near beam sidelobes
-    fov = 1.0
-    npix = good_size(int(fov / cell_deg))
-    while npix % 2:
-        npix += 1
-        npix = good_size(npix)
-
-    nx = npix
-    ny = npix
-
+    cell_deg = image_geometry.cell_deg
+    nx = image_geometry.nx
+    ny = image_geometry.ny
+    npix = nx
+    print("Cell size set to %5.5e arcseconds" % image_geometry.cell_size)
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
     # model

@@ -6,11 +6,8 @@ import dask.array as da
 import numpy as np
 import pytest
 from africanus.calibration.utils import corrupt_vis
-from africanus.constants import c as lightspeed
-from africanus.gps.utils import abs_diff
-from daskms import xds_from_ms, xds_from_table, xds_to_table
+from daskms import xds_to_table
 from daskms.experimental.zarr import xds_to_zarr
-from ducc0.fft import good_size
 from ducc0.wgridder import dirty2vis
 from numpy.testing import assert_allclose
 from xarray import Dataset
@@ -19,14 +16,14 @@ from pfb_imaging.core.grid import grid as grid_core
 from pfb_imaging.core.init import init as init_core
 from pfb_imaging.core.kclean import kclean as kclean_core
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.misc import chunkify_rows, kron_matvec
+from pfb_imaging.utils.misc import kron_matvec
 from pfb_imaging.utils.naming import xds_from_url
 
 pmp = pytest.mark.parametrize
 
 
 @pmp("do_gains", (True, False))
-def test_kclean(do_gains, ms_name):
+def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_chunks):
     """
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -36,45 +33,26 @@ def test_kclean(do_gains, ms_name):
     np.random.seed(420)
 
     test_dir = Path(ms_name).resolve().parent
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
+    xds = ms_meta.xds
+    utime = ms_meta.utime
+    freq = ms_meta.freq
+    freq0 = ms_meta.freq0
+    ntime = ms_meta.ntime
+    nchan = ms_meta.nchan
+    nant = ms_meta.nant
+    ncorr = ms_meta.ncorr
+    uvw = ms_meta.uvw
+    nrow = ms_meta.nrow
 
-    utime = np.unique(xds.TIME.values)
-    freq = spw.CHAN_FREQ.values.squeeze()
-    freq0 = np.mean(freq)
-
-    ntime = utime.size
-    nchan = freq.size
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
-
-    ncorr = xds.corr.size
-
-    uvw = xds.UVW.values
-    nrow = uvw.shape[0]
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
-
-    # image size
-    cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
-
-    srf = 2.0
-    cell_rad = cell_n / srf
-    cell_deg = cell_rad * 180 / np.pi
-    cell_size = cell_deg * 3600
-    print("Cell size set to %5.5e arcseconds" % cell_size)
-
-    # the test will fail in intrinsic if sources fall near beam sidelobes
-    fov = 1.0
-    npix = good_size(int(fov / cell_deg))
-    while npix % 2:
-        npix += 1
-        npix = good_size(npix)
-
-    nx = npix
-    ny = npix
-
+    fov = image_geometry.fov
+    cell_rad = image_geometry.cell_rad
+    nx = image_geometry.nx
+    ny = image_geometry.ny
+    print("Cell size set to %5.5e arcseconds" % image_geometry.cell_size)
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
     # model
+    npix = nx
     model = np.zeros((nchan, nx, ny), dtype=np.float64)
     nsource = 10
     x_index = np.random.randint(0, npix, nsource)
@@ -105,18 +83,8 @@ def test_kclean(do_gains, ms_name):
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
     if do_gains:
-        t = (utime - utime.min()) / (utime.max() - utime.min())
-        nu = 2.5 * (freq / freq0 - 1.0)
-
-        tt = abs_diff(t, t)
-        lt = 0.25
-        cov_t = 0.1 * np.exp(-(tt**2) / (2 * lt**2))
-        chol_t = np.linalg.cholesky(cov_t + 1e-10 * np.eye(ntime))
-        vv = abs_diff(nu, nu)
-        lv = 0.1
-        cov_nu = 0.1 * np.exp(-(vv**2) / (2 * lv**2))
-        chol_nu = np.linalg.cholesky(cov_nu + 1e-10 * np.eye(nchan))
-        chol_tnu = (chol_t, chol_nu)
+        chol_tnu = (gain_cholesky.chol_t, gain_cholesky.chol_nu)
+        nu = gain_cholesky.nu
 
         jones = np.zeros((ntime, nchan, nant, 1, 2), dtype=np.complex128)
         for p in range(nant):
@@ -129,13 +97,13 @@ def test_kclean(do_gains, ms_name):
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
-        time = xds.TIME.values
-        row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, ntime)
-        ant1 = xds.ANTENNA1.values
-        ant2 = xds.ANTENNA2.values
+        ant1 = ms_meta.ant1
+        ant2 = ms_meta.ant2
 
         gains = np.swapaxes(jones, 1, 2).copy()
-        vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, gains, model_vis).reshape(nrow, nchan, ncorr)
+        vis = corrupt_vis(time_chunks.tbin_idx, time_chunks.tbin_counts, ant1, ant2, gains, model_vis).reshape(
+            nrow, nchan, ncorr
+        )
 
         xds["DATA"] = (("row", "chan", "corr"), da.from_array(vis, chunks=(-1, -1, -1)))
         dask.compute(xds_to_table(xds, ms_name, columns="DATA"))
