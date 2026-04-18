@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:fixtures"
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:suniform"
