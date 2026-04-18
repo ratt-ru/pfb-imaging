@@ -14,7 +14,7 @@ from scipy.constants import c as lightspeed
 from pfb_imaging.utils.beam import eval_beam
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.naming import xds_from_list
-from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts
+from pfb_imaging.utils.weighting import _compute_counts, box_sum_counts, counts_to_weights, filter_extreme_counts
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -400,6 +400,7 @@ def image_data_products(
     do_beam=False,
     min_padding=1.7,
     filter_counts_level=5.0,
+    npix_super=0,
 ):
     """
     Function to compute image space data products in one go
@@ -558,6 +559,7 @@ def image_data_products(
             vsign=1.0 if flip_v else -1.0,
         )
         counts = filter_extreme_counts(counts, level=filter_counts_level)
+        counts = box_sum_counts(counts, npix_super)
         wgt = counts_to_weights(
             counts,
             uvw,

@@ -189,6 +189,16 @@ def grid(
             rich_help_panel="Weighting",
         ),
     ] = 5.0,
+    npix_super: Annotated[
+        int,
+        typer.Option(
+            help="Half-size in pixels of the box used for super-uniform weighting. "
+            "Each visibility is normalised by the sum of counts over a (2*npix_super+1)^2 box around its uv-cell. "
+            "0 (default) recovers standard uniform weighting. "
+            "Combines with robustness to give super-robust weighting.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 0,
     target: Annotated[
         str | None,
         typer.Option(
@@ -346,6 +356,7 @@ def grid(
                 nx=nx,
                 ny=ny,
                 filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
                 target=target,
                 l2_reweight_dof=l2_reweight_dof,
                 epsilon=epsilon,
@@ -396,6 +407,7 @@ def grid(
             nx=nx,
             ny=ny,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
             target=target,
             l2_reweight_dof=l2_reweight_dof,
             epsilon=epsilon,

@@ -42,6 +42,7 @@ def grid(
     nx: int | None = None,
     ny: int | None = None,
     filter_counts_level: float = 5.0,
+    npix_super: int = 0,
     target: str | None = None,
     l2_reweight_dof: int = None,
     epsilon: float = 1e-7,
@@ -414,6 +415,7 @@ def grid(
             do_noise=noise,
             do_beam=beam,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
         )
         tasks.append(task)
 

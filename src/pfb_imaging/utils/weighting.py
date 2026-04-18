@@ -224,6 +224,35 @@ def filter_extreme_counts(counts, level=10.0):
     return counts
 
 
+def box_sum_counts(counts, npix_super):
+    """Box-sum the counts grid for super-uniform weighting.
+
+    Replaces each cell of ``counts`` with the sum over a
+    ``(2*npix_super+1)^2`` window centred on that cell, with zero-padding at
+    image edges. Returns ``counts`` unchanged when ``npix_super`` is ``None``
+    or non-positive, which recovers standard uniform weighting.
+
+    Args:
+        counts: Array of shape ``(ncorr, nx, ny)``.
+        npix_super: Half-size of the box in pixels. ``0`` => standard uniform.
+
+    Returns:
+        Array of shape ``(ncorr, nx, ny)`` with box-summed counts.
+    """
+    if npix_super is None or npix_super <= 0:
+        return counts
+    from scipy.ndimage import uniform_filter
+
+    assert np.issubdtype(counts.dtype, np.floating), (
+        f"box_sum_counts requires a floating-point counts array; got dtype={counts.dtype}"
+    )
+    size = 2 * npix_super + 1
+    out = np.empty_like(counts)
+    for c in range(counts.shape[0]):
+        out[c] = uniform_filter(counts[c], size=size, mode="constant", cval=0.0) * (size * size)
+    return out
+
+
 @njit(nogil=True, cache=False, parallel=False)
 def weight_data(
     data,

@@ -335,6 +335,16 @@ def hci(
             rich_help_panel="Weighting",
         ),
     ] = 10.0,
+    npix_super: Annotated[
+        int,
+        typer.Option(
+            help="Half-size in pixels of the box used for super-uniform weighting. "
+            "Each visibility is normalised by the sum of counts over a (2*npix_super+1)^2 box around its uv-cell. "
+            "0 (default) recovers standard uniform weighting. "
+            "Combines with robustness to give super-robust weighting.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 0,
     min_padding: Annotated[
         float,
         typer.Option(
@@ -526,6 +536,7 @@ def hci(
                 check_ants=check_ants,
                 inject_transients=inject_transients,
                 filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
                 min_padding=min_padding,
                 phase_dir=phase_dir,
                 epsilon=epsilon,
@@ -595,6 +606,7 @@ def hci(
             check_ants=check_ants,
             inject_transients=inject_transients,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
             min_padding=min_padding,
             phase_dir=phase_dir,
             epsilon=epsilon,

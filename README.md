@@ -148,6 +148,30 @@ By default a single worker is used for the smallest memory footprint and easy de
 Set `--nworkers` larger than one to use multiple Dask workers for parallel chunk processing.
 The product of `--nworkers` and `--nthreads` should not exceed available resources.
 
+## Weighting
+
+Imaging weights control the tradeoff between point-source sensitivity and angular resolution.
+`pfb grid` and `pfb hci` expose the same set of options under the **Weighting** help panel:
+
+- `--robustness` -- Briggs robustness factor.
+  Leaving this unset (the default) applies natural weighting, which simply uses the visibility weights from the measurement set and maximises point-source sensitivity.
+  Setting an explicit value switches to Briggs weighting: `-2` is pure uniform (best resolution, lowest sidelobes, highest thermal noise) and larger values (e.g. `0.5`, `2`) taper back toward natural.
+  Briggs weights are computed by binning visibilities onto a padded uv grid and then dividing by a per-cell factor derived from the robustness.
+- `--npix-super` -- Super-uniform half-size in pixels.
+  When non-zero and `--robustness` is set, each visibility is normalised by the sum of counts in a `(2*npix_super+1)^2` box around its uv-cell instead of a single cell.
+  `0` (default) gives standard uniform/Briggs weighting; `1` uses a `3x3` box, which smooths sparse uv-coverage and reduces outer sidelobes.
+  Combined with a non-default `--robustness`, this yields super-robust weighting.
+- `--filter-counts-level` -- Floor cells with extremely low counts at `median / level` before normalising.
+  This prevents a handful of nearly empty uv-cells from being up-weighted far above the rest.
+- `--l2-reweight-dof` -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
+  Requires a reference model (via `--transfer-model-from` or cached from a previous iteration).
+  Small values reweight aggressively and should only be used once the model is reasonably complete.
+
+Weights are computed by `pfb grid` and written to the `.dds` dataset; the dirty image, the PSF, and every subsequent forward/backward pass in `pfb kclean`, `pfb sara`, and `pfb hci` all grid with that same stored set.
+
+**Note:** re-running `pfb grid` is the supported way to change the weighting scheme after `pfb init` -- the weighting options above only take effect at this step, and none of them require redoing the MS ingestion.
+To keep multiple weighting choices side by side, pass a distinct `--suffix` to each `pfb grid` run (e.g. `--suffix robust0 --robustness 0` and `--suffix uniform --robustness -2`); the downstream deconvolution commands then pick a dataset by matching suffix.
+
 ## Package structure
 
 The project follows the hip-cargo src layout:
@@ -251,6 +275,18 @@ uv run ruff check . --fix
 uv run pytest -v
 
 ```
+
+### Numba cache and the `PFB_FRESH_NUMBA_CACHE` env var
+
+The test suite pins Numba's on-disk cache to `<repo>/.numba_cache/` (via `NUMBA_CACHE_DIR` in `tests/conftest.py`) so compiled kernels survive across runs. Numba keys its cache by per-function source hash, which is normally enough — **except** for functions decorated with `inline="always"`. Those get compiled into their callers, but Numba does not track the cross-function dependency. If you edit an inlined helper while its callers' source stays identical, the cached machine code for the callers goes stale and can segfault on load.
+
+When iterating on any `inline="always"` function (see `src/pfb_imaging/{wavelets,utils,operators}/`), force a clean rebuild:
+
+```bash
+PFB_FRESH_NUMBA_CACHE=1 uv run pytest -v
+```
+
+A single run with the flag set is enough — subsequent runs can drop it and reuse the fresh cache.
 
 ### Commit Message Convention
 
