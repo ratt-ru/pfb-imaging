@@ -4,9 +4,7 @@ import dask
 import dask.array as da
 import numpy as np
 import pytest
-from africanus.constants import c as lightspeed
-from daskms import xds_from_ms, xds_from_table, xds_to_table
-from ducc0.fft import good_size
+from daskms import xds_to_table
 from ducc0.wgridder.experimental import dirty2vis
 from numpy.testing import assert_allclose
 
@@ -21,7 +19,7 @@ from pfb_imaging.utils.naming import xds_from_url
 pmp = pytest.mark.parametrize
 
 
-def test_sara(ms_name):
+def test_sara(ms_name, ms_meta, image_geometry):
     """
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
@@ -32,41 +30,23 @@ def test_sara(ms_name):
     np.random.seed(420)
 
     test_dir = Path(ms_name).resolve().parent
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
+    xds = ms_meta.xds
+    freq = ms_meta.freq
+    freq0 = ms_meta.freq0
+    nchan = ms_meta.nchan
+    ncorr = ms_meta.ncorr
+    uvw = ms_meta.uvw
+    nrow = ms_meta.nrow
 
-    freq = spw.CHAN_FREQ.values.squeeze()
-    freq0 = np.mean(freq)
-
-    nchan = freq.size
-    ncorr = xds.corr.size
-
-    uvw = xds.UVW.values
-    nrow = uvw.shape[0]
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
-
-    # image size
-    cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
-
-    srf = 2.0
-    cell_rad = cell_n / srf
-    cell_deg = cell_rad * 180 / np.pi
-    cell_size = cell_deg * 3600
-    print("Cell size set to %5.5e arcseconds" % cell_size)
-
-    # the test will fail in intrinsic if sources fall near beam sidelobes
-    fov = 1.0
-    npix = good_size(int(fov / cell_deg))
-    while npix % 2:
-        npix += 1
-        npix = good_size(npix)
-
-    nx = npix
-    ny = npix
-
+    fov = image_geometry.fov
+    cell_rad = image_geometry.cell_rad
+    nx = image_geometry.nx
+    ny = image_geometry.ny
+    print("Cell size set to %5.5e arcseconds" % image_geometry.cell_size)
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
     # model
+    npix = nx
     model = np.zeros((nchan, nx, ny), dtype=np.float64)
     nsource = 25
     border = np.maximum(int(0.15 * nx), int(0.15 * ny))

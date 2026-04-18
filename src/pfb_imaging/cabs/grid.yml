@@ -154,6 +154,16 @@ cabs:
         default: 5.0
         metadata:
           rich_help_panel: Weighting
+      npix-super:
+        info:
+          Half-size in pixels of the box used for super-uniform weighting.
+          Each visibility is normalised by the sum of counts over a (2*npix_super+1)^2 box around its uv-cell.
+          0 (default) recovers standard uniform weighting.
+          Combines with robustness to give super-robust weighting.
+        dtype: int
+        default: 0
+        metadata:
+          rich_help_panel: Weighting
       target:
         info:
           Predefined celestial objects known to astropy.
@@ -209,12 +219,6 @@ cabs:
         dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
-      log-directory:
-        info:
-          Directory to write logs and performance reports to.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
@@ -222,14 +226,6 @@ cabs:
         default: I
         metadata:
           rich_help_panel: Data Selection
-      fits-output-folder:
-        info:
-          Optional path to write fits files to.
-          Set to output-filename if not provided.
-          The same naming conventions apply.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Naming
       fits-mfs:
         info:
           Output MFS fits files
@@ -251,3 +247,23 @@ cabs:
           Output dataset directory.
         implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
         must_exist: false
+      log-directory:
+        dtype: Directory
+        info:
+          Directory to write logs and performance reports to.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      fits-output-folder:
+        dtype: Directory
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output

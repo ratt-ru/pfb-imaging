@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Numba AOT cache (local test runs)
+.numba_cache/
+
 # C extensions
 *.so
 
@@ -70,6 +73,7 @@ docs
 
 # PyBuilder
 target/
+scripts/genfuncs.sh
 
 # Jupyter Notebook
 .ipynb_checkpoints

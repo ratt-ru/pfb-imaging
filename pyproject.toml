@@ -1,6 +1,6 @@
 [project]
 name = "pfb-imaging"
-version = "0.0.9rc1"
+version = "0.0.9"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo == 0.2.0rc2",
+    "hip-cargo >= 0.2.0",
 ]
 
 [project.urls]

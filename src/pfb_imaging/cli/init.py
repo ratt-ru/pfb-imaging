@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -18,6 +18,14 @@ URI = NewType("URI", Path)
     info="Output dataset directory.",
     implicit="{current.output-filename}_{current.product}.xds",
     must_exist=False,
+)
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
 )
 def init(
     ms: Annotated[
@@ -185,14 +193,6 @@ def init(
             rich_help_panel="Control",
         ),
     ] = False,
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -225,19 +225,37 @@ def init(
             rich_help_panel="Weighting",
         ),
     ] = "l2",
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
@@ -271,11 +289,11 @@ def init(
                 chan_average=chan_average,
                 progressbar=progressbar,
                 check_ants=check_ants,
-                log_directory=log_directory,
                 product=product,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
+                log_directory=log_directory,
             )
             return
         except ImportError:
@@ -314,11 +332,11 @@ def init(
             chan_average=chan_average,
             progressbar=progressbar,
             check_ants=check_ants,
-            log_directory=log_directory,
             product=product,
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,
+            log_directory=log_directory,
         ),
         image=image,
         backend=backend,

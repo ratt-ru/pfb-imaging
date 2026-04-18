@@ -23,12 +23,6 @@ cabs:
         default: main
         metadata:
           rich_help_panel: Naming
-      log-directory:
-        info:
-          Directory to write logs and performance reports to.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Output
       product:
         info:
           String specifying which Stokes products to produce.
@@ -36,14 +30,6 @@ cabs:
         default: I
         metadata:
           rich_help_panel: Data Selection
-      fits-output-folder:
-        info:
-          Optional path to write fits files to.
-          Set to output-filename if not provided.
-          The same naming conventions apply.
-        dtype: Optional[Directory]
-        metadata:
-          rich_help_panel: Output
       fits-mfs:
         info:
           Output MFS fits files
@@ -375,3 +361,23 @@ cabs:
           Output component model.
         implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
         must_exist: false
+      log-directory:
+        dtype: Directory
+        info:
+          Directory to write logs and performance reports to.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      fits-output-folder:
+        dtype: Directory
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output

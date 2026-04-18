@@ -8,7 +8,7 @@ pmp = pytest.mark.parametrize
 
 @pmp("srf", [1.0, 2.0, 3.2])
 @pmp("fov", [0.1, 0.33, 1.0])
-def test_counts(ms_name, srf, fov):
+def test_counts(ms_meta, srf, fov):
     """
     Compares _compute_counts to memory greedy numpy implementation
     """
@@ -17,18 +17,13 @@ def test_counts(ms_name, srf, fov):
 
     np.random.seed(420)
     from africanus.constants import c as lightspeed
-    from daskms import xds_from_ms, xds_from_table
 
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    nchan = freq.size
-    ncorr = xds.corr.size
-
-    uvw = xds.UVW.values
-    nrow = uvw.shape[0]
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
+    freq = ms_meta.freq
+    nchan = ms_meta.nchan
+    ncorr = ms_meta.ncorr
+    uvw = ms_meta.uvw
+    nrow = ms_meta.nrow
+    max_blength = ms_meta.max_blength
 
     # image size
     cell_n = 1.0 / (2 * max_blength * freq.max() / lightspeed)
@@ -102,3 +97,55 @@ def test_uv2xy(nx, cellx):
     ug = (utmp + umax) / ucell
 
     assert ((np.floor(ug) - x) == 0).all()
+
+
+def test_box_sum_counts_identity():
+    """npix_super <= 0 returns counts unchanged (super-uniform disabled)."""
+    import numpy as np
+
+    from pfb_imaging.utils.weighting import box_sum_counts
+
+    rng = np.random.default_rng(0)
+    counts = rng.random((2, 16, 16))
+
+    out0 = box_sum_counts(counts, 0)
+    out_neg = box_sum_counts(counts, -3)
+    out_none = box_sum_counts(counts, None)
+
+    # Identity function for all "disabled" inputs
+    assert out0 is counts
+    assert out_neg is counts
+    assert out_none is counts
+
+
+def test_box_sum_counts_3x3():
+    """npix_super=1 replaces each cell with the sum of its 3x3 neighbourhood
+    with zero-padding at image edges.
+    """
+    import numpy as np
+
+    from pfb_imaging.utils.weighting import box_sum_counts
+
+    counts = np.array(
+        [
+            [
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [6.0, 7.0, 8.0, 9.0, 10.0],
+                [11.0, 12.0, 13.0, 14.0, 15.0],
+                [16.0, 17.0, 18.0, 19.0, 20.0],
+                [21.0, 22.0, 23.0, 24.0, 25.0],
+            ]
+        ]
+    )
+
+    out = box_sum_counts(counts, 1)
+
+    # Interior cell (2,2): sum of rows 1..3 and cols 1..3 = 7+8+9+12+13+14+17+18+19 = 117
+    assert out[0, 2, 2] == pytest.approx(117.0)
+    # Corner cell (0,0): sum of rows 0..1 and cols 0..1 = 1+2+6+7 = 16 (zero-padded outside)
+    assert out[0, 0, 0] == pytest.approx(16.0)
+    # Edge cell (0,2): sum of rows 0..1 and cols 1..3 = 2+3+4+7+8+9 = 33
+    assert out[0, 0, 2] == pytest.approx(33.0)
+    # Shape preserved and dtype preserved
+    assert out.shape == counts.shape
+    assert out.dtype == counts.dtype

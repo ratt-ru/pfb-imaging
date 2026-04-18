@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListStr, parse_list_str, stimela_cab, stimela_output
+from hip_cargo import ListStr, StimelaMeta, parse_list_str, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -25,6 +25,24 @@ Directory = NewType("Directory", Path)
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
     must_exist=False,
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Set to output-filename if not provided. "
+    "The same naming conventions apply.",
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
 def deconv(
     output_filename: Annotated[
         str,
@@ -43,14 +61,6 @@ def deconv(
             rich_help_panel="Naming",
         ),
     ] = "main",
-    log_directory: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
@@ -58,16 +68,6 @@ def deconv(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
-    fits_output_folder: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=Path,
-            help="Optional path to write fits files to. "
-            "Set to output-filename if not provided. "
-            "The same naming conventions apply.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     fits_mfs: Annotated[
         bool,
         typer.Option(
@@ -374,19 +374,53 @@ def deconv(
             rich_help_panel="ConjugateGradient",
         ),
     ] = 10,
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=Path,
+            help="Optional path to write fits files to. "
+            "Set to output-filename if not provided. "
+            "The same naming conventions apply.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
@@ -401,9 +435,7 @@ def deconv(
             deconv_core(
                 output_filename,
                 suffix=suffix,
-                log_directory=log_directory,
                 product=product,
-                fits_output_folder=fits_output_folder,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
                 minor_cycle=minor_cycle,
@@ -446,6 +478,8 @@ def deconv(
                 cg_maxit=cg_maxit,
                 cg_verbose=cg_verbose,
                 cg_report_freq=cg_report_freq,
+                log_directory=log_directory,
+                fits_output_folder=fits_output_folder,
             )
             return
         except ImportError:
@@ -465,9 +499,7 @@ def deconv(
         dict(
             output_filename=output_filename,
             suffix=suffix,
-            log_directory=log_directory,
             product=product,
-            fits_output_folder=fits_output_folder,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
             minor_cycle=minor_cycle,
@@ -510,6 +542,8 @@ def deconv(
             cg_maxit=cg_maxit,
             cg_verbose=cg_verbose,
             cg_report_freq=cg_report_freq,
+            log_directory=log_directory,
+            fits_output_folder=fits_output_folder,
         ),
         image=image,
         backend=backend,

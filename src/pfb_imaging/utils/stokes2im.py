@@ -23,7 +23,13 @@ from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
-from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
+from pfb_imaging.utils.weighting import (
+    _compute_counts,
+    box_sum_counts,
+    counts_to_weights,
+    filter_extreme_counts,
+    weight_data,
+)
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -65,6 +71,7 @@ def batch_stokes_image(
     robustness=None,
     min_padding=2.0,
     filter_counts_level=10.0,
+    npix_super=0,
     psf_relative_size=None,
     inject_transients=None,
     epsilon=1e-7,
@@ -137,6 +144,7 @@ def batch_stokes_image(
             robustness=robustness,
             min_padding=min_padding,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
             psf_relative_size=psf_relative_size,
             inject_transients=inject_transients,
             epsilon=epsilon,
@@ -198,6 +206,7 @@ def stokes_image(
     robustness=None,
     min_padding=2.0,
     filter_counts_level=10.0,
+    npix_super=0,
     psf_relative_size=None,
     inject_transients=None,
     epsilon=1e-7,
@@ -613,6 +622,7 @@ def stokes_image(
         )
 
         counts = filter_extreme_counts(counts, level=filter_counts_level)
+        counts = box_sum_counts(counts, npix_super)
 
         weight = counts_to_weights(
             counts,
