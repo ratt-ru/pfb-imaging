@@ -361,12 +361,14 @@ def construct_mappings(
                 continue
             freq = freq[idx]
             nchan = freq.size
+            # Use a local copy so the "unset" sentinel is re-evaluated
+            # for every dataset. Previously cpi was mutated inside the
+            # loop, which made -1 mean "all channels" only for the first
+            # dataset and silently inherited that chunk size for the rest.
             if cpi in [-1, 0, None]:
                 cpit = nchan
-                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
-                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
             tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]["start_indices"] = tmp
