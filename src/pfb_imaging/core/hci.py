@@ -832,8 +832,8 @@ def make_dummy_dataset(
             z = np.mean(np.sin(out_dec))
             ra0 = np.arctan2(y, x) % (2.0 * np.pi)
             dec0 = np.arctan2(z, np.hypot(x, y))
-        out_ra_deg = np.rad2deg(ra0)
-        out_dec_deg = np.rad2deg(dec0)
+        out_ra_deg = np.array([np.rad2deg(ra0)])
+        out_dec_deg = np.array([np.rad2deg(dec0)])
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
