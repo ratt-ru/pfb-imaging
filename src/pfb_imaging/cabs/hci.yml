@@ -365,11 +365,12 @@ cabs:
         dtype: Optional[float]
         metadata:
           rich_help_panel: Performance
-      cube-to-fits:
+      fits-vars:
         info:
-          Whether to convert the output cube to FITS format.
-        dtype: bool
-        default: false
+          Write these variables to fits.
+          Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'.
+          Variables are written per band.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Output
       wgt-mode:

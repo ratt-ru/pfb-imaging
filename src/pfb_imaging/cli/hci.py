@@ -2,7 +2,15 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import (
+    ListInt,
+    ListStr,
+    StimelaMeta,
+    parse_list_int,
+    parse_list_str,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -428,13 +436,16 @@ def hci(
             rich_help_panel="Performance",
         ),
     ] = None,
-    cube_to_fits: Annotated[
-        bool,
+    fits_vars: Annotated[
+        ListStr | None,
         typer.Option(
-            help="Whether to convert the output cube to FITS format.",
+            parser=parse_list_str,
+            help="Write these variables to fits. "
+            "Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'. "
+            "Variables are written per band.",
             rich_help_panel="Output",
         ),
-    ] = False,
+    ] = None,
     wgt_mode: Annotated[
         Literal["l2", "minvar"],
         typer.Option(
@@ -558,7 +569,7 @@ def hci(
                 cg_tol=cg_tol,
                 cg_maxit=cg_maxit,
                 object_store_memory=object_store_memory,
-                cube_to_fits=cube_to_fits,
+                fits_vars=fits_vars,
                 wgt_mode=wgt_mode,
                 obs_label=obs_label,
                 flag_excess_rms=flag_excess_rms,
@@ -629,7 +640,7 @@ def hci(
             cg_tol=cg_tol,
             cg_maxit=cg_maxit,
             object_store_memory=object_store_memory,
-            cube_to_fits=cube_to_fits,
+            fits_vars=fits_vars,
             wgt_mode=wgt_mode,
             obs_label=obs_label,
             flag_excess_rms=flag_excess_rms,

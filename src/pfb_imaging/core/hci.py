@@ -88,7 +88,7 @@ def hci(
     cg_tol: float = 1e-3,
     cg_maxit: int = 150,
     object_store_memory: float | None = None,
-    cube_to_fits: bool = False,
+    fits_vars: list[str] = None,
     wgt_mode: str = "l2",
     obs_label: str | None = None,
     flag_excess_rms: float = 1.5,
@@ -374,7 +374,6 @@ def hci(
         product,
         beam_model,
         psf_out,
-        psf_relative_size,
         utimes,
         freqs,
         radecs,
@@ -612,52 +611,54 @@ def hci(
         ds.to_zarr(fds_store.url, mode="r+")
     log.info("Reduction complete")
 
-    if cube_to_fits:
-        if "://" in str(output_dataset) and not str(output_dataset).startswith("file://"):
-            log.warning("cube_to_fits is only supported for local filesystems, skipping FITS export")
-        else:
-            local_path = str(output_dataset).removeprefix("file://").removesuffix(".zarr")
-            # reopen with chunking aligned to zarr layout for efficient streaming
-            cds = xr.open_zarr(fds_store.url, chunks={"TIME": images_per_chunk})
-            cube = cds.cube.data  # (STOKES, FREQ, TIME, Y, X)
-            cube_mean = cds.cube_mean.data  # (STOKES, FREQ, Y, X)
-            n_stokes, n_freqs, n_time, ny_cube, nx_cube = cube.shape
-            stokes_params = list(cds.coords["STOKES"].values)
+    if fits_vars is not None:
+        # reopen with chunking aligned to zarr layout for efficient streaming
+        cds = xr.open_zarr(fds_store.url, chunks={"TIME": images_per_chunk})
+        local_path = str(output_dataset).removeprefix("file://").removesuffix(".zarr")
+        stokes_params = list(cds.coords["STOKES"].values)
+        # reconstruct the base header from stored attrs
+        base_hdr = dict(cds.attrs["fits_header"])
+        for var in fits_vars:
+            match var:
+                case "cube" | "psf" | "beam_weight" | "weight_grid":
+                    if cds.get(var, None) is None:
+                        log.warning(f"{var} not found in dataset, skipping FITS export")
+                        continue
+                    cube = cds.get(var).data  # (STOKES, FREQ, TIME, Y, X)
+                    n_stokes, n_freqs, n_time, ny, nx = cube.shape
 
-            # reconstruct the base header from stored attrs
-            base_hdr = dict(cds.attrs["fits_header"])
+                    # --- per-band time cubes via StreamingHDU ---
+                    # target shape per band: (STOKES, TIME, Y, X)
+                    # FITS axes: NAXIS1=X, NAXIS2=Y, NAXIS3=TIME, NAXIS4=STOKES
+                    # drop FITS axis 4 (FREQ) from the 5-axis header
+                    band_shape = (n_stokes, n_time, ny, nx)
+                    for f in range(n_freqs):
+                        band_hdr = _make_fits_header(base_hdr, band_shape, stokes_params, drop_axes={4})
 
-            # --- per-band time cubes via StreamingHDU ---
-            # target shape per band: (STOKES, TIME, Y, X)
-            # FITS axes: NAXIS1=X, NAXIS2=Y, NAXIS3=TIME, NAXIS4=STOKES
-            # drop FITS axis 4 (FREQ) from the 5-axis header
-            band_shape = (n_stokes, n_time, ny_cube, nx_cube)
-            for f in range(n_freqs):
-                band_hdr = _make_fits_header(base_hdr, band_shape, stokes_params, drop_axes={4})
+                        filename = f"{local_path}.{var}.band{f:04d}.fits"
+                        if Path(filename).exists():
+                            Path(filename).unlink()
+                        log.info(f"Streaming {var} band {f} to {filename}")
 
-                filename = f"{local_path}.band{f:04d}.fits"
-                if Path(filename).exists():
-                    Path(filename).unlink()
-                log.info(f"Streaming cube band {f} to {filename}")
+                        shdu = fits.StreamingHDU(filename, band_hdr)
+                        for s in range(n_stokes):
+                            for t in range(0, n_time, images_per_chunk):
+                                tend = min(t + images_per_chunk, n_time)
+                                chunk = cube[s, f, t:tend, :, :].compute()
+                                shdu.write(chunk)
+                        shdu.close()
+                case "cube_mean":
+                    # --- mean image (small enough to write at once) ---
+                    # target shape: (STOKES, FREQ, Y, X)
+                    # drop FITS axis 3 (TIME/INTEGRATION) from the 5-axis header
+                    cube_mean = cds.cube_mean.data  # (STOKES, FREQ, Y, X)
+                    mean_hdr = _make_fits_header(base_hdr, cube_mean.shape, stokes_params, drop_axes={3})
 
-                shdu = fits.StreamingHDU(filename, band_hdr)
-                for s in range(n_stokes):
-                    for t in range(0, n_time, images_per_chunk):
-                        tend = min(t + images_per_chunk, n_time)
-                        chunk = cube[s, f, t:tend, :, :].compute()
-                        shdu.write(chunk)
-                shdu.close()
-
-            # --- mean image (small enough to write at once) ---
-            # target shape: (STOKES, FREQ, Y, X)
-            # drop FITS axis 3 (TIME/INTEGRATION) from the 5-axis header
-            mean_hdr = _make_fits_header(base_hdr, cube_mean.shape, stokes_params, drop_axes={3})
-
-            mean_filename = f"{local_path}.cube_mean.fits"
-            log.info(f"Writing mean image to {mean_filename}")
-            mean_data = cube_mean.compute()
-            hdu = fits.PrimaryHDU(mean_data, mean_hdr)
-            hdu.writeto(mean_filename, overwrite=True)
+                    mean_filename = f"{local_path}.cube_mean.fits"
+                    log.info(f"Writing mean image to {mean_filename}")
+                    mean_data = cube_mean.compute()
+                    hdu = fits.PrimaryHDU(mean_data, mean_hdr)
+                    hdu.writeto(mean_filename, overwrite=True)
 
             log.info("FITS export complete")
 
@@ -756,7 +757,6 @@ def make_dummy_dataset(
     product,
     beam_model,
     psf_out,
-    psf_relative_size,
     utimes,
     freqs,
     radecs,

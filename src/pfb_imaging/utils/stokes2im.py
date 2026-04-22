@@ -747,7 +747,7 @@ def stokes_image(
         coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
         coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
         wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))
-        data_vars["wgtgrid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
+        data_vars["weight_grid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
 
     data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
 
