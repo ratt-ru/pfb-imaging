@@ -5,13 +5,12 @@ description = "Radio interferometric imaging suite based on a preconditioned for
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -32,7 +31,8 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 full = [
     "katbeam>=0.1",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
-    "dask-ms[s3,xarray,zarr]>=0.2.23",
+    "dask-ms[s3,xarray,zarr]>=0.2.30",
+    "distributed>=2026.3.0",  # still need this for degrid command
     "reproject",
     "ray[default]>=2.54.0",
     "scikit-image>=0.24.0",
@@ -47,10 +47,10 @@ full = [
     "regions>=0.9",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed<2024.11.0",
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
+    "meerkat-beams[full] @ git+https://github.com/landmanbester/meerkat-beams.git@dev001",
 ]
 
 [project.scripts]

@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
     inputs:
       ms:
         info:
@@ -143,6 +143,16 @@ cabs:
         default: '-1'
         metadata:
           rich_help_panel: Imaging
+      channels-per-bin:
+        info:
+          Number of channels per frequency bin for beam correction, deconvolution etc.
+          This effectively upsamples the frequency resolution when doing beam correction and deconvolution.
+          Default of -1 results in one bin per output image.
+          Bins are collapsed via a weighted sum.
+        dtype: int
+        default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision
@@ -154,7 +164,7 @@ cabs:
           rich_help_panel: Imaging
       beam-model:
         info:
-          Path to beam model as an xarray dataset backed by zarr
+          Path to beam model (bds produced by suricat-beams).
         dtype: Optional[URI]
         metadata:
           rich_help_panel: Input
@@ -355,11 +365,12 @@ cabs:
         dtype: Optional[float]
         metadata:
           rich_help_panel: Performance
-      cube-to-fits:
+      fits-vars:
         info:
-          Whether to convert the output cube to FITS format.
-        dtype: bool
-        default: false
+          Write these variables to fits.
+          Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'.
+          Variables are written per band.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Output
       wgt-mode:

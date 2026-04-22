@@ -1,7 +1,6 @@
 import logging
 import pdb
 import sys
-from contextlib import nullcontext
 
 import dask
 import dask.array as da
@@ -10,8 +9,6 @@ import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
 from africanus.constants import c as lightspeed
-from dask.diagnostics import ProgressBar
-from dask.distributed import performance_report
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
@@ -44,16 +41,6 @@ class ForkedPdb(pdb.Pdb):
             pdb.Pdb.interaction(self, *args, **kwargs)
         finally:
             sys.stdin = _stdin
-
-
-def compute_context(scheduler, output_filename, boring=True):
-    if scheduler == "distributed":
-        return performance_report(filename=output_filename + "_dask_report.html")
-    else:
-        if boring:
-            return nullcontext()
-        else:
-            return ProgressBar()
 
 
 def kron_matvec(op, b):
@@ -361,12 +348,14 @@ def construct_mappings(
                 continue
             freq = freq[idx]
             nchan = freq.size
+            # Use a local copy so the "unset" sentinel is re-evaluated
+            # for every dataset. Previously cpi was mutated inside the
+            # loop, which made -1 mean "all channels" only for the first
+            # dataset and silently inherited that chunk size for the rest.
             if cpi in [-1, 0, None]:
                 cpit = nchan
-                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
-                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
             tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]["start_indices"] = tmp
