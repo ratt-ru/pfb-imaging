@@ -364,7 +364,7 @@ def hci(
                     msddid2bid[ms_name][idt] = sgroup
 
     log.info("Creating scaffold for stacked cube")
-    attrs, ntasks, n_timeo, n_freqo = make_dummy_dataset(
+    attrs, ntasks, n_timeo, n_freqo, phase_dir = make_dummy_dataset(
         ms,
         output_dataset,
         fields,
@@ -826,21 +826,32 @@ def make_dummy_dataset(
         out_ra = np.unique(out_ra)
         out_dec = np.unique(out_dec)
         if out_ra.size > 1 or out_dec.size > 1:
-            # just compute the barycenter
+            # compute the barycenter and propagate it as phase_dir so workers rephase to
+            # the same reference; otherwise the scaffold and the images would be centred
+            # on different skies.
             log.info("Using barycenter as phase center since no phase-dir was specified")
             cos_dec = np.cos(out_dec)
             x = np.mean(cos_dec * np.cos(out_ra))
             y = np.mean(cos_dec * np.sin(out_ra))
             z = np.mean(np.sin(out_dec))
-            out_ra = np.array([np.arctan2(y, x) % (2.0 * np.pi)])
-            out_dec = np.array([np.arctan2(z, np.hypot(x, y))])
+            ra0 = np.arctan2(y, x) % (2.0 * np.pi)
+            dec0 = np.arctan2(z, np.hypot(x, y))
+            bary = SkyCoord(ra=ra0 * units.rad, dec=dec0 * units.rad, frame="fk5")
+            phase_dir = (
+                f"{bary.ra.to_string(unit=units.hourangle, sep=':')},{bary.dec.to_string(unit=units.deg, sep=':')}"
+            )
+
+    if phase_dir is None:
+        # single-field / single radec — use the MS phase centre directly
         out_ra_deg = np.rad2deg(out_ra)
         out_dec_deg = np.rad2deg(out_dec)
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
-        out_ra_deg = np.array([coord.ra.value])
-        out_dec_deg = np.array([coord.dec.value])
+        # match the deg->rad->deg path inside stokes_image so the rounded Y/X coords
+        # agree bitwise with what the workers write back.
+        out_ra_deg = np.array([np.rad2deg(np.deg2rad(coord.ra.value))])
+        out_dec_deg = np.array([np.rad2deg(np.deg2rad(coord.dec.value))])
 
     # remove duplicates
     out_times = np.unique(out_times)
@@ -995,4 +1006,4 @@ def make_dummy_dataset(
     # Write scaffold and metadata to disk.
     cds = f"{output_dataset}"
     dummy_ds.to_zarr(cds, mode="w", compute=False)
-    return attrs, ntasks, n_times, n_freqs
+    return attrs, ntasks, n_times, n_freqs, phase_dir
