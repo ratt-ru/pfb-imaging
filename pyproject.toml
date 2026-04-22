@@ -32,6 +32,7 @@ full = [
     "katbeam>=0.1",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr]>=0.2.30",
+    "distributed>=2026.3.0",  # still need this for degrid command
     "reproject",
     "ray[default]>=2.54.0",
     "scikit-image>=0.24.0",

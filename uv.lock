@@ -770,7 +770,7 @@ wheels = [
 
 [[package]]
 name = "dask"
-version = "2024.10.0"
+version = "2026.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -783,9 +783,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "toolz" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/eb/38/10d4e3c5625b118c5a3b3066bb8bd473cc211434a4486c0ea5d93bc575be/dask-2024.10.0.tar.gz", hash = "sha256:dfd3efec5d8d8340fb647d0347637133030cad261b714623cc27de286e9db037", size = 10154629, upload-time = "2024-10-17T09:13:42.277Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/2a/5d8cc1579590af86576dde890254440e478c7174b93a02095ecfc2e6ba38/dask-2026.3.0.tar.gz", hash = "sha256:f7d96c8274e8a900d217c1ff6ea8d1bbf0b4c2c21e74a409644498d925eb8f85", size = 11000710, upload-time = "2026-03-18T07:10:14.945Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/ec/0fa1997dd7070a336063663a1305e6967b7c906bd7907f2435c5ad049b0e/dask-2024.10.0-py3-none-any.whl", hash = "sha256:1ddc27c7967e134b4f8296a488521485a5ac4927cc63e2abfa0b24227b93217f", size = 1259489, upload-time = "2024-10-17T09:13:37.954Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/f3/00bb1e867fba351e2d784170955713bee200c43ea306c59f30bd7e748192/dask-2026.3.0-py3-none-any.whl", hash = "sha256:be614b9242b0b38288060fb2d7696125946469c98a1c30e174883fd199e0428d", size = 1485630, upload-time = "2026-03-18T07:10:12.832Z" },
 ]
 
 [package.optional-dependencies]
@@ -794,23 +794,9 @@ array = [
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 dataframe = [
-    { name = "dask-expr", marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[[package]]
-name = "dask-expr"
-version = "1.1.16"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "dask", marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyarrow", marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/f0/abf573da693ae238abf48a11e50381e20945ab01a0cbdb31413b0894424b/dask_expr-1.1.16.tar.gz", hash = "sha256:9dd26886f270f373380b38dd2d41ce4321b2724e0814ea5043272cebf7f1b6bb", size = 222637, upload-time = "2024-10-17T09:15:35.734Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/a4/3bcbbc7d57d81ffb820b2330d35167e3f4361f1e5691fe38234c50de1bf2/dask_expr-1.1.16-py3-none-any.whl", hash = "sha256:dec098f940eca939700edf93fc0cdb0e820dcd6ba9780b0036fd965ebc7e813c", size = 243219, upload-time = "2024-10-17T09:15:32.448Z" },
 ]
 
 [[package]]
@@ -894,6 +880,32 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/96/8e/709914eb2b5749865801041647dc7f4e6d00b549cfe88b65ca192995f07c/distlib-0.4.0.tar.gz", hash = "sha256:feec40075be03a04501a973d81f633735b4b69f98b05450592310c0f401a4e0d", size = 614605, upload-time = "2025-07-17T16:52:00.465Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl", hash = "sha256:9659f7d87e46584a30b5780e43ac7a2143098441670ff0a49d5f9034c54a6c16", size = 469047, upload-time = "2025-07-17T16:51:58.613Z" },
+]
+
+[[package]]
+name = "distributed"
+version = "2026.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "cloudpickle" },
+    { name = "dask" },
+    { name = "jinja2" },
+    { name = "locket" },
+    { name = "msgpack" },
+    { name = "packaging" },
+    { name = "psutil" },
+    { name = "pyyaml" },
+    { name = "sortedcontainers" },
+    { name = "tblib" },
+    { name = "toolz" },
+    { name = "tornado" },
+    { name = "urllib3" },
+    { name = "zict" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/84/3e98a2d61493d201f253743091cbd4f099f502f957a9a33bb9ce5b8d5416/distributed-2026.3.0.tar.gz", hash = "sha256:4a8fc6102fededfbaae45288501276da2297a054d74eb6589f01b087c7f95c26", size = 2103970, upload-time = "2026-03-18T07:10:23.555Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/77/2ff7aefc09cf1306a81cd7a46af34f80ebefef81a2e8329b94b58ad813ae/distributed-2026.3.0-py3-none-any.whl", hash = "sha256:52518f4b3e6795e87b442e8f57788ba1ddc750c62d0835669c85927280d38f07", size = 1009769, upload-time = "2026-03-18T07:10:21.241Z" },
 ]
 
 [[package]]
@@ -1890,7 +1902,7 @@ full = [
     { name = "wget" },
     { name = "xarray", version = "2024.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "xarray", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "xarray-fits", version = "0.2.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray-fits", version = "0.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "xarray-fits", version = "0.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2594,6 +2606,7 @@ name = "pfb-imaging"
 version = "0.0.9"
 source = { editable = "." }
 dependencies = [
+    { name = "distributed" },
     { name = "hip-cargo" },
 ]
 
@@ -2644,6 +2657,7 @@ requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.30" },
+    { name = "distributed", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = ">=0.2.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
@@ -3851,6 +3865,15 @@ wheels = [
 ]
 
 [[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
+]
+
+[[package]]
 name = "stack-data"
 version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3895,6 +3918,15 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/08/59/8d381a2cfe8d36c4f4ff9f94769ff2809bfc16014d888360b0e24c7e5c6b/tbb-2022.3.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:534c089eca6bcf148408684c156229d5f09c01d323b685b15739f41985b529d7", size = 4178630, upload-time = "2026-01-22T05:30:20.589Z" },
     { url = "https://files.pythonhosted.org/packages/68/ef/d01ec56a854949efc727c8cac8941325a2020f345a786e64ca6ad3a05611/tbb-2022.3.1-py3-none-win_amd64.whl", hash = "sha256:8187e4c50a77c75c51ca9395febddd3a67d88dcb4cc537947d68d244925710f7", size = 422729, upload-time = "2026-01-22T05:30:51.916Z" },
+]
+
+[[package]]
+name = "tblib"
+version = "3.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/8a/14c15ae154895cc131174f858c707790d416c444fc69f93918adfd8c4c0b/tblib-3.2.2.tar.gz", hash = "sha256:e9a652692d91bf4f743d4a15bc174c0b76afc750fe8c7b6d195cc1c1d6d2ccec", size = 35046, upload-time = "2025-11-12T12:21:16.572Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/be/5d2d47b1fb58943194fb59dcf222f7c4e35122ec0ffe8c36e18b5d728f0b/tblib-3.2.2-py3-none-any.whl", hash = "sha256:26bdccf339bcce6a88b2b5432c988b266ebbe63a4e593f6b578b1d2e723d2b76", size = 12893, upload-time = "2025-11-12T12:21:14.407Z" },
 ]
 
 [[package]]
@@ -4254,21 +4286,19 @@ wheels = [
 
 [[package]]
 name = "xarray-fits"
-version = "0.2.5"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
     { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "dask", extra = ["array"], marker = "python_full_version < '3.11'" },
-    { name = "fsspec", version = "2024.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "dask", marker = "python_full_version < '3.11'" },
+    { name = "six", marker = "python_full_version < '3.11'" },
+    { name = "toolz", marker = "python_full_version < '3.11'" },
     { name = "xarray", version = "2024.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3c/85/e713c7193c1fd923a58ffa63e72a33da9e78ad7f46598d35b4c6c4384b83/xarray_fits-0.2.5.tar.gz", hash = "sha256:811ec6ee0b45f2915df1f4ee45381206571783b558f51ced07805b3aed16e73a", size = 6823, upload-time = "2025-05-20T08:30:20.019Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/b9/7c579cb668b72a804822bc71e5d60667a20e96a966619a84c0661ec4b264/xarray_fits-0.2.5-py3-none-any.whl", hash = "sha256:bfd46fabc51bd4200dc4dcdee45d951c55313fdc6d4b418e9e3eae89ea49771a", size = 8793, upload-time = "2025-05-20T08:30:18.889Z" },
-]
+sdist = { url = "https://files.pythonhosted.org/packages/62/ae/89d9b09ddbbb86ce300e29a1e995b5c6029155badbcfd95ee2bc625a34b9/xarray-fits-0.1.2.tar.gz", hash = "sha256:bb0ddc9700ad8262cdc497db9995a54a2100a2a68a775a7d60bc3e52829ce292", size = 18085, upload-time = "2018-03-27T10:26:21.547Z" }
 
 [[package]]
 name = "xarray-fits"
@@ -4409,6 +4439,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/da/1d/01cf9e3ab2d85190278efc3fca9f68563de35ae30ee59e7640e3af98abe3/zarr-2.18.7.tar.gz", hash = "sha256:b2b8f66f14dac4af66b180d2338819981b981f70e196c9a66e6bfaa9e59572f5", size = 3604558, upload-time = "2025-04-09T07:59:28.482Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/d8/9ffd8c237b3559945bb52103cf0eed64ea098f7b7f573f8d2962ef27b4b2/zarr-2.18.7-py3-none-any.whl", hash = "sha256:ac3dc4033e9ae4e9d7b5e27c97ea3eaf1003cc0a07f010bd83d5134bf8c4b223", size = 211273, upload-time = "2025-04-09T07:59:27.039Z" },
+]
+
+[[package]]
+name = "zict"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/ac/3c494dd7ec5122cff8252c1a209b282c0867af029f805ae9befd73ae37eb/zict-3.0.0.tar.gz", hash = "sha256:e321e263b6a97aafc0790c3cfb3c04656b7066e6738c37fffcca95d803c9fba5", size = 33238, upload-time = "2023-04-17T21:41:16.041Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/ab/11a76c1e2126084fde2639514f24e6111b789b0bfa4fc6264a8975c7e1f1/zict-3.0.0-py2.py3-none-any.whl", hash = "sha256:5796e36bd0e0cc8cf0fbc1ace6a68912611c1dbd74750a3f3026b9b9d6a327ae", size = 43332, upload-time = "2023-04-17T21:41:13.444Z" },
 ]
 
 [[package]]
