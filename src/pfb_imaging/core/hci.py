@@ -58,6 +58,7 @@ def hci(
     images_per_chunk: int = 16,
     integrations_per_image: int = 1,
     channels_per_image: int = -1,
+    channels_per_bin: int = -1,
     precision: str = "double",
     beam_model: str = None,
     field_of_view: float | None = 1.0,
@@ -512,6 +513,7 @@ def hci(
                             msid=ims,
                             attrs=attrs,
                             integrations_per_image=integrations_per_image,
+                            channels_per_bin=channels_per_bin,
                             nthreads=nthreads,
                             precision=precision,
                             sigma_column=sigma_column,
@@ -830,10 +832,10 @@ def make_dummy_dataset(
             x = np.mean(cos_dec * np.cos(out_ra))
             y = np.mean(cos_dec * np.sin(out_ra))
             z = np.mean(np.sin(out_dec))
-            ra0 = np.arctan2(y, x) % (2.0 * np.pi)
-            dec0 = np.arctan2(z, np.hypot(x, y))
-        out_ra_deg = np.array([np.rad2deg(ra0)])
-        out_dec_deg = np.array([np.rad2deg(dec0)])
+            out_ra = np.array([np.arctan2(y, x) % (2.0 * np.pi)])
+            out_dec = np.array([np.arctan2(z, np.hypot(x, y))])
+        out_ra_deg = np.rad2deg(out_ra)
+        out_dec_deg = np.rad2deg(out_dec)
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))

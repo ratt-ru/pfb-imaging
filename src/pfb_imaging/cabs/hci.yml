@@ -143,6 +143,16 @@ cabs:
         default: '-1'
         metadata:
           rich_help_panel: Imaging
+      channels-per-bin:
+        info:
+          Number of channels per frequency bin for beam correction, deconvolution etc.
+          This effectively upsamples the frequency resolution when doing beam correction and deconvolution.
+          Default of -1 results in one bin per output image.
+          Bins are collapsed via a weighted sum.
+        dtype: int
+        default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision

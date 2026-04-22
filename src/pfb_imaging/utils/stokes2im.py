@@ -18,7 +18,7 @@ from numba import set_num_threads
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.operators.hessian import hessian_jax
+from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import fitcleanbeam
@@ -57,7 +57,8 @@ def batch_stokes_image(
     timeid=None,
     msid=None,
     attrs=None,
-    integrations_per_image=None,
+    integrations_per_image=1,
+    channels_per_bin=-1,
     nthreads=1,
     precision="double",
     sigma_column=None,
@@ -158,6 +159,7 @@ def batch_stokes_image(
             weight_grid_out=weight_grid_out,
             l2_reweight_dof=l2_reweight_dof,
             wgt_mode=wgt_mode,
+            channels_per_bin=channels_per_bin,
         )
 
         tasks.append(task)
@@ -220,6 +222,7 @@ def stokes_image(
     weight_grid_out=False,
     l2_reweight_dof=None,
     wgt_mode="l2",
+    channels_per_bin=-1,
 ):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
@@ -378,79 +381,6 @@ def stokes_image(
         uvw_old = uvw
         radec_new = radec
 
-    if isinstance(beam_model, BeamWizard):
-        # should we compute a weighted mean over freq instead of interpolating here?
-        bds = beam_model.bds
-        l_beam = bds.X.values
-        m_beam = bds.Y.values
-        t_beam = Time(utime / (24 * 3600), format="mjd")
-        beam = np.zeros((len(product), l_beam.size, m_beam.size), dtype=real_type)
-        for i, p in enumerate(set(product)):  # set to sort IQUV
-            beam[i], _ = beam_model.get_rotation_averaged_beam(
-                l=l_beam,
-                m=m_beam,
-                times=t_beam,
-                freq=np.array([freq_out]),
-                time_stepping=1,
-                pixel_stepping=1,
-                var="nstokes",
-                i=p,
-                j=p,
-                verbose=0,
-            )
-        cell_deg_in = l_beam[1] - l_beam[0]
-        pbeam = reproject_and_interp_scat_beam(
-            beam,
-            radec,
-            radec_new,
-            cell_deg_in,
-            cell_deg,
-            nx,
-            ny,
-            product,
-        )
-
-        # this is a hack to get the images to align
-        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
-        pbeam = pbeam[:, ::-1, :]
-
-    elif beam_model is not None:
-        # should we compute a weighted mean over freq instead of interpolating here?
-        bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
-        l_beam = bds.l_beam.values
-        m_beam = bds.m_beam.values
-        # the beam is in feed plane direction cosine coordinates
-        # we need to flip the beam upside down because of the beam orientation
-        # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
-        # shape is (corr, chan, X, Y) -> squeeze out freq
-        beam = bds.BEAM.values[:, 0, :, :]
-        # are the MdV beams transmissive or receptive?
-        # reshape for feed and spatial rotations
-        beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
-        cell_deg_in = l_beam[1] - l_beam[0]
-        pbeam = reproject_and_interp_beam(
-            beam,
-            time,
-            antpos,
-            radec,
-            radec_new,
-            cell_deg_in,
-            cell_deg,
-            nx,
-            ny,
-            poltype,
-            product,
-            weight=weight,
-            nthreads=nthreads,
-        )
-
-        # this is a hack to get the images to align
-        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
-        pbeam = pbeam[:, ::-1, :]
-
-    else:
-        pbeam = np.ones((len(product), nx, ny), dtype=real_type)
-
     # compute lm coordinates of target if requested
     if target is not None:
         tmp = target.split(",")
@@ -594,7 +524,7 @@ def stokes_image(
             data[:, :, 0] += dspec
 
     # TODO - why do we need to cast here?
-    data = data.transpose(2, 0, 1).astype(complex_type)
+    data = data.transpose(2, 0, 1).astype(complex_type)  # -> (nstokes, nrow, nchan)
     weight = weight.transpose(2, 0, 1).astype(real_type)
     if robustness is not None:
         # we need to compute the weights on the padded grid
@@ -654,95 +584,133 @@ def stokes_image(
             nx_psf = psf_min_size
             ny_psf = psf_min_size
 
+    if channels_per_bin in (0, None, -1):
+        channels_per_bin = nchan
+    nband = int(np.ceil(nchan / channels_per_bin))
     nstokes = weight.shape[0]
-    wsum = np.zeros(nstokes)
+    wsums = np.zeros((nstokes, nband), dtype=real_type)
+    # TODO - cubes for MF deconvolution?
     residual = np.zeros((nstokes, nx, ny), dtype=real_type)
     psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
     rms = np.zeros(nstokes, dtype=real_type)
-    # TODO - the wgridder doesn't check if wgridding is actually
-    # required and always makes a minimum of nsupp number of wplanes
-    # where nsupp is the gridding kernel support. We could check this
-    # with pfb.utils.misc.wplanar if we can figure out the relationship
-    # between epsilon on the wplanar threshold parameter.
-    for c in range(nstokes):
-        wsum[c] = weight[c, ~flag].sum()
-        if wsum[c] == 0:
-            continue
-        vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=data[c],
-            wgt=weight[c],
-            mask=mask,
-            npix_x=nx,
-            npix_y=ny,
-            pixsize_x=cell_rad,
-            pixsize_y=cell_rad,
-            center_x=x0,
-            center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=True,
-            nthreads=nthreads,
-            sigma_min=min_padding,
-            double_precision_accumulation=double_accum,
-            verbosity=0,
-            dirty=residual[c],
+    pbeam = np.zeros((nstokes, nx, ny), dtype=real_type)
+    for b, fi in enumerate(range(0, nchan, channels_per_bin)):
+        ff = min(fi + channels_per_bin, nchan)
+        datab = data[:, :, fi:ff]
+        weightb = weight[:, :, fi:ff]
+        flagb = flag[:, fi:ff]
+        freqb = freq[fi:ff]
+        maskb = mask[:, fi:ff]
+        psf_visb = psf_vis[:, fi:ff]
+
+        # get beam for subband
+        pbeamb = beam_for_band(
+            beam_model,
+            utime,
+            product,
+            real_type,
+            freqb,
+            radec,
+            radec_new,
+            cell_deg,
+            nx,
+            ny,
+            time,
+            antpos,
+            poltype,
+            weightb,
+            nthreads,
         )
 
-        vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=psf_vis,
-            wgt=weight[c],
-            mask=mask,
-            npix_x=nx_psf,
-            npix_y=ny_psf,
-            pixsize_x=cell_rad,
-            pixsize_y=cell_rad,
-            center_x=x0,
-            center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=True,
-            nthreads=nthreads,
-            sigma_min=min_padding,
-            double_precision_accumulation=double_accum,
-            verbosity=0,
-            dirty=psf[c],
-        )
-        # normalize by sum of weights to get Jy/beam units
-        # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
+        # TODO - determine if wgridding is actually required (possibly using pfb.utils.misc.wplanar)
         for c in range(nstokes):
-            if wsum[c] > 0:
-                psf_max = psf[c].max()
-                wsum[c] = psf_max
-                psf[c] /= psf_max
-                residual[c] /= psf_max
-                rms[c] = np.std(residual[c], axis=(0, 1))
+            if weightb[c, ~flagb].sum() == 0:
+                continue
+            residualb = vis2dirty(
+                uvw=uvw,
+                freq=freqb,
+                vis=datab[c],
+                wgt=weightb[c],
+                mask=maskb,
+                npix_x=nx,
+                npix_y=ny,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=True,
+                nthreads=nthreads,
+                sigma_min=min_padding,
+                double_precision_accumulation=double_accum,
+                verbosity=0,
+            )
+
+            psfb = vis2dirty(
+                uvw=uvw,
+                freq=freqb,
+                vis=psf_visb,
+                wgt=weightb[c],
+                mask=maskb,
+                npix_x=nx_psf,
+                npix_y=ny_psf,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=True,
+                nthreads=nthreads,
+                sigma_min=min_padding,
+                double_precision_accumulation=double_accum,
+                verbosity=0,
+            )
+            # normalize by sum of weights to get Jy/beam units
+            # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
+            psf_max = psfb.max()
+            if psf_max > 0:
+                wsums[c, b] = psf_max
+                psfb /= psf_max
+                residualb /= psf_max
+
+            if natural_grad:
+                # TODO - add beam application
+                ifftshift = jnp.fft.ifftshift
+
+                abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psfb, axes=(0, 1)), axes=(0, 1), norm="backward"))
+
+                hess = partial(hessian_slice_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
+
+                residualb = cg(hess, residualb, tol=cg_tol, maxiter=cg_maxit)[0]
+
+            elif beam_model is not None:
+                residualb *= pbeamb[c] / (pbeamb[c] ** 2 + eta)
+
+            residual[c] += residualb * wsums[c, b]
+            psf[c] += psfb * wsums[c, b]
+            pbeam[c] += pbeamb[c] * wsums[c, b]
+
+    # normalise by wsum
+    wsum = wsums.sum(axis=1)
+    for c in range(nstokes):
+        if wsum[c] > 0:
+            residual[c] /= wsum[c]
+            psf[c] /= wsum[c]
+            pbeam[c] /= wsum[c]
+
+    # should happen after beam correction
+    rms = np.std(residual, axis=(1, 2))
 
     # these will be in degrees
     gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
-
-    if natural_grad:
-        # TODO - add beam application
-        ifftshift = jnp.fft.ifftshift
-
-        abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf, axes=(1, 2)), axes=(1, 2), norm="backward"))
-
-        hess = partial(hessian_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
-
-        residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
-
-    elif beam_model is not None:
-        residual *= pbeam / (pbeam**2 + eta)
-
     unix_time = quantity(f"{time_out}s").to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -817,3 +785,95 @@ def stokes_image(
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     return out_ds
+
+
+def beam_for_band(
+    beam_model,
+    utime,
+    product,
+    real_type,
+    freq_out,
+    radec,
+    radec_new,
+    cell_deg,
+    nx,
+    ny,
+    time,
+    antpos,
+    poltype,
+    weight,
+    nthreads,
+):
+    if isinstance(beam_model, BeamWizard):
+        # should we compute a weighted mean over freq instead of interpolating here?
+        bds = beam_model.bds
+        l_beam = bds.X.values
+        m_beam = bds.Y.values
+        t_beam = Time(utime / (24 * 3600), format="mjd")
+        beam = np.zeros((len(product), l_beam.size, m_beam.size), dtype=real_type)
+        for i, p in enumerate(set(product)):  # set to sort IQUV
+            beam[i], _ = beam_model.get_rotation_averaged_beam(
+                l=l_beam,
+                m=m_beam,
+                times=t_beam,
+                freq=np.array([freq_out]),
+                time_stepping=1,
+                pixel_stepping=1,
+                var="nstokes",
+                i=p,
+                j=p,
+                verbose=0,
+            )
+        cell_deg_in = l_beam[1] - l_beam[0]
+        pbeam = reproject_and_interp_scat_beam(
+            beam,
+            radec,
+            radec_new,
+            cell_deg_in,
+            cell_deg,
+            nx,
+            ny,
+            product,
+        )
+
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+
+    elif beam_model is not None:
+        # should we compute a weighted mean over freq instead of interpolating here?
+        bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
+        l_beam = bds.l_beam.values
+        m_beam = bds.m_beam.values
+        # the beam is in feed plane direction cosine coordinates
+        # we need to flip the beam upside down because of the beam orientation
+        # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
+        # shape is (corr, chan, X, Y) -> squeeze out freq
+        beam = bds.BEAM.values[:, 0, :, :]
+        # are the MdV beams transmissive or receptive?
+        # reshape for feed and spatial rotations
+        beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
+        cell_deg_in = l_beam[1] - l_beam[0]
+        pbeam = reproject_and_interp_beam(
+            beam,
+            time,
+            antpos,
+            radec,
+            radec_new,
+            cell_deg_in,
+            cell_deg,
+            nx,
+            ny,
+            poltype,
+            product,
+            weight=weight,
+            nthreads=nthreads,
+        )
+
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+
+    else:
+        pbeam = np.ones((len(product), nx, ny), dtype=real_type)
+    return pbeam

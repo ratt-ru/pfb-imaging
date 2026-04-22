@@ -198,6 +198,16 @@ def hci(
             rich_help_panel="Imaging",
         ),
     ] = -1,
+    channels_per_bin: Annotated[
+        int,
+        typer.Option(
+            help="Number of channels per frequency bin for beam correction, deconvolution etc. "
+            "This effectively upsamples the frequency resolution when doing beam correction and deconvolution. "
+            "Default of -1 results in one bin per output image. "
+            "Bins are collapsed via a weighted sum.",
+            rich_help_panel="Imaging",
+        ),
+    ] = -1,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
@@ -518,6 +528,7 @@ def hci(
                 images_per_chunk=images_per_chunk,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
+                channels_per_bin=channels_per_bin,
                 precision=precision,
                 beam_model=beam_model,
                 field_of_view=field_of_view,
@@ -588,6 +599,7 @@ def hci(
             images_per_chunk=images_per_chunk,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
+            channels_per_bin=channels_per_bin,
             precision=precision,
             beam_model=beam_model,
             field_of_view=field_of_view,
