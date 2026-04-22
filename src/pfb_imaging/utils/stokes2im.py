@@ -462,7 +462,7 @@ def stokes_image(
         names = transient_ds.names
         ras = transient_ds.ras
         decs = transient_ds.decs
-        if beam_model is not None:
+        if beam_model is not None and not isinstance(beam_model, BeamWizard):
             bds = xr.open_zarr(beam_model, chunks=None)
         for name, ra, dec in zip(names, ras, decs):
             ra_rad = np.deg2rad(ra)
@@ -491,7 +491,11 @@ def stokes_image(
             # apply beam in original frame
             # TODO - make sure loaded chunks don't persist after the interp call (doesn't look like it does)
             # TODO - add time axis (parallactic angle rotation)
-            if beam_model is not None:
+            if isinstance(beam_model, BeamWizard):
+                raise NotImplementedError("BeamWizard not ready for dspec!")
+                # beam_source = beam_model.get_time_variable_beamgain(radec,)
+
+            elif beam_model is not None:
                 beam_source = bds.interp(
                     chan=freq,
                     l_beam=np.array([x0t]),
@@ -609,7 +613,7 @@ def stokes_image(
             utime,
             product,
             real_type,
-            freqb,
+            np.mean(freqb, keepdims=True),
             radec,
             radec_new,
             cell_deg,

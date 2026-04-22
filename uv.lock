@@ -2606,7 +2606,6 @@ name = "pfb-imaging"
 version = "0.0.9"
 source = { editable = "." }
 dependencies = [
-    { name = "distributed" },
     { name = "hip-cargo" },
 ]
 
@@ -2615,6 +2614,7 @@ full = [
     { name = "bokeh" },
     { name = "codex-africanus", extra = ["astropy", "dask", "python-casacore", "scipy"] },
     { name = "dask-ms", extra = ["s3", "xarray", "zarr"] },
+    { name = "distributed" },
     { name = "ducc0" },
     { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "jax", version = "0.9.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2657,7 +2657,7 @@ requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.30" },
-    { name = "distributed", specifier = ">=2026.3.0" },
+    { name = "distributed", marker = "extra == 'full'", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = ">=0.2.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
