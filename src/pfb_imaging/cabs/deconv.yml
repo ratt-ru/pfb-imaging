@@ -365,6 +365,7 @@ cabs:
         dtype: Directory
         info:
           Directory to write logs and performance reports to.
+        must_exist: false
         mkdir: false
         path_policies:
           write_parent: true

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import StimelaMeta, stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -22,6 +22,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -156,12 +157,13 @@ def model2comps(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
             mkdir=False,
+            must_exist=False,
             path_policies={
                 "write_parent": True,
             },
@@ -170,7 +172,7 @@ def model2comps(
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
@@ -207,6 +209,33 @@ def model2comps(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                model2comps,
+                dict(
+                    output_filename=output_filename,
+                    overwrite=overwrite,
+                    mds=mds,
+                    from_fits=from_fits,
+                    nbasisf=nbasisf,
+                    nthreads=nthreads,
+                    fit_mode=fit_mode,
+                    min_val=min_val,
+                    suffix=suffix,
+                    model_name=model_name,
+                    use_wsum=use_wsum,
+                    sigmasq=sigmasq,
+                    model_out=model_out,
+                    out_format=out_format,
+                    out_freqs=out_freqs,
+                    product=product,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.model2comps import model2comps as model2comps_core  # noqa: E402
 

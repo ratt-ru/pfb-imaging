@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import StimelaMeta, stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -29,6 +29,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -208,12 +209,13 @@ def fluxtractor(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
             mkdir=False,
+            must_exist=False,
             path_policies={
                 "write_parent": True,
             },
@@ -222,7 +224,7 @@ def fluxtractor(
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
@@ -259,6 +261,39 @@ def fluxtractor(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                fluxtractor,
+                dict(
+                    output_filename=output_filename,
+                    suffix=suffix,
+                    mask=mask,
+                    zero_model_outside_mask=zero_model_outside_mask,
+                    or_mask_with_model=or_mask_with_model,
+                    min_model=min_model,
+                    eta=eta,
+                    model_name=model_name,
+                    residual_name=residual_name,
+                    use_psf=use_psf,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    cg_tol=cg_tol,
+                    cg_maxit=cg_maxit,
+                    cg_verbose=cg_verbose,
+                    cg_report_freq=cg_report_freq,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    product=product,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.fluxtractor import fluxtractor as fluxtractor_core  # noqa: E402
 

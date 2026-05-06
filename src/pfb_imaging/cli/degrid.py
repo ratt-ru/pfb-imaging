@@ -2,7 +2,14 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import (
+    ListInt,
+    StimelaMeta,
+    parse_list_int,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -17,6 +24,7 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -26,7 +34,7 @@ def degrid(
         list[URI],
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="Path to measurement set.",
             rich_help_panel="Input",
         ),
@@ -180,12 +188,13 @@ def degrid(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
             mkdir=False,
+            must_exist=False,
             path_policies={
                 "write_parent": True,
             },
@@ -216,6 +225,35 @@ def degrid(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                degrid,
+                dict(
+                    ms=ms,
+                    output_filename=output_filename,
+                    scans=scans,
+                    ddids=ddids,
+                    fields=fields,
+                    suffix=suffix,
+                    mds=mds,
+                    model_column=model_column,
+                    product=product,
+                    freq_range=freq_range,
+                    integrations_per_image=integrations_per_image,
+                    channels_per_image=channels_per_image,
+                    accumulate=accumulate,
+                    region_file=region_file,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    host_address=host_address,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    log_directory=log_directory,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.degrid import degrid as degrid_core  # noqa: E402
 
