@@ -479,8 +479,8 @@ def hci(
             rich_help_panel="Output",
         ),
         StimelaMeta(
-            mkdir=False,
             must_exist=False,
+            mkdir=False,
             path_policies={
                 "write_parent": True,
             },
