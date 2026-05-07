@@ -421,9 +421,32 @@ cabs:
           write_parent: true
         metadata:
           rich_help_panel: Output
+      fits-output-folder:
+        dtype: Directory
+        info:
+          Optional path to write fits files to.
+          Written next to output-dataset if not provided.
+          The same naming conventions apply.
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
       temp-dir:
         dtype: Directory
         info:
           A temporary directory to store ephemeral files.
         metadata:
           rich_help_panel: Output
+      numba-cache-dir:
+        dtype: Directory
+        info:
+          Directory to use for numba caching.
+          Currently not configurable.
+          Exists to ensure the directory is mounted.
+        implicit: '/tmp/numba'
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true

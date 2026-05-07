@@ -88,6 +88,7 @@ def hci(
     cg_tol: float = 1e-3,
     cg_maxit: int = 150,
     object_store_memory: float | None = None,
+    fits_output_folder: str | None = None,
     fits_vars: list[str] = None,
     wgt_mode: str = "l2",
     obs_label: str | None = None,
@@ -121,7 +122,14 @@ def hci(
     output_dataset = f"{prefix}{basedir}/{oname}"
     opts_dict["output_dataset"] = output_dataset
 
-    # this should be a file system
+    # logs and fits need a file system
+    if fits_output_folder is None:
+        fits_output_folder = Path(basedir) / f"{oname}_fits"
+    else:
+        fits_output_folder = Path(fits_output_folder)
+    opts_dict["fits_output_folder"] = fits_output_folder
+    fits_output_folder.mkdir(parents=True, exist_ok=True)
+
     if log_directory is None:
         log_directory = Path(basedir) / "pfb_logs"
     else:
@@ -614,7 +622,6 @@ def hci(
     if fits_vars is not None:
         # reopen with chunking aligned to zarr layout for efficient streaming
         cds = xr.open_zarr(fds_store.url, chunks={"TIME": images_per_chunk})
-        local_path = str(output_dataset).removeprefix("file://").removesuffix(".zarr")
         stokes_params = list(cds.coords["STOKES"].values)
         # reconstruct the base header from stored attrs
         base_hdr = dict(cds.attrs["fits_header"])
@@ -635,12 +642,12 @@ def hci(
                     for f in range(n_freqs):
                         band_hdr = _make_fits_header(base_hdr, band_shape, stokes_params, drop_axes={4})
 
-                        filename = f"{local_path}.{var}.band{f:04d}.fits"
+                        filename = fits_output_folder / f"{var}.band{f:04d}.fits"
                         if Path(filename).exists():
                             Path(filename).unlink()
                         log.info(f"Streaming {var} band {f} to {filename}")
 
-                        shdu = fits.StreamingHDU(filename, band_hdr)
+                        shdu = fits.StreamingHDU(str(filename), band_hdr)
                         for s in range(n_stokes):
                             for t in range(0, n_time, images_per_chunk):
                                 tend = min(t + images_per_chunk, n_time)
@@ -654,11 +661,11 @@ def hci(
                     cube_mean = cds.cube_mean.data  # (STOKES, FREQ, Y, X)
                     mean_hdr = _make_fits_header(base_hdr, cube_mean.shape, stokes_params, drop_axes={3})
 
-                    mean_filename = f"{local_path}.cube_mean.fits"
+                    mean_filename = fits_output_folder / "cube_mean.fits"
                     log.info(f"Writing mean image to {mean_filename}")
                     mean_data = cube_mean.compute()
                     hdu = fits.PrimaryHDU(mean_data, mean_hdr)
-                    hdu.writeto(mean_filename, overwrite=True)
+                    hdu.writeto(str(mean_filename), overwrite=True)
 
             log.info("FITS export complete")
 

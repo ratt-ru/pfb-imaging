@@ -1194,7 +1194,7 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.2.0"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=uritypes#4ea89c9ab927e2d8a9e31e2033316decfe9a15a9" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=schemas#6eb08239d23efa24aef30ed6670cf02f299fac41" }
 dependencies = [
     { name = "fsspec", version = "2024.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2667,7 +2667,7 @@ requires-dist = [
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.30" },
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=uritypes" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=schemas" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },

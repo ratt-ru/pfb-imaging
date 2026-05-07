@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo @ git+https://github.com/landmanbester/hip-cargo.git@uritypes",
+    "hip-cargo @ git+https://github.com/landmanbester/hip-cargo.git@schemas",
 ]
 
 [project.urls]

@@ -43,9 +43,29 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Written next to output-dataset if not provided. "
+    "The same naming conventions apply.",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def hci(
     ms: Annotated[
@@ -486,6 +506,23 @@ def hci(
             },
         ),
     ] = None,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Optional path to write fits files to. "
+            "Written next to output-dataset if not provided. "
+            "The same naming conventions apply.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
@@ -578,6 +615,7 @@ def hci(
                     flag_excess_rms=flag_excess_rms,
                     output_dataset=output_dataset,
                     log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
                     temp_dir=temp_dir,
                 ),
             )
@@ -641,6 +679,7 @@ def hci(
                 obs_label=obs_label,
                 flag_excess_rms=flag_excess_rms,
                 log_directory=log_directory,
+                fits_output_folder=fits_output_folder,
                 temp_dir=temp_dir,
             )
             return
@@ -713,6 +752,7 @@ def hci(
             flag_excess_rms=flag_excess_rms,
             output_dataset=output_dataset,
             log_directory=log_directory,
+            fits_output_folder=fits_output_folder,
             temp_dir=temp_dir,
         ),
         image=image,

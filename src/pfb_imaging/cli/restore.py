@@ -46,9 +46,19 @@ File = NewType("File", Path)
     info="Optional path to write fits files to. "
     "Set to output-filename if not provided. "
     "The same naming conventions apply.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def restore(
     output_filename: Annotated[
@@ -157,6 +167,7 @@ def restore(
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
