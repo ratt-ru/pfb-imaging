@@ -489,7 +489,6 @@ def stokes_image(
             dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # apply beam in original frame
-            # TODO - make sure loaded chunks don't persist after the interp call (doesn't look like it does)
             # TODO - add time axis (parallactic angle rotation)
             if isinstance(beam_model, BeamWizard):
                 raise NotImplementedError("BeamWizard not ready for dspec!")
@@ -770,6 +769,8 @@ def stokes_image(
     data_vars["psf_maj"] = (("STOKES", "FREQ", "TIME"), bmaj[:, None, None])
     data_vars["psf_min"] = (("STOKES", "FREQ", "TIME"), bmin[:, None, None])
     data_vars["psf_pa"] = (("STOKES", "FREQ", "TIME"), bpa[:, None, None])
+    data_vars["orig_phase_dir_ra"] = (("TIME",), np.array([radec[0]], dtype=np.float64))
+    data_vars["orig_phase_dir_dec"] = (("TIME",), np.array([radec[1]], dtype=np.float64))
 
     if attrs is None:
         attrs = {

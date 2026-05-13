@@ -925,6 +925,7 @@ def make_dummy_dataset(
     # if we don't pass these into stokes2im they get overwritten
     attrs = {
         "pfb-imaging-version": pfb_version,
+        # Store dicts as list since zarr doesn't maintain dict order.
         "fits_header": list(dict(hdr).items()),
         "radec_dims": (ra_dim, dec_dim),
         "fits_dims": (("X", ra_dim), ("Y", dec_dim), ("TIME", "TIME"), ("FREQ", "FREQ"), ("STOKES", "STOKES")),
@@ -975,6 +976,16 @@ def make_dummy_dataset(
                 ("FREQ",),
                 da.empty((n_freqs), chunks=(1), dtype=np.float32),
             ),
+            # we can't add these as coordinates as they are not necessarily unique
+            # simplest to set them inside stokes2im
+            "orig_phase_dir_ra": (
+                ("TIME",),
+                da.empty((n_times), chunks=(images_per_chunk,), dtype=np.float64),
+            ),
+            "orig_phase_dir_dec": (
+                ("TIME",),
+                da.empty((n_times), chunks=(images_per_chunk,), dtype=np.float64),
+            ),
         },
         coords={
             "TIME": (("TIME",), out_times),
@@ -983,7 +994,6 @@ def make_dummy_dataset(
             "X": (("X",), out_ras),
             "Y": (("Y",), out_decs),
         },
-        # Store dicts as tuples as zarr doesn't seem to maintain dict order.
         attrs=attrs,
     )
 
