@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import StimelaMeta, stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -22,6 +22,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -32,9 +33,19 @@ Directory = NewType("Directory", Path)
     info="Optional path to write fits files to. "
     "Set to output-filename if not provided. "
     "The same naming conventions apply.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def grid(
     output_filename: Annotated[
@@ -279,11 +290,12 @@ def grid(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -293,13 +305,14 @@ def grid(
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -330,6 +343,49 @@ def grid(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                grid,
+                dict(
+                    output_filename=output_filename,
+                    xds=xds,
+                    suffix=suffix,
+                    concat_row=concat_row,
+                    overwrite=overwrite,
+                    transfer_model_from=transfer_model_from,
+                    use_best_model=use_best_model,
+                    robustness=robustness,
+                    dirty=dirty,
+                    psf=psf,
+                    residual=residual,
+                    noise=noise,
+                    beam=beam,
+                    weight=weight,
+                    psf_oversize=psf_oversize,
+                    field_of_view=field_of_view,
+                    super_resolution_factor=super_resolution_factor,
+                    cell_size=cell_size,
+                    nx=nx,
+                    ny=ny,
+                    filter_counts_level=filter_counts_level,
+                    npix_super=npix_super,
+                    target=target,
+                    l2_reweight_dof=l2_reweight_dof,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    product=product,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.grid import grid as grid_core  # noqa: E402
 

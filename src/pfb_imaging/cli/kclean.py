@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import StimelaMeta, stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 
@@ -29,6 +29,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -39,9 +40,19 @@ Directory = NewType("Directory", Path)
     info="Optional path to write fits files to. "
     "Set to output-filename if not provided. "
     "The same naming conventions apply.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def kclean(
     output_filename: Annotated[
@@ -247,11 +258,12 @@ def kclean(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -261,13 +273,14 @@ def kclean(
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -298,6 +311,45 @@ def kclean(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                kclean,
+                dict(
+                    output_filename=output_filename,
+                    suffix=suffix,
+                    mask=mask,
+                    dirosion=dirosion,
+                    mop_flux=mop_flux,
+                    mop_gamma=mop_gamma,
+                    niter=niter,
+                    nthreads=nthreads,
+                    threshold=threshold,
+                    rmsfactor=rmsfactor,
+                    eta=eta,
+                    gamma=gamma,
+                    peak_factor=peak_factor,
+                    sub_peak_factor=sub_peak_factor,
+                    minor_maxit=minor_maxit,
+                    subminor_maxit=subminor_maxit,
+                    verbose=verbose,
+                    report_freq=report_freq,
+                    cg_tol=cg_tol,
+                    cg_maxit=cg_maxit,
+                    cg_verbose=cg_verbose,
+                    cg_report_freq=cg_report_freq,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    product=product,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.kclean import kclean as kclean_core  # noqa: E402
 

@@ -170,3 +170,51 @@ def reproject_and_interp_beam(
     pmask = pmask.astype(bool)
     pbeam[~pmask] = 0.0
     return pbeam
+
+
+def reproject_and_interp_scat_beam(
+    beam,
+    radec0,
+    radecf,
+    cell_deg_in,
+    cell_deg_out,
+    nxo,
+    nyo,
+    product,
+):
+    """
+    beam    - (nstokes, nx, ny)
+    radec0  - original pointing direction
+    radecf  - direction to project to
+    """
+    nstokes, nxi, nyi = beam.shape
+
+    # reproject onto target field
+    wcs_ref = WCS(naxis=2)
+    wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
+    wcs_ref.wcs.cunit = ["deg", "deg"]
+    wcs_ref.wcs.crval = np.array((radec0[0] * 180.0 / np.pi, radec0[1] * 180.0 / np.pi))
+    wcs_ref.wcs.crpix = [1 + nxi // 2, 1 + nyi // 2]
+    wcs_ref.array_shape = [nxi, nyi]
+
+    # header for target field
+    wcs_target = WCS(naxis=2)
+    wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
+    wcs_target.wcs.cunit = ["deg", "deg"]
+    wcs_target.wcs.crval = np.array((radecf[0] * 180.0 / np.pi, radecf[1] * 180.0 / np.pi))
+    wcs_target.wcs.crpix = [nxo // 2, nyo // 2]
+    wcs_target.array_shape = [nxo, nyo]
+
+    pbeam = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
+    pmask = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
+    for i in range(nstokes):
+        pbeam[i], pmask[i] = reproject_interp(
+            (beam[i], wcs_ref), wcs_target, shape_out=(nxo, nyo)
+        )  # , block_size='auto', parallel=nthreads
+
+    # set beam to zero where it is not defined
+    pmask = pmask.astype(bool)
+    pbeam[~pmask] = 0.0
+    return pbeam

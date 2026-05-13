@@ -2,7 +2,14 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import (
+    ListInt,
+    StimelaMeta,
+    parse_list_int,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 File = NewType("File", Path)
@@ -28,6 +35,7 @@ File = NewType("File", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -38,9 +46,19 @@ File = NewType("File", Path)
     info="Optional path to write fits files to. "
     "Set to output-filename if not provided. "
     "The same naming conventions apply.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def restore(
     output_filename: Annotated[
@@ -127,11 +145,12 @@ def restore(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -141,13 +160,14 @@ def restore(
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Optional path to write fits files to. "
             "Set to output-filename if not provided. "
             "The same naming conventions apply.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -178,6 +198,27 @@ def restore(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                restore,
+                dict(
+                    output_filename=output_filename,
+                    model_name=model_name,
+                    residual_name=residual_name,
+                    suffix=suffix,
+                    outputs=outputs,
+                    gausspar=gausspar,
+                    drop_bands=drop_bands,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    product=product,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
 
