@@ -695,6 +695,7 @@ def stokes_image(
                 residualb = cg(hess, residualb, tol=cg_tol, maxiter=cg_maxit)[0]
 
             elif beam_model is not None:
+                # TODO - spatially varying eta (fit 2D Gaussian to pbeam and use inverse)
                 residualb *= pbeamb[c] / (pbeamb[c] ** 2 + eta)
 
             residual[c] += residualb * wsums[c, b]
@@ -821,7 +822,7 @@ def beam_for_band(
                 l=l_beam,
                 m=m_beam,
                 times=t_beam,
-                freq=np.array([freq_out]),
+                freq=np.array([freq_out]),  # TODO - can we fold in the variance due to finite bandwidth?
                 time_stepping=1,
                 pixel_stepping=1,
                 var="nstokes",
