@@ -24,6 +24,9 @@ def set_envs(nthreads, ncpu, log=None):
     ne_threads = min(ncpu, nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+    os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
+    os.environ["RAY_worker_num_grpc_internal_threads"] = "1"
     # this is required for numba to use the tbb threaing layer
     dist = importlib.metadata.distribution("tbb")
     tbb_path = None
@@ -50,6 +53,8 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
+        "NUMBA_NUM_THREADS": str(nthreads),
+        "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars
 
