@@ -225,6 +225,7 @@ def construct_mappings(
     field_ids=None,
     ddids=None,
     scans=None,
+    apply_cal="all",
 ):
     """
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
@@ -279,7 +280,11 @@ def construct_mappings(
     idts = {}
     for ims, ms in enumerate(ms_name):
         xds = xds_from_ms(
-            ms, chunks={"row": -1}, columns=("TIME", "UVW"), group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
+            ms,
+            chunks={"row": -1},
+            columns=("TIME", "UVW"),
+            group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
+            apply_cal=apply_cal,
         )
 
         # subtables
