@@ -26,6 +26,8 @@ def set_envs(nthreads, ncpu, log=None):
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     os.environ["NUMBA_THREADING_LAYER"] = "tbb"
     os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
+    # gRPC EventEngine pool defaults to ~hw_threads per worker; cap it so we
+    # don't blow ulimit -u with many workers. See ray-project/ray#54988.
     os.environ["RAY_worker_num_grpc_internal_threads"] = "1"
     # this is required for numba to use the tbb threaing layer
     dist = importlib.metadata.distribution("tbb")
