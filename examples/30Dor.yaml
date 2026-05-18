@@ -36,10 +36,13 @@ gosara:
         Super-resolution factor to apply to the image. This is used to determine the image size and cell size.
     data-column:
       default: DATA
-    katdal-flags:
-      defaukt: 'apply-cal="all"'
     weight-column:
       dtype: str
       default: WEIGHT_SPECTRUM
       info:
         Column containing data weights
+    fields:
+      dtype: List[int]
+      default: [2]
+      info:
+        List of fields to image.

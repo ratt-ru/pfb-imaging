@@ -31,7 +31,7 @@ def init(
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
-    apply_cal: str = "all",
+    applycal: str = "all",
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
     precision: str = "double",
@@ -262,7 +262,12 @@ def init(
 
     tasks = []
     for ims, ms_name in enumerate(ms):
-        xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by, apply_cal=apply_cal)
+        xds = xds_from_ms(ms_name,
+                          columns=columns,
+                          table_schema=schema,
+                          group_cols=group_by,
+                          applycal=applycal
+        )
 
         for ds in xds:
             fid = ds.FIELD_ID

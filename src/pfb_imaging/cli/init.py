@@ -129,7 +129,7 @@ def init(
             rich_help_panel="Input",
         ),
     ] = None,
-    apply_cal: Annotated[
+    applycal: Annotated[
         str,
         typer.Option(
             help="Flags to pass to xds_from_storage_ms when reading data with katdal.",
@@ -286,7 +286,7 @@ def init(
                 sigma_column=sigma_column,
                 flag_column=flag_column,
                 gain_table=gain_table,
-                apply_cal=apply_cal,
+                applycal=applycal,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
                 precision=precision,
@@ -330,7 +330,7 @@ def init(
             sigma_column=sigma_column,
             flag_column=flag_column,
             gain_table=gain_table,
-            apply_cal=apply_cal,
+            applycal=applycal,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
             precision=precision,
