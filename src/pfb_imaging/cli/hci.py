@@ -2,7 +2,14 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import (
+    ListInt,
+    StimelaMeta,
+    parse_list_int,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -43,7 +50,7 @@ def hci(
         list[URI],
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="Path to measurement set",
             rich_help_panel="Input",
         ),
@@ -52,7 +59,7 @@ def hci(
         Directory,
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="Basename of output.",
             rich_help_panel="Output",
         ),
@@ -163,7 +170,7 @@ def hci(
     gain_table: Annotated[
         list[URI] | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Path to Quartical gain table containing NET gains. "
             "There must be a table for each MS. "
             "glob(ms) and glob(gt) should match up when running from CLI.",
@@ -209,7 +216,7 @@ def hci(
     beam_model: Annotated[
         URI | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Path to beam model as an xarray dataset backed by zarr",
             rich_help_panel="Input",
         ),
@@ -452,7 +459,7 @@ def hci(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
@@ -467,7 +474,7 @@ def hci(
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="A temporary directory to store ephemeral files.",
             rich_help_panel="Output",
         ),
@@ -496,6 +503,69 @@ def hci(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                hci,
+                dict(
+                    ms=ms,
+                    product=product,
+                    scans=scans,
+                    ddids=ddids,
+                    fields=fields,
+                    freq_range=freq_range,
+                    overwrite=overwrite,
+                    transfer_model_from=transfer_model_from,
+                    data_column=data_column,
+                    model_column=model_column,
+                    weight_column=weight_column,
+                    sigma_column=sigma_column,
+                    flag_column=flag_column,
+                    gain_table=gain_table,
+                    max_simul_chunks=max_simul_chunks,
+                    images_per_chunk=images_per_chunk,
+                    integrations_per_image=integrations_per_image,
+                    channels_per_image=channels_per_image,
+                    precision=precision,
+                    beam_model=beam_model,
+                    field_of_view=field_of_view,
+                    super_resolution_factor=super_resolution_factor,
+                    cell_size=cell_size,
+                    nx=nx,
+                    ny=ny,
+                    psf_relative_size=psf_relative_size,
+                    robustness=robustness,
+                    target=target,
+                    l2_reweight_dof=l2_reweight_dof,
+                    eta=eta,
+                    psf_out=psf_out,
+                    weight_grid_out=weight_grid_out,
+                    natural_grad=natural_grad,
+                    check_ants=check_ants,
+                    inject_transients=inject_transients,
+                    filter_counts_level=filter_counts_level,
+                    npix_super=npix_super,
+                    min_padding=min_padding,
+                    phase_dir=phase_dir,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    cg_tol=cg_tol,
+                    cg_maxit=cg_maxit,
+                    object_store_memory=object_store_memory,
+                    cube_to_fits=cube_to_fits,
+                    wgt_mode=wgt_mode,
+                    obs_label=obs_label,
+                    flag_excess_rms=flag_excess_rms,
+                    output_dataset=output_dataset,
+                    log_directory=log_directory,
+                    temp_dir=temp_dir,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.hci import hci as hci_core  # noqa: E402
 

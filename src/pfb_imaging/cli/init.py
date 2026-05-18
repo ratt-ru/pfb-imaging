@@ -2,7 +2,14 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListInt, StimelaMeta, parse_list_int, stimela_cab, stimela_output
+from hip_cargo import (
+    ListInt,
+    StimelaMeta,
+    parse_list_int,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -32,7 +39,7 @@ def init(
         list[URI],
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="Path to measurement set",
             rich_help_panel="Input",
         ),
@@ -123,7 +130,7 @@ def init(
     gain_table: Annotated[
         list[URI] | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Path to Quartical gain table containing NET gains. "
             "There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.",
             rich_help_panel="Input",
@@ -228,7 +235,7 @@ def init(
     log_directory: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="Directory to write logs and performance reports to.",
             rich_help_panel="Output",
         ),
@@ -263,6 +270,41 @@ def init(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                init,
+                dict(
+                    ms=ms,
+                    output_filename=output_filename,
+                    scans=scans,
+                    ddids=ddids,
+                    fields=fields,
+                    freq_range=freq_range,
+                    overwrite=overwrite,
+                    data_column=data_column,
+                    weight_column=weight_column,
+                    sigma_column=sigma_column,
+                    flag_column=flag_column,
+                    gain_table=gain_table,
+                    integrations_per_image=integrations_per_image,
+                    channels_per_image=channels_per_image,
+                    precision=precision,
+                    bda_decorr=bda_decorr,
+                    max_field_of_view=max_field_of_view,
+                    beam_model=beam_model,
+                    chan_average=chan_average,
+                    progressbar=progressbar,
+                    check_ants=check_ants,
+                    product=product,
+                    nworkers=nworkers,
+                    nthreads=nthreads,
+                    wgt_mode=wgt_mode,
+                    log_directory=log_directory,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.init import init as init_core  # noqa: E402
 
