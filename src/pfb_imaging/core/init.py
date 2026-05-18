@@ -262,12 +262,7 @@ def init(
 
     tasks = []
     for ims, ms_name in enumerate(ms):
-        xds = xds_from_ms(ms_name,
-                          columns=columns,
-                          table_schema=schema,
-                          group_cols=group_by,
-                          applycal=applycal
-        )
+        xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by, applycal=applycal)
 
         for ds in xds:
             fid = ds.FIELD_ID
