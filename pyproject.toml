@@ -32,7 +32,7 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 full = [
     "katbeam>=0.1",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
-    "dask-ms[s3,xarray,zarr]>=0.2.23",
+    "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "reproject",
     "ray[default]>=2.54.0",
     "scikit-image>=0.24.0",
