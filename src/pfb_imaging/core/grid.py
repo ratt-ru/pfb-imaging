@@ -115,6 +115,7 @@ def grid(
     opts = {
         "field_of_view": field_of_view,
         "super_resolution_factor": super_resolution_factor,
+        "psf_oversize": psf_oversize,
         "epsilon": epsilon,
         "do_wgridding": do_wgridding,
         "double_accum": double_accum,
