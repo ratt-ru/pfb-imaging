@@ -1,4 +1,5 @@
 import gc
+import os
 from datetime import datetime, timezone
 
 import numexpr as ne
@@ -369,5 +370,7 @@ def stokes_vis(
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    out_ds.to_zarr(f"{xds_store}/{oname}.zarr", mode="w")
+    zarr_path = f"{xds_store}/{oname}.zarr"
+    os.makedirs(zarr_path, exist_ok=True)
+    out_ds.to_zarr(zarr_path, mode="w")
     return time_out, freq_out
