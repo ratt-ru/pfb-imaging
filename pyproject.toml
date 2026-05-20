@@ -52,8 +52,6 @@ full = [
     "pillow>=12.2.0",
     "xarray-ms>=0.5.3",
     "msv4-utils>=0.0.2",
-    "ipykernel>=7.2.0",
-    "ipywidgets>=8.1.8",
 ]
 
 [project.scripts]
@@ -102,6 +100,8 @@ dev = [
     "pre-commit>=4.0.0",
     "mypy>=1.0.0",
     "ipdb",
+    "ipykernel>=7.2.0",
+    "ipywidgets>=8.1.8",
 ]
 test = [
     "pytest>=9.0.3",
