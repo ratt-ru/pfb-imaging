@@ -100,10 +100,6 @@ cabs:
         dtype: Optional[List[URI]]
         metadata:
           rich_help_panel: Input
-      applycal:
-        info:
-          Flags to pass to xds_from_storage_ms when reading data with katdal.
-        default: all
       integrations-per-image:
         info:
           Number of time integrations per image.

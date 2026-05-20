@@ -225,7 +225,6 @@ def construct_mappings(
     field_ids=None,
     ddids=None,
     scans=None,
-    applycal="all",
 ):
     """
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
@@ -284,14 +283,13 @@ def construct_mappings(
             chunks={"row": -1},
             columns=("TIME", "UVW"),
             group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
-            applycal=applycal,
         )
 
         # subtables
-        field_tab = xds_from_table(ms + "::FIELD", applycal=applycal)[0]
-        spw_tab = xds_from_table(ms + "::SPECTRAL_WINDOW", applycal=applycal)[0]
-        pol_tab = xds_from_table(ms + "::POLARIZATION", applycal=applycal)[0]
-        ant_tab = xds_from_table(ms + "::ANTENNA", applycal=applycal)[0]
+        field_tab = xds_from_table(ms + "::FIELD")[0]
+        spw_tab = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
+        pol_tab = xds_from_table(ms + "::POLARIZATION")[0]
+        ant_tab = xds_from_table(ms + "::ANTENNA")[0]
 
         antpos[ms] = ant_tab.POSITION.data
         poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze())
