@@ -138,7 +138,7 @@ class SARABase(ABC):
         nbasis = self._psi.nbasis
         nxmax = self._psi.nxmax
         nymax = self._psi.nymax
-        log.info(f"Using {self._psi.nthreads_per_band} numba threads per band")
+        log.info(f"Using {nthreads} threads")
 
         # --- state ---
         self._model = model.copy()
