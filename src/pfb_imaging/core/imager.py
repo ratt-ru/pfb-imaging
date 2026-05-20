@@ -189,7 +189,7 @@ def imager(
     # partitions are not sub-divided
     all_freqs = []
     all_chan_widths = []
-    all_times = []
+    max_blength = 0
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
@@ -206,8 +206,13 @@ def imager(
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
-            all_times.append(ds.time.values)
-    # guard against irregyular channel widths
+            # TODO - why do we sometimes get NaN's in uvw?
+            uvw = ds.UVW.values.reshape(-1, 3)
+            uvw_mask = np.isnan(uvw).all(axis=-1)
+            uvw = uvw[~uvw_mask]
+            max_blength = max(max_blength, np.sqrt(np.abs(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
+
+    # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
     cw = cw[np.isfinite(cw)]
     if cw.size == 0:
@@ -219,7 +224,6 @@ def imager(
         nband = int(np.ceil((np.max(all_freqs) - np.min(all_freqs)) / (min_chan_width * channels_per_image)))
         nband = max(nband, 1)
     all_freqs = np.unique(all_freqs)
-    all_times = np.unique(all_times)
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
@@ -303,6 +307,8 @@ def imager(
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
                 timeid += 1
