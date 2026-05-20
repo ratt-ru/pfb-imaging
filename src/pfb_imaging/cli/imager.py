@@ -3,9 +3,9 @@ from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import (
-    ListInt,
+    ListStr,
     StimelaMeta,
-    parse_list_int,
+    parse_list_str,
     parse_upath,
     stimela_cab,
     stimela_output,
@@ -53,9 +53,9 @@ def imager(
         ),
     ],
     scan_names: Annotated[
-        ListInt | None,
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
@@ -63,9 +63,9 @@ def imager(
         ),
     ] = None,
     spw_names: Annotated[
-        ListInt | None,
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
@@ -73,9 +73,9 @@ def imager(
         ),
     ] = None,
     field_names: Annotated[
-        ListInt | None,
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
             rich_help_panel="Data Selection",
         ),

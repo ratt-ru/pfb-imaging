@@ -29,7 +29,7 @@ cabs:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       spw-names:
@@ -37,7 +37,7 @@ cabs:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       field-names:
@@ -45,7 +45,7 @@ cabs:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       freq-range:

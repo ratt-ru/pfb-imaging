@@ -39,7 +39,6 @@ def imager(
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
-    applycal: str = "all",
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
     precision: str = "double",
@@ -48,7 +47,6 @@ def imager(
     beam_model: str | None = None,
     chan_average: int = 1,
     progressbar: bool = True,
-    check_ants: bool = False,
     log_directory: str | None = None,
     product: str = "I",
     nworkers: int = 1,
@@ -87,7 +85,7 @@ def imager(
         mslist = msstore.fs.glob(str(ms_path).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
@@ -100,7 +98,7 @@ def imager(
             gtlist = gainstore.fs.glob(str(gt).rstrip("/"))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
             except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
@@ -209,17 +207,27 @@ def imager(
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
             all_times.append(ds.time.values)
+    # guard against irregyular channel widths
+    cw = np.asarray(all_chan_widths)
+    cw = cw[np.isfinite(cw)]
+    if cw.size == 0:
+        log.error_and_raise("No SPW has a usable channel_width", ValueError)
+    min_chan_width = np.min(cw)
+    if channels_per_image in (0, None, -1):
+        nband = len(np.unique([f.tobytes() for f in all_freqs]))  # one per spw
+    else:
+        nband = int(np.ceil((np.max(all_freqs) - np.min(all_freqs)) / (min_chan_width * channels_per_image)))
+        nband = max(nband, 1)
     all_freqs = np.unique(all_freqs)
     all_times = np.unique(all_times)
-    min_chan_width = np.min(all_chan_widths)
-    nband = int(np.ceil((all_freqs.max() - all_freqs.min()) / (min_chan_width * channels_per_image)))
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
-    band_edges = np.arange(all_freqs.min() - min_chan_width, all_freqs.max() + min_chan_width, nband + 1)
+    band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
     freq_out = band_edges[0:-1] + half_band_width
 
     tasks = []
-    timeid = 0
+    scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
+    next_tid = 0
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
@@ -234,20 +242,18 @@ def imager(
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
 
-            ds = node.ds
+            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
+            if ds.frequency.size == 0:
+                continue
             field_name = np.unique(ds.field_name.values).item()  # partitioned by FIELD_ID → single value
             scan_name = np.unique(ds.scan_name.values).item()  # partitioned by SCAN_NUMBER → single value
             spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
-            idt = f"FIELD-{field_name}_SPW-{spw_name}_SCAN-{scan_name}"
             # skip if data not in selection
             if (field_names is not None) and (field_name not in field_names):
                 continue
             if (spw_names is not None) and (spw_name not in spw_names):
                 continue
             if (scan_names is not None) and (scan_name not in scan_names):
-                continue
-            idx = (ds.frequency.values >= freq_min) & (ds.frequency.values <= freq_max)
-            if not idx.any():
                 continue
 
             freqs_node = ds.frequency.values
@@ -263,10 +269,15 @@ def imager(
             else:
                 cpi_node = channels_per_image
             for tlow in range(0, ntimes_node, ipi_node):
-                thigh = np.minimum(tlow + ipi_node, ntimes_node)
+                thigh = min(tlow + ipi_node, ntimes_node)
                 t_index = slice(tlow, thigh)
+                key = (scan_name, tlow // ipi_node)
+                if key not in scan_block_to_tid:
+                    scan_block_to_tid[key] = next_tid
+                    next_tid += 1
+                timeid = scan_block_to_tid[key]
                 for flow in range(0, nchan_node, cpi_node):
-                    fhigh = np.minimum(flow + cpi_node, nchan_node)
+                    fhigh = min(flow + cpi_node, nchan_node)
                     nu_index = slice(flow, fhigh)
                     bandid = int(np.argmin(np.abs(freq_out - freqs_node[nu_index].mean())))
 

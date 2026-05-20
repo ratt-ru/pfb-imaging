@@ -1,4 +1,3 @@
-import gc
 from datetime import datetime, timezone
 
 import numexpr as ne
@@ -16,6 +15,7 @@ from pfb_imaging import pfb_version
 from pfb_imaging.utils.weighting import weight_data
 
 
+# wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
     try:
@@ -100,16 +100,26 @@ def stokes_vis(
     utime = ds.time.values
     time_out = np.mean(utime)
 
-    # INTERVAL is now EFFECTIVE_INTEGRATION_TIME and needs to be reshaped
-    interval = ds.EFFECTIVE_INTEGRATION_TIME.values.ravel()
+    # INTERVAL treated differently depending on whether it's regular or irregular
+    it_attr = ds.time.attrs.get("integration_time", {}).get("data")
+    if "INTEGRATION_TIME" in ds.data_vars:  # irregular
+        interval = ds.INTEGRATION_TIME.values.ravel()
+    else:
+        interval = np.full(nrow, it_attr, dtype=np.float64)  # regular
 
-    # a few hoops to get ANTENNA1 and ANTENNA2 as before
+    # get MSv2 style ANTENNA1 and ANTENNA2
     ant1_names = ds.baseline_antenna1_name.values
     ant2_names = ds.baseline_antenna2_name.values
-    ant12 = np.concatenate([ant1_names, ant2_names])
-    _, inv = np.unique(ant12, return_inverse=True)
-    ant1_bl = inv[: len(inv) // 2]
-    ant2_bl = inv[len(inv) // 2 :]
+    # ant12 = np.concatenate([ant1_names, ant2_names])
+    # _, inv = np.unique(ant12, return_inverse=True)
+    # ant1_bl = inv[: len(inv) // 2]
+    # ant2_bl = inv[len(inv) // 2 :]
+    # claude recommends rather do the following
+    ant_names = node_dt["antenna_xds"].antenna_name.values
+    order = np.argsort(ant_names)
+    sorted_n = ant_names[order]
+    ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
+    ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
     time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
     time = time.ravel()
     ant1 = ant1.ravel()
@@ -197,7 +207,6 @@ def stokes_vis(
     uvw = uvw[mrow]
     flag = flag[mrow]
     weight = weight[mrow]
-    gc.collect()
 
     # number of output correlations will be set by required Stokes products
     ncorr = data.shape[-1]
@@ -215,6 +224,12 @@ def stokes_vis(
     # simple average over channels
     if chan_average > 1:
         from africanus.averaging import time_and_channel
+
+        def chan_widths_array(ds):
+            if "CHANNEL_WIDTH" in ds.data_vars:
+                return ds.CHANNEL_WIDTH.values
+            cw = ds.frequency.attrs["channel_width"]["data"]
+            return np.full(ds.frequency.size, cw, dtype=np.float64)
 
         chan_width = np.broadcast_to(ds.frequency.attrs["channel_width"]["data"], nchan)
 

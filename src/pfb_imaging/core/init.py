@@ -78,7 +78,7 @@ def init(
         mslist = msstore.fs.glob(str(ms_path).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
@@ -91,7 +91,7 @@ def init(
             gtlist = gainstore.fs.glob(str(gt).rstrip("/"))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
             except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
