@@ -68,6 +68,7 @@ def deconv(
     cg_maxit: int = 150,
     cg_verbose: int = 1,
     cg_report_freq: int = 10,
+    sigma_target: float | None = None,
 ):
     """
     General preconditioned forward-backward deconvolution loop.
@@ -260,7 +261,8 @@ def deconv(
         save_fits(update_mfs, fits_oname + f"_{suffix}_update_{iter0 + k + 1}.fits", hdr_mfs)
 
         modelp = deepcopy(model)
-        lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
+        rms_scale = sigma_target if sigma_target is not None else rms
+        lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms_scale
         log.info(f"Solving for model with lambda = {lam:.3e}")
         model = solver.backward(lam)
 
