@@ -9,7 +9,9 @@ from pfb_imaging.utils import logging as pfb_logging
 __version__ = "0.0.9"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
-os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+if os.environ["NUMBA_THREADING_LAYER"] is None:
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+
 
 
 def set_envs(nthreads, ncpu, log=None):
@@ -71,7 +73,7 @@ def set_envs(nthreads, ncpu, log=None):
         "JAX_LOGGING_LEVEL": "ERROR",  # for the workers
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
-        "NUMBA_THREADING_LAYER": "tbb",
+        "NUMBA_THREADING_LAYER": os.environ["NUMBA_THREADING_LAYER"],
         "RAY_DISABLE_DASHBOARD": "1",
         "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0",
     }
