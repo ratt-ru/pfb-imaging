@@ -105,10 +105,10 @@ def imager(
         opts_dict["gain_table"] = gain_table
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/init_{timestamp}.log"
+    logname = f"{str(log_directory)}/imager_{timestamp}.log"
     pfb_logging.log_to_file(logname)
 
-    log.log_options_dict(opts_dict, title="INIT options")
+    log.log_options_dict(opts_dict, title="IMAGER options")
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
@@ -163,8 +163,6 @@ def imager(
         freq_min = -np.inf
         freq_max = np.inf
 
-    partition_schema = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
-
     # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
@@ -196,7 +194,6 @@ def imager(
         engine, kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
-            partition_schema=partition_schema,
             engine=engine,
             **kwargs,
         )
@@ -238,7 +235,6 @@ def imager(
         engine, kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
-            partition_schema=partition_schema,
             engine=engine,
             **kwargs,
         )
@@ -355,7 +351,7 @@ def get_engine(ms_path: str) -> MSv4Backend:
     if backend == MSv4Backend.CASA_TABLE:
         import xarray_ms  # noqa: F401
 
-        return "xarray-ms:msv2", {}
+        return "xarray-ms:msv2", {"partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]}
     elif backend == MSv4Backend.ZARR:
         return "zarr", {}
     elif backend == MSv4Backend.MEERKAT:
