@@ -151,13 +151,6 @@ def imager(
             rich_help_panel="Imaging",
         ),
     ] = -1,
-    nband: Annotated[
-        int,
-        typer.Option(
-            help="Number of frequency bands to split data into for imaging.",
-            rich_help_panel="Imaging",
-        ),
-    ] = 1,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
@@ -290,7 +283,6 @@ def imager(
                     gain_table=gain_table,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
-                    nband=nband,
                     precision=precision,
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
@@ -324,7 +316,6 @@ def imager(
                 gain_table=gain_table,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
-                nband=nband,
                 precision=precision,
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
@@ -367,7 +358,6 @@ def imager(
             gain_table=gain_table,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
-            nband=nband,
             precision=precision,
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,

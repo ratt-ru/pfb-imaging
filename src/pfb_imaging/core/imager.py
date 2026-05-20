@@ -42,7 +42,6 @@ def imager(
     applycal: str = "all",
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
-    nband: int = 1,
     precision: str = "double",
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
@@ -191,24 +190,31 @@ def imager(
     # note mapping currently maps partitions to the band it has most overlap with
     # partitions are not sub-divided
     all_freqs = []
+    all_chan_widths = []
     all_times = []
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
+        engine, kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
             partition_schema=partition_schema,
-            #   applycal=applycal,
-            engine=get_engine(ms_name),
+            engine=engine,
+            **kwargs,
         )
         for node in dt.children.values():
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
-            all_freqs.append(node.ds.frequency.values)
-            all_times.append(node.ds.time.values)
+            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
+            all_freqs.append(ds.frequency.values)
+            all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
+            all_times.append(ds.time.values)
     all_freqs = np.unique(all_freqs)
     all_times = np.unique(all_times)
-    band_edges = np.arange(all_freqs.min(), all_freqs.max(), nband + 1)
+    min_chan_width = np.min(all_chan_widths)
+    nband = int(np.ceil((all_freqs.max() - all_freqs.min()) / (min_chan_width * channels_per_image)))
+    log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
+    band_edges = np.arange(all_freqs.min() - min_chan_width, all_freqs.max() + min_chan_width, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
     freq_out = band_edges[0:-1] + half_band_width
 
@@ -217,11 +223,12 @@ def imager(
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
+        engine, kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
             partition_schema=partition_schema,
-            #   applycal=applycal,
-            engine=get_engine(ms_name),
+            engine=engine,
+            **kwargs,
         )
         for node in dt.children.values():
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
@@ -242,7 +249,6 @@ def imager(
             idx = (ds.frequency.values >= freq_min) & (ds.frequency.values <= freq_max)
             if not idx.any():
                 continue
-            idt = f"FIELD-{field_name}_SPW-{spw_name}_SCAN-{scan_name}"
 
             freqs_node = ds.frequency.values
             times_node = ds.time.values
@@ -250,8 +256,12 @@ def imager(
             ntimes_node = times_node.size
             if integrations_per_image in (0, None, -1):
                 ipi_node = ntimes_node
+            else:
+                ipi_node = integrations_per_image
             if channels_per_image in (0, None, -1):
                 cpi_node = nchan_node
+            else:
+                cpi_node = channels_per_image
             for tlow in range(0, ntimes_node, ipi_node):
                 thigh = np.minimum(tlow + ipi_node, ntimes_node)
                 t_index = slice(tlow, thigh)
@@ -328,10 +338,10 @@ def get_engine(ms_path: str) -> MSv4Backend:
     if backend == MSv4Backend.CASA_TABLE:
         import xarray_ms  # noqa: F401
 
-        return "xarray-ms:msv2"
+        return "xarray-ms:msv2", {}
     elif backend == MSv4Backend.ZARR:
-        return "zarr"
+        return "zarr", {}
     elif backend == MSv4Backend.MEERKAT:
         import xarray_kat  # noqa: F401
 
-        return "xarray-kat"
+        return "xarray-kat", {"applycal": "all"}

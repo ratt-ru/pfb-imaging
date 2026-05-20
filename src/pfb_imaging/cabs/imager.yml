@@ -116,13 +116,6 @@ cabs:
         default: '-1'
         metadata:
           rich_help_panel: Imaging
-      nband:
-        info:
-          Number of frequency bands to split data into for imaging.
-        dtype: int
-        default: 1
-        metadata:
-          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision

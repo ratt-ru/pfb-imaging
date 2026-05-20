@@ -636,9 +636,9 @@ array = [
     { name = "numpy" },
 ]
 dataframe = [
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pyarrow", marker = "python_full_version >= '3.11'" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
 ]
 
 [[package]]
@@ -2246,8 +2246,6 @@ full = [
     { name = "dask-ms", extra = ["katdal", "s3", "xarray", "zarr"] },
     { name = "distributed" },
     { name = "ducc0" },
-    { name = "ipykernel" },
-    { name = "ipywidgets" },
     { name = "jax" },
     { name = "katbeam" },
     { name = "lz4" },
@@ -2265,12 +2263,15 @@ full = [
     { name = "scikit-image" },
     { name = "sympy" },
     { name = "tbb" },
+    { name = "xarray-kat" },
     { name = "xarray-ms" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "ipdb" },
+    { name = "ipykernel" },
+    { name = "ipywidgets" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "ruff" },
@@ -2288,8 +2289,6 @@ requires-dist = [
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2024.11.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = ">=0.2.1" },
-    { name = "ipykernel", marker = "extra == 'full'", specifier = ">=7.2.0" },
-    { name = "ipywidgets", marker = "extra == 'full'", specifier = ">=8.1.8" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
@@ -2307,6 +2306,7 @@ requires-dist = [
     { name = "scikit-image", marker = "extra == 'full'", specifier = ">=0.24.0" },
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
     { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
+    { name = "xarray-kat", marker = "extra == 'full'", specifier = ">=0.0.4" },
     { name = "xarray-ms", marker = "extra == 'full'", specifier = ">=0.5.3" },
 ]
 provides-extras = ["full"]
@@ -2314,6 +2314,8 @@ provides-extras = ["full"]
 [package.metadata.requires-dev]
 dev = [
     { name = "ipdb" },
+    { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "ipywidgets", specifier = ">=8.1.8" },
     { name = "mypy", specifier = ">=1.0.0" },
     { name = "pre-commit", specifier = ">=4.0.0" },
     { name = "ruff", specifier = ">=0.8.0" },
@@ -3325,6 +3327,28 @@ wheels = [
 ]
 
 [[package]]
+name = "tensorstore"
+version = "0.1.84"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ml-dtypes" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/83/18/c8e8b4faffab1a434b6c013d54cf7f5b754a6849429d9dbb718297705796/tensorstore-0.1.84.tar.gz", hash = "sha256:3cb091dfde68600e6d8f03a389ccc92ffa7c0798a0c600d1013c0138d7163e6b", size = 7208048, upload-time = "2026-05-16T06:17:58.448Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/2f/7630705a1db3a349f162552c7a34f4e74c06bf9800d73c233eb939305f6e/tensorstore-0.1.84-cp311-cp311-macosx_10_14_x86_64.whl", hash = "sha256:6103311700359e9f552e8560d16eecf1548b87e2f8a6a766b9f6a65c8722f879", size = 16556656, upload-time = "2026-05-16T06:17:01.065Z" },
+    { url = "https://files.pythonhosted.org/packages/09/2b/fbba516c549fc868d9b9c74e3e593157825b08db0103dcfcde1ae994d1f4/tensorstore-0.1.84-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:340fe971f1808d7060f2273b8eee352780bcb65e5035f78163fa9b8930aa795a", size = 14900174, upload-time = "2026-05-16T06:17:03.647Z" },
+    { url = "https://files.pythonhosted.org/packages/55/6d/fe5013aa1b8e8e6a73213285f29a059bfcbefcfebafc937694823bdc5a00/tensorstore-0.1.84-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:34352f8ba6e5efba5feb18917d68da1a92bbff80e64c3fd06d3d1af4b343821a", size = 19341729, upload-time = "2026-05-16T06:17:06.242Z" },
+    { url = "https://files.pythonhosted.org/packages/11/c5/65e7dfc4108451f5317aca47a7c339954d0b7601ed4db4481a2f80ee2da1/tensorstore-0.1.84-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8ae74451ab5cc8a0cd9e51926adf04f4dfdbd8ad5ac31ac71f1caa7bdfb2828d", size = 20952887, upload-time = "2026-05-16T06:17:08.653Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/dc/11a487107c5b73684aeaa4667693d5e73b96bc3ad7211db4a03f6049bf65/tensorstore-0.1.84-cp311-cp311-win_amd64.whl", hash = "sha256:4c9b084b0b44c36eaa9b9c51c3347474cd3c94fda12344fb507e6629357615bf", size = 13391569, upload-time = "2026-05-16T06:17:11.307Z" },
+    { url = "https://files.pythonhosted.org/packages/46/8a/1b5231e965257c3ee7d4615cb49a0fac53a71a1c34b293bcf524bb7c6d13/tensorstore-0.1.84-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:915371fc2c27540e8b69c573b7a06217fb8d161ec231cedfa9f3d264615a326d", size = 16571584, upload-time = "2026-05-16T06:17:13.283Z" },
+    { url = "https://files.pythonhosted.org/packages/88/5d/52e52aa00a5ae3ebe1116ca52ac9f47ef98e94f6c4e411649cd3d1bb79cc/tensorstore-0.1.84-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4477eabe26e2f5131f1b1a3444cd9167fe69fabc29579eab8259d218399b9e6b", size = 14905169, upload-time = "2026-05-16T06:17:15.638Z" },
+    { url = "https://files.pythonhosted.org/packages/61/36/f88b4bf267902f12cd2ca33aff10fabd6839dd1ce7d51876ebefa98aaf2c/tensorstore-0.1.84-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3ace00cf2e45dc5d64fe3a10c2cbef61343915683808a10a3e081233566a7231", size = 19345134, upload-time = "2026-05-16T06:17:17.984Z" },
+    { url = "https://files.pythonhosted.org/packages/18/7c/b7b24e10e5cb0213c85204d53fcd60d0568d986ea0001a00a815e14e01e1/tensorstore-0.1.84-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:64c8039558d5607b73903948fce058725731df410c5c196cf58b3fc6222395b5", size = 20968745, upload-time = "2026-05-16T06:17:20.569Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/36/33ad454a2b667a93b35e74595a351dbf9b8693440bd68665990663b79164/tensorstore-0.1.84-cp312-cp312-win_amd64.whl", hash = "sha256:08e7ec5b35db5d4c4b6a867be8500448f9bd4e0c9d5a52d7f0b460650622baf6", size = 13398458, upload-time = "2026-05-16T06:17:22.701Z" },
+]
+
+[[package]]
 name = "tifffile"
 version = "2026.3.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3532,6 +3556,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0f/03/e3353b72e518574b32993989d8f696277bf878e9d508c7dd22e86c0dab5b/xarray-2026.2.0.tar.gz", hash = "sha256:978b6acb018770554f8fd964af4eb02f9bcc165d4085dbb7326190d92aa74bcf", size = 3111388, upload-time = "2026-02-13T22:20:50.18Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/92/545eb2ca17fc0e05456728d7e4378bfee48d66433ae3b7e71948e46826fb/xarray-2026.2.0-py3-none-any.whl", hash = "sha256:e927d7d716ea71dea78a13417970850a640447d8dd2ceeb65c5687f6373837c9", size = 1405358, upload-time = "2026-02-13T22:20:47.847Z" },
+]
+
+[[package]]
+name = "xarray-kat"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "katpoint" },
+    { name = "katsdptelstate", extra = ["rdb"] },
+    { name = "tensorstore" },
+    { name = "xarray" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/73/6d88535eb2a697f66f800fc7353fd6a60410b57d419606ead4910ec4f2e3/xarray_kat-0.0.4.tar.gz", hash = "sha256:3206671eb7fa8979768cd4fb04ed475cbabb2b6a8daa338543d738d3ee4986f3", size = 91468, upload-time = "2026-03-31T13:02:09.021Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/4d/9c67c157e4cbd9584ce5d74cee08e1b08d43af5d6c4592ce4ae419470712/xarray_kat-0.0.4-py3-none-any.whl", hash = "sha256:eeb9f5fcac5fbce7eda1fe5f266069de74c0b36d2e7dc54d3c753728da896b71", size = 110127, upload-time = "2026-03-31T13:02:07.445Z" },
 ]
 
 [[package]]

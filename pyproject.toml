@@ -52,6 +52,7 @@ full = [
     "pillow>=12.2.0",
     "xarray-ms>=0.5.3",
     "msv4-utils>=0.0.2",
+    "xarray-kat>=0.0.4",
 ]
 
 [project.scripts]
