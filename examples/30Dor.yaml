@@ -1,0 +1,52 @@
+# RDBs
+# Tarantula long track
+# http://archive-gw-1.kat.ac.za/1530927060/1530927060_sdp_l0.full.rdb
+
+# Nova Centauri 2025 (V1935 Cen) epoch 2 (UHF) (J0408)
+# http://archive-gw-1.kat.ac.za/1764392353/1764392353_sdp_l0.full.rdb
+
+opts:
+  log:
+    dir: logs/log-{config.run.datetime}
+    name: log-{info.fqname}
+    nest: 2
+  backend:
+    select: native
+
+gosara:
+  name: Tarantula-imaging
+  info: Recipe to image Tarantula field directly off the archive.
+
+  inputs:
+    ms:
+      dtype: MS
+      default: http://archive-gw-1.kat.ac.za/1530927060/1530927060_sdp_l0.full.rdb
+    base-dir:
+      dtype: str
+      default: outputs
+      info:
+        Base directory in which to place output data products.
+    image-name:
+      default: 'sara_30Dor'
+    field-of-view:
+      dtype: float
+      default: 2.0
+      info:
+        Field of view in degrees. This is used to determine the image size and cell size.
+    super-resolution-factor:
+      dtype: float
+      default: 1.5
+      info:
+        Super-resolution factor to apply to the image. This is used to determine the image size and cell size.
+    data-column:
+      default: DATA
+    weight-column:
+      dtype: str
+      default: WEIGHT_SPECTRUM
+      info:
+        Column containing data weights
+    fields:
+      dtype: List[int]
+      default: [2]
+      info:
+        List of fields to image.

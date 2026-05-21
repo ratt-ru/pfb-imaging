@@ -59,6 +59,10 @@ from pfb_imaging.cli.init import init  # noqa: E402
 
 app.command(name="init")(init)
 
+from pfb_imaging.cli.imager import imager  # noqa: E402
+
+app.command(name="imager")(imager)
+
 from pfb_imaging.cli.kclean import kclean  # noqa: E402
 
 app.command(name="kclean")(kclean)

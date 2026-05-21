@@ -10,7 +10,9 @@ COPY pyproject.toml README.md ./
 COPY src/ src/
 
 # install git in case we need to install a package from a git repo
-RUN apt-get update && apt-get install -y git
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git gcc build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install package with full dependencies using uv
 RUN uv pip install --system --no-cache ".[full]"

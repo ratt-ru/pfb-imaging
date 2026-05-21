@@ -3,9 +3,9 @@ from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import (
-    ListInt,
+    ListStr,
     StimelaMeta,
-    parse_list_int,
+    parse_list_str,
     parse_upath,
     stimela_cab,
     stimela_output,
@@ -16,7 +16,7 @@ URI = NewType("URI", Path)
 
 
 @stimela_cab(
-    name="init",
+    name="imager",
     info="Initialise Stokes data products.",
 )
 @stimela_output(
@@ -34,7 +34,7 @@ URI = NewType("URI", Path)
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
 )
-def init(
+def imager(
     ms: Annotated[
         list[URI],
         typer.Option(
@@ -52,30 +52,30 @@ def init(
             rich_help_panel="Naming",
         ),
     ],
-    scans: Annotated[
-        ListInt | None,
+    scan_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    ddids: Annotated[
-        ListInt | None,
+    spw_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    fields: Annotated[
-        ListInt | None,
+    field_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
+            parser=parse_list_str,
             help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
             rich_help_panel="Data Selection",
         ),
@@ -193,13 +193,6 @@ def init(
             rich_help_panel="Reporting",
         ),
     ] = True,
-    check_ants: Annotated[
-        bool,
-        typer.Option(
-            help="Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.",
-            rich_help_panel="Control",
-        ),
-    ] = False,
     product: Annotated[
         str,
         typer.Option(
@@ -274,13 +267,13 @@ def init(
             from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
             preflight_remote_must_exist(
-                init,
+                imager,
                 dict(
                     ms=ms,
                     output_filename=output_filename,
-                    scans=scans,
-                    ddids=ddids,
-                    fields=fields,
+                    scan_names=scan_names,
+                    spw_names=spw_names,
+                    field_names=field_names,
                     freq_range=freq_range,
                     overwrite=overwrite,
                     data_column=data_column,
@@ -296,7 +289,6 @@ def init(
                     beam_model=beam_model,
                     chan_average=chan_average,
                     progressbar=progressbar,
-                    check_ants=check_ants,
                     product=product,
                     nworkers=nworkers,
                     nthreads=nthreads,
@@ -306,15 +298,15 @@ def init(
             )
 
             # Lazy import the core implementation
-            from pfb_imaging.core.init import init as init_core  # noqa: E402
+            from pfb_imaging.core.imager import imager as imager_core  # noqa: E402
 
             # Call the core function with all parameters
-            init_core(
+            imager_core(
                 ms,
                 output_filename,
-                scans=scans,
-                ddids=ddids,
-                fields=fields,
+                scan_names=scan_names,
+                spw_names=spw_names,
+                field_names=field_names,
                 freq_range=freq_range,
                 overwrite=overwrite,
                 data_column=data_column,
@@ -330,7 +322,6 @@ def init(
                 beam_model=beam_model,
                 chan_average=chan_average,
                 progressbar=progressbar,
-                check_ants=check_ants,
                 product=product,
                 nworkers=nworkers,
                 nthreads=nthreads,
@@ -351,13 +342,13 @@ def init(
         raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
-        init,
+        imager,
         dict(
             ms=ms,
             output_filename=output_filename,
-            scans=scans,
-            ddids=ddids,
-            fields=fields,
+            scan_names=scan_names,
+            spw_names=spw_names,
+            field_names=field_names,
             freq_range=freq_range,
             overwrite=overwrite,
             data_column=data_column,
@@ -373,7 +364,6 @@ def init(
             beam_model=beam_model,
             chan_average=chan_average,
             progressbar=progressbar,
-            check_ants=check_ants,
             product=product,
             nworkers=nworkers,
             nthreads=nthreads,

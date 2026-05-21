@@ -1,29 +1,37 @@
 import time
+import warnings
 from pathlib import Path
 
 import fsspec
 import numpy as np
 import psutil
 import ray
-from daskms import xds_from_storage_ms as xds_from_ms
+import xarray as xr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
+from msv4_utils import MSv4Backend, infer_backend
+from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
+from xarray_ms.errors import FrameConversionWarning, IrregularGridWarning, MissingMetadataWarning
 
 from pfb_imaging import set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.misc import construct_mappings
 from pfb_imaging.utils.naming import set_output_names
-from pfb_imaging.utils.stokes2vis import safe_stokes_vis
+from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 
-log = pfb_logging.get_logger("INIT")
+warnings.filterwarnings("ignore", category=IrregularGridWarning)
+warnings.filterwarnings("ignore", category=MissingMetadataWarning)
+warnings.filterwarnings("ignore", category=FrameConversionWarning)
 
 
-def init(
+log = pfb_logging.get_logger("IMAGER")
+
+
+def imager(
     ms: list[Path],
     output_filename: str,
-    scans: list[int] | None = None,
-    ddids: list[int] | None = None,
-    fields: list[int] | None = None,
+    scan_names: list[int] | None = None,
+    spw_names: list[int] | None = None,
+    field_names: list[int] | None = None,
     freq_range: str | None = None,
     overwrite: bool = False,
     data_column: str = "DATA",
@@ -39,7 +47,6 @@ def init(
     beam_model: str | None = None,
     chan_average: int = 1,
     progressbar: bool = True,
-    check_ants: bool = False,
     log_directory: str | None = None,
     product: str = "I",
     nworkers: int = 1,
@@ -79,7 +86,8 @@ def init(
         try:
             assert len(mslist) > 0
             msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception:
+        except Exception as e:
+            raise e
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
     opts_dict["ms"] = ms
@@ -98,10 +106,10 @@ def init(
         opts_dict["gain_table"] = gain_table
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/init_{timestamp}.log"
+    logname = f"{str(log_directory)}/imager_{timestamp}.log"
     pfb_logging.log_to_file(logname)
 
-    log.log_options_dict(opts_dict, title="INIT options")
+    log.log_options_dict(opts_dict, title="IMAGER options")
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
@@ -118,7 +126,6 @@ def init(
 
     time_start = time.time()
 
-    # Main implementation logic (previously in _init)
     basename = f"{output_filename}"
 
     xds_store = DaskMSStore(f"{basename}.xds")
@@ -157,34 +164,6 @@ def init(
         freq_min = -np.inf
         freq_max = np.inf
 
-    log.info("Constructing mapping")
-    (
-        row_mapping,
-        freq_mapping,
-        time_mapping,
-        freqs,
-        utimes,
-        ms_chunks,
-        gains,
-        radecs,
-        chan_widths,
-        max_blength,
-        antpos,
-        poltype,
-    ) = construct_mappings(
-        ms,
-        gain_names,
-        ipi=integrations_per_image,
-        cpi=channels_per_image,
-        freq_min=freq_min,
-        freq_max=freq_max,
-        field_ids=fields,
-        ddids=ddids,
-        scans=scans,
-    )
-
-    group_by = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
-
     # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
@@ -198,140 +177,136 @@ def init(
         dc2 = None
         operator = None
 
-    columns = (dc1, "UVW", "ANTENNA1", "ANTENNA2", "TIME", "INTERVAL", "FLAG_ROW")
-    schema = {}
-    if flag_column != "None":
-        columns += (flag_column,)
-        schema[flag_column] = {"dims": ("chan", "corr")}
-    schema[dc1] = {"dims": ("chan", "corr")}
-    if dc2 is not None:
-        columns += (dc2,)
-        schema[dc2] = {"dims": ("chan", "corr")}
+    # DATA is always mapped to VISIBILITY in MSv4, so we need to rename it here
+    if dc1 == "DATA":
+        dc1 = "VISIBILITY"
+    if dc2 == "DATA":
+        dc2 = "VISIBILITY"
 
-    # only WEIGHT column gets special treatment
-    # any other column must have channel axis
-    if sigma_column is not None:
-        log.info(f"Initialising weights from {sigma_column} column")
-        columns += (sigma_column,)
-        schema[sigma_column] = {"dims": ("chan", "corr")}
-    elif weight_column is not None:
-        log.info(f"Using weights from {weight_column} column")
-        columns += (weight_column,)
-        # hack for https://github.com/ratt-ru/dask-ms/issues/268
-        if weight_column != "WEIGHT":
-            schema[weight_column] = {"dims": ("chan", "corr")}
-    else:
-        log.info("No weights provided, using unity weights")
-
-    # distinct freq groups
-    sgroup = 0
-    freq_groups = []
-    freq_sgroups = []
-    for ms_name in ms:
-        for idt, freq in freqs[ms_name].items():
-            ilo = idt.find("DDID") + 4
-            ihi = idt.rfind("_")
-            ddid = int(idt[ilo:ihi])
-            if (ddids is not None) and (ddid not in ddids):
+    # figure out where band edges are
+    # note mapping currently maps partitions to the band it has most overlap with
+    # partitions are not sub-divided
+    all_freqs = []
+    all_chan_widths = []
+    max_blength = 0
+    for ims, ms_name in enumerate(ms):
+        if "file://" in ms_name:
+            ms_name = ms_name.replace("file://", "")
+        dt_kwargs = get_engine(ms_name)
+        dt = xr.open_datatree(
+            ms_name,
+            **dt_kwargs,
+        )
+        for node in dt.children.values():
+            if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
-            if not len(freq_groups):
-                freq_groups.append(freq)
-                freq_sgroups.append(sgroup)
-                sgroup += freq_mapping[ms_name][idt]["counts"].size
-            else:
-                in_group = False
-                for fs in freq_groups:
-                    if freq.size == fs.size and np.all(freq == fs):
-                        in_group = True
-                        break
-                if not in_group:
-                    freq_groups.append(freq)
-                    freq_sgroups.append(sgroup)
-                    sgroup += freq_mapping[ms_name][idt]["counts"].size
+            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
+            all_freqs.append(ds.frequency.values)
+            all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
+            # TODO - why do we sometimes get NaN's in uvw?
+            uvw = ds.UVW.values.reshape(-1, 3)  # .load()
+            uvw_mask = np.isnan(uvw).all(axis=-1)
+            uvw = uvw[~uvw_mask]
+            max_blength = max(max_blength, np.sqrt(np.abs(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
 
-    # band mapping
-    msddid2bid = {}
-    for ms_name in ms:
-        msddid2bid[ms_name] = {}
-        for idt, freq in freqs[ms_name].items():
-            # find group where it matches
-            for sgroup, fs in zip(freq_sgroups, freq_groups):
-                if freq.size == fs.size and np.all(freq == fs):
-                    msddid2bid[ms_name][idt] = sgroup
+    # guard against irregular channel widths
+    cw = np.asarray(all_chan_widths)
+    cw = cw[np.isfinite(cw)]
+    if cw.size == 0:
+        log.error_and_raise("No SPW has a usable channel_width", ValueError)
+    min_chan_width = np.min(cw)
+    if channels_per_image in (0, None, -1):
+        nband = len(np.unique([f.tobytes() for f in all_freqs]))  # one per spw
+    else:
+        nband = int(np.ceil((np.max(all_freqs) - np.min(all_freqs)) / (min_chan_width * channels_per_image)))
+        nband = max(nband, 1)
+    all_freqs = np.unique(all_freqs)
+    log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
+    band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
+    half_band_width = (band_edges[1] - band_edges[0]) / 2
+    freq_out = band_edges[0:-1] + half_band_width
 
     tasks = []
+    scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
+    next_tid = 0
     for ims, ms_name in enumerate(ms):
-        xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by)
-
-        for ds in xds:
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            if (fields is not None) and (fid not in fields):
-                continue
-            if (ddids is not None) and (ddid not in ddids):
-                continue
-            if (scans is not None) and (scanid not in scans):
+        if "file://" in ms_name:
+            ms_name = ms_name.replace("file://", "")
+        dt_kwargs = get_engine(ms_name)
+        dt = xr.open_datatree(
+            ms_name,
+            **dt_kwargs,
+        )
+        for node in dt.children.values():
+            if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
 
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-
-            idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
-            if not idx.any():
+            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
+            if ds.frequency.size == 0:
+                continue
+            field_name = np.unique(ds.field_name.values).item()  # .load()  # partitioned by FIELD_ID → single value
+            scan_name = np.unique(ds.scan_name.values).item()  # .load()  # partitioned by SCAN_NUMBER → single value
+            spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
+            # skip if data not in selection
+            if (field_names is not None) and (field_name not in field_names):
+                continue
+            if (spw_names is not None) and (spw_name not in spw_names):
+                continue
+            if (scan_names is not None) and (scan_name not in scan_names):
                 continue
 
-            titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
-            for ti, (tlow, tcounts) in titr:
-                t_index = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms_name][idt]["start_indices"][t_index]
-                rcnts = row_mapping[ms_name][idt]["counts"][t_index]
-                # select all rows for output dataset
-                row_index = slice(ridx[0], ridx[-1] + rcnts[-1])
+            freqs_node = ds.frequency.values  # .load()
+            times_node = ds.time.values  # .load()
+            nchan_node = freqs_node.size
+            ntimes_node = times_node.size
+            if integrations_per_image in (0, None, -1):
+                ipi_node = ntimes_node
+            else:
+                ipi_node = integrations_per_image
+            if channels_per_image in (0, None, -1):
+                cpi_node = nchan_node
+            else:
+                cpi_node = channels_per_image
+            for tlow in range(0, ntimes_node, ipi_node):
+                thigh = min(tlow + ipi_node, ntimes_node)
+                t_index = slice(tlow, thigh)
+                key = (scan_name, tlow // ipi_node)
+                if key not in scan_block_to_tid:
+                    scan_block_to_tid[key] = next_tid
+                    next_tid += 1
+                timeid = scan_block_to_tid[key]
+                for flow in range(0, nchan_node, cpi_node):
+                    fhigh = min(flow + cpi_node, nchan_node)
+                    nu_index = slice(flow, fhigh)
+                    bandid = int(np.argmin(np.abs(freq_out - freqs_node[nu_index].mean())))
 
-                fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
-                b0 = msddid2bid[ms_name][idt]
-                for fi, (flow, fcounts) in fitr:
-                    nu_index = slice(flow, flow + fcounts)
-                    subds = ds[{"row": row_index, "chan": nu_index}]
-                    if gains[ms_name][idt] is not None:
-                        subgds = gains[ms_name][idt][{"gain_time": t_index, "gain_freq": nu_index}]
-                        jones = subgds.gains
-                    else:
-                        jones = None
+                    # slice out subset of node
+                    subdt = node.isel(time=t_index, frequency=nu_index)
 
                     fut = safe_stokes_vis.remote(
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,
-                        ds=subds,
-                        jones=jones,
-                        freq=freqs[ms_name][idt][nu_index],
-                        chan_width=chan_widths[ms_name][idt][nu_index],
-                        utime=utimes[ms_name][idt][t_index],
-                        tbin_idx=ridx,
-                        tbin_counts=rcnts,
-                        chan_low=flow,
-                        chan_high=flow + fcounts,
-                        radec=radecs[ms_name][idt],
-                        antpos=antpos[ms_name],
-                        poltype=poltype[ms_name],
+                        node_dt=subdt,
                         xds_store=xds_store.url,
-                        bandid=b0 + fi,
-                        timeid=ti,
+                        bandid=bandid,
+                        timeid=timeid,
                         msid=ims,
-                        # Parameters previously from opts:
+                        freq_out=freq_out[bandid],
                         precision=precision,
                         sigma_column=sigma_column,
                         weight_column=weight_column,
                         product=product,
-                        check_ants=check_ants,
                         chan_average=chan_average,
                         bda_decorr=bda_decorr,
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
+                timeid += 1
 
     nds = len(tasks)
     ncomplete = 0
@@ -366,3 +341,19 @@ def init(
         ray.shutdown()
 
     return
+
+
+def get_engine(ms_path: str) -> MSv4Backend:
+    if "file://" in ms_path:
+        ms_path = ms_path.replace("file://", "")
+    backend = infer_backend(ms_path)
+    if backend == MSv4Backend.CASA_TABLE:
+        import xarray_ms  # noqa: F401
+
+        return {"engine": "xarray-ms:msv2", "partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]}
+    elif backend == MSv4Backend.ZARR:
+        return {"engine": "zarr", "chunks": None}
+    elif backend == MSv4Backend.MEERKAT:
+        import xarray_kat  # noqa: F401
+
+        return {"engine": "xarray-kat", "applycal": "all"}  # , "chunked_array_type": "xarray-kat", "chunks": {}
