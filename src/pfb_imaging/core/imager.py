@@ -86,7 +86,8 @@ def imager(
         try:
             assert len(mslist) > 0
             msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception:
+        except Exception as e:
+            raise e
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
     opts_dict["ms"] = ms
@@ -191,11 +192,10 @@ def imager(
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
-        engine, kwargs = get_engine(ms_name)
+        dt_kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
-            engine=engine,
-            **kwargs,
+            **dt_kwargs,
         )
         for node in dt.children.values():
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
@@ -204,7 +204,7 @@ def imager(
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
             # TODO - why do we sometimes get NaN's in uvw?
-            uvw = ds.UVW.values.reshape(-1, 3)
+            uvw = ds.UVW.values.reshape(-1, 3)  # .load()
             uvw_mask = np.isnan(uvw).all(axis=-1)
             uvw = uvw[~uvw_mask]
             max_blength = max(max_blength, np.sqrt(np.abs(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
@@ -232,11 +232,10 @@ def imager(
     for ims, ms_name in enumerate(ms):
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
-        engine, kwargs = get_engine(ms_name)
+        dt_kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
-            engine=engine,
-            **kwargs,
+            **dt_kwargs,
         )
         for node in dt.children.values():
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
@@ -245,8 +244,8 @@ def imager(
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             if ds.frequency.size == 0:
                 continue
-            field_name = np.unique(ds.field_name.values).item()  # partitioned by FIELD_ID → single value
-            scan_name = np.unique(ds.scan_name.values).item()  # partitioned by SCAN_NUMBER → single value
+            field_name = np.unique(ds.field_name.values).item()  # .load()  # partitioned by FIELD_ID → single value
+            scan_name = np.unique(ds.scan_name.values).item()  # .load()  # partitioned by SCAN_NUMBER → single value
             spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
             # skip if data not in selection
             if (field_names is not None) and (field_name not in field_names):
@@ -256,8 +255,8 @@ def imager(
             if (scan_names is not None) and (scan_name not in scan_names):
                 continue
 
-            freqs_node = ds.frequency.values
-            times_node = ds.time.values
+            freqs_node = ds.frequency.values  # .load()
+            times_node = ds.time.values  # .load()
             nchan_node = freqs_node.size
             ntimes_node = times_node.size
             if integrations_per_image in (0, None, -1):
@@ -351,10 +350,10 @@ def get_engine(ms_path: str) -> MSv4Backend:
     if backend == MSv4Backend.CASA_TABLE:
         import xarray_ms  # noqa: F401
 
-        return "xarray-ms:msv2", {"partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]}
+        return {"engine": "xarray-ms:msv2", "partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]}
     elif backend == MSv4Backend.ZARR:
-        return "zarr", {}
+        return {"engine": "zarr", "chunks": None}
     elif backend == MSv4Backend.MEERKAT:
         import xarray_kat  # noqa: F401
 
-        return "xarray-kat", {"applycal": "all"}
+        return {"engine": "xarray-kat", "applycal": "all"}  # , "chunked_array_type": "xarray-kat", "chunks": {}

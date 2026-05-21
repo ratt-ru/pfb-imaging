@@ -1,5 +1,9 @@
-# RDB
+# RDBs
+# Tarantula long track
 # http://archive-gw-1.kat.ac.za/1530927060/1530927060_sdp_l0.full.rdb
+
+# Nova Centauri 2025 (V1935 Cen) epoch 2 (UHF) (J0408)
+# http://archive-gw-1.kat.ac.za/1764392353/1764392353_sdp_l0.full.rdb
 
 opts:
   log:

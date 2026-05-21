@@ -124,8 +124,9 @@ def stokes_vis(
     ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
     time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
     time = time.ravel()
-    ant1 = ant1.ravel()
-    ant2 = ant2.ravel()
+    # averaging routines expect int32 antenna indices
+    ant1 = ant1.ravel().astype(np.int32)
+    ant2 = ant2.ravel().astype(np.int32)
     uvw = ds.UVW.values.reshape(nrow, 3)
     flag = ds.FLAG.values.reshape(nrow, nchan, ncorr)
 
