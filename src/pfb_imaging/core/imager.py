@@ -190,8 +190,6 @@ def imager(
     all_chan_widths = []
     max_blength = 0
     for ims, ms_name in enumerate(ms):
-        if "file://" in ms_name:
-            ms_name = ms_name.replace("file://", "")
         dt_kwargs = get_engine(ms_name)
         dt = xr.open_datatree(
             ms_name,
@@ -230,8 +228,6 @@ def imager(
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
     for ims, ms_name in enumerate(ms):
-        if "file://" in ms_name:
-            ms_name = ms_name.replace("file://", "")
         dt_kwargs = get_engine(ms_name)
         from pprint import pformat
 
