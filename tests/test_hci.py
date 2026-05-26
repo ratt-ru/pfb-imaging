@@ -397,3 +397,18 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     img = ds.cube.values[0, f_peak, t_peak]  # (Y, X)
     peak_iy, peak_ix = np.unravel_index(np.argmax(img), img.shape)
     assert (int(peak_iy), int(peak_ix)) == (iy, ix)
+
+    # verify our contiguous-block binning matches the cube's coordinates
+    assert_allclose(ds.TIME.values, ms_meta.utime.reshape(n_tbin, ipi).mean(axis=1), atol=1e-6)
+    assert_allclose(ds.FREQ.values, ms_meta.freq.reshape(n_fbin, cpi).mean(axis=1), atol=1e-3)
+
+    # flux at the source pixel as a function of (freq, time). For a source on an
+    # exact pixel centre under natural weighting, the PSF-peak normalisation
+    # recovers the injected flux directly, so the cube equals the binned dynamic
+    # spectrum. Observed agreement is <0.1%; 1% leaves margin for float32 cube
+    # storage and gridder (epsilon) numerics across platforms.
+    src = ds.cube.values[0, :, :, iy, ix]  # (FREQ, TIME)
+    expected_ft = expected_f[:, None] * expected_t[None, :]  # (FREQ, TIME)
+    peak = float(expected_ft.max())
+
+    assert_allclose(src, expected_ft, rtol=1e-2, atol=1e-2 * peak)
