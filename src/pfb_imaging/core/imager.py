@@ -229,9 +229,6 @@ def imager(
     next_tid = 0
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name)
-        from pprint import pformat
-
-        log.info("xarray engine kwargs %s", pformat(dt_kwargs))
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
@@ -243,8 +240,8 @@ def imager(
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             if ds.frequency.size == 0:
                 continue
-            field_name = np.unique(ds.field_name.values).item()  # .load()  # partitioned by FIELD_ID → single value
-            scan_name = np.unique(ds.scan_name.values).item()  # .load()  # partitioned by SCAN_NUMBER → single value
+            field_name = np.unique(ds.field_name.load().values).item()  # partitioned by FIELD_ID → single value
+            scan_name = np.unique(ds.scan_name.load().values).item()  # partitioned by SCAN_NUMBER → single value
             spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
             # skip if data not in selection
             if (field_names is not None) and (field_name not in field_names):

@@ -1802,11 +1802,11 @@ wheels = [
 
 [[package]]
 name = "msv4-utils"
-version = "0.0.2"
+version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/38/f5/9bec30d7bab8ffe02ab673fb008c5d0545a6f2c64d9ef6f9c012691d1003/msv4_utils-0.0.2.tar.gz", hash = "sha256:051e785b090a2a9d68a1294620925b336744419d0860e20a77ce195a2dd6287d", size = 9906, upload-time = "2026-03-05T12:43:40.337Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/85/33638b948df2a5b115a955c67be0845cac532bef711a178060cf2d08883e/msv4_utils-0.0.3.tar.gz", hash = "sha256:681363c0e79454536ca748f4235b4b91cd0768433294b7c47575a1c0567d64ac", size = 10126, upload-time = "2026-05-20T07:19:58.139Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/86/b2a54549eb17eb26deb6917366c08126d19390ed08e9a4fd999a4001fda8/msv4_utils-0.0.2-py3-none-any.whl", hash = "sha256:a424d824f328b31c91e5a2a7f7053453e45805586fcdb9c524a9059fd7db7c34", size = 7095, upload-time = "2026-03-05T12:43:38.909Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/c5/4eea0ca3fff078dabfbfa11fdf90b8578db62ac66186b1d599ce2f772171/msv4_utils-0.0.3-py3-none-any.whl", hash = "sha256:522e902cb5b8b322bad25d7434e7ffbc14e0e687dcb7ca23113c872305bd4efb", size = 7155, upload-time = "2026-05-20T07:19:56.844Z" },
 ]
 
 [[package]]
@@ -2293,7 +2293,7 @@ requires-dist = [
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "msv4-utils", marker = "extra == 'full'", specifier = ">=0.0.2" },
+    { name = "msv4-utils", marker = "extra == 'full'", specifier = ">=0.0.3" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "omegaconf", marker = "extra == 'full'", specifier = ">=2.3" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
@@ -2306,8 +2306,8 @@ requires-dist = [
     { name = "scikit-image", marker = "extra == 'full'", specifier = ">=0.24.0" },
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
     { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
-    { name = "xarray-kat", marker = "extra == 'full'", specifier = ">=0.0.4" },
-    { name = "xarray-ms", marker = "extra == 'full'", specifier = ">=0.5.3" },
+    { name = "xarray-kat", marker = "extra == 'full'", specifier = ">=0.0.5" },
+    { name = "xarray-ms", marker = "extra == 'full'", specifier = ">=0.5.4" },
 ]
 provides-extras = ["full"]
 
@@ -3560,7 +3560,7 @@ wheels = [
 
 [[package]]
 name = "xarray-kat"
-version = "0.0.4"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "katpoint" },
@@ -3568,14 +3568,14 @@ dependencies = [
     { name = "tensorstore" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/73/6d88535eb2a697f66f800fc7353fd6a60410b57d419606ead4910ec4f2e3/xarray_kat-0.0.4.tar.gz", hash = "sha256:3206671eb7fa8979768cd4fb04ed475cbabb2b6a8daa338543d738d3ee4986f3", size = 91468, upload-time = "2026-03-31T13:02:09.021Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/72/40dc6d724f75d459cb848aca84ab6daf65933ec421b68d2b94dcfb9af0a1/xarray_kat-0.0.5.tar.gz", hash = "sha256:07404c342ca36265a821eaf9633934609fa7a7aab1198c544c5263fea05bed09", size = 92563, upload-time = "2026-05-20T09:11:21.082Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/4d/9c67c157e4cbd9584ce5d74cee08e1b08d43af5d6c4592ce4ae419470712/xarray_kat-0.0.4-py3-none-any.whl", hash = "sha256:eeb9f5fcac5fbce7eda1fe5f266069de74c0b36d2e7dc54d3c753728da896b71", size = 110127, upload-time = "2026-03-31T13:02:07.445Z" },
+    { url = "https://files.pythonhosted.org/packages/95/fe/997b040452e1d1b757d8de5d7d82f20b503d119a7501f48ce2cabdcafe1c/xarray_kat-0.0.5-py3-none-any.whl", hash = "sha256:aec24dc72f93d02e74e296582835432d2d470d15feb8d2e6671fe8c3dbc159d0", size = 111254, upload-time = "2026-05-20T09:11:19.343Z" },
 ]
 
 [[package]]
 name = "xarray-ms"
-version = "0.5.3"
+version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arcae" },
@@ -3583,9 +3583,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/bf/d7c941aa1c7df07d1a86b604a2986c6cb2f6a617f2fe5ba38437b7ff72ad/xarray_ms-0.5.3.tar.gz", hash = "sha256:abf122d9501400575d32cadcbf88e84dcc6074a1c4bbff284e1ecb3e2444e196", size = 73833, upload-time = "2026-05-11T09:13:28.313Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/ce/09d5283cef57b3402281ccec086e7bf51da90f86400db413c331ca4abd5d/xarray_ms-0.5.4.tar.gz", hash = "sha256:67862976f6da81f3363c8a363417f302574755260f0fecad661daf919f868a84", size = 74017, upload-time = "2026-05-20T09:13:10.126Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/f8/3d3d51e721e1af7d8277055d776c03b70a9d181e910cccccd52729f1f361/xarray_ms-0.5.3-py3-none-any.whl", hash = "sha256:ef400b5f774747da87b571a8e1d7798203050a68093aa82c4102e7efab40df28", size = 52809, upload-time = "2026-05-11T09:13:26.545Z" },
+    { url = "https://files.pythonhosted.org/packages/52/34/ab8a6c3bcf028c80966205e06d634997157664d2c34fb2ac986afd786cc6/xarray_ms-0.5.4-py3-none-any.whl", hash = "sha256:ec9a1eda8f9e63666256c5a9693dfb3604e7511e1b414fd5f451a8a0c11db5fc", size = 52923, upload-time = "2026-05-20T09:13:08.864Z" },
 ]
 
 [[package]]

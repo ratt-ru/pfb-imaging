@@ -50,9 +50,9 @@ full = [
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
-    "xarray-ms>=0.5.3",
-    "msv4-utils>=0.0.2",
-    "xarray-kat>=0.0.4",
+    "xarray-ms>=0.5.4",
+    "msv4-utils>=0.0.3",
+    "xarray-kat>=0.0.5",
 ]
 
 [project.scripts]
