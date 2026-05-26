@@ -3,7 +3,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
+import yaml
+from africanus.coordinates import radec_to_lm
 from astropy.io import fits
+from daskms import xds_from_table
 from numpy.testing import assert_allclose
 
 from pfb_imaging.core.hci import (
@@ -14,8 +17,26 @@ from pfb_imaging.core.hci import (
 from pfb_imaging.core.hci import (
     hci as hci_core,
 )
+from pfb_imaging.utils.misc import set_image_size
+from pfb_imaging.utils.transients import generate_transient_spectra
 
 pmp = pytest.mark.parametrize
+
+
+def _lm_to_radec(lcoord, mcoord, ra0, dec0):
+    """Invert the SIN (orthographic) projection.
+
+    Args:
+        lcoord, mcoord: direction cosines relative to the phase centre.
+        ra0, dec0: phase-centre RA/Dec in radians.
+
+    Returns:
+        (ra, dec) of the (l, m) point in radians.
+    """
+    n = np.sqrt(1.0 - lcoord**2 - mcoord**2)
+    dec = np.arcsin(mcoord * np.cos(dec0) + n * np.sin(dec0))
+    ra = ra0 + np.arctan2(lcoord, n * np.cos(dec0) - mcoord * np.sin(dec0))
+    return ra, dec
 
 
 def _make_base_fits_header():
@@ -284,3 +305,95 @@ def test_hci_rejects_existing_output_without_overwrite(ms_name, tmp_path):
         )
 
     assert (Path(out) / "marker").exists()
+
+
+def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
+    """Injected transient lands at the expected pixel with the expected dynamic spectrum.
+
+    The base visibilities are zeroed via data_column="DATA-DATA" so the cube
+    contains only the injected transient. The transient is placed on an exact
+    pixel centre by choosing integer (l, m) offsets and inverting the SIN
+    projection, with natural weighting so the per-bin flux is analytic.
+    """
+    out = str(tmp_path / "hci_transients.zarr")
+
+    # --- geometry: must match what hci computes internally ---
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+
+    # phase centre of the test field (radians)
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    # place the transient an integer number of pixels off centre (well inside
+    # the ~0.257 deg half-FOV) so it sits exactly on a pixel centre.
+    di, dj = -20, 16  # X (l) and Y (m) pixel offsets from the central pixel
+    lcoord = di * cell_rad
+    mcoord = dj * cell_rad
+    ra, dec = _lm_to_radec(lcoord, mcoord, ra0, dec0)
+
+    # guard the inversion against the projection the code actually uses
+    lm_check = radec_to_lm(np.array([[ra, dec]]), np.array([ra0, dec0])).squeeze()
+    assert_allclose(lm_check, [lcoord, mcoord], atol=1e-12)
+
+    # --- transient config written into tmp_path (sidecar zarr stays out of repo) ---
+    transient = {
+        "name": "test_transient",
+        "time": {"peak_time": 1200.0, "duration": 600.0, "shape": "gaussian"},
+        "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": -1.5},
+        "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+    }
+    config_path = tmp_path / "transient.yaml"
+    with open(config_path, "w") as f:
+        yaml.safe_dump({"transients": [transient]}, f)
+
+    ipi = 4  # integrations per image -> 60 / 4 = 15 time bins
+    cpi = 2  # channels per image    -> 8  / 2 = 4  freq bins
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        data_column="DATA-DATA",
+        inject_transients=str(config_path),
+        channels_per_image=cpi,
+        channels_per_bin=-1,
+        integrations_per_image=ipi,
+        images_per_chunk=15,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=None,
+        epsilon=1e-7,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    ds = xr.open_zarr(out)
+    assert ds.sizes["FREQ"] == ms_meta.nchan // cpi
+    assert ds.sizes["TIME"] == ms_meta.ntime // ipi
+
+    # The transient was injected at direction cosines (l, m) = (di, dj) * cell_rad.
+    # The wgridder places this on an exact pixel centre offset from the central
+    # pixel (nx//2, ny//2) by -di in X and +dj in Y (flip_v convention).
+    # We predict from (l, m) rather than from ds.X/ds.Y because the cube's RA
+    # labels are linear in RA and omit the cos(dec) projection factor, so they
+    # disagree with the gridded position by ~1/cos(dec) for an l-offset at dec!=0.
+    ix = nx // 2 - di
+    iy = ny // 2 + dj
+
+    # expected time/freq profiles, evaluated on the MS sampling
+    tprofile, fprofile = generate_transient_spectra(ms_meta.utime, ms_meta.freq, transient)
+    n_tbin = ms_meta.ntime // ipi
+    n_fbin = ms_meta.nchan // cpi
+    expected_t = tprofile.reshape(n_tbin, ipi).mean(axis=1)
+    expected_f = fprofile.reshape(n_fbin, cpi).mean(axis=1)
+
+    # position: argmax of the brightest (time, freq) slice must be the predicted pixel
+    t_peak = int(np.argmax(expected_t))
+    f_peak = int(np.argmax(expected_f))
+    img = ds.cube.values[0, f_peak, t_peak]  # (Y, X)
+    peak_iy, peak_ix = np.unravel_index(np.argmax(img), img.shape)
+    assert (int(peak_iy), int(peak_ix)) == (iy, ix)
