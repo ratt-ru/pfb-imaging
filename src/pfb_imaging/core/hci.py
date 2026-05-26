@@ -402,8 +402,8 @@ def hci(
 
     log.info("Scaffolding complete")
 
-    log.info("Initialising BeamWizard")
     if beam_model is not None:
+        log.info("Initialising BeamWizard")
         beam_wizard = BeamWizard(beam_model, output_dataset)
     else:
         beam_wizard = None
