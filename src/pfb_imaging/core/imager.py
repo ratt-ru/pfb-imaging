@@ -204,7 +204,7 @@ def imager(
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
             # TODO - why do we sometimes get NaN's in uvw?
-            uvw = ds.UVW.values.reshape(-1, 3)  # .load()
+            uvw = ds.UVW.load().values
             uvw_mask = np.isnan(uvw).all(axis=-1)
             uvw = uvw[~uvw_mask]
             max_blength = max(max_blength, np.sqrt(np.abs(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
@@ -233,6 +233,9 @@ def imager(
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
         dt_kwargs = get_engine(ms_name)
+        from pprint import pformat
+
+        log.info("xarray engine kwargs %s", pformat(dt_kwargs))
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
@@ -356,4 +359,4 @@ def get_engine(ms_path: str) -> MSv4Backend:
     elif backend == MSv4Backend.MEERKAT:
         import xarray_kat  # noqa: F401
 
-        return {"engine": "xarray-kat", "applycal": "all"}  # , "chunked_array_type": "xarray-kat", "chunks": {}
+        return {"engine": "xarray-kat", "applycal": "all", "chunked_array_type": "xarray-kat", "chunks": {}}
