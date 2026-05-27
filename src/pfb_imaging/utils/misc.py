@@ -212,6 +212,7 @@ def construct_mappings(
     field_ids=None,
     ddids=None,
     scans=None,
+    enforce_time_ordering=True,
 ):
     """
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
@@ -295,8 +296,11 @@ def construct_mappings(
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             idts[ms].append(idt)
-            radecs[ms][idt] = field_tab.PHASE_DIR.data[fid].squeeze()
-
+            radec = field_tab.PHASE_DIR.data[fid].squeeze()
+            # force radec to lie in [0, 2*pi)
+            if 0 < radec[0] < 2 * np.pi:
+                radec[0] = radec[0] % (2 * np.pi)
+            radecs[ms][idt] = radec
             freqs[ms][idt] = spw_tab.CHAN_FREQ.data[ddid]
             chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
@@ -366,7 +370,7 @@ def construct_mappings(
                 freq_mapping[ms][idt]["counts"] = np.array((nchan,), dtype=int)
 
             time = times[ms][idt]
-            if not np.all(time[1:] >= time[:-1]):
+            if enforce_time_ordering and (not np.all(time[1:] >= time[:-1])):
                 raise NotImplementedError(
                     f"Time column in {ms} for {idt} is not monotonically "
                     f"non-decreasing. pfb-imaging currently requires "
