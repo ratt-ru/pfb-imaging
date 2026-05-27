@@ -112,16 +112,16 @@ def stokes_vis(
     # get MSv2 style ANTENNA1 and ANTENNA2
     ant1_names = ds.baseline_antenna1_name.values
     ant2_names = ds.baseline_antenna2_name.values
-    # ant12 = np.concatenate([ant1_names, ant2_names])
-    # _, inv = np.unique(ant12, return_inverse=True)
-    # ant1_bl = inv[: len(inv) // 2]
-    # ant2_bl = inv[len(inv) // 2 :]
+    ant12 = np.concatenate([ant1_names, ant2_names])
+    _, inv = np.unique(ant12, return_inverse=True)
+    ant1_bl = inv[: len(inv) // 2]
+    ant2_bl = inv[len(inv) // 2 :]
     # claude recommends rather do the following
-    ant_names = node_dt["antenna_xds"].antenna_name.values
-    order = np.argsort(ant_names)
-    sorted_n = ant_names[order]
-    ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
-    ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
+    # ant_names = node_dt["antenna_xds"].antenna_name.values
+    # order = np.argsort(ant_names)
+    # sorted_n = ant_names[order]
+    # ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
+    # ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
     time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
     time = time.ravel()
     # averaging routines expect int32 antenna indices
@@ -220,17 +220,16 @@ def stokes_vis(
     corr = list("".join(dict.fromkeys(sorted(product))))
     ncorr = len(corr)
 
+    # CHANNEL_WIDTH will only be in data_vars if it's not regular, otherwise it's an attr of frequency coord
+    if "CHANNEL_WIDTH" in ds.data_vars:
+        chan_width = ds.CHANNEL_WIDTH.values
+    else:
+        cw = ds.frequency.attrs["channel_width"]["data"]
+        chan_width = np.full(ds.frequency.size, cw, dtype=np.float64)
+
     # simple average over channels
     if chan_average > 1:
         from africanus.averaging import time_and_channel
-
-        def chan_widths_array(ds):
-            if "CHANNEL_WIDTH" in ds.data_vars:
-                return ds.CHANNEL_WIDTH.values
-            cw = ds.frequency.attrs["channel_width"]["data"]
-            return np.full(ds.frequency.size, cw, dtype=np.float64)
-
-        chan_width = chan_widths_array(ds)
 
         res = time_and_channel(
             time,
