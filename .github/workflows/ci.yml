@@ -125,9 +125,9 @@ jobs:
           restore-keys: numba-cache-${{ matrix.python-version }}-
           path: ${{ env.NUMBA_CACHE_DIR }}
 
-      - name: List the measures directory
+      - name: Fingerprint the measures data
         if: env.SKIP_CHECKS != 'true'
-        run: curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/ > measures_dir.txt
+        run: curl -sSI https://www.astron.nl/iers/WSRT_Measures.ztar | grep -iE 'last-modified|etag' > measures_dir.txt
 
       - name: Load cached CASA Measures Data
         if: env.SKIP_CHECKS != 'true'
@@ -145,7 +145,7 @@ jobs:
           mkdir -p ~/measures
           set -e
           for i in {1..3}; do
-            if curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
+            if curl -L https://www.astron.nl/iers/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
               break
             elif [ $i -eq 3 ]; then
               echo "Download failed after 3 attempts."; exit 1
