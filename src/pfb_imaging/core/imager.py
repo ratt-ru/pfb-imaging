@@ -191,6 +191,8 @@ def imager(
     max_blength = 0
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name)
+        if "file://" in ms_name:
+            ms_name = ms_name.replace("file://", "")
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
@@ -229,6 +231,8 @@ def imager(
     next_tid = 0
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name)
+        if "file://" in ms_name:
+            ms_name = ms_name.replace("file://", "")
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
