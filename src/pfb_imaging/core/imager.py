@@ -1,6 +1,7 @@
 import time
 import warnings
 from pathlib import Path
+from typing import Any
 
 import fsspec
 import numpy as np
@@ -29,9 +30,9 @@ log = pfb_logging.get_logger("IMAGER")
 def imager(
     ms: list[Path],
     output_filename: str,
-    scan_names: list[int] | None = None,
-    spw_names: list[int] | None = None,
-    field_names: list[int] | None = None,
+    scan_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    field_names: list[str] | None = None,
     freq_range: str | None = None,
     overwrite: bool = False,
     data_column: str = "DATA",
@@ -86,8 +87,7 @@ def imager(
         try:
             assert len(mslist) > 0
             msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception as e:
-            raise e
+        except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
     opts_dict["ms"] = ms
@@ -219,7 +219,8 @@ def imager(
             uvw = ds.UVW.load().values
             uvw_mask = np.isnan(uvw).all(axis=-1)
             uvw = uvw[~uvw_mask]
-            max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
+            if uvw.size:
+                max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
 
     # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
@@ -230,9 +231,10 @@ def imager(
     if channels_per_image in (0, None, -1):
         nband = len(np.unique([f.tobytes() for f in all_freqs]))  # one per spw
     else:
-        nband = int(np.ceil((np.max(all_freqs) - np.min(all_freqs)) / (min_chan_width * channels_per_image)))
+        flat_freqs = np.concatenate(all_freqs)
+        nband = int(np.ceil((flat_freqs.max() - flat_freqs.min()) / (min_chan_width * channels_per_image)))
         nband = max(nband, 1)
-    all_freqs = np.unique(all_freqs)
+    all_freqs = np.unique(np.concatenate(all_freqs))
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
@@ -318,7 +320,6 @@ def imager(
                         max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
-                timeid += 1
 
     nds = len(tasks)
     ncomplete = 0
@@ -355,16 +356,22 @@ def imager(
     return
 
 
-def get_engine(ms_path: str) -> MSv4Backend:
+def get_engine(ms_path: str) -> dict[str, Any]:
     if "file://" in ms_path:
         ms_path = ms_path.replace("file://", "")
     backend = infer_backend(ms_path)
     if backend == MSv4Backend.CASA_TABLE:
         import xarray_ms  # noqa: F401
 
-        return {"engine": "xarray-ms:msv2", "partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]}
+        return {
+            "engine": "xarray-ms:msv2",
+            "partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
+        }
     elif backend == MSv4Backend.ZARR:
-        return {"engine": "zarr", "chunks": None}
+        return {
+            "engine": "zarr",
+            "chunks": None,
+        }
     elif backend == MSv4Backend.MEERKAT:
         import xarray_kat  # noqa: F401
 
@@ -375,3 +382,5 @@ def get_engine(ms_path: str) -> MSv4Backend:
             "chunks": {},
             "uvw_sign_convention": "casa",
         }
+    else:
+        raise ValueError(f"Unhandled MSv4 backend {backend!r} for {ms_path}")

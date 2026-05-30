@@ -18,10 +18,7 @@ from pfb_imaging.utils.weighting import weight_data
 # wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
-    try:
-        return stokes_vis(*args, **kwargs)
-    except Exception as e:
-        raise e
+    return stokes_vis(*args, **kwargs)
 
 
 def stokes_vis(
@@ -79,13 +76,13 @@ def stokes_vis(
     elif precision.lower() == "double":
         real_type = np.float64
         complex_type = np.complex128
+    else:
+        raise ValueError(f"Unsupported precision {precision!r}; expected 'single' or 'double'")
 
     data = getattr(ds, dc1).values
     if dc2 is not None:
-        try:
-            assert operator == "+" or operator == "-"
-        except Exception as e:
-            raise e
+        if operator not in ("+", "-"):
+            raise ValueError(f"Unsupported operator {operator!r}; expected '+' or '-'")
         # can't use out here, data are immutable as passed through Ray's object store
         data = ne.evaluate(
             f"data {operator} data2",
@@ -283,6 +280,8 @@ def stokes_vis(
     mask = (~flag).astype(np.uint8)
 
     # TODO - better beam interpolation
+    if max_blength is None or max_freq is None:
+        raise ValueError("max_blength and max_freq must be provided to size the beam grid")
     fov = max_field_of_view
     cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
     cell_deg = np.rad2deg(cell_rad)
