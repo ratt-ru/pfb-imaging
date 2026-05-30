@@ -55,7 +55,7 @@ gosara:
     fields:
       dtype: List[int]
       info:
-        Which fields to image
+        List of fields to image
     scans:
       dtype: List[int]
       info:
@@ -146,12 +146,12 @@ gosara:
     output-filename:
       default: '{recipe.base-dir}/{recipe.image-name}'
       aliases: ['*.output-filename']
-    fits-output-folder:
-      default: '{recipe.base-dir}/fits'
-      aliases: ['*.fits-output-folder']
-    log-directory:
-      default: '{recipe.base-dir}/logs'
-      aliases: ['*.log-directory']
+    # fits-output-folder:
+    #   default: '{recipe.base-dir}/fits'
+    #   aliases: ['*.fits-output-folder']
+    # log-directory:
+    #   default: '{recipe.base-dir}/logs'
+    #   aliases: ['*.log-directory']
     transfer-model-from:
       dtype: str
       info:

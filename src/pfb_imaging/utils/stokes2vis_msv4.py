@@ -1,11 +1,12 @@
-import gc
 from datetime import datetime, timezone
 
 import numexpr as ne
 import numpy as np
 import ray
 import xarray as xr
-from casacore.quanta import quantity
+
+# from casacore.quanta import quantity
+# from astropy.time import Time
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
@@ -14,52 +15,60 @@ from pfb_imaging import pfb_version
 from pfb_imaging.utils.weighting import weight_data
 
 
+# wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
-    try:
-        return stokes_vis(*args, **kwargs)
-    except Exception as e:
-        raise e
+    return stokes_vis(*args, **kwargs)
 
 
 def stokes_vis(
     dc1=None,
     dc2=None,
     operator=None,
-    ds=None,
-    jones=None,
-    freq=None,
-    chan_width=None,
-    utime=None,
-    tbin_idx=None,
-    tbin_counts=None,
-    chan_low=None,
-    chan_high=None,
-    radec=None,
-    antpos=None,
-    poltype=None,
+    node_dt=None,
     xds_store=None,
     bandid=None,
     timeid=None,
     msid=None,
-    # Parameters previously from opts:
+    freq_out=None,
     precision="double",
     sigma_column=None,
     weight_column=None,
     product="I",
-    check_ants=False,
     chan_average=1,
     bda_decorr=1.0,
     max_field_of_view=3.0,
     beam_model=None,
-    wgt_mode="l2",
+    wgt_mode="minvar",
     max_blength=None,
     max_freq=None,
 ):
-    fieldid = ds.FIELD_ID
-    ddid = ds.DATA_DESC_ID
-    scanid = ds.SCAN_NUMBER
-    oname = f"ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}"
+    """
+    MSv4 version of stokes2vis.
+
+    inputs:
+        dc1, dc2, operator: data column names and operator to combine them with.
+        node_dt: sub-node of datatree with the relevant time and frequency selection already applied.
+        xds_store: parent directory store to write out xarray datasets to.
+        bandid, timeid, msid: identifiers for the output dataset.
+        freq_out: output frequency for selected data.
+        precision: "single" or "double" for output data and weights.
+        sigma_column: name of column containing sigma values to convert to weights.
+        weight_column: name of column containing weights to use instead of sigma.
+        product: Stokes product. Can be any subset of IQUV.
+        chan_average: number of channels to average together.
+        bda_decorr: decorrelation threshold for baseline dependent averaging.
+        max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
+        beam_model: model to use for beam correction. Can be "katbeam" or None.
+        wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
+    """
+    # load in all data
+    node_dt.load()
+    ds = node_dt.ds
+    field_name = np.unique(ds.field_name.values).item()
+    spw_name = ds.frequency.attrs["spectral_window_name"]
+    scan_name = np.unique(ds.scan_name.values).item()
+    oname = f"ms{msid:04d}_fid{field_name}_spw{spw_name}_scan{scan_name}_band{bandid:04d}_time{timeid:04d}"
 
     if precision.lower() == "single":
         real_type = np.float32
@@ -67,44 +76,59 @@ def stokes_vis(
     elif precision.lower() == "double":
         real_type = np.float64
         complex_type = np.complex128
-
-    # LB - is this the correct way to do this?
-    # we don't want it to end up in the distributed object store
-    ds = ds.load(scheduler="sync")
-    if jones is not None:
-        # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler="sync").values
+    else:
+        raise ValueError(f"Unsupported precision {precision!r}; expected 'single' or 'double'")
 
     data = getattr(ds, dc1).values
-    ds = ds.drop_vars(dc1)
     if dc2 is not None:
-        try:
-            assert operator == "+" or operator == "-"
-        except Exception as e:
-            raise e
-        ne.evaluate(
+        if operator not in ("+", "-"):
+            raise ValueError(f"Unsupported operator {operator!r}; expected '+' or '-'")
+        # can't use out here, data are immutable as passed through Ray's object store
+        data = ne.evaluate(
             f"data {operator} data2",
             local_dict={"data": data, "data2": getattr(ds, dc2).values},
-            out=data,
             casting="same_kind",
         )
-        ds = ds.drop_vars(dc2)
 
-    time = ds.TIME.values
-    ds = ds.drop_vars("TIME")
-    interval = ds.INTERVAL.values
-    ds = ds.drop_vars("INTERVAL")
-    ant1 = ds.ANTENNA1.values
-    ds = ds.drop_vars("ANTENNA1")
-    ant2 = ds.ANTENNA2.values
-    ds = ds.drop_vars("ANTENNA2")
-    uvw = ds.UVW.values
-    ds = ds.drop_vars("UVW")
-    flag = ds.FLAG.values
-    ds = ds.drop_vars("FLAG")
+    # we now get utimes and freqs from the coords
+    freq = ds.frequency.values
+    freq_min = freq.min()
+    freq_max = freq.max()
+    ntime, nbl, nchan, ncorr = data.shape
+    nrow = ntime * nbl
+    utime = ds.time.values
+    time_out = np.mean(utime)
+
+    # INTERVAL treated differently depending on whether it's regular or irregular
+    it_attr = ds.time.attrs.get("integration_time", {}).get("data")
+    if "INTEGRATION_TIME" in ds.data_vars:  # irregular
+        interval = ds.INTEGRATION_TIME.values.ravel()
+    else:
+        interval = np.full(nrow, it_attr, dtype=np.float64)  # regular
+
+    # get MSv2 style ANTENNA1 and ANTENNA2
+    ant1_names = ds.baseline_antenna1_name.values
+    ant2_names = ds.baseline_antenna2_name.values
+    ant12 = np.concatenate([ant1_names, ant2_names])
+    _, inv = np.unique(ant12, return_inverse=True)
+    ant1_bl = inv[: len(inv) // 2]
+    ant2_bl = inv[len(inv) // 2 :]
+    # claude recommends rather do the following
+    # ant_names = node_dt["antenna_xds"].antenna_name.values
+    # order = np.argsort(ant_names)
+    # sorted_n = ant_names[order]
+    # ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
+    # ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
+    time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
+    time = time.ravel()
+    # averaging routines expect int32 antenna indices
+    ant1 = ant1.ravel().astype(np.int32)
+    ant2 = ant2.ravel().astype(np.int32)
+    uvw = ds.UVW.values.reshape(nrow, 3)
+    flag = ds.FLAG.values.reshape(nrow, nchan, ncorr)
+
     # MS may contain auto-correlations
-    frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    ds = ds.drop_vars("FLAG_ROW")
+    frow = ant1 == ant2
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -114,33 +138,29 @@ def stokes_vis(
     if flag.all():
         return None
 
-    nrow, nchan, ncorr = data.shape
-
     if sigma_column is not None:
         weight = ne.evaluate("1.0/sigma**2", local_dict={"sigma": getattr(ds, sigma_column).values})
-        ds = ds.drop_vars(sigma_column)
+        weight = weight.reshape(nrow, nchan, ncorr)
     elif weight_column is not None:
-        if weight_column == "WEIGHT":
-            weight = np.broadcast_to(getattr(ds, weight_column).values[:, None, :], (nrow, nchan, ncorr))
-        else:
-            weight = getattr(ds, weight_column).values
-        ds = ds.drop_vars(weight_column)
+        weight = getattr(ds, weight_column).values.reshape(nrow, nchan, ncorr)
     else:
         weight = np.ones((nrow, nchan, ncorr), dtype=real_type)
 
-    # this seems to help with memory consumption
-    # note the ds.drop_vars above
-    del ds
-    gc.collect()
-
-    nrow, nchan, ncorr = data.shape
-    ntime = utime.size
+    # antenna positions
+    antpos = node_dt["antenna_xds"].ANTENNA_POSITION.values
     nant = antpos.shape[0]
-    time_out = np.mean(utime)
 
-    freq_out = np.mean(freq)
-    freq_min = freq.min()
-    freq_max = freq.max()
+    # polarization types
+    if set(ds.polarization.values).issubset({"XX", "XY", "YX", "YY"}):
+        poltype = "linear"
+    elif set(ds.polarization.values).issubset({"RR", "RL", "LR", "LL"}):
+        poltype = "circular"
+    else:
+        raise ValueError("Unknown polarization types")
+
+    # get phase dir from field_and_source subtable
+    base = node_dt.ds.attrs["data_groups"]["base"]
+    radec = node_dt[base["field_and_source"].rsplit("/", 1)[-1]].ds.FIELD_PHASE_CENTER_DIRECTION.values[0]
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -148,50 +168,15 @@ def stokes_vis(
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
 
-    if jones is not None:
-        if jones.dtype != complex_type:
-            jones = jones.astype(complex_type)
-        # qcal has chan and ant axes reversed compared to pfb implementation
-        jones = np.swapaxes(jones, 1, 2)
-        # data are not 2x2 so we need separate labels
-        # for jones correlations and data/weight correlations
-        # reshape to dispatch with overload
-        jones_ncorr = jones.shape[-1]
-        if jones_ncorr == 4:
-            jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
-        elif jones_ncorr == 2:
-            pass
-        else:
-            raise ValueError(f"Incorrect number of correlations of {jones_ncorr} for product {product}")
-    else:
-        jones = np.ones((ntime, nant, nchan, 1, 2), dtype=complex_type)
+    # Fake jones for now
+    jones = np.ones((ntime, nant, nchan, 1, 2), dtype=complex_type)
 
-    # check that there are no missing antennas
-    ant1u = np.unique(ant1)
-    ant2u = np.unique(ant2)
-    allants = np.unique(np.concatenate((ant1u, ant2u)))
-
-    # check that antpos gives the correct size table
-    antmax = allants.size
-    if check_ants:
-        try:
-            assert antmax == nant
-        except Exception:
-            raise ValueError(
-                "Inconsistent ANTENNA table. "
-                "Shape does not match max number of antennas "
-                "as inferred from ant1 and ant2. "
-                f"Table size is {antpos.shape} but got {antmax}. "
-                f"{oname}"
-            )
-
-    # relabel antennas by index
-    # this only works because allants is sorted in ascending order
-    for a, ant in enumerate(allants):
-        ant1 = np.where(ant1 == ant, a, ant1)
-        ant2 = np.where(ant2 == ant, a, ant2)
+    # need to rewrite weight_data for MSv4, this is temporary
+    tbin_idx = np.arange(ntime) * nbl
+    tbin_counts = np.full(ntime, nbl)
 
     # apply gains and convert to Stokes
+    data = data.reshape(nrow, nchan, ncorr)
     data, weight = weight_data(
         data,
         weight,
@@ -222,7 +207,6 @@ def stokes_vis(
     uvw = uvw[mrow]
     flag = flag[mrow]
     weight = weight[mrow]
-    gc.collect()
 
     # number of output correlations will be set by required Stokes products
     ncorr = data.shape[-1]
@@ -232,6 +216,13 @@ def stokes_vis(
     # set corr coords (removing duplicates and sorting)
     corr = list("".join(dict.fromkeys(sorted(product))))
     ncorr = len(corr)
+
+    # CHANNEL_WIDTH will only be in data_vars if it's not regular, otherwise it's an attr of frequency coord
+    if "CHANNEL_WIDTH" in ds.data_vars:
+        chan_width = ds.CHANNEL_WIDTH.values
+    else:
+        cw = ds.frequency.attrs["channel_width"]["data"]
+        chan_width = np.full(ds.frequency.size, cw, dtype=np.float64)
 
     # simple average over channels
     if chan_average > 1:
@@ -289,6 +280,8 @@ def stokes_vis(
     mask = (~flag).astype(np.uint8)
 
     # TODO - better beam interpolation
+    if max_blength is None or max_freq is None:
+        raise ValueError("max_blength and max_freq must be provided to size the beam grid")
     fov = max_field_of_view
     cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
     cell_deg = np.rad2deg(cell_rad)
@@ -339,21 +332,18 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    unix_time = quantity(f"{time_out}s").to_unix_time()
-    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
         "pfb-imaging-version": pfb_version,
         "ra": radec[0],
         "dec": radec[1],
-        "fieldid": fieldid,
-        "ddid": ddid,
-        "scanid": scanid,
+        "field_name": field_name,
+        "spw_name": spw_name,
+        "scan_name": scan_name,
         "freq_out": freq_out,
         "freq_min": freq_min,
         "freq_max": freq_max,
-        "chan_low": chan_low,
-        "chan_high": chan_high,
         "bandid": bandid,
         "time_out": time_out,
         "time_min": utime.min(),

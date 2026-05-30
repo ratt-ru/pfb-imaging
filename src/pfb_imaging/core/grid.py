@@ -240,8 +240,8 @@ def grid(
                     xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                     xds_dct[tbid]["time_out"] = times_out[0]
                     xds_dct[tbid]["freq_out"] = freqs_out[b]
-                    xds_dct[tbid]["chan_low"] = ds.chan_low
-                    xds_dct[tbid]["chan_high"] = ds.chan_high
+                    # xds_dct[tbid]["chan_low"] = ds.chan_low
+                    # xds_dct[tbid]["chan_high"] = ds.chan_high
     else:
         ntime = ntime_in
         times_out = times_in
@@ -256,8 +256,8 @@ def grid(
                         xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                         xds_dct[tbid]["time_out"] = times_out[t]
                         xds_dct[tbid]["freq_out"] = freqs_out[b]
-                        xds_dct[tbid]["chan_low"] = ds.chan_low
-                        xds_dct[tbid]["chan_high"] = ds.chan_high
+                        # xds_dct[tbid]["chan_low"] = ds.chan_low
+                        # xds_dct[tbid]["chan_high"] = ds.chan_high
 
     ncorr = ds.corr.size
     corrs = ds.corr.values
@@ -291,8 +291,8 @@ def grid(
         dsl = ds_dct["dsl"]
         time_out = ds_dct["time_out"]
         freq_out = ds_dct["freq_out"]
-        chan_low = ds_dct["chan_low"]
-        chan_high = ds_dct["chan_high"]
+        # chan_low = ds_dct["chan_low"]
+        # chan_high = ds_dct["chan_high"]
         iter0 = 0
         if from_cache:
             out_ds_name = f"{dds_store.url}/time{timeid}_band{bandid}.zarr"
@@ -344,8 +344,8 @@ def grid(
             "field_of_view": field_of_view,
             "product": product,
             "niters": iter0,
-            "chan_low": chan_low,
-            "chan_high": chan_high,
+            # "chan_low": chan_low,
+            # "chan_high": chan_high,
         }
 
         # get the model
