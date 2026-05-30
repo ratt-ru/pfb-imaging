@@ -215,9 +215,13 @@ def imager(
                 continue
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
-            # TODO - why do we sometimes get NaN's in uvw?
+            # xarray-ms establishes a regular grid over irregular or missing data.
+            # Nans are inserted in these cases, mostly because xarray interprets nans as missing data.
+            # This is different from xarray-kat which inherits katdal's missing data behaviour
+            # (zeroed visibilities and weights).
             uvw = ds.UVW.load().values
             uvw_mask = np.isnan(uvw).all(axis=-1)
+            # this forces a reshape (t, bl, 3) -> (row, 3)
             uvw = uvw[~uvw_mask]
             if uvw.size:
                 max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
