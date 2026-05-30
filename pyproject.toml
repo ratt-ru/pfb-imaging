@@ -88,6 +88,8 @@ addopts = [
     "--strict-config",
     "--verbose",
 ]
+timeout = 300
+timeout_method = "thread"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -106,4 +108,5 @@ dev = [
 ]
 test = [
     "pytest>=9.0.3",
+    "pytest-timeout>=2.3",
 ]

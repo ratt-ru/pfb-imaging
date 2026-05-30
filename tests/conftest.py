@@ -1,14 +1,24 @@
 import os
-import shutil
-import tarfile
-from pathlib import Path
-from types import SimpleNamespace
 
-import numpy as np
-import pytest
-import ray
-import requests
-import xarray_ms  # noqa: F401
+# Disable ray's uv_runtime_env_hook BEFORE importing ray. When the driver runs
+# under `uv run`, the hook overrides py_executable so workers are launched via
+# `uv run --frozen python …`, which rebuilds a fresh venv per worker from the
+# driver's cmdline. That venv only contains the default project deps (not the
+# [full] extra where ray itself lives), so workers crash on `import ray` and
+# ray.wait() blocks forever. The constant is read at import time, so this must
+# come before `import ray`.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
+
+import shutil  # noqa: E402
+import tarfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+import ray  # noqa: E402
+import requests  # noqa: E402
+import xarray_ms  # noqa: E402, F401
 
 # ── Numba cache location ────────────────────────────────────────────
 # Pin Numba's file cache to <repo>/.numba_cache so it survives across
@@ -183,6 +193,7 @@ def manage_ray():
     env_vars["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     env_vars["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
     env_vars["RAY_RUNTIME_ENV_WORKING_DIR_MAX_SIZE_MB"] = "2048"
+    env_vars["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 
     runtime_env = {
         "env_vars": env_vars,
@@ -190,7 +201,6 @@ def manage_ray():
         "worker_process_setup_hook": setup_ray_worker,
     }
 
-    # Start Ray
     ray.init(num_cpus=1, runtime_env=runtime_env, ignore_reinit_error=True, include_dashboard=False)
 
     yield
