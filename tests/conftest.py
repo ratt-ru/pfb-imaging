@@ -18,7 +18,6 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import ray  # noqa: E402
 import requests  # noqa: E402
-import xarray_ms  # noqa: E402, F401
 
 # ── Numba cache location ────────────────────────────────────────────
 # Pin Numba's file cache to <repo>/.numba_cache so it survives across
