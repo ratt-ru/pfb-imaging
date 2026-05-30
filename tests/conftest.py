@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import ray
 import requests
+import xarray_ms  # noqa: F401
 
 # ── Numba cache location ────────────────────────────────────────────
 # Pin Numba's file cache to <repo>/.numba_cache so it survives across
@@ -185,7 +186,6 @@ def manage_ray():
 
     runtime_env = {
         "env_vars": env_vars,
-        "working_dir": None,
         "excludes": get_excludes(),
         "worker_process_setup_hook": setup_ray_worker,
     }
