@@ -213,3 +213,14 @@ cabs:
           write_parent: true
         metadata:
           rich_help_panel: Output
+      numba-cache-dir:
+        dtype: Directory
+        info:
+          Directory to use for numba caching.
+          Currently not configurable.
+          Exists to ensure the directory is mounted.
+        implicit: '/tmp/numba'
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
