@@ -53,6 +53,8 @@ def stokes_vis(
     max_field_of_view=3.0,
     beam_model=None,
     wgt_mode="l2",
+    max_blength=None,
+    max_freq=None,
 ):
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -226,10 +228,6 @@ def stokes_vis(
     ncorr = data.shape[-1]
     # we need this for averaging
     flag = np.tile(flag.any(axis=-1, keepdims=True), (1, 1, ncorr))
-
-    # do before averaging
-    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
-    max_freq = freq.max()
 
     # set corr coords (removing duplicates and sorting)
     corr = list("".join(dict.fromkeys(sorted(product))))

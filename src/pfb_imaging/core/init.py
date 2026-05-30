@@ -234,6 +234,10 @@ def init(
             ddid = int(idt[ilo:ihi])
             if (ddids is not None) and (ddid not in ddids):
                 continue
+            idx = (freq >= freq_min) & (freq <= freq_max)
+            if not idx.any():
+                continue
+            freq = freq[idx]
             if not len(freq_groups):
                 freq_groups.append(freq)
                 freq_sgroups.append(sgroup)
@@ -248,6 +252,7 @@ def init(
                     freq_groups.append(freq)
                     freq_sgroups.append(sgroup)
                     sgroup += freq_mapping[ms_name][idt]["counts"].size
+    all_freqs = np.unique(np.concatenate(freq_groups))
 
     # band mapping
     msddid2bid = {}
@@ -330,6 +335,8 @@ def init(
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
 

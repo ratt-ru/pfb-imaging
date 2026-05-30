@@ -73,7 +73,7 @@ def imager(
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
         ncpu = ncpu // 2
-    log.info(f"Using {nworkers} workers with {nthreads} per worker")
+    log.info(f"Using {nworkers} workers with {nthreads} thread per worker")
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -201,13 +201,25 @@ def imager(
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
+            if ds.frequency.size == 0:
+                continue
+            field_name = np.unique(ds.field_name.load().values).item()  # partitioned by FIELD_ID → single value
+            scan_name = np.unique(ds.scan_name.load().values).item()  # partitioned by SCAN_NUMBER → single value
+            spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
+            # skip if data not in selection
+            if (field_names is not None) and (field_name not in field_names):
+                continue
+            if (spw_names is not None) and (spw_name not in spw_names):
+                continue
+            if (scan_names is not None) and (scan_name not in scan_names):
+                continue
             all_freqs.append(ds.frequency.values)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
             # TODO - why do we sometimes get NaN's in uvw?
             uvw = ds.UVW.load().values
             uvw_mask = np.isnan(uvw).all(axis=-1)
             uvw = uvw[~uvw_mask]
-            max_blength = max(max_blength, np.sqrt(np.abs(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
+            max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
 
     # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
@@ -255,8 +267,8 @@ def imager(
             if (scan_names is not None) and (scan_name not in scan_names):
                 continue
 
-            freqs_node = ds.frequency.values  # .load()
-            times_node = ds.time.values  # .load()
+            freqs_node = ds.frequency.load().values
+            times_node = ds.time.load().values
             nchan_node = freqs_node.size
             ntimes_node = times_node.size
             if integrations_per_image in (0, None, -1):
@@ -356,4 +368,10 @@ def get_engine(ms_path: str) -> MSv4Backend:
     elif backend == MSv4Backend.MEERKAT:
         import xarray_kat  # noqa: F401
 
-        return {"engine": "xarray-kat", "applycal": "all", "chunked_array_type": "xarray-kat", "chunks": {}}
+        return {
+            "engine": "xarray-kat",
+            "applycal": "all",
+            "chunked_array_type": "xarray-kat",
+            "chunks": {},
+            "uvw_sign_convention": "fourier",
+        }
