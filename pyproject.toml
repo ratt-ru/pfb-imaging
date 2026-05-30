@@ -33,7 +33,7 @@ full = [
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "reproject",
-    "ray[default]>=2.54.0",
+    "ray[default]>=2.55.0",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -52,7 +52,7 @@ full = [
     "pillow>=12.2.0",
     "xarray-ms>=0.5.4",
     "msv4-utils>=0.0.3",
-    "xarray-kat>=0.0.5",
+    "xarray-kat>=0.0.6",
 ]
 
 [project.scripts]

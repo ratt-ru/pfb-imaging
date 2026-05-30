@@ -373,5 +373,5 @@ def get_engine(ms_path: str) -> MSv4Backend:
             "applycal": "all",
             "chunked_array_type": "xarray-kat",
             "chunks": {},
-            "uvw_sign_convention": "fourier",
+            "uvw_sign_convention": "casa",
         }
