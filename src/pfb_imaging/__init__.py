@@ -14,6 +14,9 @@ os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 
 def set_envs(nthreads, ncpu, log=None):
     # these seem to have more sensible defaults
+    # Note - do not set NUMBA_NUM_THREADS here.
+    # It should be initialised to the maximum and then we use numba.set_num_threads()
+    # in the worker processes to set it to the number of threads per worker.
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
@@ -25,7 +28,6 @@ def set_envs(nthreads, ncpu, log=None):
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     os.environ["NUMBA_THREADING_LAYER"] = "tbb"
-    os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     # gRPC EventEngine pool defaults to ~hw_threads per worker; cap it so we
     # don't blow ulimit -u with many workers. See ray-project/ray#54988.
     os.environ["RAY_worker_num_grpc_internal_threads"] = "1"
@@ -55,7 +57,6 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
-        "NUMBA_NUM_THREADS": str(nthreads),
         "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars
