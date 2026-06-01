@@ -309,6 +309,7 @@ cabs:
         dtype: Directory
         info:
           Directory to write logs and performance reports to.
+        must_exist: false
         mkdir: false
         path_policies:
           write_parent: true
@@ -320,6 +321,7 @@ cabs:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
+        must_exist: false
         mkdir: false
         path_policies:
           write_parent: true

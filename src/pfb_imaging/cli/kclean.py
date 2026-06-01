@@ -29,6 +29,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -39,6 +40,7 @@ Directory = NewType("Directory", Path)
     info="Optional path to write fits files to. "
     "Set to output-filename if not provided. "
     "The same naming conventions apply.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
@@ -261,6 +263,7 @@ def kclean(
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
@@ -277,6 +280,7 @@ def kclean(
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,
