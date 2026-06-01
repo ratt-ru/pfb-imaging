@@ -842,10 +842,6 @@ def beam_for_band(
             product,
         )
 
-        # this is a hack to get the images to align
-        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
-        pbeam = pbeam[:, ::-1, :]
-
     elif beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here?
         bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])

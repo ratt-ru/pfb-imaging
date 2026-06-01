@@ -188,6 +188,7 @@ def reproject_and_interp_scat_beam(
     radecf  - direction to project to
     """
     nstokes, nxi, nyi = beam.shape
+    assert nstokes == len(product), "Number of Stokes products in beam does not match length of product string"
 
     # reproject onto target field
     wcs_ref = WCS(naxis=2)
@@ -210,9 +211,7 @@ def reproject_and_interp_scat_beam(
     pbeam = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
     pmask = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
     for i in range(nstokes):
-        pbeam[i], pmask[i] = reproject_interp(
-            (beam[i], wcs_ref), wcs_target, shape_out=(nxo, nyo)
-        )  # , block_size='auto', parallel=nthreads
+        pbeam[i], pmask[i] = reproject_interp((beam[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))
 
     # set beam to zero where it is not defined
     pmask = pmask.astype(bool)
