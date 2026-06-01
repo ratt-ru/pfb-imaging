@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - name: Check out code
@@ -119,7 +119,11 @@ jobs:
       - name: Run pfb-imaging
         run: uv run pfb --help
 
-      - name: Run tests
+      # MSv4 (arcae) and MSv2 (daskms/python-casacore) cannot share a process
+      # — both link to incompatible casacore builds and segfault when used
+      # together (see arcae#72). Run each in its own pytest invocation so the
+      # interpreter only ever loads one of the two stacks.
+      - name: Run tests (MSv4 / arcae)
         run: |
           export RAY_NUM_CPUS=2
           export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
@@ -128,7 +132,18 @@ jobs:
           export OPENBLAS_NUM_THREADS=1
           export NUMEXPR_NUM_THREADS=1
 
-          uv run pytest -v tests/
+          uv run --frozen pytest -v tests/test_imager.py
+
+      - name: Run tests (MSv2 / daskms)
+        run: |
+          export RAY_NUM_CPUS=2
+          export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+
+          uv run --frozen pytest -v tests/ --ignore=tests/test_imager.py
 
   # Only publish if quality checks and tests pass
   publish:

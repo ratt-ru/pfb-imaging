@@ -80,7 +80,7 @@ def init(
         mslist = msstore.fs.glob(str(ms_path).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
@@ -93,7 +93,7 @@ def init(
             gtlist = gainstore.fs.glob(str(gt).rstrip("/"))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
             except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
@@ -237,6 +237,10 @@ def init(
             ddid = int(idt[ilo:ihi])
             if (ddids is not None) and (ddid not in ddids):
                 continue
+            idx = (freq >= freq_min) & (freq <= freq_max)
+            if not idx.any():
+                continue
+            freq = freq[idx]
             if not len(freq_groups):
                 freq_groups.append(freq)
                 freq_sgroups.append(sgroup)
@@ -251,6 +255,7 @@ def init(
                     freq_groups.append(freq)
                     freq_sgroups.append(sgroup)
                     sgroup += freq_mapping[ms_name][idt]["counts"].size
+    all_freqs = np.unique(np.concatenate(freq_groups))
 
     # band mapping
     msddid2bid = {}
@@ -344,6 +349,8 @@ def init(
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
 
