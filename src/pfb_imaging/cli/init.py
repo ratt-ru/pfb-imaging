@@ -30,9 +30,19 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="log-directory",
     info="Directory to write logs and performance reports to.",
+    must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
     metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
 )
 def init(
     ms: Annotated[
@@ -240,6 +250,7 @@ def init(
             rich_help_panel="Output",
         ),
         StimelaMeta(
+            must_exist=False,
             mkdir=False,
             path_policies={
                 "write_parent": True,

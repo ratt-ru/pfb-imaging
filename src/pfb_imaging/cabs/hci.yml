@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:fatalii_bweek
     inputs:
       ms:
         info:
@@ -416,3 +416,14 @@ cabs:
           A temporary directory to store ephemeral files.
         metadata:
           rich_help_panel: Output
+      numba-cache-dir:
+        dtype: Directory
+        info:
+          Directory to use for numba caching.
+          Currently not configurable.
+          Exists to ensure the directory is mounted.
+        implicit: '/tmp/numba'
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true

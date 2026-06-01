@@ -45,6 +45,15 @@ URI = NewType("URI", Path)
     info="A temporary directory to store ephemeral files.",
     metadata={"rich_help_panel": "Output"},
 )
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+)
 def hci(
     ms: Annotated[
         list[URI],
