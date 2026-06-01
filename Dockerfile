@@ -22,6 +22,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages:$LD_LIBRARY_PATH
 
 # So that the numba cache dir exists and gets mounted
 ENV NUMBA_CACHE_DIR=/tmp/numba
+RUN mkdir -p /tmp/numba
 
 # Make CLI available
 CMD ["pfb", "--help"]
