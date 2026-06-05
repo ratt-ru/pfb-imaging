@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
+from numpy.testing import assert_allclose
 
 from pfb_imaging.core.imager import imager as imager_core
 
@@ -204,7 +205,12 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     assert np.isfinite(leg).all(), "legacy init+grid MFS dirty contains NaN/Inf (see diagnostics above)"
     assert np.isfinite(new).all(), "imager .dt MFS dirty contains NaN/Inf (see diagnostics above)"
 
-    # peak-normalised comparison is robust to small absolute-scale differences
-    a = new / np.abs(new).max()
-    b = leg / np.abs(leg).max()
-    assert np.abs(a - b).max() < 5e-2, f"max abs diff {np.abs(a - b).max():.3e} exceeds tolerance"
+    # Both images are already wsum-normalised (sum DIRTY / sum WSUM), summed over
+    # all output-image nodes, so the comparison is MFS and independent of how the
+    # bands are indexed (imager keeps the original band id, init+grid reindexes
+    # contiguously when a band is dropped). init+grid and imager share the wsum
+    # convention, so they agree to ~1e-12 on real data. Use the 1 + x shift idiom
+    # (cf. test_sara) so the assertion stays well-defined when both images are
+    # identically zero -- an MS with no signal in DATA, or a fully-flagged band --
+    # rather than dividing by a zero peak.
+    assert_allclose(1 + new, 1 + leg, rtol=1e-4, atol=1e-4)
