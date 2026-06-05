@@ -21,9 +21,9 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
-    name="xds-out",
-    info="Output dataset directory.",
-    implicit="{current.output-filename}_{current.product}.xds",
+    name="dt-out",
+    info="Output imaging DataTree directory.",
+    implicit="{current.output-filename}_{current.product}.dt",
     must_exist=False,
 )
 @stimela_output(
@@ -235,6 +235,134 @@ def imager(
             rich_help_panel="Weighting",
         ),
     ] = "l2",
+    weight_grouping: Annotated[
+        Literal["per-band-time", "mfs", "per-band", "per-time"],
+        typer.Option(
+            help="How uv counts are grouped before forming imaging weights. "
+            "per-band-time -> each output image weighted on its own counts. "
+            "mfs/per-time -> sum counts over bands within a time. "
+            "per-band -> sum counts over time within a band.",
+            rich_help_panel="Weighting",
+        ),
+    ] = "per-band-time",
+    robustness: Annotated[
+        float | None,
+        typer.Option(
+            help="Briggs robustness in [-2, 2]. Values > 2 (or None) use natural weighting.",
+            rich_help_panel="Weighting",
+        ),
+    ] = None,
+    field_of_view: Annotated[
+        float | None,
+        typer.Option(
+            help="Field of view in degrees. Used to set the image size.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    super_resolution_factor: Annotated[
+        float,
+        typer.Option(
+            help="Pixels per resolution element relative to Nyquist.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 2.0,
+    cell_size: Annotated[
+        float | None,
+        typer.Option(
+            help="Cell size in arcseconds. Overrides super-resolution-factor if set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    nx: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of pixels in x. Computed from field-of-view if not set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    ny: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of pixels in y. Computed from field-of-view if not set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    psf_oversize: Annotated[
+        float,
+        typer.Option(
+            help="PSF size relative to the image size.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 1.4,
+    filter_counts_level: Annotated[
+        float,
+        typer.Option(
+            help="Replace uv cells with counts below median/level to avoid upweighting near-empty cells.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 5.0,
+    npix_super: Annotated[
+        int,
+        typer.Option(
+            help="Box half-size in pixels for super-uniform weighting. 0 -> standard uniform.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 0,
+    epsilon: Annotated[
+        float,
+        typer.Option(
+            help="Gridder accuracy.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 1e-7,
+    do_wgridding: Annotated[
+        bool,
+        typer.Option(
+            help="Use w-gridding (recommended for wide fields).",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
+    double_accum: Annotated[
+        bool,
+        typer.Option(
+            help="Use double precision accumulation when gridding.",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
+    keep_scratch: Annotated[
+        bool,
+        typer.Option(
+            help="Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.",
+            rich_help_panel="Control",
+        ),
+    ] = True,
+    fits_mfs: Annotated[
+        bool,
+        typer.Option(
+            help="Write MFS FITS images.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_cubes: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS image cubes.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Directory to write FITS files to. Required when output is on a non-file protocol.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={"write_parent": True},
+        ),
+    ] = None,
     log_directory: Annotated[
         Directory | None,
         typer.Option(
@@ -304,6 +432,23 @@ def imager(
                     nworkers=nworkers,
                     nthreads=nthreads,
                     wgt_mode=wgt_mode,
+                    weight_grouping=weight_grouping,
+                    robustness=robustness,
+                    field_of_view=field_of_view,
+                    super_resolution_factor=super_resolution_factor,
+                    cell_size=cell_size,
+                    nx=nx,
+                    ny=ny,
+                    psf_oversize=psf_oversize,
+                    filter_counts_level=filter_counts_level,
+                    npix_super=npix_super,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    keep_scratch=keep_scratch,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    fits_output_folder=fits_output_folder,
                     log_directory=log_directory,
                 ),
             )
@@ -337,6 +482,23 @@ def imager(
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
+                weight_grouping=weight_grouping,
+                robustness=robustness,
+                field_of_view=field_of_view,
+                super_resolution_factor=super_resolution_factor,
+                cell_size=cell_size,
+                nx=nx,
+                ny=ny,
+                psf_oversize=psf_oversize,
+                filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                keep_scratch=keep_scratch,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+                fits_output_folder=fits_output_folder,
                 log_directory=log_directory,
             )
             return
@@ -379,6 +541,23 @@ def imager(
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,
+            weight_grouping=weight_grouping,
+            robustness=robustness,
+            field_of_view=field_of_view,
+            super_resolution_factor=super_resolution_factor,
+            cell_size=cell_size,
+            nx=nx,
+            ny=ny,
+            psf_oversize=psf_oversize,
+            filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            keep_scratch=keep_scratch,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+            fits_output_folder=fits_output_folder,
             log_directory=log_directory,
         ),
         image=image,

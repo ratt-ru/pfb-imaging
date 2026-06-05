@@ -1,5 +1,6 @@
-"""Smoke test for the MSv4 DataTree imager (pass 1 -> .scratch tree)."""
+"""End-to-end smoke test for the MSv4 DataTree imager (.dt product)."""
 
+import glob
 from pathlib import Path
 
 import numpy as np
@@ -8,10 +9,9 @@ import xarray as xr
 from pfb_imaging.core.imager import imager as imager_core
 
 
-def test_imager_pass1_writes_scratch_tree(ms_name):
-    """imager() pass 1 writes a .scratch DataTree of fine averaged Stokes pieces."""
-    test_dir = Path(ms_name).resolve().parent
-    outname = str(test_dir / "test_imager")
+def test_imager_writes_dt_tree(ms_name, tmp_path):
+    """imager() runs both passes and writes a unified .dt DataTree plus FITS."""
+    outname = str(tmp_path / "test_imager")
 
     imager_core(
         [Path(ms_name)],
@@ -20,23 +20,33 @@ def test_imager_pass1_writes_scratch_tree(ms_name):
         channels_per_image=2,
         product="I",
         field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=True,
+        fits_cubes=False,
         overwrite=True,
         keep_ray_alive=True,
     )
 
-    dt = xr.open_datatree(outname + "_I.scratch", engine="zarr", chunks=None)
-    # output-image groups: band{b:04d}_time{t:04d}
-    image_names = [n for n in dt.children if n.startswith("band")]
-    assert image_names, "no output-image groups written"
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
 
-    # each image group has at least one partition piece with the expected vars
-    image = dt[sorted(image_names)[0]]
-    pieces = [name for name in image.children]
-    assert pieces, "image group has no partition pieces"
-    piece = image[pieces[0]]
-    for v in ("VIS", "WEIGHT", "MASK", "UVW", "FREQ", "BEAM", "COUNTS"):
-        assert v in piece.ds, f"piece missing {v}"
-    assert piece.ds.attrs["baseline_group"] == "all"
-    ncorr = piece.ds.corr.size
-    assert piece.ds.COUNTS.shape[0] == ncorr
-    assert np.isfinite(piece.ds.VIS.values).all()
+    # output-image nodes: band{b}_time{t}
+    image_names = sorted(n for n in dt.children if n.startswith("band"))
+    assert image_names, "no output-image nodes written"
+
+    band = dt[image_names[0]]
+    for v in ("DIRTY", "RESIDUAL", "PSF", "WSUM", "PSFPARSN"):
+        assert v in band.ds, f"band node missing {v}"
+    assert np.isfinite(band.ds.DIRTY.values).all()
+    # fresh image: residual == dirty (no model yet)
+    np.testing.assert_array_equal(band.ds.RESIDUAL.values, band.ds.DIRTY.values)
+
+    # partition children with vis-space + per-partition image-space products
+    part_names = [n for n in band.children]
+    assert part_names, "band node has no partition children"
+    part = band[part_names[0]]
+    for v in ("VIS", "WEIGHT", "MASK", "UVW", "FREQ", "PSF", "PSFHAT", "BEAM"):
+        assert v in part.ds, f"partition missing {v}"
+    assert part.ds.attrs["baseline_group"] == "all"
+
+    # MFS FITS written for DIRTY
+    assert glob.glob(str(tmp_path / "*dirty*mfs.fits")), "no MFS dirty FITS written"
