@@ -49,6 +49,40 @@ Out of scope this iteration (deliberate follow-ups):
 - Actual partitioning of data by baseline group and per-antenna-pair-type Mueller beams
   (MeerKAT+). Only the *storage layer* must accommodate them.
 
+## 2a. Implementation constraints (revision)
+
+These supersede any conflicting detail later in the document.
+
+**No bespoke access layer, no new module sprawl.** Use the native `xarray` DataTree API
+directly — `xr.open_datatree(store)`, `ds.to_zarr(store, group=…, mode=…)`, `dt.children` —
+not thin wrappers around them. Implement by **extending existing modules**, not by adding new
+`imager_*` / `*_tree` files (one-level-deep wrappers and gratuitous file splits violate
+`.claude/rules/python-standards.md §4`). Concrete placement:
+
+| Concern | Lives in | Form |
+|---|---|---|
+| Pass-1 fine Stokes + per-piece `COUNTS` | `utils/stokes2vis_msv4.py` | **extend** `stokes_vis` (call `_compute_counts` directly; write into the `.scratch` tree via `ds.to_zarr(group=…)`) |
+| Counts reduction strategies | `utils/weighting.py` | one function `reduce_counts(counts, grouping)` (a `match` over `per-band-time`/`mfs`/`per-band`/`per-time`), not a registry-of-functions file |
+| Pass-2 per-partition gridding + summation | `operators/gridder.py` | **reuse/extend** `image_data_products` to write the `.dt` tree and sum over partitions |
+| `HessianTree` (both backends) | `operators/hessian.py` | a class beside `HessPSF` |
+| Tree-aware FITS | `utils/fits.py` | `rdt2fits` beside `rdds2fits`, reusing `set_wcs`/`save_fits`/`create_beams_table` |
+| Geometry + two-pass orchestration | `core/imager.py` | inline |
+
+Node-naming convention (`band{b:04d}_time{t:04d}`, `part{p:04d}`) is the one piece genuinely
+shared across modules; if helpers are warranted at all they belong in `utils/naming.py`,
+otherwise inline the f-strings.
+
+**python-casacore must stay off the imaging import path (done — commit 89b51cc).** arcae (the
+`xarray-ms:msv2` engine used to read MSv4) and python-casacore cannot coexist in one process.
+The gridding/FITS utilities pulled casacore in transitively (`africanus` in `beam.py`/`misc.py`,
+`casacore.quanta` in `fits.py`). These are now deferred/replaced so `operators/gridder.py`,
+`utils/fits.py` and `operators/hessian.py` import casacore-free. Consequence: the whole imager
+(driver + pass-1 arcae workers + pass-2 ducc0 workers) is casacore-free, so **no process-role
+isolation is needed** — arcae and ducc0 gridding coexist. Keep it that way: do not add
+top-level `africanus`/`daskms`/`casacore` imports to any module on the imaging path. (When
+mosaic phase-centre offsets later need an `lm` conversion, use a casacore-free path, not
+`africanus.coordinates.radec_to_lm`.)
+
 ## 3. Pipeline and stores
 
 `imager` runs two passes and manages two zarr stores:
