@@ -292,12 +292,18 @@ def stokes_vis(
     # TODO - better beam interpolation
     if max_blength is None or max_freq is None:
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
+    # NB: the beam evaluation grid is sized at the critically-sampled (Nyquist)
+    # cell, which is a *separate* quantity from the imaging cell_rad passed in for
+    # the COUNTS uv-grid below. Keep them in distinct variables so the imaging
+    # cell (used to bin COUNTS) is not clobbered -- counts must be gridded on the
+    # same cell that grid_partition's counts_to_weights later looks them up on,
+    # i.e. the imaging cell (matching the legacy image_data_products path).
     fov = max_field_of_view
-    cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
-    cell_deg = np.rad2deg(cell_rad)
-    npix = int(fov / cell_deg)
-    l_beam = (-(npix // 2) + np.arange(npix)) * cell_deg
-    m_beam = (-(npix // 2) + np.arange(npix)) * cell_deg
+    beam_cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
+    beam_cell_deg = np.rad2deg(beam_cell_rad)
+    npix = int(fov / beam_cell_deg)
+    l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+    m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
     if beam_model is None:
         beam = np.ones((ncorr, npix, npix), dtype=real_type)
     elif beam_model.lower() == "katbeam":
