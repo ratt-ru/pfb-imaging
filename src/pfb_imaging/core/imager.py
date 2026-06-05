@@ -16,6 +16,7 @@ from xarray_ms.errors import FrameConversionWarning, IrregularGridWarning, Missi
 
 from pfb_imaging import set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.misc import set_image_size
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 
@@ -53,6 +54,12 @@ def imager(
     nworkers: int = 1,
     nthreads: int | None = None,
     wgt_mode: str = "l2",
+    field_of_view: float | None = None,
+    super_resolution_factor: float = 2.0,
+    cell_size: float | None = None,
+    nx: int | None = None,
+    ny: int | None = None,
+    psf_oversize: float = 1.4,
     keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
@@ -128,18 +135,19 @@ def imager(
 
     basename = f"{output_filename}"
 
-    xds_store = DaskMSStore(f"{basename}.xds")
-    if xds_store.exists():
+    # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
+    scratch_store = DaskMSStore(f"{basename}.scratch")
+    if scratch_store.exists():
         if overwrite:
-            log.info(f"Overwriting {basename}.xds")
-            xds_store.rm(recursive=True)
+            log.info(f"Overwriting {basename}.scratch")
+            scratch_store.rm(recursive=True)
         else:
-            log.error_and_raise(f"{basename}.xds exists. Set overwrite to overwrite it. ", RuntimeError)
+            log.error_and_raise(f"{basename}.scratch exists. Set overwrite to overwrite it. ", RuntimeError)
 
-    fs = fsspec.filesystem(xds_store.protocol)
-    fs.makedirs(xds_store.url, exist_ok=True)
+    fs = fsspec.filesystem(scratch_store.protocol)
+    fs.makedirs(scratch_store.url, exist_ok=True)
 
-    log.info(f"Data products will be stored in {xds_store.url}")
+    log.info(f"Pass-1 scratch products will be stored in {scratch_store.url}")
 
     if gain_table is not None:
 
@@ -244,6 +252,18 @@ def imager(
     half_band_width = (band_edges[1] - band_edges[0]) / 2
     freq_out = band_edges[0:-1] + half_band_width
 
+    # shared imaging geometry (also fixes the padded uv-grid used for COUNTS)
+    max_freq = float(all_freqs.max())
+    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
+        max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
+    )
+    min_padding = 1.7
+    nx_pad = int(np.ceil(min_padding * nx))
+    nx_pad += nx_pad % 2
+    ny_pad = int(np.ceil(min_padding * ny))
+    ny_pad += ny_pad % 2
+    log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
@@ -306,7 +326,7 @@ def imager(
                         dc2=dc2,
                         operator=operator,
                         node_dt=subdt,
-                        xds_store=xds_store.url,
+                        scratch_store=scratch_store.url,
                         bandid=bandid,
                         timeid=timeid,
                         msid=ims,
@@ -321,15 +341,19 @@ def imager(
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
                         max_blength=max_blength,
-                        max_freq=all_freqs.max(),
+                        max_freq=max_freq,
+                        nx_pad=nx_pad,
+                        ny_pad=ny_pad,
+                        cell_rad=cell_rad,
+                        baseline_group="all",
                     )
                     tasks.append(fut)
 
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
-    times_out = []
-    freqs_out = []
+    bandids_out = []
+    timeids_out = []
     while remaining_tasks:
         # Wait for at least 1 task to complete
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
@@ -338,21 +362,19 @@ def imager(
         for task in ready:
             result = ray.get(task)
             if result is not None:
-                times_out.append(result[0])
-                freqs_out.append(result[1])
+                bandids_out.append(result[0])
+                timeids_out.append(result[1])
             ncomplete += 1
             if progressbar:
                 print(f"Completed: {ncomplete} / {nds}", end="\n", flush=True)
 
-    times_out = np.unique(times_out)
-    freqs_out = np.unique(freqs_out)
+    ntime = len(set(timeids_out))
+    nband_out = len(set(bandids_out))
 
-    nband = freqs_out.size
-    ntime = times_out.size
+    log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_store.url}")
+    log.info(f"Pass 1 done after {time.time() - time_start}s")
 
-    log.info(f"Freq and time selection resulted in {nband} output bands and {ntime} output times")
-
-    log.info(f"All done after {time.time() - time_start}s")
+    # TODO (next phases): reduce COUNTS, run pass 2 into the .dt tree, write FITS.
 
     if not keep_ray_alive:
         ray.shutdown()
