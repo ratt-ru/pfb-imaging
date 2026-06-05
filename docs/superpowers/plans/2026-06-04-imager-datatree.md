@@ -1,5 +1,10 @@
 # Imager DataTree Implementation Plan (revised)
 
+> **Status: COMPLETE** — all phases implemented and tested on the `imager` branch
+> (commits 89b51cc → 46835bd). The imager produces the unified `.dt` DataTree + FITS;
+> `init`/`grid` remain live. Follow-ups (out of scope): wiring `deconv`/`sara`/`kclean` to the
+> `.dt` tree, the per-`(band,time)` Ray actor, baseline-group partitioning / Mueller beams.
+
 > **For agentic workers:** implement task-by-task with TDD. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Make `pfb imager` produce a single unified `xarray.DataTree` (one node per output image, one child per data partition) that subsumes today's `.xds`+`.dds` split, via a two-pass MS→tree pipeline with a reducible uv-`COUNTS` weighting product, a sum-over-partitions `HessianTree`, and FITS export.
