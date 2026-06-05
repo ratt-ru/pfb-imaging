@@ -18,11 +18,31 @@ import xarray as xr
 from pfb_imaging.core.imager import imager as imager_core
 
 
+def _describe(name, num, den, per_node_wsum):
+    """Compact diagnostics for an (un-normalised) MFS numerator / wsum pair.
+
+    Printed before the equivalence assertion so a CI failure shows *which*
+    image went bad and why (empty store, zero wsum, NaNs in DIRTY, ...).
+    """
+    nnan = int(np.isnan(num).sum())
+    finite = num[np.isfinite(num)]
+    lo = float(finite.min()) if finite.size else float("nan")
+    hi = float(finite.max()) if finite.size else float("nan")
+    print(
+        f"[{name}] nodes={len(per_node_wsum)} den(sum wsum)={den:.6g} "
+        f"per-node wsum={per_node_wsum} DIRTY nan={nnan}/{num.size} "
+        f"finite-min/max={lo:.4g}/{hi:.4g}",
+        flush=True,
+    )
+
+
 def _mfs_dirty_from_dt(store):
     dt = xr.open_datatree(store, engine="zarr", chunks=None)
     nodes = [dt[n].ds for n in dt.children if n.startswith("band")]
     num = sum(ds.DIRTY.values[0] for ds in nodes)  # corr 0 == Stokes I
-    den = sum(float(ds.WSUM.values[0]) for ds in nodes)
+    per_node_wsum = [float(ds.WSUM.values[0]) for ds in nodes]
+    den = sum(per_node_wsum)
+    _describe(f"imager .dt {store}", num, den, per_node_wsum)
     return num / den
 
 
@@ -31,7 +51,9 @@ def _mfs_dirty_from_dds(store):
 
     dds, _ = xds_from_url(store)
     num = sum(ds.DIRTY.values[0] for ds in dds)
-    den = sum(float(ds.WSUM.values[0]) for ds in dds)
+    per_node_wsum = [float(ds.WSUM.values[0]) for ds in dds]
+    den = sum(per_node_wsum)
+    _describe(f"legacy .dds {store}", num, den, per_node_wsum)
     return num / den
 
 
@@ -110,9 +132,20 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     env = os.environ.copy()
 
     base_leg = str(tmp_path / "legacy")
-    subprocess.run(
+
+    def _run(label, argv):
+        """Run a pfb subprocess, surfacing its output so CI logs the casacore
+        reference path (the init/grid Ray runtime is the prime suspect when the
+        reference image comes back empty/NaN on a resource-constrained runner)."""
+        res = subprocess.run([pfb, *argv], env=env, capture_output=True, text=True)
+        print(f"\n===== {label} rc={res.returncode} =====", flush=True)
+        print(f"[{label} stdout tail]\n{res.stdout[-3000:]}", flush=True)
+        print(f"[{label} stderr tail]\n{res.stderr[-3000:]}", flush=True)
+        res.check_returncode()
+
+    _run(
+        "pfb init",
         [
-            pfb,
             "init",
             "--ms",
             str(ms_name),
@@ -126,13 +159,10 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
             "I",
             "--overwrite",
         ],
-        check=True,
-        env=env,
-        capture_output=True,
     )
-    subprocess.run(
+    _run(
+        "pfb grid",
         [
-            pfb,
             "grid",
             "--output-filename",
             base_leg,
@@ -148,9 +178,6 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
             "--no-fits-cubes",
             "--overwrite",
         ],
-        check=True,
-        env=env,
-        capture_output=True,
     )
 
     base_new = str(tmp_path / "imager")
@@ -171,6 +198,11 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     leg = _mfs_dirty_from_dds(base_leg + "_I_main.dds")
     new = _mfs_dirty_from_dt(base_new + "_I.dt")
     assert new.shape == leg.shape == (nx, ny)
+
+    # finiteness is checked per-image first so a CI failure names the offending
+    # path (legacy vs imager) instead of collapsing both into a single nan diff
+    assert np.isfinite(leg).all(), "legacy init+grid MFS dirty contains NaN/Inf (see diagnostics above)"
+    assert np.isfinite(new).all(), "imager .dt MFS dirty contains NaN/Inf (see diagnostics above)"
 
     # peak-normalised comparison is robust to small absolute-scale differences
     a = new / np.abs(new).max()
