@@ -1,9 +1,47 @@
+import numpy as np
 import pytest
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights
+from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, reduce_counts
 
 pmp = pytest.mark.parametrize
+
+
+def _counts_grid(value):
+    return np.full((1, 4, 4), float(value))
+
+
+def test_reduce_counts_per_band_time_identity():
+    counts = {(0, 0): _counts_grid(1), (1, 0): _counts_grid(2)}
+    out = reduce_counts(counts, "per-band-time")
+    assert set(out) == {(0, 0), (1, 0)}
+    np.testing.assert_array_equal(out[(0, 0)], _counts_grid(1))
+    np.testing.assert_array_equal(out[(1, 0)], _counts_grid(2))
+
+
+def test_reduce_counts_mfs_sums_bands_within_time():
+    counts = {(0, 0): _counts_grid(1), (1, 0): _counts_grid(2), (0, 1): _counts_grid(10), (1, 1): _counts_grid(20)}
+    out = reduce_counts(counts, "mfs")
+    # time 0 -> 1+2=3 shared; time 1 -> 10+20=30 shared
+    np.testing.assert_array_equal(out[(0, 0)], _counts_grid(3))
+    np.testing.assert_array_equal(out[(1, 0)], _counts_grid(3))
+    np.testing.assert_array_equal(out[(0, 1)], _counts_grid(30))
+    np.testing.assert_array_equal(out[(1, 1)], _counts_grid(30))
+    # per-time matches mfs over the band axis
+    np.testing.assert_array_equal(reduce_counts(counts, "per-time")[(0, 0)], _counts_grid(3))
+
+
+def test_reduce_counts_per_band_sums_time_within_band():
+    counts = {(0, 0): _counts_grid(1), (0, 1): _counts_grid(4), (1, 0): _counts_grid(2)}
+    out = reduce_counts(counts, "per-band")
+    np.testing.assert_array_equal(out[(0, 0)], _counts_grid(5))
+    np.testing.assert_array_equal(out[(0, 1)], _counts_grid(5))
+    np.testing.assert_array_equal(out[(1, 0)], _counts_grid(2))
+
+
+def test_reduce_counts_unknown_raises():
+    with pytest.raises(ValueError, match="nonsense"):
+        reduce_counts({}, "nonsense")
 
 
 @pmp("srf", [1.0, 2.0, 3.2])
