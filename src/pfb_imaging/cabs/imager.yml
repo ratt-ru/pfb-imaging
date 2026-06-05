@@ -197,12 +197,143 @@ cabs:
         default: l2
         metadata:
           rich_help_panel: Weighting
+      weight-grouping:
+        info:
+          How uv counts are grouped before forming imaging weights.
+          per-band-time -> each output image weighted on its own counts.
+          mfs/per-time -> sum counts over bands within a time.
+          per-band -> sum counts over time within a band.
+        choices:
+        - per-band-time
+        - mfs
+        - per-band
+        - per-time
+        default: per-band-time
+        metadata:
+          rich_help_panel: Weighting
+      robustness:
+        info:
+          Briggs robustness in [-2, 2].
+          Values > 2 (or None) use natural weighting.
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Weighting
+      field-of-view:
+        info:
+          Field of view in degrees.
+          Used to set the image size.
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Imaging
+      super-resolution-factor:
+        info:
+          Pixels per resolution element relative to Nyquist.
+        dtype: float
+        default: 2.0
+        metadata:
+          rich_help_panel: Imaging
+      cell-size:
+        info:
+          Cell size in arcseconds.
+          Overrides super-resolution-factor if set.
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: Imaging
+      nx:
+        info:
+          Number of pixels in x.
+          Computed from field-of-view if not set.
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Imaging
+      ny:
+        info:
+          Number of pixels in y.
+          Computed from field-of-view if not set.
+        dtype: Optional[int]
+        metadata:
+          rich_help_panel: Imaging
+      psf-oversize:
+        info:
+          PSF size relative to the image size.
+        dtype: float
+        default: 1.4
+        metadata:
+          rich_help_panel: Imaging
+      filter-counts-level:
+        info:
+          Replace uv cells with counts below median/level to avoid upweighting near-empty cells.
+        dtype: float
+        default: 5.0
+        metadata:
+          rich_help_panel: Weighting
+      npix-super:
+        info:
+          Box half-size in pixels for super-uniform weighting.
+          0 -> standard uniform.
+        dtype: int
+        default: 0
+        metadata:
+          rich_help_panel: Weighting
+      epsilon:
+        info:
+          Gridder accuracy.
+        dtype: float
+        default: 1.0e-07
+        metadata:
+          rich_help_panel: Imaging
+      do-wgridding:
+        info:
+          Use w-gridding (recommended for wide fields).
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Imaging
+      double-accum:
+        info:
+          Use double precision accumulation when gridding.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Imaging
+      keep-scratch:
+        info:
+          Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Control
+      fits-mfs:
+        info:
+          Write MFS FITS images.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      fits-cubes:
+        info:
+          Write FITS image cubes.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      fits-output-folder:
+        info:
+          Directory to write FITS files to.
+          Required when output is on a non-file protocol.
+        dtype: Optional[Directory]
+        metadata:
+          rich_help_panel: Output
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
     outputs:
-      xds-out:
+      dt-out:
         dtype: Directory
         info:
-          Output dataset directory.
-        implicit: '{current.output-filename}_{current.product}.xds'
+          Output imaging DataTree directory.
+        implicit: '{current.output-filename}_{current.product}.dt'
         must_exist: false
       log-directory:
         dtype: Directory

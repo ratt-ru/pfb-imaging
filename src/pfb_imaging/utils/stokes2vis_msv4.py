@@ -5,14 +5,15 @@ import numpy as np
 import ray
 import xarray as xr
 
-# from casacore.quanta import quantity
 # from astropy.time import Time
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
-from pfb_imaging.utils.weighting import weight_data
+from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.misc import to_unix_time
+from pfb_imaging.utils.weighting import _compute_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -26,7 +27,7 @@ def stokes_vis(
     dc2=None,
     operator=None,
     node_dt=None,
-    xds_store=None,
+    scratch_store=None,
     bandid=None,
     timeid=None,
     msid=None,
@@ -42,6 +43,10 @@ def stokes_vis(
     wgt_mode="minvar",
     max_blength=None,
     max_freq=None,
+    nx_pad=None,
+    ny_pad=None,
+    cell_rad=None,
+    baseline_group="all",
 ):
     """
     MSv4 version of stokes2vis.
@@ -49,8 +54,12 @@ def stokes_vis(
     inputs:
         dc1, dc2, operator: data column names and operator to combine them with.
         node_dt: sub-node of datatree with the relevant time and frequency selection already applied.
-        xds_store: parent directory store to write out xarray datasets to.
+        scratch_store: parent .scratch DataTree store; the piece is written to the group
+            ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
+        nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
+            COUNTS grid used to build imaging weights in pass 2.
+        baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_out: output frequency for selected data.
         precision: "single" or "double" for output data and weights.
         sigma_column: name of column containing sigma values to convert to weights.
@@ -68,7 +77,8 @@ def stokes_vis(
     field_name = np.unique(ds.field_name.values).item()
     spw_name = ds.frequency.attrs["spectral_window_name"]
     scan_name = np.unique(ds.scan_name.values).item()
-    oname = f"ms{msid:04d}_fid{field_name}_spw{spw_name}_scan{scan_name}_band{bandid:04d}_time{timeid:04d}"
+    # partition identity: (msid, field, spw, baseline_group); scan distinguishes fine pieces
+    piece_name = f"ms{msid:04d}_fid{field_name}_spw{spw_name}_bg{baseline_group}_scan{scan_name}"
 
     if precision.lower() == "single":
         real_type = np.float32
@@ -282,12 +292,18 @@ def stokes_vis(
     # TODO - better beam interpolation
     if max_blength is None or max_freq is None:
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
+    # NB: the beam evaluation grid is sized at the critically-sampled (Nyquist)
+    # cell, which is a *separate* quantity from the imaging cell_rad passed in for
+    # the COUNTS uv-grid below. Keep them in distinct variables so the imaging
+    # cell (used to bin COUNTS) is not clobbered -- counts must be gridded on the
+    # same cell that grid_partition's counts_to_weights later looks them up on,
+    # i.e. the imaging cell (matching the legacy image_data_products path).
     fov = max_field_of_view
-    cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
-    cell_deg = np.rad2deg(cell_rad)
-    npix = int(fov / cell_deg)
-    l_beam = (-(npix // 2) + np.arange(npix)) * cell_deg
-    m_beam = (-(npix // 2) + np.arange(npix)) * cell_deg
+    beam_cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
+    beam_cell_deg = np.rad2deg(beam_cell_rad)
+    npix = int(fov / beam_cell_deg)
+    l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+    m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
     if beam_model is None:
         beam = np.ones((ncorr, npix, npix), dtype=real_type)
     elif beam_model.lower() == "katbeam":
@@ -317,13 +333,34 @@ def stokes_vis(
 
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
+    vis_cf = data.transpose(2, 0, 1)
+    wgt_cf = weight.transpose(2, 0, 1)
+
+    # signs occording to wgridder conventions
+    flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
+    counts = _compute_counts(
+        uvw,
+        freq,
+        mask,
+        wgt_cf,
+        nx_pad,
+        ny_pad,
+        cell_rad,
+        cell_rad,
+        wgt_cf.dtype,
+        ngrid=1,
+        usign=1.0 if flip_u else -1.0,
+        vsign=1.0 if flip_v else -1.0,
+    )
+
     data_vars = {}
-    data_vars["VIS"] = (("corr", "row", "chan"), data.transpose(2, 0, 1))
-    data_vars["WEIGHT"] = (("corr", "row", "chan"), weight.transpose(2, 0, 1))
+    data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
+    data_vars["WEIGHT"] = (("corr", "row", "chan"), wgt_cf)
     data_vars["MASK"] = (("row", "chan"), mask)
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
     data_vars["BEAM"] = (("corr", "l_beam", "m_beam"), beam)
+    data_vars["COUNTS"] = (("corr", "u", "v"), counts)
 
     coords = {
         "chan": (("chan",), freq),
@@ -332,14 +369,17 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    unix_time = to_unix_time(time_out)
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
         "pfb-imaging-version": pfb_version,
         "ra": radec[0],
         "dec": radec[1],
+        "msid": msid,
         "field_name": field_name,
         "spw_name": spw_name,
+        "baseline_group": baseline_group,
         "scan_name": scan_name,
         "freq_out": freq_out,
         "freq_min": freq_min,
@@ -357,5 +397,6 @@ def stokes_vis(
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    out_ds.to_zarr(f"{xds_store}/{oname}.zarr", mode="w")
-    return time_out, freq_out
+    group = f"band{bandid:04d}_time{timeid:04d}/{piece_name}"
+    out_ds.to_zarr(scratch_store, group=group, mode="a")
+    return bandid, timeid, piece_name

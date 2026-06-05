@@ -6,6 +6,9 @@ __pycache__/
 # Numba AOT cache (local test runs)
 .numba_cache/
 
+# Claude Code transient session locks (rules/ is intentionally tracked)
+.claude/*.lock
+
 # C extensions
 *.so
 
@@ -69,11 +72,9 @@ instance/
 # Sphinx and documentation
 docs/_build/
 docs-env
-docs
 
 # PyBuilder
 target/
-scripts/genfuncs.sh
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -113,10 +114,6 @@ ENV/
 
 # test data
 tests/data/
-
-# AI
-.claude
-.claude-code
 
 # random
 rich_help_panels.md

@@ -6,6 +6,23 @@
 
 *Note: Detailed domain logic, Python standards, and CI/CD rules have been modularized into the `.claude/rules/` directory for progressive disclosure.*
 
+## MSv4 DataTree imager (`pfb imager`)
+
+`pfb imager` is the MSv4 front-end that combines `init`+`grid` into a two-pass pipeline producing
+a single unified `xarray.DataTree` (`<out>_<P>.dt`, one node per `(band,time)` output image with a
+`part####` child per data partition) plus a `.scratch` cache. It uses the **native** DataTree API
+(`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
+`xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
+`.claude/rules/architecture.md §8` and `docs/superpowers/specs/2026-06-04-imager-datatree-design.md`.
+
+**⚠️ arcae ⊥ python-casacore:** the MSv4 reader (`arcae`) and python-casacore cannot share a
+process (arcae#72). The imaging path is kept casacore-free — **never** add top-level
+`africanus`/`daskms`/`casacore` imports to imaging-path modules (`stokes2vis_msv4`,
+`operators/gridder`, `operators/hessian`, `utils/fits`, and the `misc`/`beam` helpers); defer them
+into the functions that need them. Consequently **do not run `pytest tests/` as one command** — it
+segfaults; `tests/test_imager.py` runs in its own pytest invocation (see
+`.claude/rules/testing-and-ci.md`).
+
 ## Core Dependencies
 
 * Minimize external dependencies.

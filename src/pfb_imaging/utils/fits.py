@@ -6,9 +6,9 @@ import xarray as xr
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
-from casacore.quanta import quantity
 
 from pfb_imaging import pfb_version
+from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.naming import xds_from_list
 
 
@@ -130,8 +130,8 @@ def set_wcs(
         header["ORIGIN"] = f"pfb-imaging: v{pfb_version}"
         header["SPECSYS"] = "TOPOCENT"
         if ms_time is not None:
-            # TODO - probably a round about way of doing this
-            unix_time = quantity(f"{ms_time}s").to_unix_time()
+            # ms_time is in MJD seconds; convert to unix time
+            unix_time = to_unix_time(ms_time)
             utc_iso = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             header["UTC_TIME"] = utc_iso
             t = Time(utc_iso)
@@ -390,5 +390,126 @@ def dds2fits(
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
             save_fits(cube, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)
+
+    return column
+
+
+@ray.remote
+def rdt2fits(*args, **kwargs):
+    return dt2fits(*args, **kwargs)
+
+
+def dt2fits(
+    store_url,
+    column,
+    outname,
+    norm_wsum=True,
+    otype=np.float32,
+    nthreads=1,
+    do_mfs=True,
+    do_cube=True,
+    psfpars_mfs=None,
+    force_unit=None,
+):
+    """Render a band-node variable from the imager ``.dt`` DataTree to FITS.
+
+    The DataTree analogue of :func:`dds2fits`: it sources band-stacked data from
+    the ``.dt`` store (one group per output image ``band{b}_time{t}``) instead of
+    a flat ``.dds`` list, and reuses the access-agnostic helpers
+    :func:`set_wcs`/:func:`save_fits`/:func:`create_beams_table`. :func:`dds2fits`
+    is left untouched for the live ``.dds`` consumers.
+
+    Args:
+        store_url: path/URL of the ``.dt`` store.
+        column: band-node data variable to render (e.g. ``"DIRTY"``).
+        outname: output basename; files are ``<outname>_<column>_time{t}[_mfs].fits``.
+        norm_wsum: divide by wsum (Jy/beam) vs weighted Jy/pixel.
+        do_mfs, do_cube: which products to write.
+        psfpars_mfs: optional ``{timeid: (ncorr, 3)}`` MFS beam params.
+        force_unit: override the BUNIT header.
+
+    Returns:
+        The rendered ``column`` name.
+    """
+    basename = outname + "_" + column.lower()
+    unit = force_unit or ("Jy/beam" if norm_wsum else "Jy/pixel")
+    bpar = ["BMAJ", "BMIN", "BPA"]
+
+    dt = xr.open_datatree(store_url, engine="zarr", chunks=None)
+    nodes = [dt[name].ds for name in dt.children if name.startswith("band")]
+    nodes = [ds for ds in nodes if column in ds]
+    if not nodes:
+        return column
+
+    timeids = np.unique([int(ds.attrs["timeid"]) for ds in nodes])
+    for timeid in timeids:
+        # bands for this time chunk, ordered by frequency
+        dst = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == timeid), key=lambda d: d.attrs["freq_out"])
+        ref = dst[0]
+        nband = len(dst)
+        freqs = np.array([ds.attrs["freq_out"] for ds in dst])
+        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, nx, ny)
+        wsums = np.stack([ds.WSUM.values for ds in dst], axis=0)  # (band, corr)
+        wsum = wsums.sum(axis=0)  # (corr,)
+        _, ncorr, nx, ny = cube.shape
+        radec = (ref.attrs["ra"], ref.attrs["dec"])
+        cell_deg = np.rad2deg(ref.attrs["cell_rad"])
+        time_out = ref.attrs["time_out"]
+
+        beams_hdu = None
+        psfpars_mfs_timeid = None
+        if psfpars_mfs is not None:
+            pp = np.asarray(psfpars_mfs[timeid])
+            assert pp.shape == (ncorr, 3), "psfpars_mfs should have shape (ncorr, 3)"
+            da = xr.DataArray(
+                pp[None], dims=("band", "corr", "bpar"), coords={"band": [0], "corr": ref.corr.values, "bpar": bpar}
+            )
+            beams_hdu = create_beams_table(da, cell2deg=cell_deg)
+            psfpars_mfs_timeid = pp[0]  # always Stokes I in fits header
+
+        if do_mfs:
+            freq_mfs = np.sum(freqs[:, None] * wsums) / wsum.sum()
+            hdr = set_wcs(
+                cell_deg, cell_deg, nx, ny, radec, freq_mfs, unit=unit, ms_time=time_out, gausspar=psfpars_mfs_timeid
+            )
+            hdr["WSUM"] = float(wsum[0])
+            if norm_wsum:
+                cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
+            else:
+                cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
+            save_fits(
+                cube_mfs, basename + f"_time{timeid}_mfs.fits", hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu
+            )
+
+        if do_cube:
+            cube_beams = None
+            psfparsf_timeid = None
+            if all("PSFPARSN" in ds for ds in dst):
+                pp = np.stack([ds.PSFPARSN.values for ds in dst], axis=0)  # (band, corr, 3)
+                da = xr.DataArray(
+                    pp,
+                    dims=("band", "corr", "bpar"),
+                    coords={"band": np.arange(nband), "corr": ref.corr.values, "bpar": bpar},
+                )
+                psfparsf_timeid = pp[:, 0]  # always Stokes I in fits header
+                cube_beams = create_beams_table(da, cell2deg=cell_deg)
+            hdr = set_wcs(
+                cell_deg,
+                cell_deg,
+                nx,
+                ny,
+                radec,
+                freqs,
+                unit=unit,
+                ms_time=time_out,
+                gausspar=psfpars_mfs_timeid,
+                gausspars=psfparsf_timeid,
+            )
+            for i in range(nband):
+                hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
+            cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube
+            save_fits(
+                cube_out, basename + f"_time{timeid}.fits", hdr, overwrite=True, dtype=otype, beams_hdu=cube_beams
+            )
 
     return column
