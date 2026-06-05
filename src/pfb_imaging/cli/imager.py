@@ -314,7 +314,7 @@ def imager(
             help="Gridder accuracy.",
             rich_help_panel="Imaging",
         ),
-    ] = 1e-7,
+    ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
@@ -360,7 +360,9 @@ def imager(
         StimelaMeta(
             must_exist=False,
             mkdir=False,
-            path_policies={"write_parent": True},
+            path_policies={
+                "write_parent": True,
+            },
         ),
     ] = None,
     log_directory: Annotated[
