@@ -9,17 +9,14 @@ import jax
 import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
-from africanus.constants import c as lightspeed
 from dask.diagnostics import ProgressBar
 from dask.distributed import performance_report
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms import xds_from_storage_table as xds_from_table
-from daskms.experimental.zarr import xds_from_zarr
 from ducc0.fft import c2r, good_size, r2c
 from jax import value_and_grad
 from numba import njit, prange
 from numba.extending import overload
 from omegaconf import ListConfig
+from scipy.constants import c as lightspeed
 from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
@@ -258,6 +255,11 @@ def construct_mappings(
     time_mapping    - dict[MS][IDT] utimes per dataset
 
     """
+    # daskms pulls in python-casacore; import it locally so this module stays
+    # importable on the casacore-free (arcae/ducc0) imaging path.
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
+    from daskms.experimental.zarr import xds_from_zarr
 
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig):
         ms_name = [ms_name]
