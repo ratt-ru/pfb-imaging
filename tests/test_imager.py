@@ -126,7 +126,22 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
 
     init+grid load python-casacore, so they run in a subprocess; imager loads
     arcae in-process. Both are pinned to the same image size and compared as
-    peak-normalised MFS dirty images.
+    wsum-normalised MFS dirty images.
+
+    KNOWN LIMITATION (FIXME): the shared test MS downloaded from Google Drive
+    currently has an all-zero DATA column, so in CI both pipelines produce an
+    identically-zero dirty image and this test only verifies that the two paths
+    *agree* (and run end to end) -- it is a no-op on the actual gridding maths.
+    It becomes a real equivalence check only when the MS carries visibilities
+    (older locally-cached copies still do, which is why it is meaningful there).
+    To make it meaningful everywhere, populate DATA with a deterministic model
+    (predict point sources with ducc0 ``dirty2vis`` as test_kclean/test_sara do)
+    -- ideally once per session in conftest, written via arcae once we trust
+    arcae writes, or via a casacore subprocess so the arcae process stays
+    casacore-free (arcae#72). Fully flagging one band at the same time would
+    additionally exercise the band-dropping path. Until then the comparison is
+    deliberately divide-by-zero-safe (see below) so a zero-signal MS does not
+    masquerade as a NaN failure.
     """
     nx = ny = 256
     pfb = os.path.join(os.path.dirname(sys.executable), "pfb")
