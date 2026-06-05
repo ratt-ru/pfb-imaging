@@ -5,12 +5,12 @@ import numexpr as ne
 import numpy as np
 import ray
 import xarray as xr
-from casacore.quanta import quantity
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
+from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.weighting import weight_data
 
 
@@ -339,7 +339,7 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    unix_time = quantity(f"{time_out}s").to_unix_time()
+    unix_time = to_unix_time(time_out)
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
