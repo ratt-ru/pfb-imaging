@@ -925,6 +925,99 @@ def grid_partition(
     }
 
 
+def residual_from_partitions(
+    dirty,
+    parts,
+    model,
+    cell_rad,
+    nthreads=1,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+):
+    """Recompute a band's residual by summing the exact degrid/grid over partitions.
+
+    The DataTree analogue of ``compute_residual``: it reuses the per-partition
+    gridding inputs already stored in pass 2 (``UVW``/``WEIGHT``/``MASK``/
+    ``FREQ``/image-grid ``BEAM``) and never recomputes the PSF, so it is cheap
+    enough to call once per major cycle. The beam is applied once on the degrid
+    side, matching the once-attenuated convention of ``compute_residual`` and of
+    the stored ``DIRTY``.
+
+    Args:
+        dirty: Band-node dirty image ``(corr, nx, ny)`` (sum over partitions,
+            un-normalised by wsum, as produced in pass 2).
+        parts: Iterable of partition datasets, each with corr-first ``WEIGHT``,
+            ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
+            image-grid ``BEAM`` ``(corr,nx,ny)``, plus ``l0``/``m0`` attrs (0 if absent).
+        model: Band model image ``(corr, nx, ny)``.
+        cell_rad: Image cell size (rad).
+        nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+
+    Returns:
+        Residual image ``(corr, nx, ny)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``.
+    """
+    resize_thread_pool(nthreads)
+    ncorr, nx, ny = dirty.shape
+    convim = np.zeros_like(dirty)
+    tmp = np.zeros((nx, ny), dtype=dirty.dtype)
+    for part in parts:
+        uvw = part.UVW.values
+        wgt = part.WEIGHT.values
+        mask = part.MASK.values
+        freq = part.FREQ.values
+        beam = part.BEAM.values
+        l0 = part.attrs.get("l0", 0.0)
+        m0 = part.attrs.get("m0", 0.0)
+        flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+        for c in range(ncorr):
+            model_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=beam[c] * model[c],
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                nthreads=nthreads,
+                divide_by_n=False,
+                sigma_min=1.1,
+                sigma_max=3.0,
+            )
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=model_vis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx,
+                npix_y=ny,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=nthreads,
+                sigma_min=1.1,
+                sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=tmp,
+            )
+            convim[c] += tmp
+
+    return dirty - convim
+
+
 def compute_residual(
     dsl,
     nx,

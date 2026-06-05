@@ -34,8 +34,9 @@ In scope this iteration:
 - Two-pass `imager` producing a unified DataTree (`.dt`) plus FITS outputs.
 - Full multi-partition storage layout, including a `baseline_group` axis in the partition
   identity (storage extensibility only — partitioning *by* baseline group is out of scope).
-- The image-space sum-over-partitions Hessian (`HessianTree`), with **both** backends
-  (PSF-approx and exact gridder), implemented and unit-tested directly against a tree.
+- The image-space sum-over-partitions Hessian (`HessianTree`, PSF-convolution only) plus a
+  `residual_from_partitions` function owning the exact degrid/grid path (see §8), both
+  unit-tested directly against synthetic partitions.
 - A first-class, reducible `COUNTS` product with named weighting-reduction strategies.
 - Scratch store retained as an optional cache.
 
@@ -64,7 +65,8 @@ not thin wrappers around them. Implement by **extending existing modules**, not 
 | Pass-1 fine Stokes + per-piece `COUNTS` | `utils/stokes2vis_msv4.py` | **extend** `stokes_vis` (call `_compute_counts` directly; write into the `.scratch` tree via `ds.to_zarr(group=…)`) |
 | Counts reduction strategies | `utils/weighting.py` | one function `reduce_counts(counts, grouping)` (a `match` over `per-band-time`/`mfs`/`per-band`/`per-time`), not a registry-of-functions file |
 | Pass-2 per-partition gridding + summation | `operators/gridder.py` | **reuse/extend** `image_data_products` to write the `.dt` tree and sum over partitions |
-| `HessianTree` (both backends) | `operators/hessian.py` | a class beside `HessPSF` |
+| `HessianTree` (PSF-convolution only) | `operators/hessian.py` | a class beside `HessPSF` |
+| `residual_from_partitions` (exact degrid/grid) | `operators/gridder.py` | a function beside `compute_residual` |
 | Tree-aware FITS | `utils/fits.py` | `rdt2fits` beside `rdds2fits`, reusing `set_wcs`/`save_fits`/`create_beams_table` |
 | Geometry + two-pass orchestration | `core/imager.py` | inline |
 
@@ -210,19 +212,26 @@ finer granularity than the imaging products.
 5. Write the tree. Each `(band, part)` is an independent zarr group path, so Ray workers
    write concurrently without contention.
 
-## 8. Hessian over the tree (`HessianTree`, "store both")
+## 8. Hessian over the tree (`HessianTree`) and the residual (revised)
 
-A `HessianTree` operator walks a band node's partition children and sums their contributions.
-Two interchangeable backends share the stored data:
+The PSF is expensive and is computed once in pass 2 (`grid_partition`); it must not be
+recomputed per iteration. This mirrors the existing `image_data_products` / `compute_residual`
+split in `operators/gridder.py`, so the DataTree imager has two distinct operators:
 
-- **PSF-approx:** `Σ_p` beam-weighted PSF convolution using per-partition `PSFHAT`/`BEAM`
-  (fast; approximate across a wide mosaic). Mirrors today's `HessPSF` but generalised to a
-  sum over partitions with per-partition beams.
-- **Exact gridder:** `Σ_p hessian_slice` over each partition's vis-space arrays
-  (accurate; slower; one degrid/grid round-trip per partition per major cycle).
+- **`HessianTree` (PSF-convolution only)** — the cheap inner-minor-cycle operator:
+  `H x = (1/Σ_p wsum_p) Σ_p B_pᵀ (PSF_p ⊛ (B_p x)) + η x`, summing per-partition `PSFHAT`+`BEAM`
+  convolutions. Generalises `HessPSF` to a sum over partitions with per-partition beams. Lives
+  in `operators/hessian.py` beside `HessPSF`. (Decision: the originally-planned exact-gridder
+  backend is dropped — the exact degrid/grid path is owned by the residual function below, so
+  a second `HessianTree` mode would be redundant.)
+- **`residual_from_partitions`** (`operators/gridder.py`, beside `compute_residual`) — the
+  exact, once-per-major-cycle gradient: `residual = dirty - Σ_p G_pᵀ W_p G_p (beam_p · model)`.
+  Reuses the per-partition `UVW`/`WEIGHT`/`MASK`/`FREQ`/image-grid `BEAM` stored in pass 2,
+  applies the beam once (matching `compute_residual` and the stored `DIRTY`), and never touches
+  `PSF`/`PSFHAT`. This is where mosaic correctness lives (per-partition beam + `x0,y0`).
 
-Both are implemented and unit-tested directly against a tree this iteration. `HessianTree` is
-the intended bridge for the future `deconv` consumer.
+`HessianTree` is the intended bridge for the future `deconv` consumer; the residual function is
+its per-major-cycle companion.
 
 ## 9. Access layer
 

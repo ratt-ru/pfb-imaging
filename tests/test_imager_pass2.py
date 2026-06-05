@@ -3,7 +3,7 @@
 import numpy as np
 import xarray as xr
 
-from pfb_imaging.operators.gridder import grid_partition
+from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions
 from pfb_imaging.utils.weighting import _compute_counts
 
 
@@ -91,3 +91,60 @@ def test_grid_partition_robust_reweights():
     # natural-weight call leaves weights untouched
     nat = grid_partition(part, None, nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=None)
     np.testing.assert_allclose(nat["WEIGHT"], part.WEIGHT.values)
+
+
+def _image_beam_partition(nx, ny, nrow=200, seed=0, beam_val=1.0, l0=0.0, m0=0.0):
+    """A partition with the beam already on the image grid (as stored in pass 2)."""
+    rng = np.random.default_rng(seed)
+    uvw = rng.standard_normal((nrow, 3)) * 100.0
+    freq = np.array([1.0e9])
+    wgt = np.abs(rng.standard_normal((1, nrow, 1))) + 0.1
+    mask = np.ones((nrow, 1), dtype=np.uint8)
+    beam = np.full((1, nx, ny), float(beam_val))
+    return xr.Dataset(
+        {
+            "WEIGHT": (("corr", "row", "chan"), wgt),
+            "MASK": (("row", "chan"), mask),
+            "UVW": (("row", "three"), uvw),
+            "FREQ": (("chan",), freq),
+            "BEAM": (("corr", "x", "y"), beam),
+        },
+        coords={"corr": ["I"]},
+        attrs={"l0": l0, "m0": m0},
+    )
+
+
+def test_residual_zero_model_returns_dirty():
+    nx = ny = 16
+    part = _image_beam_partition(nx, ny, seed=0)
+    dirty = np.random.default_rng(5).standard_normal((1, nx, ny))
+    model = np.zeros((1, nx, ny))
+    res = residual_from_partitions(dirty, [part], model, cell_rad=1.0e-6)
+    np.testing.assert_allclose(res, dirty, atol=1e-12)
+
+
+def test_residual_partition_additivity():
+    """convim summed over [p0, p1] equals convim(p0) + convim(p1)."""
+    nx = ny = 16
+    p0 = _image_beam_partition(nx, ny, nrow=120, seed=0)
+    p1 = _image_beam_partition(nx, ny, nrow=80, seed=1)
+    rng = np.random.default_rng(7)
+    dirty = rng.standard_normal((1, nx, ny))
+    model = rng.standard_normal((1, nx, ny))
+    c01 = dirty - residual_from_partitions(dirty, [p0, p1], model, 1.0e-6)
+    c0 = dirty - residual_from_partitions(dirty, [p0], model, 1.0e-6)
+    c1 = dirty - residual_from_partitions(dirty, [p1], model, 1.0e-6)
+    np.testing.assert_allclose(c01, c0 + c1, rtol=1e-5, atol=1e-8)
+
+
+def test_residual_beam_applied_once():
+    """Doubling the beam doubles the model term (beam applied once on degrid side)."""
+    nx = ny = 16
+    p1 = _image_beam_partition(nx, ny, seed=0, beam_val=1.0)
+    p2 = _image_beam_partition(nx, ny, seed=0, beam_val=2.0)
+    rng = np.random.default_rng(9)
+    dirty = np.zeros((1, nx, ny))
+    model = rng.standard_normal((1, nx, ny))
+    c1 = dirty - residual_from_partitions(dirty, [p1], model, 1.0e-6)
+    c2 = dirty - residual_from_partitions(dirty, [p2], model, 1.0e-6)
+    np.testing.assert_allclose(c2, 2.0 * c1, rtol=1e-5, atol=1e-8)

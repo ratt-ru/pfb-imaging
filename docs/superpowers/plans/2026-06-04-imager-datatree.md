@@ -17,8 +17,9 @@
 | casacore isolation | `utils/{misc,beam,fits}.py` | **DONE — commit 89b51cc** |
 | counts reduction | `utils/weighting.py` | `reduce_counts(counts, grouping)` |
 | pass-1 fine Stokes + counts | `utils/stokes2vis_msv4.py` | extend `stokes_vis` |
-| pass-2 per-partition grid + sum | `operators/gridder.py` | extend `image_data_products` |
-| `HessianTree` | `operators/hessian.py` | class beside `HessPSF` |
+| pass-2 per-partition grid (focused fn) | `operators/gridder.py` | `grid_partition` (DONE 59855a2) |
+| per-major-cycle residual over partitions | `operators/gridder.py` | `residual_from_partitions` beside `compute_residual` |
+| `HessianTree` (PSF-convolution only) | `operators/hessian.py` | class beside `HessPSF` |
 | tree FITS | `utils/fits.py` | `rdt2fits` beside `rdds2fits` |
 | geometry + orchestration + CLI | `core/imager.py`, `cli/imager.py` | inline |
 
@@ -73,11 +74,22 @@ In `operators/gridder.py`, add the tree-writing, sum-over-partitions pass-2 path
 
 ---
 
-## Phase 4 — `HessianTree` in `operators/hessian.py`
+## Phase 3b — `residual_from_partitions` in `operators/gridder.py` — DONE (commit pending)
 
-Class beside `HessPSF`. `H x = (1/Σ_p wsum_p) Σ_p B_pᵀ G_pᵀ W_p G_p B_p x + η x`, two backends sharing stored data: `mode="psf"` (per-partition `PSFHAT`+`BEAM` convolution, reusing the `r2c/c2r` pattern already in `hessian.py`) and `mode="exact"` (`Σ_p hessian_slice`). Constructor takes a list of per-partition dicts + `nx,ny[,nx_psf,ny_psf]`, `eta`, `mode`; `dot`/`hdot`.
+Beside `compute_residual`. `residual = dirty - Σ_p G_pᵀ W_p G_p (beam_p · model)`, reusing the
+per-partition gridding inputs stored in pass 2, beam applied once (once-attenuated, matching
+`compute_residual`), PSF never recomputed. Pure/casacore-free; the major-cycle companion to
+`HessianTree`. Tests: zero-model → residual==dirty; partition additivity of the model term;
+beam-applied-once linearity.
 
-- [ ] **Tests** (`tests/test_hessian_tree.py` or extend `tests/test_hessian_approx.py`): delta-PSF psf-mode ≈ identity (η=0); two identical partitions ≡ one (psf mode); exact mode single partition matches `hessian_slice/wsum`. Confirm fail → implement → confirm pass → lint → commit `feat(imager): add HessianTree sum-over-partitions operator`.
+## Phase 4 — `HessianTree` in `operators/hessian.py` (PSF-convolution only)
+
+Class beside `HessPSF`. `H x = (1/Σ_p wsum_p) Σ_p B_pᵀ (PSF_p ⊛ (B_p x)) + η x`, summing
+per-partition `PSFHAT`+`BEAM` convolutions (reuse the `r2c/c2r` pattern already in `hessian.py`).
+Constructor takes a list of per-partition dicts (`psfhat`, `beam`, `wsum`) + `nx,ny,nx_psf,ny_psf`,
+`eta`; `dot`/`hdot`. No exact-gridder mode — the exact path is `residual_from_partitions`.
+
+- [ ] **Tests** (`tests/test_hessian_tree.py` or extend `tests/test_hessian_approx.py`): delta-PSF ≈ identity (η=0); two identical partitions ≡ one. Confirm fail → implement → confirm pass → lint → commit `feat(imager): add HessianTree sum-over-partitions operator`.
 
 ---
 
