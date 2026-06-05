@@ -6,7 +6,7 @@ from pfb_imaging.utils.misc import to_unix_time
 
 def test_casacore_vs_astropy(ms_name, ms_meta):
     """
-    Test casacore.quanta.quatity against astropy.time.Time unix time conversion
+    Test casacore.quanta.quantity against astropy.time.Time unix time conversion
     """
     from casacore.quanta import quantity
 
