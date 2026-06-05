@@ -469,14 +469,19 @@ class HessianTree(object):
         self.wsum = np.zeros(self.ncorr)
         for p in partitions:
             self.wsum += p["wsum"]
+        # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
+        # iterations does not reallocate each dot(); safe because actor calls are
+        # single-threaded (matches HessPSF)
+        self.xpad = empty_noncritical((self.nx_psf, self.ny_psf), dtype="f8")
+        self.xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
 
     def dot(self, x):
         xtmp = x if x.ndim == 3 else x[None, :, :]
         nband, nx, ny = xtmp.shape
         assert nx == self.nx and ny == self.ny
         out = np.zeros_like(xtmp)
-        xpad = empty_noncritical((self.nx_psf, self.ny_psf), dtype="f8")
-        xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
+        xpad = self.xpad
+        xhat = self.xhat
         for p in self.parts:
             beam = p["beam"]
             psfhat = p["psfhat"]
