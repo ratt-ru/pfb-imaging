@@ -69,11 +69,9 @@ instance/
 # Sphinx and documentation
 docs/_build/
 docs-env
-docs
 
 # PyBuilder
 target/
-scripts/genfuncs.sh
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -113,10 +111,6 @@ ENV/
 
 # test data
 tests/data/
-
-# AI
-.claude
-.claude-code
 
 # random
 rich_help_panels.md
