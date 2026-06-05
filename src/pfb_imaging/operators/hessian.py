@@ -476,8 +476,11 @@ class HessianTree(object):
         self.xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
 
     def dot(self, x):
+        # leading axis is the correlation axis (HessianTree acts per output image;
+        # the band/time axis is distributed by Ray, not carried here)
         xtmp = x if x.ndim == 3 else x[None, :, :]
-        nband, nx, ny = xtmp.shape
+        ncorr, nx, ny = xtmp.shape
+        assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
         assert nx == self.nx and ny == self.ny
         out = np.zeros_like(xtmp)
         xpad = self.xpad
