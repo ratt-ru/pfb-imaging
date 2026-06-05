@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-04
 **Branch:** `imager`
-**Status:** Design (approved-pending)
+**Status:** Implemented (commits 89b51cc → 46835bd). §4 reflects the as-built layout; `MODEL`/`NOISE`
+band-node vars and the `deconv` consumer are deliberate follow-ups. See the plan
+(`docs/superpowers/plans/2026-06-04-imager-datatree.md`) for the phase-by-phase record.
 
 ## 1. Motivation
 
@@ -100,40 +102,38 @@ Distinct suffixes ensure the new product never collides with `init`/`grid`'s `.x
 
 One node per **output image** named `band{b:04d}_time{t:04d}`; one child node per **data
 partition** named `part{p:04d}`. A partition is identified by the tuple
-`(field, spw, baseline_group)` and scans within a partition are concatenated along `row`.
-`baseline_group` defaults to a single group (e.g. `"all"`) until baseline-group partitioning
+`(msid, field, spw, baseline_group)` and scans within a partition are concatenated along `row`.
+`baseline_group` defaults to a single group (`"all"`) until baseline-group partitioning
 is implemented.
+
+The layout below reflects the implementation (`core/imager._grid_image`,
+`operators/gridder.grid_partition`). `MODEL`/`NOISE` are **not** written by the imager — they
+are added later by the (future) `deconv` consumer.
 
 ```
 <output>_<P>.dt/                      # single zarr store, opened via xr.open_datatree(...)
   (root attrs)
       pfb-imaging-version, product, nband, ntime,
-      freq_out[nband], time_out[ntime],
-      nx, ny, nx_psf, ny_psf, cell_rad,
-      max_blength, max_freq,
-      flip_u, flip_v, flip_w (wgridder convention defaults)
+      nx, ny, nx_psf, ny_psf, cell_rad, max_blength, max_freq
 
   band{b:04d}_time{t:04d}/            # === ONE OUTPUT IMAGE / one Hessian summation domain
-      coords: x, y, corr, x_psf, y_psf
-      attrs:  bandid, timeid, freq_out, time_out, freq_min, freq_max,
+      coords: corr, bpar
+      attrs:  bandid, timeid, freq_out, time_out,
               ra, dec,            # output image phase centre
-              l0, m0, x0, y0,     # wgridder centre conventions for the image frame
-              flip_u, flip_v, flip_w,
-              robustness, weight_grouping,
-              wsum,               # Σ over partitions, per corr
-              niters
+              cell_rad, robustness (omitted when natural), niters
       vars (Σ over partitions, image-space):
-              MODEL    (corr, x, y)
               DIRTY    (corr, x, y)
-              RESIDUAL (corr, x, y)
-              NOISE    (corr, x, y)
+              RESIDUAL (corr, x, y)   # == DIRTY for a fresh image (no model yet)
+              PSF      (corr, x_psf, y_psf)
+              PSFPARSN (corr, bpar)
+              WSUM     (corr,)
+              # MODEL / NOISE added later by deconv
 
-      part{p:04d}/                    # === ONE DATA PARTITION (field, spw, baseline_group)
-          coords: row, chan, corr     # x, y, x_psf, y_psf inherited from parent
+      part{p:04d}/                    # === ONE DATA PARTITION (msid, field, spw, baseline_group)
+          coords: corr, bpar
           attrs:  msid, field_name, spw_name, baseline_group,
-                  scan_names[],
                   ra, dec,            # field phase centre
-                  l0, m0, x0, y0,     # field offset wrt output image centre
+                  l0, m0,             # field offset wrt output image centre (0 for single field)
                   wsum                # per corr
           vis-space:
                   VIS    (corr, row, chan)
@@ -141,22 +141,23 @@ is implemented.
                   MASK   (row, chan)
                   UVW    (row, three)
                   FREQ   (chan,)
-          image-space (per partition; required for "store both"):
+          image-space (per partition):
                   PSF     (corr, x_psf, y_psf)
-                  PSFHAT  (corr, x_psf, yo2)
+                  PSFHAT  (corr, x_psf, yo2)   # consumed by HessianTree
                   BEAM    (corr, x, y)
                   PSFPARSN(corr, bpar)
 ```
 
 Design rationale:
 
-- The band node is the **summation domain**: image-space sums
-  (`DIRTY`/`MODEL`/`RESIDUAL`/`NOISE`) and the summed `wsum` live here.
+- The band node is the **summation domain**: the image-space sums (`DIRTY`/`RESIDUAL`/`PSF`,
+  plus `MODEL`/`NOISE` once deconv runs) and the summed `WSUM` live here.
 - Partition children hold everything partition-specific: vis-space arrays (ragged `row`),
   the per-field `BEAM`/`PSF`/`PSFHAT`, and the phase offsets `x0,y0`. This is a 1:1 map of
   `H x = Σ_p B_pᵀ G_pᵀ W_p G_p B_p x` — band node = the sum, children = the terms.
 - All partitions in a band share **one** output image grid (`x,y`, cell, common phase
-  centre). Per-field offsets are carried as `x0,y0`/`l0,m0` partition attrs.
+  centre). Per-field offsets are carried as `l0,m0` partition attrs (`x0,y0`/`flip_*` are derived
+  on demand from `wgridder_conventions(l0, m0)` rather than stored).
 - Heterogeneous `row` counts across partitions are exactly what DataTree allows; this is the
   reason a single `Dataset` is insufficient.
 - `baseline_group` in the partition identity makes per-antenna-pair-type Mueller beams a
@@ -242,33 +243,43 @@ and will be retired when those are migrated.
 
 ## 10. FITS output
 
-`imager` emits FITS (`DIRTY`/`PSF`/`RESIDUAL`/`MODEL`/`NOISE`/`BEAM`) from the band nodes,
-controlled by the same `fits_mfs`/`fits_cubes`/`fits_output_folder` options as `grid`.
+`imager` emits FITS for the band-node columns that exist after pass 2 — `DIRTY`, `PSF` and
+`RESIDUAL` (`RESIDUAL == DIRTY` until `deconv` runs; `MODEL`/`NOISE` are future) — controlled by
+the same `fits_mfs`/`fits_cubes`/`fits_output_folder` options as `grid`.
 
-The existing `rdds2fits` (`utils/fits.py`) must keep working unchanged for the live
-`grid`/`restore`/etc. consumers — it reads a flat dds list via `xds_from_list` and that
-contract is not to be broken. Rather than retrofit `rdds2fits` to walk a DataTree, add a
-**separate** tree-aware FITS utility (e.g. `rdt2fits`) that reads band nodes from the `.dt`
-store and reuses the lower-level FITS-writing helpers in `utils/fits.py` where they are
-already independent of the dds-list access pattern.
+The existing `rdds2fits`/`dds2fits` (`utils/fits.py`) keep working unchanged for the live
+`grid`/`restore`/etc. consumers (flat dds list via `xds_from_list`). A **separate** tree-aware
+pair `dt2fits` (+ ray wrapper `rdt2fits`) reads band nodes from the `.dt` store and reuses the
+access-agnostic `set_wcs`/`save_fits`/`create_beams_table` helpers.
 
-## 11. Testing
+## 11. Testing (as built)
 
-- **Single-field equivalence:** `imager` `DIRTY`/`PSF` match `init`+`grid` within gridding
-  tolerance on the existing test MS.
-- **Two-partition mosaic:** synthetic two-field case exercising the summation Hessian; the
-  PSF-approx and exact-gridder backends agree to tolerance.
-- **Counts reductions:** `mfs` vs `per-band-time` produce the expected difference in applied
-  weights / image weighting.
-- **Scratch cache:** a re-run with changed imaging/weighting params reuses the scratch store
-  and skips MS re-reads; cache invalidation works like `grid`'s `opts.pkl` validation.
+- **Single-field equivalence** (`tests/test_imager.py`): `imager` MFS `DIRTY` matches `init`+`grid`
+  within a peak-normalised tolerance. Because arcae and python-casacore cannot share a process
+  (arcae#72), the casacore-based `init`+`grid` reference runs in a **subprocess** while `imager`
+  runs in-process.
+- **Pass-2 gridding** (`tests/test_imager_pass2.py`): `grid_partition` shapes/`WSUM`, row-additivity
+  (the basis of the sum-over-partitions Hessian), robust reweighting; `residual_from_partitions`
+  zero-model, partition additivity and beam-applied-once. (A true two-field mosaic is validated via
+  the `HessianTree` two-identical-partitions invariant — the session test MS is single-field.)
+- **`HessianTree`** (`tests/test_hessian_tree.py`): delta-PSF identity, Tikhonov `η`, two identical
+  partitions ≡ one.
+- **Counts reductions** (`tests/test_weighting.py`): `per-band-time`/`mfs`/`per-band`/`per-time`.
+- **Tree FITS** (`tests/test_fits_tree.py`): MFS value, cube band axis, missing-column no-op.
+- **Scratch cache** (`tests/test_imager.py`): the `.scratch` store is retained by default. (A
+  cache-validation-on-param-change step like `grid`'s `opts.pkl` is a future refinement.)
+
+**Test isolation:** `tests/test_imager.py` (arcae) runs in its own pytest invocation;
+everything else runs with `--ignore=tests/test_imager.py` (see `.claude/rules/testing-and-ci.md`).
 
 ## 12. Open questions / risks
 
-- **Concurrent zarr group writes:** independent group paths in one store should be safe for
-  parallel Ray writers; confirm with the chosen zarr backend during implementation.
-- **`PSFHAT` footprint:** storing per-partition `PSFHAT` for every partition increases disk
-  use vs the current single-PSF-per-band layout; accepted given the "store both" decision.
-  No opt-out flag for now — both PSF-approx and exact-gridder backends are always supported.
+- **Concurrent zarr group writes:** the pass-2 driver initialises the `.dt` root, then Ray
+  workers write independent group paths (`band…/part…`) with `mode="a"` and no consolidated
+  metadata, which is safe for distinct groups on a local filesystem. The end-to-end test runs
+  with `nworkers=1` (sequential writes); higher worker counts exercise the concurrent path.
+- **`PSFHAT` footprint:** each partition stores its own `PSFHAT` (consumed by `HessianTree`) and
+  its vis-space arrays (consumed by `residual_from_partitions`). This is more disk than the
+  legacy single-PSF-per-band layout but is required by the operator split; no opt-out flag.
 - **Beam interpolation** currently uses a coarse rotation-averaged katbeam; unchanged here,
   but the per-partition layout is where improved/Mueller beams will slot in. The eventual plan (out of scope for now) is to use the BeamWizard class to do the beam interpolation (as is done in the hci sub-command in the stokes2im function). This functionality will live outside of pfb-imaging.
