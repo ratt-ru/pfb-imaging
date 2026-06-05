@@ -5,13 +5,14 @@ import numpy as np
 import ray
 import xarray as xr
 
-# from casacore.quanta import quantity
 # from astropy.time import Time
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
+from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.weighting import _compute_counts, weight_data
 
 
@@ -329,11 +330,21 @@ def stokes_vis(
     vis_cf = data.transpose(2, 0, 1)
     wgt_cf = weight.transpose(2, 0, 1)
 
-    # per-piece uv counts on the padded imaging grid (pass 2 reduces these into
-    # imaging weights). signs match wgridder_conventions(0, 0): flip_u=False -> -1,
-    # flip_v=True -> +1, consistent with counts_to_weights in pass 2.
+    # signs occording to wgridder conventions
+    flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     counts = _compute_counts(
-        uvw, freq, mask, wgt_cf, nx_pad, ny_pad, cell_rad, cell_rad, wgt_cf.dtype, ngrid=1, usign=-1.0, vsign=1.0
+        uvw,
+        freq,
+        mask,
+        wgt_cf,
+        nx_pad,
+        ny_pad,
+        cell_rad,
+        cell_rad,
+        wgt_cf.dtype,
+        ngrid=1,
+        usign=1.0 if flip_u else -1.0,
+        vsign=1.0 if flip_v else -1.0,
     )
 
     data_vars = {}
@@ -352,7 +363,8 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    unix_time = to_unix_time(time_out)
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
         "pfb-imaging-version": pfb_version,

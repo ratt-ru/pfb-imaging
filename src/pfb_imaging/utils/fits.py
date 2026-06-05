@@ -8,6 +8,7 @@ from astropy.time import Time
 from astropy.wcs import WCS
 
 from pfb_imaging import pfb_version
+from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.naming import xds_from_list
 
 
@@ -129,9 +130,8 @@ def set_wcs(
         header["ORIGIN"] = f"pfb-imaging: v{pfb_version}"
         header["SPECSYS"] = "TOPOCENT"
         if ms_time is not None:
-            # ms_time is in MJD seconds; convert to unix time via astropy
-            # (casacore-free equivalent of quantity(f"{ms_time}s").to_unix_time())
-            unix_time = Time(ms_time / 86400.0, format="mjd", scale="utc").unix
+            # ms_time is in MJD seconds; convert to unix time
+            unix_time = to_unix_time(ms_time)
             utc_iso = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             header["UTC_TIME"] = utc_iso
             t = Time(utc_iso)

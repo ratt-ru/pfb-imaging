@@ -1,6 +1,4 @@
 import logging
-import pdb
-import sys
 from contextlib import nullcontext
 
 import dask
@@ -21,26 +19,14 @@ from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
 
-from pfb_imaging.utils.fits import load_fits
-
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
 
 
-class ForkedPdb(pdb.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
-
-    """
-
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open("/dev/stdin")
-            pdb.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
+def to_unix_time(times):
+    # MJD_UNIX_OFFSET = 3506716800.0
+    return times - 3506716800.0
 
 
 def compute_context(scheduler, output_filename, boring=True):
@@ -654,6 +640,9 @@ def init_mask(mask, model, output_type, log):
         mask = np.ones((nx, ny), dtype=output_type)
     elif mask.endswith(".fits"):
         try:
+            # avoids circular import
+            from pfb_imaging.utils.fits import load_fits
+
             mask = load_fits(mask, dtype=output_type).squeeze()
             assert mask.shape == (nx, ny)
             print("Using provided fits mask")
