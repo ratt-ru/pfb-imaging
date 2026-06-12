@@ -21,7 +21,7 @@ from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from zarr import ProcessSynchronizer
 
-from pfb_imaging import pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings, set_image_size
 from pfb_imaging.utils.stokes2im import batch_stokes_image
@@ -91,6 +91,7 @@ def hci(
     obs_label: str | None = None,
     flag_excess_rms: float = 1.5,
     temp_dir: str | None = None,
+    ray_address: str = "local",
     keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
@@ -182,13 +183,7 @@ def hci(
     else:
         mem_limit = None
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
-        object_store_memory=mem_limit,
-        runtime_env=runtime_env,
-    )
+    init_ray(nworkers, ray_address=ray_address, runtime_env=runtime_env, object_store_memory=mem_limit, log=log)
 
     fds_store = DaskMSStore(f"{output_dataset}")
     if fds_store.exists():

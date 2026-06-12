@@ -210,6 +210,13 @@ def imager(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -301,6 +308,7 @@ def imager(
                     chan_average=chan_average,
                     progressbar=progressbar,
                     product=product,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     wgt_mode=wgt_mode,
@@ -334,6 +342,7 @@ def imager(
                 chan_average=chan_average,
                 progressbar=progressbar,
                 product=product,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
@@ -376,6 +385,7 @@ def imager(
             chan_average=chan_average,
             progressbar=progressbar,
             product=product,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,

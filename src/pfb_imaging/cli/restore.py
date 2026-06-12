@@ -119,6 +119,13 @@ def restore(
             rich_help_panel="Data Selection",
         ),
     ] = None,
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -211,6 +218,7 @@ def restore(
                     outputs=outputs,
                     gausspar=gausspar,
                     drop_bands=drop_bands,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     product=product,
@@ -231,6 +239,7 @@ def restore(
                 outputs=outputs,
                 gausspar=gausspar,
                 drop_bands=drop_bands,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 product=product,
@@ -260,6 +269,7 @@ def restore(
             outputs=outputs,
             gausspar=gausspar,
             drop_bands=drop_bands,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             product=product,
