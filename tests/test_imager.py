@@ -1,15 +1,13 @@
 """End-to-end smoke test for the MSv4 DataTree imager (.dt product).
 
-This module loads the arcae ``xarray-ms:msv2`` engine, which cannot coexist
-with python-casacore in one process (arcae#72). CI runs it in its own pytest
-invocation. The equivalence test therefore runs the casacore-based
-``init``+``grid`` reference in a subprocess and compares on disk.
+This module loads the arcae ``xarray-ms:msv2`` engine. As of arcae 0.5.2
+(ratt-ru/arcae#211, #212) arcae and python-casacore coexist in one process, so
+this file runs in the same ``pytest tests/`` session as the casacore-based
+tests, and the equivalence test calls the legacy ``init``+``grid`` reference
+in-process (it previously ran them in a subprocess for arcae#72 isolation).
 """
 
 import glob
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -124,9 +122,11 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
 def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     """imager .dt dirty matches the legacy init+grid .dds dirty (natural weights).
 
-    init+grid load python-casacore, so they run in a subprocess; imager loads
-    arcae in-process. Both are pinned to the same image size and compared as
-    wsum-normalised MFS dirty images.
+    As of arcae 0.5.2 (ratt-ru/arcae#211, #212) arcae and python-casacore coexist
+    in one process, so the casacore-based init+grid reference now runs **in-process**
+    alongside the arcae-based imager (it used to run in a subprocess purely to keep
+    casacore out of the arcae process). All three calls share the session Ray
+    cluster, so each passes keep_ray_alive=True to avoid tearing it down mid-suite.
 
     KNOWN LIMITATION (FIXME): the shared test MS downloaded from Google Drive
     currently has an all-zero DATA column, so in CI both pipelines produce an
@@ -136,64 +136,38 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     (older locally-cached copies still do, which is why it is meaningful there).
     To make it meaningful everywhere, populate DATA with a deterministic model
     (predict point sources with ducc0 ``dirty2vis`` as test_kclean/test_sara do)
-    -- ideally once per session in conftest, written via arcae once we trust
-    arcae writes, or via a casacore subprocess so the arcae process stays
-    casacore-free (arcae#72). Fully flagging one band at the same time would
-    additionally exercise the band-dropping path. Until then the comparison is
-    deliberately divide-by-zero-safe (see below) so a zero-signal MS does not
-    masquerade as a NaN failure.
+    -- ideally once per session in conftest. Fully flagging one band at the same
+    time would additionally exercise the band-dropping path. Until then the
+    comparison is deliberately divide-by-zero-safe (see below) so a zero-signal MS
+    does not masquerade as a NaN failure.
     """
+    from pfb_imaging.core.grid import grid
+    from pfb_imaging.core.init import init
+
     nx = ny = 256
-    pfb = os.path.join(os.path.dirname(sys.executable), "pfb")
-    env = os.environ.copy()
 
     base_leg = str(tmp_path / "legacy")
-
-    def _run(label, argv):
-        """Run a pfb subprocess, surfacing its output so CI logs the casacore
-        reference path (the init/grid Ray runtime is the prime suspect when the
-        reference image comes back empty/NaN on a resource-constrained runner)."""
-        res = subprocess.run([pfb, *argv], env=env, capture_output=True, text=True)
-        print(f"\n===== {label} rc={res.returncode} =====", flush=True)
-        print(f"[{label} stdout tail]\n{res.stdout[-3000:]}", flush=True)
-        print(f"[{label} stderr tail]\n{res.stderr[-3000:]}", flush=True)
-        res.check_returncode()
-
-    _run(
-        "pfb init",
-        [
-            "init",
-            "--ms",
-            str(ms_name),
-            "--output-filename",
-            base_leg,
-            "--channels-per-image",
-            "2",
-            "--integrations-per-image",
-            "-1",
-            "--product",
-            "I",
-            "--overwrite",
-        ],
+    init(
+        [Path(ms_name)],
+        base_leg,
+        channels_per_image=2,
+        integrations_per_image=-1,
+        product="I",
+        overwrite=True,
+        keep_ray_alive=True,
     )
-    _run(
-        "pfb grid",
-        [
-            "grid",
-            "--output-filename",
-            base_leg,
-            "--nx",
-            str(nx),
-            "--ny",
-            str(ny),
-            "--no-psf",
-            "--no-residual",
-            "--no-noise",
-            "--no-beam",
-            "--no-fits-mfs",
-            "--no-fits-cubes",
-            "--overwrite",
-        ],
+    grid(
+        base_leg,
+        nx=nx,
+        ny=ny,
+        psf=False,
+        residual=False,
+        noise=False,
+        beam=False,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
     )
 
     base_new = str(tmp_path / "imager")
@@ -217,8 +191,8 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
 
     # finiteness is checked per-image first so a CI failure names the offending
     # path (legacy vs imager) instead of collapsing both into a single nan diff
-    assert np.isfinite(leg).all(), "legacy init+grid MFS dirty contains NaN/Inf (see diagnostics above)"
-    assert np.isfinite(new).all(), "imager .dt MFS dirty contains NaN/Inf (see diagnostics above)"
+    assert np.isfinite(leg).all(), "legacy init+grid MFS dirty contains NaN/Inf (see _describe output above)"
+    assert np.isfinite(new).all(), "imager .dt MFS dirty contains NaN/Inf (see _describe output above)"
 
     # Both images are already wsum-normalised (sum DIRTY / sum WSUM), summed over
     # all output-image nodes, so the comparison is MFS and independent of how the
