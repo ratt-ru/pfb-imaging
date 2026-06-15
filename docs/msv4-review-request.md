@@ -9,6 +9,14 @@
 > path (matches to ~1e-14); the parts where I'm least sure are the ones that
 > touch your libraries. Priority reading order and specific questions below.
 
+> **Status (2026-06-15): review complete — sjperkins' responses are inlined below**
+> as **A (sjperkins):** blocks. Headline outcome: **Focus 1 is resolved** — as of
+> **arcae 0.5.2** (ratt-ru/arcae#211, ratt-ru/arcae#212) arcae and python-casacore
+> coexist in a single process, so the process-separation guardrails (two-invocation
+> test split, subprocess equivalence test, CI/doc notes) are being removed. The
+> imaging path stays casacore-free *by choice* (lightweight install / fast startup),
+> not out of necessity.
+
 ## What the PR does (1 minute)
 
 `pfb imager` is a two-pass, Ray-distributed pipeline:
@@ -66,10 +74,30 @@ the functions that need them rather than imported at module scope. Consequences:
 **Questions:**
 1. Is full process separation still the right model, or is there a supported path
    to arcae + python-casacore coexistence we should track instead?
+
+   > **A (sjperkins):** Initially — "Yes, process separation is the correct model."
+   >
+   > **Update (superseding):** "The following PRs included in **arcae 0.5.2** should
+   > now make this process separation redundant — ratt-ru/arcae#211, ratt-ru/arcae#212.
+   > arcae and python-casacore can now co-exist in the same process." → We are
+   > therefore removing the test/CI/docs guardrails; the imaging path stays
+   > casacore-free only as a lightweight-install / startup choice.
+
 2. Could anything in the arcae/`xarray-ms` import chain pull python-casacore
    transitively (so our "casacore-free" guarantee is weaker than we think)?
+
+   > **A (sjperkins):** "No — xarray-ms/arcae never import python-casacore."
+
 3. Is disabling `RAY_ENABLE_UV_RUN_RUNTIME_ENV` the sanctioned way to run arcae
    inside Ray workers under `uv`, or is there a cleaner pattern?
+
+   > **A (sjperkins):** This flag is **orthogonal** to the arcae ⊥ casacore question.
+   > It controls whether Ray propagates the `uv run` environment to workers (when set,
+   > Ray deactivates the regular `RAY_RUNTIME_ENV_HOOK`); it matters mainly for local
+   > clusters that may share an environment. Both libraries can be installed in one
+   > venv — only *importing both in one process* caused the (now-fixed) symbol clash.
+   > Suggests a Ray mini-cluster (`ray.cluster_utils.Cluster`) for tests. → This
+   > setting therefore **stays** in `conftest.py` (it is not an arcae⊥casacore guardrail).
 
 ## Focus 2 — MSv4 / xarray-ms access patterns
 
@@ -81,25 +109,68 @@ File references are `core/imager.py` (CI = `imager.py`) and
    `partition_schema=["FIELD_ID","DATA_DESC_ID","SCAN_NUMBER"]`; `ZARR → "zarr"`;
    `MEERKAT → "xarray-kat"` (`applycal="all"`, `uvw_sign_convention="casa"`).
    *Is this partition schema the right granularity? Are we handling DDID vs SPW correctly?*
+
+   > **A (sjperkins):** These partition values are probably suitable for MSs produced by
+   > `msv4toms.py`. MSs from other instruments may need to be partitioned by other columns
+   > (`SOURCE_ID` is the obvious one). See the
+   > [xarray-ms partitioning docs](https://xarray-ms.readthedocs.io/en/latest/partitioning.html).
+   > *(On the `MEERKAT`/`applycal`/`uvw_sign_convention` setup — "fine for the time being,
+   > but a bit ugly; cf. @bennahugo's similar setup in tricolour — worth a nicer approach
+   > later. We can always refactor.")*
+
 2. **Visibility-node filter** — `node.attrs.get("type") not in VISIBILITY_XDS_TYPES`
    (from `msv4_utils`). *Is this the canonical way to enumerate visibility nodes in a DataTree?*
+
+   > **A (sjperkins):** "Briefly, yes. A more nuanced answer: no canonical MSv4 traversal
+   > methods have been defined yet."
+
 3. **DATA → VISIBILITY rename** (`imager.py` ~343–347): we map the `DATA` column name to
    `VISIBILITY`. *Always correct? Should we be going through `data_groups` / the
    `correlated_data` field instead of assuming the name?*
+
+   > **A (sjperkins):** "To be fully compliant, one should go through the `data_groups`
+   > mechanism. Probably the user/developer would have to supply the `data_group` name to
+   > perform the lookup."
+
 4. **Per-node identity** (`s2v:77–79`): `field_name` / `scan_name` via
    `np.unique(...).item()`, SPW via `ds.frequency.attrs["spectral_window_name"]`.
    *Robust given the partition schema, or fragile?*
+
+   > **A (sjperkins):** "`field_names` and `scan_names` can technically vary per partition.
+   > Multiple values in `field_names` imply multiple entries for that field in
+   > `field_and_source_{data_group_name}_xds`. The complexity of supporting this at the
+   > partition level may not be worth it, especially if the xarray-ms `PARTITION_SCHEMA`
+   > includes `FIELD_ID` and `SCAN_NUMBER` by default. xarray-kat scans only point at a
+   > single source, so this holds for MeerKAT archive data. The clarifying question is
+   > whether pfb should attempt to image MSs that have been substantially modified by CASA
+   > tasks."
+
 5. **ANTENNA1/2 reconstruction** (`s2v:119–136`): we rebuild MSv2-style integer
    `ant1`/`ant2` from `baseline_antenna1_name`/`baseline_antenna2_name` via
    `np.unique(..., return_inverse=True)`. There's a commented-out alternative using
    `antenna_xds.antenna_name` + `searchsorted`. *Which is correct? Does index
    ordering (name-sorted vs antenna_xds order) matter downstream (it feeds averaging
    + gains)?*
+
+   > **A (sjperkins):** "The `np.unique` approach might not map the resultant antenna indices
+   > to the entries in the `antenna_xds` subtable in all cases. It's probably sufficient when
+   > calling MSv2 code that only needs to establish baseline relations with integer indices
+   > inside high-performance kernels (numba / C/C++). If `antenna_xds` variables (e.g.
+   > `ANTENNA_POSITION`) are passed into the kernels, then the `np.searchsorted` approach is
+   > required."
+
 6. **Regular vs irregular discriminator** (`s2v:114`, `:231`): we treat
    `INTEGRATION_TIME` / `CHANNEL_WIDTH` as present in `ds.data_vars` when irregular,
    else read the value from the coord attrs (`ds.time.attrs["integration_time"]`,
    `ds.frequency.attrs["channel_width"]`). *Is `"X" in ds.data_vars` a reliable
    regular/irregular signal?*
+
+   > **A (sjperkins):** "xarray-ms signals this case with `nan` in the `integration_time` and
+   > `channel_width` attrs. xarray-ms may be too pedantic here — I'm currently discussing this
+   > with the MSv4 working group. It may be that we should reason about time using
+   > `TIME_CENTROID` and `EFFECTIVE_INTEGRATION_TIME` (and the related variables for
+   > frequency)."
+
 7. **Missing-row / NaN handling** (`imager.py:381–390`, `s2v` flag path): we note that
    `xarray-ms` fills a regular grid over irregular/missing data with **NaNs** (vs
    `xarray-kat`, which zeroes vis+weights), and we detect missing rows with
@@ -108,18 +179,53 @@ File references are `core/imager.py` (CI = `imager.py`) and
    first-class row-presence / flag indicator we should use instead of sniffing NaNs?*
    This one bit us indirectly (a zero-DATA test MS), so we care about getting the
    "absent data" contract right.
+
+   > **A (sjperkins):** "NaN is the canonical missing value for floating-point data
+   > ([xarray docs](https://docs.xarray.dev/en/v2025.03.0/user-guide/computation.html#missing-values)),
+   > and xarray-ms uses it when establishing a regular grid over an irregular one. By contrast
+   > the xarray-kat grid is always regular, but (1) some chunks may not have been written
+   > (especially at the start of an observation) and (2) if network-access max-retries fail,
+   > xarray-kat returns missing values for the chunk. xarray-kat currently *zeroes* missing
+   > visibilities and weights — I'm very open to changing these to NaN to synchronise with
+   > xarray's missing-value mechanisms."
+
 8. **Phase centre** (`s2v:172–173`): `data_groups["base"]["field_and_source"]` →
    `FIELD_PHASE_CENTER_DIRECTION.values[0]`. *Is assuming the `"base"` data group
    safe? Multiple data groups?*
+
+   > **A (sjperkins):** "The `field_name` coordinate in `correlated_xds` should be used in
+   > conjunction with the `field_name` coordinate in `field_and_source_{data_group_name}_xds`
+   > to select the appropriate `FIELD_PHASE_CENTER_DIRECTION`. Note `data_group_name` is used
+   > to look up the appropriate `field_and_source_xds` node on the DataTree."
+
 9. **Antenna positions** (`s2v:160`): `node_dt["antenna_xds"].ANTENNA_POSITION`.
+
+   > **A (sjperkins):** *(no specific comment — but see Q5: an `np.searchsorted` mapping to
+   > `antenna_xds` is required if `ANTENNA_POSITION` is fed into kernels.)*
+
 10. **Polarization** (`s2v:164–169`): linear/circular inferred by set-membership on
     `ds.polarization.values`. *Mixed / other pol frames?*
+
+    > **A (sjperkins):** "yes." *(confirming the set-membership inference on
+    > `ds.polarization.values`.)*
+
 11. **UVW frame** — we filter a `FrameConversionWarning` (ITRF → fk5 from
     `FIELD_PHASE_CENTER_DIRECTION`). *Any sign-convention / w-term implications we
     should be acting on rather than silencing?*
+
+    > **A (sjperkins):** "ITRF is not a valid UVW frame, but some CASA tasks will set it (from
+    > imperfect memory it's a celestial frame). I don't think this has sign-convention or
+    > w-term implications."
+
 12. **Load strategy** — `xr.open_datatree(..., chunks=None)` (eager) then slice
     per `(time-chunk, chan-chunk)` and hand each piece to a Ray task. *Reasonable
     for large MSv4, or should we be using a chunked/lazy read?*
+
+    > **A (sjperkins):** "Yes, this is the strategy. However, for xarray-kat prefer
+    > `xr.open_datatree(chunked_array_type="xarray-kat", chunks={})` — this internally sets up
+    > chunkwise loading of arrays that share a chunking schema (VISIBILITIES, WEIGHTS, FLAGS).
+    > Important because these values are computed dependent on each other; computing them
+    > chunkwise reduces the need to fetch data multiple times (due to caching)."
 
 ---
 
