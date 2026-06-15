@@ -49,7 +49,7 @@ def mycommand(...):
 
 All other modules (core, operators, wavelets, etc.) should use top-level imports. Exceptions:
 - `ray`, imported lazily in `operators/psi.py` because it is an optional runtime.
-- **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` pull in python-casacore, which **cannot coexist with the `arcae` MSv4 reader in one process** (arcae#72). Modules on the imager/gridding/FITS path keep these out of module scope and import them inside the functions that need them (see `construct_mappings` in `utils/misc.py`, `interp_beam` in `utils/beam.py`). Use `scipy.constants` for `lightspeed` and `utils/misc.to_unix_time` (not `casacore.quanta`).
+- **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` pull in python-casacore. As of **arcae 0.5.2** this coexists with the `arcae` MSv4 reader in one process, but the imager/gridding/FITS path still keeps these out of module scope (deferred into the functions that need them — see `construct_mappings` in `utils/misc.py`, `interp_beam` in `utils/beam.py`) to keep the path lightweight. Prefer `scipy.constants` for `lightspeed` and `utils/misc.to_unix_time` (not `casacore.quanta`).
 
 ### 3. Mathematical Operators
 
@@ -70,9 +70,9 @@ legacy `init`+`grid` `.xds`/`.dds` split for this path (`init`/`grid` remain liv
 DataTree API (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`); do not add
 `xds_from_url`/`xds_from_list`-style wrappers for the `.dt`. Detail: `.claude/rules/architecture.md` §8.
 
-**⚠️ arcae ⊥ python-casacore (arcae#72):** the imaging path is deliberately casacore-free so arcae
-and ducc0 coexist. Never add top-level `africanus`/`daskms`/`casacore` imports to imaging-path
-modules. This also splits the test suite (see Run tests below).
+**arcae + python-casacore (arcae 0.5.2+):** arcae and python-casacore now coexist in one process.
+The imaging path is still kept casacore-free *by choice* (lightweight install / fast startup), so
+prefer deferring `africanus`/`daskms`/`casacore` imports into functions rather than module scope.
 
 ## Container Workflow
 
@@ -101,10 +101,9 @@ uv run pre-commit install
 
 **Pre-commit hooks** run ruff formatting/linting and regenerate cab definitions.
 
-**Run tests** — do NOT run `pytest tests/` as one command (arcae and python-casacore can't share a process, arcae#72). Use two invocations (as CI does):
+**Run tests** — the whole suite runs as one command (arcae and python-casacore coexist as of arcae 0.5.2):
 ```bash
-uv run pytest -v tests/test_imager.py                 # arcae only
-uv run pytest -v tests/ --ignore=tests/test_imager.py # everything else (casacore)
+uv run pytest -v tests/
 ```
 
 **Format/lint**:

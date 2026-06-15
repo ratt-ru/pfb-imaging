@@ -15,13 +15,13 @@ a single unified `xarray.DataTree` (`<out>_<P>.dt`, one node per `(band,time)` o
 `xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
 `.claude/rules/architecture.md §8` and `docs/superpowers/specs/2026-06-04-imager-datatree-design.md`.
 
-**⚠️ arcae ⊥ python-casacore:** the MSv4 reader (`arcae`) and python-casacore cannot share a
-process (arcae#72). The imaging path is kept casacore-free — **never** add top-level
-`africanus`/`daskms`/`casacore` imports to imaging-path modules (`stokes2vis_msv4`,
-`operators/gridder`, `operators/hessian`, `utils/fits`, and the `misc`/`beam` helpers); defer them
-into the functions that need them. Consequently **do not run `pytest tests/` as one command** — it
-segfaults; `tests/test_imager.py` runs in its own pytest invocation (see
-`.claude/rules/testing-and-ci.md`).
+**arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
+python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/`. The
+imaging path (`stokes2vis_msv4`, `operators/gridder`, `operators/hessian`, `utils/fits`, and the
+`misc`/`beam` helpers) is nonetheless kept **casacore-free by choice** — for a lightweight CLI
+install and fast startup — so prefer deferring any `africanus`/`daskms`/`casacore` import into the
+function that needs it rather than adding it at module scope. This is a hygiene preference now, not
+a hard segfault constraint.
 
 ## Core Dependencies
 

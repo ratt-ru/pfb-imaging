@@ -22,7 +22,7 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
 2. **Optional heavy runtimes** (e.g. `ray`) in library modules that are also usable without that runtime. Example: `import ray` is deferred to `PsiNocopytRay` methods only.
-3. **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` transitively import python-casacore, which **cannot coexist with the `arcae` `xarray-ms` engine** used to read MSv4 data in the same process (arcae#72). Modules on the imager/gridding/FITS path must therefore keep these imports *out of module scope* — defer them into the functions that need them. Existing examples: the daskms imports in `construct_mappings` (`utils/misc.py`) and the `africanus.rime` imports in `interp_beam` (`utils/beam.py`). Use `from scipy.constants import c as lightspeed` (not `africanus.constants`) and `utils/misc.to_unix_time` (not `casacore.quanta.quantity`). See §8.
+3. **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` transitively import python-casacore. As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) this no longer clashes with the `arcae` `xarray-ms` engine in one process, but the imager/gridding/FITS path still keeps these imports *out of module scope* — deferred into the functions that need them — to keep the path lightweight (fast CLI startup, lightweight install). Existing examples: the daskms imports in `construct_mappings` (`utils/misc.py`) and the `africanus.rime` imports in `interp_beam` (`utils/beam.py`). Prefer `from scipy.constants import c as lightspeed` (not `africanus.constants`) and `utils/misc.to_unix_time` (not `casacore.quanta.quantity`). See §8.
 
 ## 4. Cab Generation & Container Workflow
 
@@ -114,8 +114,9 @@ distributed by Ray, the sum over a band's partitions is not):
   the legacy `image_data_products`/`compute_residual` split and owns the exact path, so
   `HessianTree` is PSF-convolution only.
 
-**arcae ⊥ python-casacore (CRITICAL).** arcae and python-casacore cannot live in one process
-(arcae#72). The whole imaging path (`stokes2vis_msv4`, `operators/gridder`, `operators/hessian`,
-`utils/fits`, and the `misc`/`beam` helpers they touch) is kept casacore-free so arcae and ducc0
-coexist — keep it that way (see §3 for the import discipline). This also dictates test layout
-(see `.claude/rules/testing-and-ci.md`).
+**arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
+python-casacore coexist in one process, so the suite runs as a single `pytest tests/` and the
+imager↔`init`+`grid` equivalence test runs both paths in-process. The whole imaging path
+(`stokes2vis_msv4`, `operators/gridder`, `operators/hessian`, `utils/fits`, and the `misc`/`beam`
+helpers they touch) is nonetheless kept casacore-free *by choice* (lightweight install, fast
+startup) — keep it that way (see §3 for the import discipline).

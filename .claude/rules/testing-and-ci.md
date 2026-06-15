@@ -8,29 +8,21 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
 * Test data in `tests/data/` is downloaded automatically from Google Drive on first run.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
 
-### arcae / python-casacore test isolation (CRITICAL)
+### arcae / python-casacore coexistence
 
-`tests/test_imager.py` loads the `arcae` `xarray-ms` engine (it exercises `pfb imager`).
-Most other tests pull in python-casacore (e.g. via `construct_mappings`/daskms in `ms_meta`).
-arcae and python-casacore **cannot coexist in one process** (arcae#72), so **never run
-`pytest tests/` as a single command** — it segfaults. Run the suite as two invocations:
+As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and python-casacore coexist in one
+process. Run the whole suite as a single command:
 
 ```bash
-uv run pytest -v tests/test_imager.py                 # arcae only
-uv run pytest -v tests/ --ignore=tests/test_imager.py # everything else (casacore)
+uv run pytest -v tests/
 ```
 
-`ci.yml` and `publish.yml` already do exactly this. Guidance for new tests:
-
-* Tests that load **arcae** (run `imager`, open an MS via `xr.open_datatree(engine="xarray-ms:msv2")`)
-  must live in `tests/test_imager.py`. To compare against the casacore-based `init`/`grid`, run
-  those in a **subprocess** (the `pfb` CLI) so casacore stays out of the arcae process — see the
-  equivalence test in `tests/test_imager.py`.
-* Tests that load **neither** arcae nor casacore (pure ducc0/numpy/zarr — e.g.
-  `tests/test_imager_pass2.py`, `tests/test_hessian_tree.py`, `tests/test_fits_tree.py`) belong
-  in the second (non-`test_imager`) group and may freely coexist with casacore tests.
-* Do not import `operators/gridder`, `operators/hessian`, `utils/fits` etc. expecting them to be
-  casacore-laden — they are deliberately casacore-free (see `.claude/rules/architecture.md` §3/§8).
+`tests/test_imager.py` (arcae / `pfb imager`) and the casacore-based tests (which pull in
+python-casacore via `construct_mappings`/daskms in `ms_meta`) therefore run together in one
+pytest session, sharing the session Ray fixture. New tests need no special placement. The
+imaging-path modules (`operators/gridder`, `operators/hessian`, `utils/fits`, …) remain
+casacore-free by design (see `.claude/rules/architecture.md` §3/§8) — a lightweight-install
+preference, not an isolation requirement.
 
 ## 2. Commit Messages
 
@@ -53,9 +45,8 @@ The CI pipeline uses a custom `[skip checks]` tag (not GitHub's `[skip ci]`).
 
 ## 5. GitHub Actions Workflows
 
-* **`ci.yml`**: Code quality (ruff) and tests across Python 3.10-3.12. Tests run as two separate
-  pytest invocations (`test_imager.py` alone, then the rest with `--ignore=tests/test_imager.py`)
-  for the arcae/casacore isolation described in §1.
+* **`ci.yml`**: Code quality (ruff) and tests across Python 3.11-3.13. The whole suite runs as a
+  single `pytest tests/` invocation (arcae and python-casacore coexist as of arcae 0.5.2; see §1).
 * **`publish.yml`**: PyPI publishing on version tags. Runs quality + tests before publishing.
 * **`publish-container.yml`**: Build and push container images to GHCR.
 * **`update-cabs.yml`**: Regenerate cab definitions on push to `main`. Uses `landman-ci-bot` GitHub App for auth.
