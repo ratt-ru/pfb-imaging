@@ -5,7 +5,7 @@ cabs:
     name: restore
     info:
       Restore model images and.or convolved images to common resolution.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue254
     inputs:
       output-filename:
         info:
@@ -58,6 +58,13 @@ cabs:
         dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
+      ray-address:
+        info:
+          Address of the ray cluster to connect to.
+          If not provided, will run locally.
+        default: local
+        metadata:
+          rich_help_panel: Performance
       nworkers:
         info:
           Number of worker processes.
