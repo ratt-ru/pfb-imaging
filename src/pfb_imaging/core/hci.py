@@ -183,7 +183,13 @@ def hci(
     else:
         mem_limit = None
 
-    init_ray(nworkers, ray_address=ray_address, runtime_env=runtime_env, object_store_memory=mem_limit, log=log)
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
+        runtime_env=runtime_env,
+        object_store_memory=mem_limit,
+        log=log,
+    )
 
     fds_store = DaskMSStore(f"{output_dataset}")
     if fds_store.exists():
