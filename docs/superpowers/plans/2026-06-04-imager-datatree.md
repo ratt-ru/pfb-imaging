@@ -1,5 +1,10 @@
 # Imager DataTree Implementation Plan (revised)
 
+> **Note (2026-06-15):** the casacore-isolation steps in this completed plan (e.g. "run MSv4 reads
+> in a process that never imports the casacore gridding path") were superseded by arcae 0.5.2,
+> which lets arcae and python-casacore coexist in one process. The imaging path is still kept
+> casacore-free by choice. See `docs/superpowers/plans/2026-06-15-remove-arcae-casacore-guardrails.md`.
+
 > **Status: COMPLETE** — all phases implemented and tested on the `imager` branch
 > (commits 89b51cc → 46835bd). The imager produces the unified `.dt` DataTree + FITS;
 > `init`/`grid` remain live. Follow-ups (out of scope): wiring `deconv`/`sara`/`kclean` to the

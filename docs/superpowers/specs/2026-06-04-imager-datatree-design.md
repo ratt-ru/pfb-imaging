@@ -76,6 +76,11 @@ Node-naming convention (`band{b:04d}_time{t:04d}`, `part{p:04d}`) is the one pie
 shared across modules; if helpers are warranted at all they belong in `utils/naming.py`,
 otherwise inline the f-strings.
 
+> **Superseded (2026-06-15, arcae 0.5.2):** arcae and python-casacore now coexist in one process
+> (ratt-ru/arcae#211, #212), so the process-isolation rationale below no longer holds. The imaging
+> path is still kept casacore-free, but now *by choice* (lightweight install), not necessity. See
+> the PR #252 review responses in `docs/msv4-review-request.md`.
+
 **python-casacore must stay off the imaging import path (done — commit 89b51cc).** arcae (the
 `xarray-ms:msv2` engine used to read MSv4) and python-casacore cannot coexist in one process.
 The gridding/FITS utilities pulled casacore in transitively (`africanus` in `beam.py`/`misc.py`,
@@ -255,9 +260,8 @@ access-agnostic `set_wcs`/`save_fits`/`create_beams_table` helpers.
 ## 11. Testing (as built)
 
 - **Single-field equivalence** (`tests/test_imager.py`): `imager` MFS `DIRTY` matches `init`+`grid`
-  within a peak-normalised tolerance. Because arcae and python-casacore cannot share a process
-  (arcae#72), the casacore-based `init`+`grid` reference runs in a **subprocess** while `imager`
-  runs in-process.
+  within a peak-normalised tolerance. As of arcae 0.5.2 both paths run **in-process** (the
+  casacore-based `init`+`grid` reference previously ran in a subprocess for arcae#72 isolation).
 - **Pass-2 gridding** (`tests/test_imager_pass2.py`): `grid_partition` shapes/`WSUM`, row-additivity
   (the basis of the sum-over-partitions Hessian), robust reweighting; `residual_from_partitions`
   zero-model, partition additivity and beam-applied-once. (A true two-field mosaic is validated via
@@ -269,8 +273,10 @@ access-agnostic `set_wcs`/`save_fits`/`create_beams_table` helpers.
 - **Scratch cache** (`tests/test_imager.py`): the `.scratch` store is retained by default. (A
   cache-validation-on-param-change step like `grid`'s `opts.pkl` is a future refinement.)
 
-**Test isolation:** `tests/test_imager.py` (arcae) runs in its own pytest invocation;
-everything else runs with `--ignore=tests/test_imager.py` (see `.claude/rules/testing-and-ci.md`).
+**Test isolation (superseded 2026-06-15):** originally `tests/test_imager.py` (arcae) ran in its
+own pytest invocation, with everything else under `--ignore=tests/test_imager.py`. As of arcae
+0.5.2 the suite runs as a single `pytest tests/` and the equivalence reference runs in-process
+(see `.claude/rules/testing-and-ci.md`).
 
 ## 12. Open questions / risks
 

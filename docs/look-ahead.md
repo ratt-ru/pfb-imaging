@@ -23,10 +23,9 @@ the two paths *agree* and run end to end — see the `FIXME` in
 - Populate `DATA` with a deterministic model (predict point sources with ducc0
   `dirty2vis`, as `test_kclean`/`test_sara` already do), ideally once per session
   in `conftest.py`.
-- Constraint: writing the MS needs casacore (daskms) or arcae, neither of which
-  may be imported in the `test_imager.py` (arcae) process (arcae#72). So either
-  write via arcae once arcae writes are trusted, or run the populate step in a
-  **subprocess** so the arcae process stays casacore-free.
+- As of arcae 0.5.2 (ratt-ru/arcae#211, #212) casacore (daskms) and arcae coexist in one
+  process, so the populate step can write the MS via daskms/casacore directly in the
+  `test_imager.py` process — no subprocess isolation needed.
 - While doing this, **fully flag one band** as a realistic baseline (RFI). This
   is already handled gracefully end to end (the band is dropped — no node, no
   Ray task, no NaN; verified for edge and interior bands), so it mainly buys
