@@ -59,6 +59,40 @@ def set_envs(nthreads, ncpu, log=None):
     return env_vars
 
 
+def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None):
+    """Initialise Ray for a pfb-imaging sub-command.
+
+    With ray_address="local" (the default) a fresh private Ray instance is
+    started even if another cluster is running on the node. Any other value
+    is treated as the address of an existing cluster to connect to, in which
+    case cluster properties (num_cpus, object_store_memory) must not be
+    passed to ray.init and are therefore dropped.
+    """
+    import ray
+
+    logger = log or logging
+
+    if ray.is_initialized():
+        logger.warning("Ray is already initialised. Requested Ray settings will be ignored.")
+        return
+
+    if ray_address == "local":
+        ray.init(
+            address="local",
+            num_cpus=nworkers,
+            object_store_memory=object_store_memory,
+            logging_level="INFO",
+            runtime_env=runtime_env,
+        )
+    else:
+        logger.info(f"Connecting to existing Ray cluster at {ray_address}")
+        ray.init(
+            address=ray_address,
+            logging_level="INFO",
+            runtime_env=runtime_env,
+        )
+
+
 def setup_ray_worker():
     logger = pfb_logging.get_logger("RAY_WORKER")
     logger.setLevel(logging.ERROR)

@@ -170,6 +170,13 @@ cabs:
         default: I
         metadata:
           rich_help_panel: Data Selection
+      ray-address:
+        info:
+          Address of the ray cluster to connect to.
+          If not provided, will run locally.
+        default: local
+        metadata:
+          rich_help_panel: Performance
       nworkers:
         info:
           Number of worker processes.

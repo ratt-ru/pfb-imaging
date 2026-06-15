@@ -250,6 +250,13 @@ def grid(
             rich_help_panel="WGridder",
         ),
     ] = True,
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -376,6 +383,7 @@ def grid(
                     epsilon=epsilon,
                     do_wgridding=do_wgridding,
                     double_accum=double_accum,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     product=product,
@@ -418,6 +426,7 @@ def grid(
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
                 double_accum=double_accum,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 product=product,
@@ -469,6 +478,7 @@ def grid(
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             product=product,
