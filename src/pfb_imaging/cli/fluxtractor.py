@@ -179,6 +179,13 @@ def fluxtractor(
             rich_help_panel="ConjugateGradient",
         ),
     ] = 10,
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -295,6 +302,7 @@ def fluxtractor(
                     cg_maxit=cg_maxit,
                     cg_verbose=cg_verbose,
                     cg_report_freq=cg_report_freq,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     product=product,
@@ -327,6 +335,7 @@ def fluxtractor(
                 cg_maxit=cg_maxit,
                 cg_verbose=cg_verbose,
                 cg_report_freq=cg_report_freq,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 product=product,
@@ -368,6 +377,7 @@ def fluxtractor(
             cg_maxit=cg_maxit,
             cg_verbose=cg_verbose,
             cg_report_freq=cg_report_freq,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             product=product,

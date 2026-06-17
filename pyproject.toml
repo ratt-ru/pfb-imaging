@@ -1,13 +1,13 @@
 [project]
 name = "pfb-imaging"
-version = "0.0.9"
+version = "0.0.10"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10, <3.14"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.2.1",
+    "hip-cargo >= 0.2.1",
 ]
 
 [project.urls]
@@ -34,7 +34,7 @@ full = [
     "dask-ms[s3,xarray,zarr]>=0.2.30",
     "distributed>=2026.3.0",  # still need this for degrid command
     "reproject",
-    "ray[default]>=2.54.0",
+    "ray[default]>=2.55.0",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -51,6 +51,9 @@ full = [
     "omegaconf>=2.3",
     "pillow>=12.2.0",
     "meerkat-beams[full] @ git+https://github.com/landmanbester/meerkat-beams.git@dev001",
+    "xarray-ms>=0.5.4 ; python_version >= '3.11'",
+    "msv4-utils>=0.0.3 ; python_version >= '3.11'",
+    "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
 [project.scripts]
@@ -86,6 +89,8 @@ addopts = [
     "--strict-config",
     "--verbose",
 ]
+timeout = 300
+timeout_method = "thread"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -99,7 +104,10 @@ dev = [
     "pre-commit>=4.0.0",
     "mypy>=1.0.0",
     "ipdb",
+    "ipykernel>=7.2.0",
+    "ipywidgets>=8.1.8",
 ]
 test = [
     "pytest>=9.0.3",
+    "pytest-timeout>=2.3",
 ]

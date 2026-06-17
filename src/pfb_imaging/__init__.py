@@ -6,7 +6,7 @@ from importlib.metadata import version
 
 from pfb_imaging.utils import logging as pfb_logging
 
-__version__ = "0.0.9"
+__version__ = "0.0.10"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
@@ -24,6 +24,10 @@ def set_envs(nthreads, ncpu, log=None):
     ne_threads = min(ncpu, nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+    # gRPC EventEngine pool defaults to ~hw_threads per worker; cap it so we
+    # don't blow ulimit -u with many workers. See ray-project/ray#54988.
+    os.environ["RAY_worker_num_grpc_internal_threads"] = "1"
     # this is required for numba to use the tbb threaing layer
     dist = importlib.metadata.distribution("tbb")
     tbb_path = None
@@ -50,8 +54,43 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
+        "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars
+
+
+def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None):
+    """Initialise Ray for a pfb-imaging sub-command.
+
+    With ray_address="local" (the default) a fresh private Ray instance is
+    started even if another cluster is running on the node. Any other value
+    is treated as the address of an existing cluster to connect to, in which
+    case cluster properties (num_cpus, object_store_memory) must not be
+    passed to ray.init and are therefore dropped.
+    """
+    import ray
+
+    logger = log or logging
+
+    if ray.is_initialized():
+        logger.warning("Ray is already initialised. Requested Ray settings will be ignored.")
+        return
+
+    if ray_address == "local":
+        ray.init(
+            address="local",
+            num_cpus=nworkers,
+            object_store_memory=object_store_memory,
+            logging_level="INFO",
+            runtime_env=runtime_env,
+        )
+    else:
+        logger.info(f"Connecting to existing Ray cluster at {ray_address}")
+        ray.init(
+            address=ray_address,
+            logging_level="INFO",
+            runtime_env=runtime_env,
+        )
 
 
 def setup_ray_worker():

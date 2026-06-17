@@ -1,8 +1,8 @@
 cabs:
-  init:
+  imager:
     flavour: python
-    command: pfb_imaging.core.init.init
-    name: init
+    command: pfb_imaging.core.imager.imager
+    name: imager
     info:
       Initialise Stokes data products.
     image: ghcr.io/ratt-ru/pfb-imaging:issue241
@@ -24,28 +24,28 @@ cabs:
           positional: true
         metadata:
           rich_help_panel: Naming
-      scans:
+      scan-names:
         info:
           List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
-      ddids:
+      spw-names:
         info:
           List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
-      fields:
+      field-names:
         info:
           List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       freq-range:
@@ -163,13 +163,6 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Reporting
-      check-ants:
-        info:
-          Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
-        dtype: bool
-        default: false
-        metadata:
-          rich_help_panel: Control
       product:
         info:
           String specifying which Stokes products to produce.

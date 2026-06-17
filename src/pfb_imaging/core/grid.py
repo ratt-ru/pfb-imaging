@@ -9,7 +9,7 @@ from africanus.coordinates import radec_to_lm
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import rimage_data_products, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import get_coordinates
@@ -55,6 +55,7 @@ def grid(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    ray_address: str = "local",
     keep_ray_alive: bool = False,
 ):
     """
@@ -127,14 +128,14 @@ def grid(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
             "worker_process_setup_hook": setup_ray_worker,
         },
+        log=log,
     )
 
     time_start = time.time()
@@ -240,8 +241,8 @@ def grid(
                     xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                     xds_dct[tbid]["time_out"] = times_out[0]
                     xds_dct[tbid]["freq_out"] = freqs_out[b]
-                    xds_dct[tbid]["chan_low"] = ds.chan_low
-                    xds_dct[tbid]["chan_high"] = ds.chan_high
+                    # xds_dct[tbid]["chan_low"] = ds.chan_low
+                    # xds_dct[tbid]["chan_high"] = ds.chan_high
     else:
         ntime = ntime_in
         times_out = times_in
@@ -256,8 +257,8 @@ def grid(
                         xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                         xds_dct[tbid]["time_out"] = times_out[t]
                         xds_dct[tbid]["freq_out"] = freqs_out[b]
-                        xds_dct[tbid]["chan_low"] = ds.chan_low
-                        xds_dct[tbid]["chan_high"] = ds.chan_high
+                        # xds_dct[tbid]["chan_low"] = ds.chan_low
+                        # xds_dct[tbid]["chan_high"] = ds.chan_high
 
     ncorr = ds.corr.size
     corrs = ds.corr.values
@@ -291,8 +292,8 @@ def grid(
         dsl = ds_dct["dsl"]
         time_out = ds_dct["time_out"]
         freq_out = ds_dct["freq_out"]
-        chan_low = ds_dct["chan_low"]
-        chan_high = ds_dct["chan_high"]
+        # chan_low = ds_dct["chan_low"]
+        # chan_high = ds_dct["chan_high"]
         iter0 = 0
         if from_cache:
             out_ds_name = f"{dds_store.url}/time{timeid}_band{bandid}.zarr"
@@ -344,8 +345,8 @@ def grid(
             "field_of_view": field_of_view,
             "product": product,
             "niters": iter0,
-            "chan_low": chan_low,
-            "chan_high": chan_high,
+            # "chan_low": chan_low,
+            # "chan_high": chan_high,
         }
 
         # get the model
