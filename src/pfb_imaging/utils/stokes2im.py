@@ -817,6 +817,8 @@ def beam_for_band(
         m_beam = bds.Y.values
         t_beam = Time(utime / (24 * 3600), format="mjd")
         beam = np.zeros((len(product), l_beam.size, m_beam.size), dtype=real_type)
+        if isinstance(freq_out, np.ndarray):
+            freq_out = freq_out.item()
         for i, p in enumerate(set(product)):  # set to sort IQUV
             beam[i], _ = beam_model.get_rotation_averaged_beam(
                 l=l_beam,
