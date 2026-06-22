@@ -12,7 +12,12 @@ from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
-from xarray_ms.errors import FrameConversionWarning, IrregularGridWarning, MissingMetadataWarning
+from xarray_ms.errors import (
+    ColumnShapeImputationWarning,
+    FrameConversionWarning,
+    IrregularGridWarning,
+    MissingMetadataWarning,
+)
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
@@ -26,6 +31,7 @@ from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts, r
 warnings.filterwarnings("ignore", category=IrregularGridWarning)
 warnings.filterwarnings("ignore", category=MissingMetadataWarning)
 warnings.filterwarnings("ignore", category=FrameConversionWarning)
+warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
 
 
 log = pfb_logging.get_logger("IMAGER")
@@ -237,7 +243,7 @@ def imager(
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
         ncpu = ncpu // 2
-    log.info(f"Using {nworkers} workers with {nthreads} thread per worker")
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
