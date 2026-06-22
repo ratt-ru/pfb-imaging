@@ -398,5 +398,10 @@ def stokes_vis(
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     group = f"band{bandid:04d}_time{timeid:04d}/{piece_name}"
-    out_ds.to_zarr(scratch_store, group=group, mode="a")
+    # consolidated=False: many workers write distinct leaf groups into the shared
+    # scratch store concurrently. Per-write consolidation would race on the single
+    # root .zmetadata (torn JSON -> JSONDecodeError on networked filesystems); the
+    # band/time parent groups are pre-created and the driver consolidates once
+    # after all pass-1 tasks finish (see core.imager).
+    out_ds.to_zarr(scratch_store, group=group, mode="a", consolidated=False)
     return bandid, timeid, piece_name

@@ -8,6 +8,7 @@ import numpy as np
 import psutil
 import ray
 import xarray as xr
+import zarr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from msv4_utils import MSv4Backend, infer_backend
@@ -143,7 +144,9 @@ def _grid_image(
                 "wsum": prod["WSUM"].tolist(),
             },
         )
-        part_out.to_zarr(dt_store, group=f"{image_name}/part{pid:04d}", mode="a")
+        # consolidated=False: each pass-2 worker owns a distinct image_name node,
+        # but they share the store root; the driver consolidates once at the end
+        part_out.to_zarr(dt_store, group=f"{image_name}/part{pid:04d}", mode="a", consolidated=False)
 
         dirty_sum += prod["DIRTY"]
         psf_sum += prod["PSF"]
@@ -172,7 +175,7 @@ def _grid_image(
         coords={"corr": corr, "bpar": bpar},
         attrs=band_attrs,
     )
-    band_ds.to_zarr(dt_store, group=image_name, mode="a")
+    band_ds.to_zarr(dt_store, group=image_name, mode="a", consolidated=False)
 
     return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum}
 
@@ -429,6 +432,14 @@ def imager(
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
+    # Pre-create the band/time parent groups single-threaded so concurrent
+    # pass-1 workers only ever create their own distinct leaf piece group. This
+    # avoids a check-then-create race (ContainsGroupError) on the shared parent;
+    # combined with consolidated=False on the worker writes (consolidation is
+    # done once below, in the driver), it removes all shared-mutable-state races
+    # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
+    scratch_root = zarr.open_group(scratch_store.url, mode="a")
+    created_parents = set()
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name)
         if "file://" in ms_name:
@@ -483,6 +494,13 @@ def imager(
                     # slice out subset of node
                     subdt = node.isel(time=t_index, frequency=nu_index)
 
+                    # ensure the shared parent group exists before any worker
+                    # writes a leaf under it (single-threaded → no creation race)
+                    parent = f"band{bandid:04d}_time{timeid:04d}"
+                    if parent not in created_parents:
+                        scratch_root.require_group(parent)
+                        created_parents.add(parent)
+
                     fut = safe_stokes_vis.remote(
                         dc1=dc1,
                         dc2=dc2,
@@ -535,6 +553,11 @@ def imager(
 
     log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_store.url}")
     log.info(f"Pass 1 done after {time.time() - time_start}s")
+
+    # consolidate the scratch metadata once, single-threaded, now that all
+    # workers have finished (workers wrote with consolidated=False to avoid
+    # racing on the shared root .zmetadata; see stokes_vis)
+    zarr.consolidate_metadata(scratch_store.url)
 
     # ---- between passes: accumulate per-(band,time) counts and reduce ----
     log.info(f"Reducing uv counts with grouping '{weight_grouping}'")
@@ -635,6 +658,10 @@ def imager(
             ncomplete += 1
             if progressbar:
                 print(f"Gridded: {ncomplete} / {nds}", end="\n", flush=True)
+
+    # consolidate the .dt metadata once, single-threaded, now that all pass-2
+    # workers have finished (they wrote with consolidated=False; see _grid_image)
+    zarr.consolidate_metadata(dt_store.url)
 
     # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
     psfparsn = {}
