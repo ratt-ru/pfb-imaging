@@ -571,10 +571,9 @@ def imager(
     zarr.consolidate_metadata(scratch_store.url)
 
     # ---- between passes: accumulate per-(band,time) counts and reduce ----
-    log.info(f"Reducing uv counts with grouping '{weight_grouping}'")
     scratch_dt = xr.open_datatree(scratch_store.url, engine="zarr", chunks=None)
-    counts_map = {}
-    image_meta = {}
+    # per-scratch-node summary: (bandid, timeid, ra, dec, time_out, counts)
+    node_info = {}
     ncorr = None
     for name in scratch_dt.children:
         if not name.startswith("band"):
@@ -582,24 +581,73 @@ def imager(
         pieces = [child.ds for _, child in scratch_dt[name].children.items()]
         if not pieces:
             continue
-        bandid = int(pieces[0].attrs["bandid"])
-        timeid = int(pieces[0].attrs["timeid"])
         ncorr = pieces[0].corr.size
         acc = None
         for ds in pieces:
             c = ds.COUNTS.values
             acc = c.copy() if acc is None else acc + c
-        counts_map[(bandid, timeid)] = acc
-        image_meta[name] = {
-            "bandid": bandid,
-            "timeid": timeid,
+        node_info[name] = {
+            "bandid": int(pieces[0].attrs["bandid"]),
+            "timeid": int(pieces[0].attrs["timeid"]),
             "ra": float(pieces[0].attrs["ra"]),
             "dec": float(pieces[0].attrs["dec"]),
             "time_out": float(np.mean([ds.attrs["time_out"] for ds in pieces])),
+            "counts": acc,
         }
-    if not image_meta:
+    if not node_info:
         log.error_and_raise("Pass 1 produced no output images (all data flagged?)", RuntimeError)
-    reduced = reduce_counts(counts_map, weight_grouping)
+
+    # build the pass-2 work list: (out_name, src_names, meta)
+    counts_map = {}
+    work = []
+    if concat_row:
+        # time-resolved groupings contradict a time-collapsed image; map each to
+        # its band-collapsed analogue (per-band-time -> per-band, per-time -> mfs)
+        grouping_eff = {"per-band-time": "per-band", "per-time": "mfs"}.get(weight_grouping, weight_grouping)
+        if grouping_eff != weight_grouping and robustness is not None:
+            log.warning(
+                f"concat_row collapses the time axis; using weight_grouping "
+                f"'{grouping_eff}' instead of '{weight_grouping}'"
+            )
+        by_band = {}
+        for name, info in node_info.items():
+            by_band.setdefault(info["bandid"], []).append((name, info))
+        for bandid, items in sorted(by_band.items()):
+            src_names = [name for name, _ in items]
+            infos = [info for _, info in items]
+            acc = None
+            for info in infos:
+                acc = info["counts"].copy() if acc is None else acc + info["counts"]
+            counts_map[(bandid, 0)] = acc  # time-collapsed: single timeid 0 per band
+            out_name = f"band{bandid:04d}_time0000"
+            work.append(
+                (
+                    out_name,
+                    src_names,
+                    {
+                        "bandid": bandid,
+                        "timeid": 0,
+                        "ra": infos[0]["ra"],
+                        "dec": infos[0]["dec"],
+                        "time_out": float(np.mean([info["time_out"] for info in infos])),
+                    },
+                )
+            )
+    else:
+        grouping_eff = weight_grouping
+        for name, info in node_info.items():
+            counts_map[(info["bandid"], info["timeid"])] = info["counts"]
+            work.append(
+                (
+                    name,
+                    [name],
+                    {k: info[k] for k in ("bandid", "timeid", "ra", "dec", "time_out")},
+                )
+            )
+
+    ntime = len({meta["timeid"] for _, _, meta in work})
+    log.info(f"Reducing uv counts with grouping '{grouping_eff}'")
+    reduced = reduce_counts(counts_map, grouping_eff)
 
     # ---- initialise the .dt store root ----
     dt_store = DaskMSStore(f"{basename}.dt")
@@ -627,12 +675,12 @@ def imager(
 
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
     tasks = []
-    for name, meta in image_meta.items():
+    for out_name, src_names, meta in work:
         fut = _grid_image.remote(
             scratch_store.url,
             dt_store.url,
-            [name],
-            name,
+            src_names,
+            out_name,
             reduced[(meta["bandid"], meta["timeid"])],
             nx,
             ny,

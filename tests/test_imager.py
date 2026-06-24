@@ -203,3 +203,61 @@ def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
     # identically zero -- an MS with no signal in DATA, or a fully-flagged band --
     # rather than dividing by a zero peak.
     assert_allclose(1 + new, 1 + leg, rtol=1e-4, atol=1e-4)
+
+
+def test_imager_concat_row_collapses_time(ms_name, tmp_path):
+    """concat_row=True collapses the time axis into one band node and agrees
+    with concat_row=False on the MFS dirty.
+
+    Both runs pin weight_grouping="per-band" and robustness=0.0 so the per-row
+    imaging weights are identical; vis2dirty is linear in the rows
+    (grid(A∪B) == grid(A) + grid(B) up to fp), so the wsum-normalised MFS dirty
+    must match. The shared MS is one scan of 60 integrations, so
+    integrations_per_image=15 splits it into 4 time blocks (4 timeids) to make
+    the concat_row=False granularity meaningful.
+    """
+    from collections import Counter
+
+    common = dict(
+        channels_per_image=2,
+        integrations_per_image=15,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        weight_grouping="per-band",
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    base_true = str(tmp_path / "concat_true")
+    imager_core([Path(ms_name)], base_true, concat_row=True, **common)
+    base_false = str(tmp_path / "concat_false")
+    imager_core([Path(ms_name)], base_false, concat_row=False, **common)
+
+    dt_true = xr.open_datatree(base_true + "_I.dt", engine="zarr", chunks=None)
+    dt_false = xr.open_datatree(base_false + "_I.dt", engine="zarr", chunks=None)
+    bands_true = sorted(n for n in dt_true.children if n.startswith("band"))
+    bands_false = sorted(n for n in dt_false.children if n.startswith("band"))
+
+    # concat_row=True: exactly one time0000 node per distinct band
+    assert bands_true, "no band nodes written"
+    assert all(n.endswith("_time0000") for n in bands_true)
+    bandids_true = {int(dt_true[n].ds.attrs["bandid"]) for n in bands_true}
+    assert len(bands_true) == len(bandids_true)
+
+    # concat_row=False: multiple time nodes for at least one band (4 blocks here)
+    per_band = Counter(int(dt_false[n].ds.attrs["bandid"]) for n in bands_false)
+    assert max(per_band.values()) > 1, "expected multiple time nodes per band at ipi=15"
+
+    def mfs(dt, names):
+        num = sum(dt[n].ds.DIRTY.values[0] for n in names)
+        den = sum(float(dt[n].ds.WSUM.values[0]) for n in names)
+        return num / den
+
+    a = mfs(dt_true, bands_true)
+    b = mfs(dt_false, bands_false)
+    assert a.shape == b.shape
+    assert np.isfinite(a).all() and np.isfinite(b).all()
+    assert_allclose(1 + a, 1 + b, rtol=1e-4, atol=1e-4)
