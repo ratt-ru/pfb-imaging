@@ -42,7 +42,8 @@ log = pfb_logging.get_logger("IMAGER")
 def _grid_image(
     scratch_store,
     dt_store,
-    image_name,
+    src_names,
+    out_name,
     counts,
     nx,
     ny,
@@ -70,8 +71,10 @@ def _grid_image(
     light summary (``timeid``/``psf``/``wsum``) for MFS beam-parameter fitting.
     """
     resize_thread_pool(nthreads)
-    image = xr.open_datatree(scratch_store, engine="zarr", chunks=None)[image_name]
-    pieces = [child.ds.load() for _, child in image.children.items()]
+    dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None)
+    pieces = []
+    for sn in src_names:
+        pieces.extend(child.ds.load() for _, child in dt[sn].children.items())
 
     groups = {}
     for ds in pieces:
@@ -96,6 +99,13 @@ def _grid_image(
         if len(plist) == 1:
             part = plist[0]
         else:
+            # rows are only concatenatable when they share the freq axis (same
+            # spw + band channel-chunk); guard the invariant before concat
+            f0 = plist[0].FREQ.values
+            for p in plist[1:]:
+                assert np.array_equal(p.FREQ.values, f0), (
+                    f"concat group {key} has mismatched FREQ; cannot concatenate rows"
+                )
             rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
             cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
             part = plist[0].drop_vars(rowvars)
@@ -146,7 +156,7 @@ def _grid_image(
         )
         # consolidated=False: each pass-2 worker owns a distinct image_name node,
         # but they share the store root; the driver consolidates once at the end
-        part_out.to_zarr(dt_store, group=f"{image_name}/part{pid:04d}", mode="a", consolidated=False)
+        part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
 
         dirty_sum += prod["DIRTY"]
         psf_sum += prod["PSF"]
@@ -175,7 +185,7 @@ def _grid_image(
         coords={"corr": corr, "bpar": bpar},
         attrs=band_attrs,
     )
-    band_ds.to_zarr(dt_store, group=image_name, mode="a", consolidated=False)
+    band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
 
     return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum}
 
@@ -195,6 +205,7 @@ def imager(
     gain_table: list[Path] | None = None,
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
+    concat_row: bool = True,
     precision: str = "double",
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
@@ -620,6 +631,7 @@ def imager(
         fut = _grid_image.remote(
             scratch_store.url,
             dt_store.url,
+            [name],
             name,
             reduced[(meta["bandid"], meta["timeid"])],
             nx,
