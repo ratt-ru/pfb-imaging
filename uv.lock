@@ -3431,7 +3431,6 @@ dependencies = [
 
 [package.optional-dependencies]
 full = [
-    { name = "arcae", marker = "python_full_version >= '3.11'" },
     { name = "bokeh" },
     { name = "codex-africanus", extra = ["astropy", "dask", "python-casacore", "scipy"] },
     { name = "dask-ms", extra = ["katdal", "s3", "xarray", "zarr"] },
@@ -3480,7 +3479,6 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arcae", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.5.2,<0.6.0" },
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr", "katdal"], marker = "extra == 'full'", specifier = ">=0.2.31" },
