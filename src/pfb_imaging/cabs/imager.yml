@@ -71,6 +71,21 @@ cabs:
         default: DATA
         metadata:
           rich_help_panel: Data Selection
+      data-group:
+        info:
+          MSv4 data group used to resolve the 'DATA' column to its correlated_data variable and to select the field_and_source subtable.
+        default: base
+        metadata:
+          rich_help_panel: Data Selection
+      partition-columns:
+        info:
+          Columns to partition the MSv4 store by (xarray-ms PARTITION_SCHEMA).
+          Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need e.g.
+          SOURCE_ID.
+          Input as a comma separated list if running from CLI.
+        dtype: Optional[List[str]]
+        metadata:
+          rich_help_panel: Data Selection
       weight-column:
         info:
           Column containing natural weights.

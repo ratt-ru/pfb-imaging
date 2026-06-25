@@ -114,6 +114,24 @@ def imager(
             rich_help_panel="Data Selection",
         ),
     ] = "DATA",
+    data_group: Annotated[
+        str,
+        typer.Option(
+            help="MSv4 data group used to resolve the 'DATA' column to its "
+            "correlated_data variable and to select the field_and_source subtable.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = "base",
+    partition_columns: Annotated[
+        ListStr | None,
+        typer.Option(
+            parser=parse_list_str,
+            help="Columns to partition the MSv4 store by (xarray-ms PARTITION_SCHEMA). "
+            "Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need "
+            "e.g. SOURCE_ID. Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = None,
     weight_column: Annotated[
         str | None,
         typer.Option(
@@ -432,6 +450,8 @@ def imager(
                     freq_range=freq_range,
                     overwrite=overwrite,
                     data_column=data_column,
+                    data_group=data_group,
+                    partition_columns=partition_columns,
                     weight_column=weight_column,
                     sigma_column=sigma_column,
                     flag_column=flag_column,
@@ -484,6 +504,8 @@ def imager(
                 freq_range=freq_range,
                 overwrite=overwrite,
                 data_column=data_column,
+                data_group=data_group,
+                partition_columns=partition_columns,
                 weight_column=weight_column,
                 sigma_column=sigma_column,
                 flag_column=flag_column,
@@ -545,6 +567,8 @@ def imager(
             freq_range=freq_range,
             overwrite=overwrite,
             data_column=data_column,
+            data_group=data_group,
+            partition_columns=partition_columns,
             weight_column=weight_column,
             sigma_column=sigma_column,
             flag_column=flag_column,

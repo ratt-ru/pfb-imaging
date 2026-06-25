@@ -199,6 +199,8 @@ def imager(
     freq_range: str | None = None,
     overwrite: bool = False,
     data_column: str = "DATA",
+    data_group: str = "base",
+    partition_columns: list[str] | None = None,
     weight_column: str | None = None,
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
@@ -361,11 +363,11 @@ def imager(
         dc2 = None
         operator = None
 
-    # DATA is always mapped to VISIBILITY in MSv4, so we need to rename it here
-    if dc1 == "DATA":
-        dc1 = "VISIBILITY"
-    if dc2 == "DATA":
-        dc2 = "VISIBILITY"
+    # The "DATA" sentinel resolves to the data group's correlated_data variable
+    # (e.g. "VISIBILITY" for the base group) via the data_groups mechanism rather
+    # than a hardcoded name; resolved from the first visibility node below.
+    # (sjperkins, PR #252 review.)
+    vis_col = None
 
     # figure out where band edges are
     # note mapping currently maps partitions to the band it has most overlap with
@@ -374,7 +376,7 @@ def imager(
     all_chan_widths = []
     max_blength = 0
     for ims, ms_name in enumerate(ms):
-        dt_kwargs = get_engine(ms_name)
+        dt_kwargs = get_engine(ms_name, partition_columns)
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
         dt = xr.open_datatree(
@@ -384,6 +386,8 @@ def imager(
         for node in dt.children.values():
             if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
                 continue
+            if vis_col is None:
+                vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             if ds.frequency.size == 0:
                 continue
@@ -409,6 +413,13 @@ def imager(
             uvw = uvw[~uvw_mask]
             if uvw.size:
                 max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
+
+    # map the "DATA" sentinel to the data group's correlated_data variable
+    if vis_col is not None:
+        if dc1 == "DATA":
+            dc1 = vis_col
+        if dc2 == "DATA":
+            dc2 = vis_col
 
     # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
@@ -452,7 +463,7 @@ def imager(
     scratch_root = zarr.open_group(scratch_store.url, mode="a")
     created_parents = set()
     for ims, ms_name in enumerate(ms):
-        dt_kwargs = get_engine(ms_name)
+        dt_kwargs = get_engine(ms_name, partition_columns)
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
         dt = xr.open_datatree(
@@ -537,6 +548,7 @@ def imager(
                         ny_pad=ny_pad,
                         cell_rad=cell_rad,
                         baseline_group="all",
+                        data_group=data_group,
                     )
                     tasks.append(fut)
 
@@ -765,16 +777,19 @@ def imager(
     return
 
 
-def get_engine(ms_path: str) -> dict[str, Any]:
+def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict[str, Any]:
     if "file://" in ms_path:
         ms_path = ms_path.replace("file://", "")
     backend = infer_backend(ms_path)
     if backend == MSv4Backend.CASA_TABLE:
         import xarray_ms  # noqa: F401
 
+        # default schema suits mv4toms.py-style MSs; other instruments may need
+        # extra columns (e.g. SOURCE_ID) -- override via partition_columns.
+        # (sjperkins, PR #252 review; see xarray-ms partitioning docs.)
         return {
             "engine": "xarray-ms:msv2",
-            "partition_schema": ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
+            "partition_schema": partition_columns or ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
         }
     elif backend == MSv4Backend.ZARR:
         return {

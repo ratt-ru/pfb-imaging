@@ -47,6 +47,7 @@ def stokes_vis(
     ny_pad=None,
     cell_rad=None,
     baseline_group="all",
+    data_group="base",
 ):
     """
     MSv4 version of stokes2vis.
@@ -109,26 +110,32 @@ def stokes_vis(
     utime = ds.time.values
     time_out = np.mean(utime)
 
-    # INTERVAL treated differently depending on whether it's regular or irregular
-    it_attr = ds.time.attrs.get("integration_time", {}).get("data")
-    if "INTEGRATION_TIME" in ds.data_vars:  # irregular
+    # per-row integration time. MSv4 carries the actual per-sample value in
+    # EFFECTIVE_INTEGRATION_TIME (time, baseline) which ravels to row order; prefer
+    # it over the regular-grid integration_time attr (xarray-ms signals an irregular
+    # grid with NaN in that attr). Fall back to the legacy INTEGRATION_TIME var, then
+    # the scalar attr. (sjperkins, PR #252 review.)
+    if "EFFECTIVE_INTEGRATION_TIME" in ds.data_vars:
+        interval = ds.EFFECTIVE_INTEGRATION_TIME.values.ravel()
+    elif "INTEGRATION_TIME" in ds.data_vars:
         interval = ds.INTEGRATION_TIME.values.ravel()
     else:
-        interval = np.full(nrow, it_attr, dtype=np.float64)  # regular
+        it_attr = ds.time.attrs.get("integration_time", {}).get("data")
+        interval = np.full(nrow, it_attr, dtype=np.float64)
 
-    # get MSv2 style ANTENNA1 and ANTENNA2
+    # get MSv2 style ANTENNA1 and ANTENNA2 as indices into the antenna_xds
+    # subtable. A plain np.unique on the names only establishes baseline relations
+    # and need not map to antenna_xds order, which is wrong as soon as antenna_xds
+    # variables (e.g. ANTENNA_POSITION) are indexed by these. searchsorted against
+    # the antenna_xds antenna_name ordering gives the canonical mapping.
+    # (sjperkins, PR #252 review.)
     ant1_names = ds.baseline_antenna1_name.values
     ant2_names = ds.baseline_antenna2_name.values
-    ant12 = np.concatenate([ant1_names, ant2_names])
-    _, inv = np.unique(ant12, return_inverse=True)
-    ant1_bl = inv[: len(inv) // 2]
-    ant2_bl = inv[len(inv) // 2 :]
-    # claude recommends rather do the following
-    # ant_names = node_dt["antenna_xds"].antenna_name.values
-    # order = np.argsort(ant_names)
-    # sorted_n = ant_names[order]
-    # ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
-    # ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
+    ant_names = node_dt["antenna_xds"].antenna_name.values
+    order = np.argsort(ant_names)
+    sorted_n = ant_names[order]
+    ant1_bl = order[np.searchsorted(sorted_n, ant1_names)]
+    ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
     time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
     time = time.ravel()
     # averaging routines expect int32 antenna indices
@@ -168,9 +175,12 @@ def stokes_vis(
     else:
         raise ValueError("Unknown polarization types")
 
-    # get phase dir from field_and_source subtable
-    base = node_dt.ds.attrs["data_groups"]["base"]
-    radec = node_dt[base["field_and_source"].rsplit("/", 1)[-1]].ds.FIELD_PHASE_CENTER_DIRECTION.values[0]
+    # get phase dir from the field_and_source subtable of the chosen data group,
+    # selecting the row that matches this partition's field_name rather than
+    # assuming index 0. (sjperkins, PR #252 review.)
+    grp = node_dt.ds.attrs["data_groups"][data_group]
+    fns = node_dt[grp["field_and_source"].rsplit("/", 1)[-1]].ds
+    radec = fns.FIELD_PHASE_CENTER_DIRECTION.sel(field_name=field_name).values
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
