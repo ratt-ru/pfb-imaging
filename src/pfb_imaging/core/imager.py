@@ -620,6 +620,11 @@ def imager(
                 acc = info["counts"].copy() if acc is None else acc + info["counts"]
             counts_map[(bandid, 0)] = acc  # time-collapsed: single timeid 0 per band
             out_name = f"band{bandid:04d}_time0000"
+            # assumes one pointing per band: ra/dec are taken from the first node
+            # and time_out is the (unweighted) mean of the collapsed nodes' times.
+            # Rows are only concatenated within a partition key (same field), so a
+            # multi-field band would still grid its fields separately, but this
+            # band-node metadata would label them with a single pointing.
             work.append(
                 (
                     out_name,
