@@ -117,8 +117,8 @@ def imager(
     data_group: Annotated[
         str,
         typer.Option(
-            help="MSv4 data group used to resolve the 'DATA' column to its "
-            "correlated_data variable and to select the field_and_source subtable.",
+            help="MSv4 data group used to resolve the 'DATA' column to its correlated_data variable. "
+            "Also selects the field_and_source subtable.",
             rich_help_panel="Data Selection",
         ),
     ] = "base",
@@ -127,8 +127,8 @@ def imager(
         typer.Option(
             parser=parse_list_str,
             help="Columns to partition the MSv4 store by (xarray-ms PARTITION_SCHEMA). "
-            "Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need "
-            "e.g. SOURCE_ID. Input as a comma separated list if running from CLI.",
+            "Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need SOURCE_ID. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
