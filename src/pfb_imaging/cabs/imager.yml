@@ -116,6 +116,13 @@ cabs:
         default: '-1'
         metadata:
           rich_help_panel: Imaging
+      concat-row:
+        info:
+          Concatenate datasets by row
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision

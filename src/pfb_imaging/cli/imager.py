@@ -161,6 +161,13 @@ def imager(
             rich_help_panel="Imaging",
         ),
     ] = -1,
+    concat_row: Annotated[
+        bool,
+        typer.Option(
+            help="Concatenate datasets by row",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
@@ -431,6 +438,7 @@ def imager(
                     gain_table=gain_table,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
+                    concat_row=concat_row,
                     precision=precision,
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
@@ -482,6 +490,7 @@ def imager(
                 gain_table=gain_table,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
+                concat_row=concat_row,
                 precision=precision,
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
@@ -542,6 +551,7 @@ def imager(
             gain_table=gain_table,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
+            concat_row=concat_row,
             precision=precision,
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,
