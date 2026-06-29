@@ -22,7 +22,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.generate_token.outputs.token }}
 
@@ -35,7 +35,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Cache uv dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
