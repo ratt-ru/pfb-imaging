@@ -19,6 +19,30 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.weighting import _compute_counts, weight_data
 
 
+def _release_ms_caches():
+    """Evict xarray-ms's process-level arcae Table cache.
+
+    xarray-ms keeps every opened arcae Table in a class-level Multiton cache
+    with a 300 s *inactivity* TTL. Sequential Ray tasks each open their own
+    partition selection under a distinct cache key, and a busy worker never
+    goes idle long enough for entries to expire, so post-gc worker RSS
+    ratchets by ~the task's read footprint per task (observed +3.5 GB/task
+    to ~39 GB/worker on an 8-band 10-scan run) and the retained tables then
+    sit there for the whole of pass 2. The cache holds strong references --
+    gc cannot reclaim it -- so evict it explicitly between tasks; the next
+    task reconstructs its own tables anyway. Private API by necessity:
+    degrade gracefully if the pattern package changes.
+    """
+    try:
+        from rarg_python_patterns.multiton import Multiton
+
+        with Multiton._INSTANCE_LOCK:
+            Multiton._INSTANCE_CACHE.clear()
+            Multiton._EXPIRY_HEAP.clear()
+    except Exception:
+        pass
+
+
 # wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
@@ -30,6 +54,7 @@ def safe_stokes_vis(*args, **kwargs):
     try:
         ret = stokes_vis(*args, **kwargs)
     finally:
+        _release_ms_caches()
         gc.collect()
     # Per-task memory telemetry, measured *after* the collect: a post-gc RSS
     # that ratchets up across a worker's sequential tasks indicates retention
