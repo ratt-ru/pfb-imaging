@@ -558,3 +558,49 @@ def pcg_dds(
     ds.to_zarr(ds_name[0], mode="a")
 
     return resid, int(ds.bandid)
+
+
+class PCG:
+    """Conjugate-gradient ForwardSolver: ``update ≈ hess^{-1} residual``.
+
+    Satisfies the ``ForwardSolver`` Protocol.  When the operator exposes a
+    ``cg`` method (the distributed per-band fast path of ``HessTreeRay``),
+    the solve is delegated to it with this solver's controls; otherwise a
+    generic cube-level CG runs over ``hess.dot``.
+
+    Args:
+        tol: CG convergence tolerance.
+        maxit: Maximum CG iterations.
+        minit: Minimum CG iterations.
+        verbosity: 0 silent, > 1 per-iteration reporting.
+        report_freq: Reporting cadence at verbosity > 1.
+    """
+
+    def __init__(
+        self,
+        tol: float = 1e-3,
+        maxit: int = 150,
+        minit: int = 1,
+        verbosity: int = 0,
+        report_freq: int = 10,
+    ):
+        self.tol = tol
+        self.maxit = maxit
+        self.minit = minit
+        self.verbosity = verbosity
+        self.report_freq = report_freq
+
+    def solve(self, hess, residual, x0=None):
+        """Solve ``hess @ update = residual`` for update."""
+        if hasattr(hess, "cg"):
+            return hess.cg(residual, x0=x0, tol=self.tol, maxit=self.maxit, minit=self.minit)
+        return pcg_numba(
+            hess.dot,
+            residual,
+            x0=x0,
+            tol=self.tol,
+            maxit=self.maxit,
+            minit=self.minit,
+            verbosity=self.verbosity,
+            report_freq=self.report_freq,
+        )
