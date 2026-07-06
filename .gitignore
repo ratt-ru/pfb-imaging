@@ -122,3 +122,4 @@ docs-deploy.sh
 src/pfb_imaging/wavelets/convolutions_jax.py
 src/pfb_imaging/deconv/fskclean.py
 src/pfb_imaging/cabs/pfb.yml
+tmp
