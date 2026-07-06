@@ -388,3 +388,40 @@ def weight_data_np(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2,
                 vis[row, chan] = vis_func(gp[chan], gq[chan], weight[row, chan], data[row, chan])
 
     return (vis, wgt)
+
+
+def reduce_counts(counts, grouping):
+    """Reduce per-output-image uv-counts grids according to a grouping strategy.
+
+    Pass 1 produces one counts grid per output image, keyed ``(bandid, timeid)``.
+    This combines them into the *applied* counts used to build imaging weights.
+
+    Args:
+        counts: Mapping ``(bandid, timeid) -> (ncorr, nx, ny)`` counts grid.
+        grouping: One of ``"per-band-time"``, ``"mfs"``, ``"per-band"``,
+            ``"per-time"``.
+            - ``per-band-time``: each output image keeps its own counts.
+            - ``mfs`` / ``per-time``: sum over bands within each time (uniform
+              weighting across the band axis; ``mfs`` feeds a single wideband
+              image, ``per-time`` pools bands per time slot).
+            - ``per-band``: sum over time within each band.
+
+    Returns:
+        Mapping with the same keys as ``counts``. Grids may be shared array
+        objects across keys that collapse together; callers must treat the
+        returned grids as read-only.
+
+    Raises:
+        ValueError: If ``grouping`` is not recognised.
+    """
+    valid = ("per-band-time", "mfs", "per-band", "per-time")
+    if grouping == "per-band-time":
+        return dict(counts)
+    if grouping in ("mfs", "per-time", "per-band"):
+        fix_band = grouping == "per-band"
+        sums = {}
+        for (b, t), grid in counts.items():
+            key = b if fix_band else t
+            sums[key] = grid.copy() if key not in sums else sums[key] + grid
+        return {(b, t): sums[b if fix_band else t] for (b, t) in counts}
+    raise ValueError(f"Unknown weight grouping {grouping!r}; expected one of {valid}")

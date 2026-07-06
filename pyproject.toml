@@ -50,7 +50,7 @@ full = [
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
-    "xarray-ms>=0.5.4 ; python_version >= '3.11'",
+    "xarray-ms>=0.5.5 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]

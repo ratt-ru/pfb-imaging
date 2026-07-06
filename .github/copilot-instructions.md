@@ -47,7 +47,9 @@ def mycommand(...):
     return core_impl(...)
 ```
 
-All other modules (core, operators, wavelets, etc.) should use top-level imports. The only other exception is `ray`, which is imported lazily in `operators/psi.py` because it is an optional runtime.
+All other modules (core, operators, wavelets, etc.) should use top-level imports. Exceptions:
+- `ray`, imported lazily in `operators/psi.py` because it is an optional runtime.
+- **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` pull in python-casacore. As of **arcae 0.5.2** this coexists with the `arcae` MSv4 reader in one process, but the imager/gridding/FITS path still keeps these out of module scope (deferred into the functions that need them — see `construct_mappings` in `utils/misc.py`, `interp_beam` in `utils/beam.py`) to keep the path lightweight. Prefer `scipy.constants` for `lightspeed` and `utils/misc.to_unix_time` (not `casacore.quanta`).
 
 ### 3. Mathematical Operators
 
@@ -58,6 +60,19 @@ class MyOperator:
     def dot(self, x, out): ...   # forward
     def hdot(self, x, out): ...  # adjoint
 ```
+
+### 4. MSv4 DataTree imager (`pfb imager`)
+
+`pfb imager` is the MSv4 front-end: a two-pass pipeline (Ray-distributed) that reads MSv4 data via
+`arcae` and writes a single unified `xarray.DataTree` (`<out>_<P>.dt`, one node per `(band,time)`
+output image, `part####` children per data partition) plus a `.scratch` cache — replacing the
+legacy `init`+`grid` `.xds`/`.dds` split for this path (`init`/`grid` remain live). Use the native
+DataTree API (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`); do not add
+`xds_from_url`/`xds_from_list`-style wrappers for the `.dt`. Detail: `.claude/rules/architecture.md` §8.
+
+**arcae + python-casacore (arcae 0.5.2+):** arcae and python-casacore now coexist in one process.
+The imaging path is still kept casacore-free *by choice* (lightweight install / fast startup), so
+prefer deferring `africanus`/`daskms`/`casacore` imports into functions rather than module scope.
 
 ## Container Workflow
 
@@ -86,7 +101,7 @@ uv run pre-commit install
 
 **Pre-commit hooks** run ruff formatting/linting and regenerate cab definitions.
 
-**Run tests**:
+**Run tests** — the whole suite runs as one command (arcae and python-casacore coexist as of arcae 0.5.2):
 ```bash
 uv run pytest -v tests/
 ```
