@@ -48,11 +48,11 @@ goimage:
       dtype: str
       info:
         Sigma column (preferred over weight-column if provided)
-    fields:
+    field-names:
       dtype: List[int]
       info:
         List of fields to image
-    scans:
+    scan-names:
       dtype: List[int]
       info:
         List of scans to image
@@ -179,9 +179,8 @@ goimage:
         bda-decorr: =recipe.bda-decorr
         freq-range: =IFSET(recipe.freq-range)
         overwrite: =recipe.overwrite
-        check-ants: false
-        fields: =IFSET(recipe.fields)
-        scans: =IFSET(recipe.scans)
+        field-names: =IFSET(recipe.field-names)
+        scan-names: =IFSET(recipe.scan-names)
         product: =recipe.product
         wgt-mode: =recipe.wgt-mode
         super-resolution-factor: =IFSET(recipe.super-resolution-factor)
@@ -191,5 +190,3 @@ goimage:
         ny: =IFSET(recipe.ny)
         robustness: =recipe.robustness
         psf-oversize: =recipe.psf-oversize
-        l2-reweight-dof: =IFSET(recipe.l2-reweight-dof)
-        transfer-model-from: =IFSET(recipe.transfer-model-from)

@@ -128,9 +128,9 @@ godirty:
     fits-output-folder:
       default: '{recipe.base-dir}/fits'
       aliases: ['*.fits-output-folder']
-    log-directory:
-      default: '{recipe.base-dir}/logs'
-      aliases: ['*.log-directory']
+    # log-directory:
+    #   default: '{recipe.base-dir}/logs'
+    #   aliases: ['*.log-directory']
     transfer-model-from:
       dtype: str
       info:
