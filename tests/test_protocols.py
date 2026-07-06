@@ -51,3 +51,38 @@ def test_structural_regulariser_conformance():
             np.copyto(vout, v)
 
     assert isinstance(Toy(), Regulariser)
+
+
+def test_identity_psi_roundtrip():
+    from pfb_imaging.operators.psi import IdentityPsi
+
+    nband, nx, ny = 2, 8, 6
+    psi = IdentityPsi(nband, nx, ny)
+    assert isinstance(psi, PsiOperator)
+    assert (psi.nbasis, psi.nymax, psi.nxmax) == (1, nx, ny)
+
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((nband, nx, ny))
+    alpha = np.zeros((nband, 1, nx, ny))
+    xo = np.zeros_like(x)
+    psi.dot(x, alpha)
+    psi.hdot(alpha, xo)
+    np.testing.assert_array_equal(xo, x)
+
+
+def test_positivity_prox_modes():
+    from pfb_imaging.prox.positivity import positivity, positivity_band, positivity_prox
+
+    assert positivity_prox(0) is None
+    assert positivity_prox(1) is positivity
+    assert positivity_prox(2) is positivity_band
+
+    x = np.array([[[1.0, -1.0], [2.0, -0.5]]])  # (1, 2, 2)
+    positivity(x)
+    np.testing.assert_array_equal(x, [[[1.0, 0.0], [2.0, 0.0]]])
+
+    # band mode: zero the pixel across all bands if non-positive in any band
+    y = np.stack([np.full((2, 2), 1.0), np.array([[1.0, -1.0], [1.0, 1.0]])])
+    positivity_band(y)
+    assert y[0, 0, 1] == 0.0 and y[1, 0, 1] == 0.0
+    assert y[0, 0, 0] == 1.0 and y[1, 1, 1] == 1.0

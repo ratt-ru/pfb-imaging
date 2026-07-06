@@ -5,6 +5,8 @@ import numpy as np
 from numba import njit, prange
 
 from pfb_imaging.operators import PsiOperatorProtocol
+from pfb_imaging.prox.positivity import positivity as _nb_positivity  # noqa: F401
+from pfb_imaging.prox.positivity import positivity_band as _nb_positivity_band  # noqa: F401
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
 from pfb_imaging.utils import logging as pfb_logging
 
@@ -32,29 +34,6 @@ def _nb_primal_step(x, xp, xout, tau):
     xo_f = xout.ravel()
     for i in prange(n):
         x_f[i] = xp_f[i] - tau * xo_f[i]
-
-
-@njit(**_FAST_JIT)
-def _nb_positivity(x):
-    """Clamp negative values to zero (positivity == 1)."""
-    n = x.size
-    x_f = x.ravel()
-    for i in prange(n):
-        if x_f[i] < 0.0:
-            x_f[i] = 0.0
-
-
-@njit(**_FAST_JIT)
-def _nb_positivity_band(x):
-    """Zero all bands where any band is non-positive (positivity == 2)."""
-    nband, nx, ny = x.shape
-    for i in prange(nx):
-        for j in range(ny):
-            for b in range(nband):
-                if x[b, i, j] <= 0.0:
-                    for bb in range(nband):
-                        x[bb, i, j] = 0.0
-                    break
 
 
 @njit(**_FAST_JIT)

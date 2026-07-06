@@ -818,3 +818,26 @@ class PsiNocopytRay:
         results = ray.get(refs)
         for b, result in enumerate(results):
             xo[b] = result
+
+
+class IdentityPsi:
+    """Trivial PsiOperator for image-domain regularisers (l1/ISTA, positivity).
+
+    Coefficient buffers have shape ``(nband, 1, nx, ny)``: the trailing
+    ``(nymax, nxmax)`` axes hold ``(nx, ny)`` directly (names follow the
+    existing buffer convention).
+    """
+
+    def __init__(self, nband, nx, ny):
+        self.nband = nband
+        self.nx = nx
+        self.ny = ny
+        self.nbasis = 1
+        self.nymax = nx
+        self.nxmax = ny
+
+    def dot(self, x, alphao):
+        alphao[:, 0, :, :] = x
+
+    def hdot(self, alpha, xo):
+        xo[...] = alpha[:, 0, :, :]
