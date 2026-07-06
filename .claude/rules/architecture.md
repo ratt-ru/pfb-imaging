@@ -83,9 +83,11 @@ path. Design/plan: `docs/superpowers/specs/2026-06-04-imager-datatree-design.md`
 1. **Pass 1** — `utils/stokes2vis_msv4.stokes_vis`: reads raw MSv4 finely (per scan /
    `integrations_per_image`), converts to Stokes, averages, and writes fine pieces plus a
    per-piece uv `COUNTS` grid into a `.scratch` DataTree.
-2. **Reduction** — `utils/weighting.reduce_counts`: combines `COUNTS` by `weight_grouping`
-   (`per-band-time` default, `mfs`, `per-band`, `per-time`). Natural weighting is `robustness`
-   `None` or `> 2` (there is intentionally no `natural` grouping).
+2. **Reduction** — the driver streams per-piece `COUNTS` directly into one grid per applied
+   `weight_grouping` group (`per-band-time` default, `mfs`, `per-band`, `per-time`), holding
+   `ngroups` grids rather than `nband*ntime` (`counts_key` in `core/imager.imager`;
+   `utils/weighting.reduce_counts` documents the grouping semantics). Natural weighting is
+   `robustness` `None` or `> 2` (no `natural` grouping; counts are skipped entirely).
 3. **Pass 2** — `core/imager._grid_image` (one Ray task per output image): groups fine pieces
    into partitions, concatenates scans along `row`, grids each partition with
    `operators/gridder.grid_partition`, sums the image-space products over partitions into the

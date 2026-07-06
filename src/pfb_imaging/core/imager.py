@@ -1,4 +1,6 @@
 import gc
+import os
+import resource
 import time
 import warnings
 from pathlib import Path
@@ -28,7 +30,7 @@ from pfb_imaging.utils.fits import rdt2fits
 from pfb_imaging.utils.misc import fitcleanbeam, set_image_size
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
-from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts, reduce_counts
+from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
 
 warnings.filterwarnings("ignore", category=IrregularGridWarning)
 warnings.filterwarnings("ignore", category=MissingMetadataWarning)
@@ -196,7 +198,13 @@ def _grid_image(
     del groups, part
     gc.collect()
 
-    return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum}
+    # post-gc memory telemetry (see safe_stokes_vis for interpretation)
+    mem = {
+        "pid": os.getpid(),
+        "rss_gb": psutil.Process().memory_info().rss / 2**30,
+        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
+    }
+    return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum, "mem": mem}
 
 
 def imager(
@@ -558,13 +566,21 @@ def imager(
 
         # Process the completed task
         for task in ready:
-            result = ray.get(task)
+            result, mem = ray.get(task)
             if result is not None:
                 bandids_out.append(result[0])
                 timeids_out.append(result[1])
             ncomplete += 1
             if progressbar:
-                print(f"Completed: {ncomplete} / {nds}", end="\n", flush=True)
+                # post-gc rss ratcheting up for a pid across tasks indicates
+                # retention below Python (C-level caches/arenas); peak is the
+                # worker's lifetime high-water mark
+                print(
+                    f"Completed: {ncomplete} / {nds} "
+                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    end="\n",
+                    flush=True,
+                )
 
     ntime = len(set(timeids_out))
     nband_out = len(set(bandids_out))
@@ -577,10 +593,38 @@ def imager(
     # racing on the shared root .zmetadata; see stokes_vis)
     zarr.consolidate_metadata(scratch_store.url)
 
-    # ---- between passes: accumulate per-(band,time) counts and reduce ----
+    # ---- between passes: stream per-piece counts into the applied grouping ----
+    # effective grouping first: time-resolved groupings contradict a
+    # time-collapsed image, so concat_row maps each to its band-collapsed
+    # analogue (per-band-time -> per-band, per-time -> mfs)
+    if concat_row:
+        grouping_eff = {"per-band-time": "per-band", "per-time": "mfs"}.get(weight_grouping, weight_grouping)
+        if grouping_eff != weight_grouping and robustness is not None:
+            log.warning(
+                f"concat_row collapses the time axis; using weight_grouping "
+                f"'{grouping_eff}' instead of '{weight_grouping}'"
+            )
+    else:
+        grouping_eff = weight_grouping
+
+    def counts_key(bandid, timeid):
+        """Applied-weighting group of an output image (concat_row collapses time)."""
+        tid = 0 if concat_row else timeid
+        if grouping_eff == "per-band-time":
+            return (bandid, tid)
+        if grouping_eff == "per-band":
+            return (bandid,)
+        if grouping_eff == "per-time":
+            return (tid,)
+        return ()  # mfs
+
     scratch_dt = xr.open_datatree(scratch_store.url, engine="zarr", chunks=None)
-    # per-scratch-node summary: (bandid, timeid, ra, dec, time_out, counts)
+    # per-scratch-node summary: (bandid, timeid, ra, dec, time_out)
     node_info = {}
+    # one counts grid per applied-weighting group -- accumulating at the
+    # grouping granularity (rather than per (band,time) node) bounds driver
+    # memory at ngroups grids instead of nband*ntime
+    group_counts = {}
     ncorr = None
     for name in scratch_dt.children:
         if not name.startswith("band"):
@@ -589,43 +633,36 @@ def imager(
         if not pieces:
             continue
         ncorr = pieces[0].corr.size
-        acc = None
-        for ds in pieces:
-            c = ds.COUNTS.values
-            acc = c.copy() if acc is None else acc + c
+        bandid = int(pieces[0].attrs["bandid"])
+        timeid = int(pieces[0].attrs["timeid"])
+        # natural weighting (robustness None) never touches counts; skip the reads
+        if robustness is not None:
+            key = counts_key(bandid, timeid)
+            for ds in pieces:
+                c = ds.COUNTS.values
+                if key in group_counts:
+                    group_counts[key] += c
+                else:
+                    group_counts[key] = c.copy()
         node_info[name] = {
-            "bandid": int(pieces[0].attrs["bandid"]),
-            "timeid": int(pieces[0].attrs["timeid"]),
+            "bandid": bandid,
+            "timeid": timeid,
             "ra": float(pieces[0].attrs["ra"]),
             "dec": float(pieces[0].attrs["dec"]),
             "time_out": float(np.mean([ds.attrs["time_out"] for ds in pieces])),
-            "counts": acc,
         }
     if not node_info:
         log.error_and_raise("Pass 1 produced no output images (all data flagged?)", RuntimeError)
 
     # build the pass-2 work list: (out_name, src_names, meta)
-    counts_map = {}
     work = []
     if concat_row:
-        # time-resolved groupings contradict a time-collapsed image; map each to
-        # its band-collapsed analogue (per-band-time -> per-band, per-time -> mfs)
-        grouping_eff = {"per-band-time": "per-band", "per-time": "mfs"}.get(weight_grouping, weight_grouping)
-        if grouping_eff != weight_grouping and robustness is not None:
-            log.warning(
-                f"concat_row collapses the time axis; using weight_grouping "
-                f"'{grouping_eff}' instead of '{weight_grouping}'"
-            )
         by_band = {}
         for name, info in node_info.items():
             by_band.setdefault(info["bandid"], []).append((name, info))
         for bandid, items in sorted(by_band.items()):
             src_names = [name for name, _ in items]
             infos = [info for _, info in items]
-            acc = None
-            for info in infos:
-                acc = info["counts"].copy() if acc is None else acc + info["counts"]
-            counts_map[(bandid, 0)] = acc  # time-collapsed: single timeid 0 per band
             out_name = f"band{bandid:04d}_time0000"
             # assumes one pointing per band: ra/dec are taken from the first node
             # and time_out is the (unweighted) mean of the collapsed nodes' times.
@@ -646,9 +683,7 @@ def imager(
                 )
             )
     else:
-        grouping_eff = weight_grouping
         for name, info in node_info.items():
-            counts_map[(info["bandid"], info["timeid"])] = info["counts"]
             work.append(
                 (
                     name,
@@ -658,8 +693,7 @@ def imager(
             )
 
     ntime = len({meta["timeid"] for _, _, meta in work})
-    log.info(f"Reducing uv counts with grouping '{grouping_eff}'")
-    reduced = reduce_counts(counts_map, grouping_eff)
+    log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")
 
     # ---- initialise the .dt store root ----
     dt_store = DaskMSStore(f"{basename}.dt")
@@ -693,7 +727,9 @@ def imager(
             dt_store.url,
             src_names,
             out_name,
-            reduced[(meta["bandid"], meta["timeid"])],
+            # None under natural weighting (robustness None); grid_partition
+            # ignores counts in that case
+            group_counts.get(counts_key(meta["bandid"], meta["timeid"])),
             nx,
             ny,
             nx_psf,
@@ -729,7 +765,13 @@ def imager(
             wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:
-                print(f"Gridded: {ncomplete} / {nds}", end="\n", flush=True)
+                mem = res["mem"]
+                print(
+                    f"Gridded: {ncomplete} / {nds} "
+                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    end="\n",
+                    flush=True,
+                )
 
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)

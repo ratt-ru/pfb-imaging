@@ -1,8 +1,11 @@
 import gc
+import os
+import resource
 from datetime import datetime, timezone
 
 import numexpr as ne
 import numpy as np
+import psutil
 import ray
 import xarray as xr
 
@@ -25,9 +28,19 @@ def safe_stokes_vis(*args, **kwargs):
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
     try:
-        return stokes_vis(*args, **kwargs)
+        ret = stokes_vis(*args, **kwargs)
     finally:
         gc.collect()
+    # Per-task memory telemetry, measured *after* the collect: a post-gc RSS
+    # that ratchets up across a worker's sequential tasks indicates retention
+    # below Python (arcae/casacore caches, allocator arenas), which gc cannot
+    # touch. ru_maxrss is the process lifetime high-water mark (kB on Linux).
+    mem = {
+        "pid": os.getpid(),
+        "rss_gb": psutil.Process().memory_info().rss / 2**30,
+        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
+    }
+    return ret, mem
 
 
 def stokes_vis(
@@ -170,17 +183,6 @@ def stokes_vis(
     uvw = ds.UVW.values.reshape(nrow, 3)
     flag = ds.FLAG.values.reshape(nrow, nchan, ncorr)
 
-    # MS may contain auto-correlations
-    frow = ant1 == ant2
-
-    # combine flag and frow
-    flag = np.logical_or(flag, frow[:, None, None])
-
-    # we rely on this to check the number of output bands and
-    # to ensure we don't end up with fully flagged chunks
-    if flag.all():
-        return None
-
     if sigma_column is not None:
         weight = ne.evaluate("1.0/sigma**2", local_dict={"sigma": getattr(ds, sigma_column).values})
         weight = weight.reshape(nrow, nchan, ncorr)
@@ -207,6 +209,33 @@ def stokes_vis(
     grp = node_dt.ds.attrs["data_groups"][data_group]
     fns = node_dt[grp["field_and_source"].rsplit("/", 1)[-1]].ds
     radec = fns.FIELD_PHASE_CENTER_DIRECTION.sel(field_name=field_name).values
+
+    # CHANNEL_WIDTH will only be in data_vars if it's not regular, otherwise it's an attr of frequency coord
+    if "CHANNEL_WIDTH" in ds.data_vars:
+        chan_width = ds.CHANNEL_WIDTH.values
+    else:
+        cw = ds.frequency.attrs["channel_width"]["data"]
+        chan_width = np.full(freq.size, cw, dtype=np.float64)
+
+    # Everything this task needs is now extracted into plain numpy arrays;
+    # release the loaded input Dataset/DataTree so the raw c64/f32 inputs die
+    # as soon as their converted copies exist below, instead of staying pinned
+    # until task exit (the legacy dask-backed path never holds them at all).
+    # The collect is required: deserialised xarray objects sit in reference
+    # cycles that plain refcounting cannot free.
+    del node_dt, ds, fns, grp
+    gc.collect()
+
+    # MS may contain auto-correlations
+    frow = ant1 == ant2
+
+    # combine flag and frow
+    flag = np.logical_or(flag, frow[:, None, None])
+
+    # we rely on this to check the number of output bands and
+    # to ensure we don't end up with fully flagged chunks
+    if flag.all():
+        return None
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -262,13 +291,6 @@ def stokes_vis(
     # set corr coords (removing duplicates and sorting)
     corr = list("".join(dict.fromkeys(sorted(product))))
     ncorr = len(corr)
-
-    # CHANNEL_WIDTH will only be in data_vars if it's not regular, otherwise it's an attr of frequency coord
-    if "CHANNEL_WIDTH" in ds.data_vars:
-        chan_width = ds.CHANNEL_WIDTH.values
-    else:
-        cw = ds.frequency.attrs["channel_width"]["data"]
-        chan_width = np.full(ds.frequency.size, cw, dtype=np.float64)
 
     # simple average over channels
     if chan_average > 1:
