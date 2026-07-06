@@ -106,6 +106,27 @@ vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`) and per-partition `PSF
 `xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (those remain only for the legacy
 `.dds` consumers), and do not add one-level-deep shims around the native API.
 
+**Memory discipline (Ray + MSv4) — battle-tested, do not regress.** Ray workers are long-lived;
+anything a task leaves behind compounds across the run. Full story, measured numbers and the
+local repro harness: `docs/msv4-memory-patterns.md`.
+* Never blanket-`.load()` an MSv4 node — it reads *every* correlated-data column
+  (`VISIBILITY`, `CORRECTED_DATA`, `MODEL_DATA`, …). Load only the needed variables, extract
+  to plain numpy, then release the Dataset *before* heavy processing (`stokes_vis` is the
+  template).
+* `gc.collect()` in a `try/finally` at every Ray-task boundary: deserialised xarray objects
+  sit in reference cycles that refcounting cannot free.
+* Evict xarray-ms's process-level Multiton table cache between tasks
+  (`stokes2vis_msv4._release_ms_caches`): its 300 s *inactivity* TTL + per-partition cache
+  keys mean a busy worker otherwise retains ~a task's read footprint per task, below Python.
+* Pass-1/2 tasks return post-gc `{pid, rss_gb, peak_gb}`, printed in the progress lines.
+  Read this before theorising about memory: ratcheting post-gc rss per pid = below-Python
+  retention; flat rss with high peak = per-task transients.
+
+**Time epochs.** The MSv4 `time` coordinate and the `.dt`'s `time_out` attrs are **unix
+seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. `utils/fits.set_wcs` takes
+`time_is_unix=` — applying the wrong convention shifts FITS `DATE-OBS` by ~111 years (ERFA
+"dubious year" warnings are the symptom).
+
 **Deconvolution operators** (per output image; the embarrassingly-parallel `(band,time)` axis is
 distributed by Ray, the sum over a band's partitions is not):
 * `operators/hessian.HessianTree` — PSF-convolution Hessian summed over a band's partitions,

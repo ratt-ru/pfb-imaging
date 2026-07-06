@@ -37,6 +37,14 @@ preference, not an isolation requirement.
 Always run linting after adding or modifying any code:
 `uv run ruff format . && uv run ruff check . --fix`
 
+### 3.1 Cab Sync Before Committing CLI Changes
+
+The pre-commit `generate-cabs` hook needs `hip-cargo` on PATH and may fail in
+environments where it isn't. Regenerate manually and confirm a clean diff instead:
+`uv run hip-cargo generate-cabs --module 'src/pfb_imaging/cli/*.py' --output-dir src/pfb_imaging/cabs`
+(a stale cab fails CI via `tests/test_roundtrip.py`; see python-standards §2.1 for the
+help-text formatting constraints that test imposes).
+
 ## 4. CI Workflow and `[skip checks]`
 
 The CI pipeline uses a custom `[skip checks]` tag (not GitHub's `[skip ci]`).

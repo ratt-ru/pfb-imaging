@@ -16,6 +16,19 @@ Follow these exact patterns for Typer annotations:
 * **Optional with default:** `Annotated[Type, typer.Option(help="...")] = default`.
 * **Optional None:** `Annotated[Type | None, typer.Option(help="...")] = None`.
 
+### 2.1 CLI Help Text Must Round-Trip
+
+`tests/test_roundtrip.py` regenerates every CLI module from its cab and compares
+line-by-line, so `help=` strings must match hip-cargo's canonical formatting exactly:
+* The generator rewraps help at `". "` sentence boundaries, one sentence per line. A
+  single sentence rendering longer than 120 chars makes ruff's E501 unfixable and the
+  whole regenerated file comes out unformatted (line-count mismatch) — split long help
+  into multiple short sentences.
+* Avoid mid-help abbreviations containing periods (`e.g.`) — they are false sentence
+  boundaries to the generator.
+* After editing any help text, run `uv run pytest tests/test_roundtrip.py` and
+  regenerate the cabs.
+
 ## 3. Lazy Imports for CLI Modules
 CLI modules must remain lightweight. Import heavy dependencies only inside the execution scope (within functions) rather than at the top of the file. This keeps CLI startup fast and allows lightweight installation for cab definitions only.
 
