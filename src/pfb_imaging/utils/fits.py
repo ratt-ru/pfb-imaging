@@ -62,6 +62,7 @@ def set_wcs(
     gausspar=None,
     gausspars=None,
     ms_time=None,
+    time_is_unix=False,
     header=True,
     casambm=True,
     ncorr=1,
@@ -74,6 +75,8 @@ def set_wcs(
     unit - Jy/beam or Jy/pixel
     gausspar - MFS beam parameters in degrees
     ms_time - measurement set time
+    time_is_unix - if True, ms_time is already in unix seconds (MSv4/.dt
+        convention); otherwise it is MSv2 MJD seconds and is shifted to unix
     header - if True, return a header, otherwise return a WCS object
     casambm - if True, add the CASAMBM keyword to the header
     """
@@ -130,8 +133,8 @@ def set_wcs(
         header["ORIGIN"] = f"pfb-imaging: v{pfb_version}"
         header["SPECSYS"] = "TOPOCENT"
         if ms_time is not None:
-            # ms_time is in MJD seconds; convert to unix time
-            unix_time = to_unix_time(ms_time)
+            # MSv2 (.dds) carries MJD seconds; MSv4 (.dt) already carries unix
+            unix_time = ms_time if time_is_unix else to_unix_time(ms_time)
             utc_iso = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             header["UTC_TIME"] = utc_iso
             t = Time(utc_iso)
@@ -470,7 +473,16 @@ def dt2fits(
         if do_mfs:
             freq_mfs = np.sum(freqs[:, None] * wsums) / wsum.sum()
             hdr = set_wcs(
-                cell_deg, cell_deg, nx, ny, radec, freq_mfs, unit=unit, ms_time=time_out, gausspar=psfpars_mfs_timeid
+                cell_deg,
+                cell_deg,
+                nx,
+                ny,
+                radec,
+                freq_mfs,
+                unit=unit,
+                ms_time=time_out,
+                time_is_unix=True,
+                gausspar=psfpars_mfs_timeid,
             )
             hdr["WSUM"] = float(wsum[0])
             if norm_wsum:
@@ -502,6 +514,7 @@ def dt2fits(
                 freqs,
                 unit=unit,
                 ms_time=time_out,
+                time_is_unix=True,
                 gausspar=psfpars_mfs_timeid,
                 gausspars=psfparsf_timeid,
             )

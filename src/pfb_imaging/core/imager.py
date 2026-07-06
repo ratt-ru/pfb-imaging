@@ -73,29 +73,29 @@ def _grid_image(
     """
     resize_thread_pool(nthreads)
     dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None)
-    pieces = []
-    for sn in src_names:
-        pieces.extend(child.ds.load() for _, child in dt[sn].children.items())
-
     groups = {}
-    for ds in pieces:
-        key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
-        groups.setdefault(key, []).append(ds)
+    for sn in src_names:
+        for _, child in dt[sn].children.items():
+            # COUNTS is only consumed by the driver's weight reduction and is
+            # by far the largest piece variable; don't read it here
+            ds = child.ds.drop_vars("COUNTS", errors="ignore").load()
+            key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
+            groups.setdefault(key, []).append(ds)
 
     # filter/box the reduced counts once per image (grid_partition copies before use)
     if robustness is not None:
         counts = filter_extreme_counts(counts.copy(), level=filter_counts_level)
         counts = box_sum_counts(counts, npix_super)
 
-    corr = pieces[0].corr.values
+    corr = next(iter(groups.values()))[0].corr.values
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
     dirty_sum = np.zeros((ncorr, nx, ny))
     psf_sum = np.zeros((ncorr, nx_psf, ny_psf))
     wsum_sum = np.zeros(ncorr)
 
-    for pid, key in enumerate(sorted(groups)):
-        plist = groups[key]
+    for pid, key in enumerate(list(sorted(groups))):
+        plist = groups.pop(key)
         # concat scans of the same partition along row (beam/freq identical across scans)
         if len(plist) == 1:
             part = plist[0]
@@ -112,6 +112,9 @@ def _grid_image(
             part = plist[0].drop_vars(rowvars)
             for v in rowvars:
                 part[v] = cat[v]
+            del cat
+        # release the pre-concat originals before gridding (concat copied them)
+        del plist
 
         prod = grid_partition(
             part,
@@ -190,7 +193,7 @@ def _grid_image(
 
     # break the reference cycles holding the loaded pieces so a reused Ray
     # worker doesn't accumulate them across tasks (see safe_stokes_vis)
-    del pieces, groups, part
+    del groups, part
     gc.collect()
 
     return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum}
@@ -381,6 +384,7 @@ def imager(
     all_freqs = []
     all_chan_widths = []
     max_blength = 0
+    selected = []  # cached (ims, node, freqs_node, times_node, chan0) for the dispatch loop
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name, partition_columns)
         if "file://" in ms_name:
@@ -407,7 +411,8 @@ def imager(
                 continue
             if (scan_names is not None) and (scan_name not in scan_names):
                 continue
-            all_freqs.append(ds.frequency.values)
+            freqs_node = ds.frequency.load().values
+            all_freqs.append(freqs_node)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
             # xarray-ms establishes a regular grid over irregular or missing data.
             # Nans are inserted in these cases, mostly because xarray interprets nans as missing data.
@@ -419,6 +424,13 @@ def imager(
             uvw = uvw[~uvw_mask]
             if uvw.size:
                 max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
+            # cache the selected node and its loaded coords so the dispatch loop
+            # below does not have to re-open and re-filter the datatree. chan0 is
+            # the offset of the freq-range selection in *full-node* channel
+            # indices: the dispatch loop applies isel to the unsliced node, so
+            # slices built on the trimmed axis must be shifted by it.
+            chan0 = int(np.searchsorted(node.ds.frequency.load().values, freqs_node[0]))
+            selected.append((ims, node, freqs_node, ds.time.load().values, chan0))
 
     # map the "DATA" sentinel to the data group's correlated_data variable
     if vis_col is not None:
@@ -468,95 +480,72 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_store.url, mode="a")
     created_parents = set()
-    for ims, ms_name in enumerate(ms):
-        dt_kwargs = get_engine(ms_name, partition_columns)
-        if "file://" in ms_name:
-            ms_name = ms_name.replace("file://", "")
-        dt = xr.open_datatree(
-            ms_name,
-            **dt_kwargs,
-        )
-        for node in dt.children.values():
-            if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
-                continue
+    for ims, node, freqs_node, times_node, chan0 in selected:
+        scan_name = np.unique(node.ds.scan_name.load().values).item()
+        nchan_node = freqs_node.size
+        ntimes_node = times_node.size
+        if integrations_per_image in (0, None, -1):
+            ipi_node = ntimes_node
+        else:
+            ipi_node = integrations_per_image
+        if channels_per_image in (0, None, -1):
+            cpi_node = nchan_node
+        else:
+            cpi_node = channels_per_image
+        for tlow in range(0, ntimes_node, ipi_node):
+            thigh = min(tlow + ipi_node, ntimes_node)
+            t_index = slice(tlow, thigh)
+            key = (scan_name, tlow // ipi_node)
+            if key not in scan_block_to_tid:
+                scan_block_to_tid[key] = next_tid
+                next_tid += 1
+            timeid = scan_block_to_tid[key]
+            for flow in range(0, nchan_node, cpi_node):
+                fhigh = min(flow + cpi_node, nchan_node)
+                # flow/fhigh index the freq-range-trimmed axis; isel below acts
+                # on the unsliced node, so shift by the selection offset chan0
+                nu_index = slice(chan0 + flow, chan0 + fhigh)
+                bandid = int(np.argmin(np.abs(freq_out - freqs_node[flow:fhigh].mean())))
 
-            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
-            if ds.frequency.size == 0:
-                continue
-            field_name = np.unique(ds.field_name.load().values).item()  # partitioned by FIELD_ID → single value
-            scan_name = np.unique(ds.scan_name.load().values).item()  # partitioned by SCAN_NUMBER → single value
-            spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
-            # skip if data not in selection
-            if (field_names is not None) and (field_name not in field_names):
-                continue
-            if (spw_names is not None) and (spw_name not in spw_names):
-                continue
-            if (scan_names is not None) and (scan_name not in scan_names):
-                continue
+                # slice out subset of node
+                subdt = node.isel(time=t_index, frequency=nu_index)
 
-            freqs_node = ds.frequency.load().values
-            times_node = ds.time.load().values
-            nchan_node = freqs_node.size
-            ntimes_node = times_node.size
-            if integrations_per_image in (0, None, -1):
-                ipi_node = ntimes_node
-            else:
-                ipi_node = integrations_per_image
-            if channels_per_image in (0, None, -1):
-                cpi_node = nchan_node
-            else:
-                cpi_node = channels_per_image
-            for tlow in range(0, ntimes_node, ipi_node):
-                thigh = min(tlow + ipi_node, ntimes_node)
-                t_index = slice(tlow, thigh)
-                key = (scan_name, tlow // ipi_node)
-                if key not in scan_block_to_tid:
-                    scan_block_to_tid[key] = next_tid
-                    next_tid += 1
-                timeid = scan_block_to_tid[key]
-                for flow in range(0, nchan_node, cpi_node):
-                    fhigh = min(flow + cpi_node, nchan_node)
-                    nu_index = slice(flow, fhigh)
-                    bandid = int(np.argmin(np.abs(freq_out - freqs_node[nu_index].mean())))
+                # ensure the shared parent group exists before any worker
+                # writes a leaf under it (single-threaded → no creation race)
+                parent = f"band{bandid:04d}_time{timeid:04d}"
+                if parent not in created_parents:
+                    scratch_root.require_group(parent)
+                    created_parents.add(parent)
 
-                    # slice out subset of node
-                    subdt = node.isel(time=t_index, frequency=nu_index)
-
-                    # ensure the shared parent group exists before any worker
-                    # writes a leaf under it (single-threaded → no creation race)
-                    parent = f"band{bandid:04d}_time{timeid:04d}"
-                    if parent not in created_parents:
-                        scratch_root.require_group(parent)
-                        created_parents.add(parent)
-
-                    fut = safe_stokes_vis.remote(
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        node_dt=subdt,
-                        scratch_store=scratch_store.url,
-                        bandid=bandid,
-                        timeid=timeid,
-                        msid=ims,
-                        freq_out=freq_out[bandid],
-                        precision=precision,
-                        sigma_column=sigma_column,
-                        weight_column=weight_column,
-                        product=product,
-                        chan_average=chan_average,
-                        bda_decorr=bda_decorr,
-                        max_field_of_view=max_field_of_view,
-                        beam_model=beam_model,
-                        wgt_mode=wgt_mode,
-                        max_blength=max_blength,
-                        max_freq=max_freq,
-                        nx_pad=nx_pad,
-                        ny_pad=ny_pad,
-                        cell_rad=cell_rad,
-                        baseline_group="all",
-                        data_group=data_group,
-                    )
-                    tasks.append(fut)
+                fut = safe_stokes_vis.remote(
+                    dc1=dc1,
+                    dc2=dc2,
+                    operator=operator,
+                    node_dt=subdt,
+                    scratch_store=scratch_store.url,
+                    bandid=bandid,
+                    timeid=timeid,
+                    msid=ims,
+                    freq_out=freq_out[bandid],
+                    precision=precision,
+                    sigma_column=sigma_column,
+                    weight_column=weight_column,
+                    product=product,
+                    chan_average=chan_average,
+                    bda_decorr=bda_decorr,
+                    max_field_of_view=max_field_of_view,
+                    beam_model=beam_model,
+                    wgt_mode=wgt_mode,
+                    max_blength=max_blength,
+                    max_freq=max_freq,
+                    nx_pad=nx_pad,
+                    ny_pad=ny_pad,
+                    cell_rad=cell_rad,
+                    baseline_group="all",
+                    data_group=data_group,
+                    nthreads=nthreads,
+                )
+                tasks.append(fut)
 
     nds = len(tasks)
     ncomplete = 0

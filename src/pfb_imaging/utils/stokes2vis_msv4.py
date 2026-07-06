@@ -13,7 +13,6 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.weighting import _compute_counts, weight_data
 
 
@@ -57,6 +56,7 @@ def stokes_vis(
     cell_rad=None,
     baseline_group="all",
     data_group="base",
+    nthreads=1,
 ):
     """
     MSv4 version of stokes2vis.
@@ -80,6 +80,7 @@ def stokes_vis(
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
         beam_model: model to use for beam correction. Can be "katbeam" or None.
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
+        nthreads: threads available to the task (parallelises the COUNTS gridding).
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
     # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
@@ -383,7 +384,7 @@ def stokes_vis(
         cell_rad,
         cell_rad,
         wgt_cf.dtype,
-        ngrid=1,
+        ngrid=nthreads,
         usign=1.0 if flip_u else -1.0,
         vsign=1.0 if flip_v else -1.0,
     )
@@ -404,8 +405,9 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    unix_time = to_unix_time(time_out)
-    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # the MSv4 time coordinate is already unix seconds (xarray-ms converts
+    # MSv2 MJD seconds); no epoch shift needed here
+    utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
         "pfb-imaging-version": pfb_version,
