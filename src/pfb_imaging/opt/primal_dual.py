@@ -1,10 +1,8 @@
-from abc import ABC, abstractmethod
 from time import time
 
 import numpy as np
 from numba import njit, prange
 
-from pfb_imaging.operators import PsiOperatorProtocol
 from pfb_imaging.prox.positivity import positivity as _nb_positivity  # noqa: F401
 from pfb_imaging.prox.positivity import positivity_band as _nb_positivity_band  # noqa: F401
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
@@ -275,165 +273,112 @@ def primal_dual_numba(
     return x, v
 
 
-class PrimalDual(ABC):
-    """Abstract base class for primal-dual splitting algorithms.
+class PrimalDual:
+    """Primal-dual solver for ``min_x f(x) + lam * g(Psi^T x)``.
 
-    The fixed algorithm loop lives in :meth:`solve`.  Subclasses override
-    problem-specific methods (:meth:`dual_step` and :meth:`prox_primal`).
-
-    Operators use the following convention (matching the existing functions):
-      - ``psi(x, v)``:    analysis operator, image → coefficients, fills ``v`` in-place
-      - ``psih(v, xout)``: synthesis operator, coefficients → image, fills ``xout`` in-place
+    Concrete class satisfying the ``BackwardSolver`` Protocol; the
+    regulariser arrives via ``setup``.  The dual update prefers the fused
+    ``reg.dual_update(vp, v, lam, sigma)`` fast path when the regulariser
+    provides one, falling back to the generic Moreau decomposition
+    ``v = vtilde - sigma * prox_{(lam/sigma) g}(vtilde/sigma)`` via
+    ``reg.prox``.  The dual variable is internal state, warm-started
+    across ``solve`` calls; ``reset()`` zeros it.
 
     Args:
-        psi: Linear operator implementing dot (analysis operator) and hdot (synthesis operator) methods.
-             The analysis operator ``psi.dot(x, v)`` fills ``v = Ψ†x`` in-place.
-             The synthesis operator ``psi.hdot(v, xout)`` fills ``xout = Ψv`` in-place.
-        hessnorm: Spectral norm of the data-fidelity Hessian.
-        nu: Spectral norm of ``psi`` (default 1.0).
-        gamma: Step-size safety factor (default 1.0).
-        sigma: Dual step size.  Computed from ``hessnorm``, ``gamma``, ``nu``
-            when ``None``.
-        tol: Convergence tolerance on relative primal change (default 1e-5).
-        maxit: Maximum number of iterations (default 1000).
-        report_freq: Log progress every this many iterations at verbosity > 1
-            (default 10).
-        verbosity: 0 = silent, 1 = convergence message, 2 = per-iter logging
-            (default 1).
+        tol: Convergence tolerance on relative primal change.
+        maxit: Maximum iterations.
+        report_freq: Log every this many iterations at verbosity > 1.
+        verbosity: 0 silent, 1 convergence message, 2 per-iter logging.
+        gamma: Step-size safety factor.
+        sigma: Dual step size; computed from hessnorm/gamma/nu when None.
+        on_converge: Optional ``cb(x, k, eps) -> bool`` fired when
+            ``eps < tol``; return False to continue iterating.
+        primal_prox: Optional in-place image-domain prox (e.g. positivity).
     """
 
     def __init__(
         self,
-        psi: PsiOperatorProtocol,
-        hessnorm: float,
-        nu=1.0,
-        gamma=1.0,
-        sigma=None,
-        tol=1e-5,
-        maxit=1000,
-        report_freq=10,
-        verbosity=1,
+        tol: float = 1e-5,
+        maxit: int = 1000,
+        report_freq: int = 10,
+        verbosity: int = 1,
+        gamma: float = 1.0,
+        sigma: float | None = None,
+        on_converge=None,
+        primal_prox=None,
     ):
-        if not isinstance(psi, PsiOperatorProtocol):
-            raise TypeError("psi must implement dot() and hdot()")
-        self.psi = psi
-        self.hessnorm = hessnorm
-        self.nu = nu
-        self.gamma = gamma
         self.tol = tol
         self.maxit = maxit
         self.report_freq = report_freq
         self.verbosity = verbosity
+        self.gamma = gamma
+        self._sigma_opt = sigma
+        self.on_converge = on_converge
+        self.primal_prox = primal_prox
         self._grad = None
+        self._reg = None
+        self._v = None
 
+    def setup(self, prox, hessnorm: float) -> None:
+        """Bind the regulariser, compute step sizes, allocate the dual."""
+        self._reg = prox
+        self.hessnorm = hessnorm
+        nu = prox.nu
+        sigma = self._sigma_opt
         if sigma is None:
-            sigma = hessnorm / (2.0 * gamma) / nu
+            sigma = hessnorm / (2.0 * self.gamma) / nu
         self.sigma = sigma
-        self.tau = 0.98 / (hessnorm / (2.0 * gamma) + sigma * nu**2)
+        self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu**2)
+        psi = prox.psi
+        self._v = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
 
-    def set_grad(self, grad):
-        """Set (or replace) the gradient of the smooth data-fidelity term.
-
-        Called before the first :meth:`solve` and between outer iterations
-        (e.g. in SARA when the Hessian is re-estimated).
-
-        Args:
-            grad: Callable ``grad(x) -> array`` returning the gradient.
-        """
+    def set_grad(self, grad) -> None:
+        """Set the gradient of the smooth data-fidelity term."""
         self._grad = grad
 
-    @abstractmethod
-    def dual_step(self, xp, v, vp):
-        """Dual update: analyse ``xp`` into ``v``, then update ``v`` in-place.
+    def reset(self) -> None:
+        """Drop the warm-started dual variable."""
+        if self._v is not None:
+            self._v[...] = 0.0
 
-        Should call ``self.psi(xp, v)`` first, then apply the proximal step
-        using ``vp`` (the previous dual iterate) to produce the new ``v``.
+    def _dual_step(self, xp, v, vp, lam):
+        """Analysis + dual proximal update; fused fast path when available."""
+        reg = self._reg
+        reg.psi.dot(xp, v)
+        if hasattr(reg, "dual_update"):
+            reg.dual_update(vp, v, lam, sigma=self.sigma)
+        else:
+            # generic Moreau: v holds Psi^T xp on entry
+            vtilde = vp + self.sigma * v
+            reg.prox(vtilde, v, lam, sigma=self.sigma)
+            np.subtract(vtilde, self.sigma * v, out=v)
 
-        Args:
-            xp: Previous primal iterate (read-only).
-            v: Dual variable array; overwritten with the new dual iterate.
-            vp: Previous dual iterate (read-only inside this method; will be
-                overwritten by :meth:`extrapolate_dual` immediately after).
-        """
-
-    @abstractmethod
-    def prox_primal(self, x):
-        """Apply the primal proximal operator in-place (e.g. positivity).
-
-        Args:
-            x: Primal variable; modified in-place.
-        """
-
-    # --- methods with default numba implementations ---
-
-    def extrapolate_dual(self, v, vp):
-        """Overwrite ``vp`` with ``2*v - vp`` (over-relaxation step)."""
-        _nb_extrapolate_dual(v, vp)
-
-    def primal_step(self, x, xp, xout, tau):
-        """Overwrite ``x`` with ``xp - tau * xout``."""
-        _nb_primal_step(x, xp, xout, tau)
-
-    def norm_diff(self, x, xp):
-        """Return relative norm of change: ``||x - xp|| / ||x||``."""
-        return _nb_norm_diff(x, xp)
-
-    def any_nonzero(self, x):
-        """Return ``True`` if any element of ``x`` is nonzero."""
-        return _nb_any_nonzero(x)
-
-    def on_converge(self, x, k):
-        """Hook called when ``eps < tol``.  Return ``True`` to stop.
-
-        Override in subclasses to implement reweighting or other outer-loop
-        logic.  The default always returns ``True`` (stop immediately).
-
-        Args:
-            x: Current primal iterate.
-            k: Current iteration index.
-
-        Returns:
-            ``True`` to terminate the solve loop, ``False`` to continue.
-        """
-        return True
-
-    def solve(self, x, v):
-        """Run the primal-dual loop.
-
-        Args:
-            x: Initial primal variable (modified in-place and returned).
-            v: Initial dual variable (modified in-place and returned).
-
-        Returns:
-            Tuple ``(x, v)`` of final primal and dual iterates.
-
-        Raises:
-            RuntimeError: If :meth:`set_grad` has not been called.
-        """
+    def solve(self, x, lam: float):
+        """Run the primal-dual loop; returns the final primal iterate."""
+        if self._reg is None:
+            raise RuntimeError("regulariser not bound; call setup() before solve()")
         if self._grad is None:
             raise RuntimeError("grad not set; call set_grad() before solve()")
 
         xp = x.copy()
+        v = self._v
         vp = v.copy()
         xout = np.zeros_like(x)
 
         eps = 1.0
         tii = time()
         for k in range(self.maxit):
-            self.dual_step(xp, v, vp)
-            self.extrapolate_dual(v, vp)
-            self.psi.hdot(vp, xout)
+            self._dual_step(xp, v, vp, lam)
+            _nb_extrapolate_dual(v, vp)
+            self._reg.psi.hdot(vp, xout)
             xout += self._grad(xp)
-            self.primal_step(x, xp, xout, self.tau)
-            self.prox_primal(x)
+            _nb_primal_step(x, xp, xout, self.tau)
+            if self.primal_prox is not None:
+                self.primal_prox(x)
 
-            if self.any_nonzero(x):
-                eps = self.norm_diff(x, xp)
-            else:
-                eps = 1.0
-
+            eps = _nb_norm_diff(x, xp) if _nb_any_nonzero(x) else 1.0
             if eps < self.tol:
-                if self.on_converge(x, k):
+                if self.on_converge is None or self.on_converge(x, k, eps):
                     break
 
             np.copyto(xp, x)
@@ -445,12 +390,9 @@ class PrimalDual(ABC):
         ttot = time() - tii
         if self.verbosity > 1:
             log.info(f"Total time: {ttot:.3f}s  ({ttot / max(k + 1, 1) * 1e3:.1f} ms/iter)")
-
         if k == self.maxit - 1:
             if self.verbosity:
                 log.info(f"Max iters reached. eps = {eps:.3e}")
-        else:
-            if self.verbosity:
-                log.info(f"Success, converged after {k} iterations")
-
-        return x, v
+        elif self.verbosity:
+            log.info(f"Success, converged after {k} iterations")
+        return x
