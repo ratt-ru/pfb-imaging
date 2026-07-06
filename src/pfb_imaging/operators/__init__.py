@@ -53,6 +53,46 @@ class Preconditioner(Protocol):
 
 
 @runtime_checkable
+class LinearOperator(Protocol):
+    """Hermitian image-space operator (Hessian family). Allocating style.
+
+    Methods:
+
+    - dot: apply the operator; returns a new array
+    - hdot: apply the adjoint (same as dot for Hermitian operators)
+    """
+
+    def dot(self, x): ...
+
+    def hdot(self, x): ...
+
+
+@runtime_checkable
+class PsiOperator(Protocol):
+    """Analysis/synthesis operator pair. In-place style.
+
+    Shape attributes are part of the contract; coefficient buffers have
+    shape ``(nband, nbasis, nymax, nxmax)`` and images ``(nband, nx, ny)``.
+
+    Methods:
+
+    - dot: analysis, image to coefficients, fills ``alphao`` in-place
+    - hdot: synthesis, coefficients to image, fills ``xo`` in-place
+    """
+
+    nband: int
+    nbasis: int
+    nymax: int
+    nxmax: int
+    nx: int
+    ny: int
+
+    def dot(self, x, alphao): ...
+
+    def hdot(self, alpha, xo): ...
+
+
+@runtime_checkable
 class PsiOperatorProtocol(Protocol):
     """
     The signal decomposition operator only needs to be able to apply the operator and its adjoint.
@@ -65,18 +105,3 @@ class PsiOperatorProtocol(Protocol):
     def dot(self, x, alphao): ...
 
     def hdot(self, alpha, xo): ...
-
-
-@runtime_checkable
-class ProxOperatorProtocol(Protocol):
-    """
-    The proximal operator needs to be able to apply the operator and its adjoint.
-    Methods:
-
-    - prox: applies the proximal operator to a vector
-    - hprox: applies the adjoint of the proximal operator to a vector
-    """
-
-    def prox(self, x, rho): ...
-
-    def hprox(self, x, rho): ...
