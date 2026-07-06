@@ -3,7 +3,7 @@
 import numpy as np
 
 from pfb_imaging.deconv.sara import SARABase
-from pfb_imaging.operators.psi import PsiOperatorProtocol
+from pfb_imaging.operators import PsiOperatorProtocol
 from pfb_imaging.opt.forward_backward import ForwardBackward
 from pfb_imaging.opt.primal_dual import _nb_positivity, _nb_positivity_band
 from pfb_imaging.prox.prox_21m import prox_21m_numba

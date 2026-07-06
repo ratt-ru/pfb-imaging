@@ -2,7 +2,14 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListStr, parse_list_str, stimela_cab, stimela_output
+from hip_cargo import (
+    ListStr,
+    StimelaMeta,
+    parse_list_str,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 
@@ -25,6 +32,35 @@ Directory = NewType("Directory", Path)
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
     must_exist=False,
 )
+@stimela_output(
+    dtype="Directory",
+    name="log-directory",
+    info="Directory to write logs and performance reports to.",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Set to output-filename if not provided. "
+    "The same naming conventions apply.",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
+    name="numba-cache-dir",
+    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    implicit="/tmp/numba",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+)
 def deconv(
     output_filename: Annotated[
         str,
@@ -43,29 +79,13 @@ def deconv(
             rich_help_panel="Naming",
         ),
     ] = "main",
-    log_directory: Annotated[
-        str | None,
-        typer.Option(
-            help="Directory to write logs and performance reports to.",
-            rich_help_panel="Naming",
-        ),
-    ] = None,
     product: Annotated[
         str,
         typer.Option(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
-            rich_help_panel="Naming",
+            rich_help_panel="Data Selection",
         ),
     ] = "I",
-    fits_output_folder: Annotated[
-        str | None,
-        typer.Option(
-            help="Optional path to write fits files to. "
-            "Set to output-filename if not provided. "
-            "The same naming conventions apply.",
-            rich_help_panel="Naming",
-        ),
-    ] = None,
     fits_mfs: Annotated[
         bool,
         typer.Option(
@@ -229,7 +249,7 @@ def deconv(
         int | None,
         typer.Option(
             help="Total number of threads to use. Defaults to half the total number available.",
-            rich_help_panel="WGridder",
+            rich_help_panel="Performance",
         ),
     ] = None,
     epsilon: Annotated[
@@ -372,19 +392,55 @@ def deconv(
             rich_help_panel="ConjugateGradient",
         ),
     ] = 10,
+    log_directory: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Optional path to write fits files to. "
+            "Set to output-filename if not provided. "
+            "The same naming conventions apply.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
             help="Execution backend.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = "auto",
     always_pull_images: Annotated[
         bool,
         typer.Option(
             help="Always pull container images, even if cached locally.",
         ),
-        {"stimela": {"skip": True}},
+        StimelaMeta(
+            skip=True,
+        ),
     ] = False,
 ):
     """
@@ -392,6 +448,62 @@ def deconv(
     """
     if backend == "native" or backend == "auto":
         try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
+
+            preflight_remote_must_exist(
+                deconv,
+                dict(
+                    output_filename=output_filename,
+                    suffix=suffix,
+                    product=product,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    minor_cycle=minor_cycle,
+                    opt_backend=opt_backend,
+                    bases=bases,
+                    nlevels=nlevels,
+                    l1_reweight_from=l1_reweight_from,
+                    alpha=alpha,
+                    hess_norm=hess_norm,
+                    hess_approx=hess_approx,
+                    rmsfactor=rmsfactor,
+                    eta=eta,
+                    gamma=gamma,
+                    nbasisf=nbasisf,
+                    positivity=positivity,
+                    niter=niter,
+                    tol=tol,
+                    diverge_count=diverge_count,
+                    rms_outside_model=rms_outside_model,
+                    init_factor=init_factor,
+                    verbosity=verbosity,
+                    nthreads=nthreads,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    pd_tol=pd_tol,
+                    pd_maxit=pd_maxit,
+                    pd_verbose=pd_verbose,
+                    pd_report_freq=pd_report_freq,
+                    fb_tol=fb_tol,
+                    fb_maxit=fb_maxit,
+                    fb_verbose=fb_verbose,
+                    fb_report_freq=fb_report_freq,
+                    acceleration=acceleration,
+                    pm_tol=pm_tol,
+                    pm_maxit=pm_maxit,
+                    pm_verbose=pm_verbose,
+                    pm_report_freq=pm_report_freq,
+                    cg_tol=cg_tol,
+                    cg_maxit=cg_maxit,
+                    cg_verbose=cg_verbose,
+                    cg_report_freq=cg_report_freq,
+                    log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
+                ),
+            )
+
             # Lazy import the core implementation
             from pfb_imaging.core.deconv import deconv as deconv_core  # noqa: E402
 
@@ -399,9 +511,7 @@ def deconv(
             deconv_core(
                 output_filename,
                 suffix=suffix,
-                log_directory=log_directory,
                 product=product,
-                fits_output_folder=fits_output_folder,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
                 minor_cycle=minor_cycle,
@@ -444,23 +554,28 @@ def deconv(
                 cg_maxit=cg_maxit,
                 cg_verbose=cg_verbose,
                 cg_report_freq=cg_report_freq,
+                log_directory=log_directory,
+                fits_output_folder=fits_output_folder,
             )
             return
         except ImportError:
             if backend == "native":
                 raise
 
-    # Fall back to container execution
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
     from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("pfb-imaging")
+    if image is None:
+        raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
         deconv,
         dict(
             output_filename=output_filename,
             suffix=suffix,
-            log_directory=log_directory,
             product=product,
-            fits_output_folder=fits_output_folder,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
             minor_cycle=minor_cycle,
@@ -503,7 +618,10 @@ def deconv(
             cg_maxit=cg_maxit,
             cg_verbose=cg_verbose,
             cg_report_freq=cg_report_freq,
+            log_directory=log_directory,
+            fits_output_folder=fits_output_folder,
         ),
+        image=image,
         backend=backend,
         always_pull_images=always_pull_images,
     )

@@ -17,16 +17,33 @@ jobs:
     name: Code Quality
     runs-on: ubuntu-latest
     steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
       - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v7
 
-      - name: Set up Python
-        run: uv python install 3.10
-
       - name: Cache uv dependencies
+        if: env.SKIP_CHECKS != 'true'
         uses: actions/cache@v5
         with:
           path: ~/.cache/uv
@@ -35,12 +52,15 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        if: env.SKIP_CHECKS != 'true'
+        run: uv sync --group dev
 
       - name: Check code formatting
+        if: env.SKIP_CHECKS != 'true'
         run: uv run ruff format --check .
 
       - name: Lint code
+        if: env.SKIP_CHECKS != 'true'
         run: uv run ruff check .
 
   test:
@@ -52,44 +72,65 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
       - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Set up Python ${{ matrix.python-version }}
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           # This ensures the venv is created and ready before the test step
           activate-environment: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Restore repo times
+        if: env.SKIP_CHECKS != 'true'
         uses: chetan/git-restore-mtime-action@v2
 
       - name: Create Key and Numba Cache Directory
+        if: env.SKIP_CHECKS != 'true'
         id: numba-key
         run: |
           mkdir -p ${{ env.NUMBA_CACHE_DIR }}
           echo "timestamp=$(/bin/date -u '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
 
       - name: Cache Numba Kernels
+        if: env.SKIP_CHECKS != 'true'
         uses: actions/cache@v5
         with:
           key: numba-cache-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
           restore-keys: numba-cache-${{ matrix.python-version }}-
           path: ${{ env.NUMBA_CACHE_DIR }}
 
-      - name: List the measures directory
-        run: curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/ > measures_dir.txt
+      - name: Fingerprint the measures data
+        if: env.SKIP_CHECKS != 'true'
+        run: curl -sSI https://www.astron.nl/iers/WSRT_Measures.ztar | grep -iE 'last-modified|etag' > measures_dir.txt
 
       - name: Load cached CASA Measures Data
+        if: env.SKIP_CHECKS != 'true'
         id: load-cached-casa-measures
         uses: actions/cache@v5
         with:
@@ -99,12 +140,12 @@ jobs:
             ~/.casarc
 
       - name: Download and install CASA Measures Data
-        if: steps.load-cached-casa-measures.outputs.cache-hit != 'true'
+        if: env.SKIP_CHECKS != 'true' && steps.load-cached-casa-measures.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/measures
           set -e
           for i in {1..3}; do
-            if curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
+            if curl -L https://www.astron.nl/iers/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
               break
             elif [ $i -eq 3 ]; then
               echo "Download failed after 3 attempts."; exit 1
@@ -116,14 +157,16 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: uv sync --extra full --extra dev --frozen
+        if: env.SKIP_CHECKS != 'true'
+        run: uv sync --extra full --group dev --group test --frozen
 
       - name: Run pfb-imaging
+        if: env.SKIP_CHECKS != 'true'
         run: uv run pfb --help
 
       - name: Run tests
+        if: env.SKIP_CHECKS != 'true'
         run: |
-          # Force Ray and JAX to stay within the 2-core limit of the GHA runner
           export RAY_NUM_CPUS=2
           export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
           export OMP_NUM_THREADS=1
@@ -131,4 +174,4 @@ jobs:
           export OPENBLAS_NUM_THREADS=1
           export NUMEXPR_NUM_THREADS=1
 
-          uv run pytest -v tests/
+          uv run --frozen pytest -v tests/

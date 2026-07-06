@@ -4,7 +4,6 @@ from functools import partial
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from daskms import xds_from_ms, xds_from_table
 from ducc0.fft import c2c, r2c
 from ducc0.wgridder import dirty2vis, vis2dirty
 from jax.scipy.sparse.linalg import cg
@@ -187,18 +186,13 @@ def test_wgridder_conventions(center_offset):
 
 
 @pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
-def test_psfvis(center_offset, ms_name):
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    uvw = xds.UVW.values
-    freq = spw.CHAN_FREQ.values.squeeze()
+def test_psfvis(center_offset, ms_meta):
+    uvw = ms_meta.uvw
+    freq = ms_meta.freq
+    max_blength = ms_meta.max_blength
+    max_freq = ms_meta.max_freq
 
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
-    max_freq = freq.max()
-
-    nx, ny, _, _, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 2.0)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 2.0)
     x0, y0 = center_offset
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -238,22 +232,16 @@ def test_psfvis(center_offset, ms_name):
 
 
 @pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
-def test_hessian(center_offset, ms_name):
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    uvw = xds.UVW.values
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    nrow = uvw.shape[0]
-    nchan = freq.size
-
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
-    max_freq = freq.max()
+def test_hessian(center_offset, ms_meta):
+    uvw = ms_meta.uvw
+    freq = ms_meta.freq
+    nrow = ms_meta.nrow
+    nchan = ms_meta.nchan
+    max_blength = ms_meta.max_blength
+    max_freq = ms_meta.max_freq
 
     x0, y0 = center_offset
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -319,19 +307,14 @@ def test_hessian(center_offset, ms_name):
     assert np.allclose(1 + diff, 1)
 
 
-def test_hessian_jax(ms_name):
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    uvw = xds.UVW.values
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
-    max_freq = freq.max()
+def test_hessian_jax(ms_meta):
+    uvw = ms_meta.uvw
+    freq = ms_meta.freq
+    max_blength = ms_meta.max_blength
+    max_freq = ms_meta.max_freq
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -384,19 +367,14 @@ def test_hessian_jax(ms_name):
     assert np.allclose(1 + diff, 1)
 
 
-def test_hessian_inv_jax(ms_name):
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    uvw = xds.UVW.values
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
-    max_freq = freq.max()
+def test_hessian_inv_jax(ms_meta):
+    uvw = ms_meta.uvw
+    freq = ms_meta.freq
+    max_blength = ms_meta.max_blength
+    max_freq = ms_meta.max_freq
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -452,19 +430,14 @@ def test_hessian_inv_jax(ms_name):
     assert eps < 0.05  # max diff is less than 5%
 
 
-def test_complex_convolve(ms_name):
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-    uvw = xds.UVW.values
-    freq = spw.CHAN_FREQ.values.squeeze()
-
-    umax = np.abs(uvw[:, 0]).max()
-    vmax = np.abs(uvw[:, 1]).max()
-    uv_max = np.maximum(umax, vmax)
-    max_freq = freq.max()
+def test_complex_convolve(ms_meta):
+    uvw = ms_meta.uvw
+    freq = ms_meta.freq
+    max_blength = ms_meta.max_blength
+    max_freq = ms_meta.max_freq
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(max_blength, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10

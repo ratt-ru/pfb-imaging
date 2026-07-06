@@ -28,3 +28,26 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 """
+
+# defines optimiser protocols
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class OptimiserProtocol(Protocol):
+    """
+    The optimiser protocol defines the interface for optimisers.
+    It is used to ensure that all optimisers have the same interface.
+    Methods:
+
+    - step: performs one iteration of the optimisation algorithm
+    - get_solution: returns the current solution
+    - get_history: returns the history of the optimisation
+    """
+
+    def step(self): ...
+
+    def get_solution(self): ...
+
+    def get_history(self): ...

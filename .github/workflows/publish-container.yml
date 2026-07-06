@@ -42,9 +42,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # For version tags: v1.2.3 -> 1.2.3, 1.2
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            # For version tags: v1.2.3 -> 1.2.3, 1.2; v0.0.9rc1 -> 0.0.9rc1
+            type=pep440,pattern={{version}}
+            type=pep440,pattern={{major}}.{{minor}}
             # For PRs: use branch name (e.g., ghcr.io/user/repo:feature-branch)
             type=raw,value=${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
             # For main branch: use 'latest'

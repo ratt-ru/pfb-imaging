@@ -28,3 +28,55 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 """
+
+# defines operator protocols
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class Preconditioner(Protocol):
+    """
+    The preconditioner needs to be Hermitian and invertible.
+    Methods:
+
+    - dot: applies the preconditioner to a vector
+    - hdot: applies the adjoint of dot (same as dot for Hermitian operators)
+    - idot: applies the inverse of the preconditioner to a vector
+    """
+
+    def dot(self, x): ...
+
+    def hdot(self, x): ...
+
+    def idot(self, x): ...
+
+
+@runtime_checkable
+class PsiOperatorProtocol(Protocol):
+    """
+    The signal decomposition operator only needs to be able to apply the operator and its adjoint.
+    Methods:
+
+    - dot: applies the operator to a vector
+    - hdot: applies the adjoint of the operator to a vector
+    """
+
+    def dot(self, x, alphao): ...
+
+    def hdot(self, alpha, xo): ...
+
+
+@runtime_checkable
+class ProxOperatorProtocol(Protocol):
+    """
+    The proximal operator needs to be able to apply the operator and its adjoint.
+    Methods:
+
+    - prox: applies the proximal operator to a vector
+    - hprox: applies the adjoint of the proximal operator to a vector
+    """
+
+    def prox(self, x, rho): ...
+
+    def hprox(self, x, rho): ...

@@ -14,11 +14,13 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        run: uv python install 3.10
 
       - name: Cache uv dependencies
         uses: actions/cache@v5
@@ -29,7 +31,7 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --group dev
 
       - name: Check code formatting
         run: uv run ruff format --check .
@@ -37,12 +39,102 @@ jobs:
       - name: Lint code
         run: uv run ruff check .
 
-  # Only publish if quality checks pass
-  # Tests are run in CI workflow before tagging
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    env:
+      NUMBA_CACHE_DIR: /tmp/numba-cache
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          activate-environment: true
+
+      - name: Restore repo times
+        uses: chetan/git-restore-mtime-action@v2
+
+      - name: Create Key and Numba Cache Directory
+        id: numba-key
+        run: |
+          mkdir -p ${{ env.NUMBA_CACHE_DIR }}
+          echo "timestamp=$(/bin/date -u '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Cache Numba Kernels
+        uses: actions/cache@v5
+        with:
+          key: numba-cache-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
+          restore-keys: numba-cache-${{ matrix.python-version }}-
+          path: ${{ env.NUMBA_CACHE_DIR }}
+
+      - name: Fingerprint the measures data
+        run: curl -sSI https://www.astron.nl/iers/WSRT_Measures.ztar | grep -iE 'last-modified|etag' > measures_dir.txt
+
+      - name: Load cached CASA Measures Data
+        id: load-cached-casa-measures
+        uses: actions/cache@v5
+        with:
+          key: casa-measures-${{ hashFiles('measures_dir.txt')}}
+          path: |
+            ~/measures
+            ~/.casarc
+
+      - name: Download and install CASA Measures Data
+        if: steps.load-cached-casa-measures.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/measures
+          set -e
+          for i in {1..3}; do
+            if curl -L https://www.astron.nl/iers/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
+              break
+            elif [ $i -eq 3 ]; then
+              echo "Download failed after 3 attempts."; exit 1
+            else
+              echo "Retrying download..."; sleep 5
+            fi
+          done
+          tar xvzf WSRT_Measures.ztar -C ~/measures
+          echo "measures.directory: ~/measures" > ~/.casarc
+
+      - name: Install pfb-imaging
+        run: uv sync --extra full --group dev --group test --frozen
+
+      - name: Run pfb-imaging
+        run: uv run pfb --help
+
+      - name: Run tests
+        run: |
+          export RAY_NUM_CPUS=2
+          export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+
+          uv run --frozen pytest -v tests/
+
+  # Only publish if quality checks and tests pass
   publish:
     name: Build and Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [quality]
+    needs: [quality, test]
     environment:
       name: pypi
       url: https://pypi.org/project/pfb-imaging/
@@ -54,11 +146,13 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Set up Python
-        run: uv python install 3.10
 
       - name: Build package
         run: uv build

@@ -9,7 +9,7 @@ from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import set_envs, setup_ray_worker
+from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings
 from pfb_imaging.utils.naming import set_output_names
@@ -45,6 +45,7 @@ def init(
     nworkers: int = 1,
     nthreads: int | None = None,
     wgt_mode: str = "l2",
+    ray_address: str = "local",
     keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
@@ -78,7 +79,7 @@ def init(
         mslist = msstore.fs.glob(str(ms_path).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
@@ -91,7 +92,7 @@ def init(
             gtlist = gainstore.fs.glob(str(gt).rstrip("/"))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
             except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
@@ -106,14 +107,14 @@ def init(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
             "worker_process_setup_hook": setup_ray_worker,
         },
+        log=log,
     )
 
     time_start = time.time()
@@ -168,7 +169,7 @@ def init(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     ) = construct_mappings(
@@ -234,6 +235,10 @@ def init(
             ddid = int(idt[ilo:ihi])
             if (ddids is not None) and (ddid not in ddids):
                 continue
+            idx = (freq >= freq_min) & (freq <= freq_max)
+            if not idx.any():
+                continue
+            freq = freq[idx]
             if not len(freq_groups):
                 freq_groups.append(freq)
                 freq_sgroups.append(sgroup)
@@ -248,6 +253,7 @@ def init(
                     freq_groups.append(freq)
                     freq_sgroups.append(sgroup)
                     sgroup += freq_mapping[ms_name][idt]["counts"].size
+    all_freqs = np.unique(np.concatenate(freq_groups))
 
     # band mapping
     msddid2bid = {}
@@ -330,6 +336,8 @@ def init(
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
                         wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=all_freqs.max(),
                     )
                     tasks.append(fut)
 

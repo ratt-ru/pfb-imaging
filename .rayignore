@@ -35,7 +35,6 @@ LICENSE
 docs-deploy.sh
 recipes/
 setup-docs.sh
-uv.lock
 tbump.toml
 *.pre-commit-config.yaml
 *.rayignore

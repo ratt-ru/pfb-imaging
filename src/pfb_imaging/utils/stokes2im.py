@@ -9,7 +9,6 @@ import xarray as xr
 from africanus.coordinates import radec_to_lm
 from astropy import units
 from astropy.coordinates import SkyCoord
-from casacore.quanta import quantity
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
 from numba import set_num_threads
@@ -19,9 +18,15 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam
-from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
-from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
+from pfb_imaging.utils.weighting import (
+    _compute_counts,
+    box_sum_counts,
+    counts_to_weights,
+    filter_extreme_counts,
+    weight_data,
+)
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -63,6 +68,7 @@ def batch_stokes_image(
     robustness=None,
     min_padding=2.0,
     filter_counts_level=10.0,
+    npix_super=0,
     psf_relative_size=None,
     inject_transients=None,
     epsilon=1e-7,
@@ -136,6 +142,7 @@ def batch_stokes_image(
             robustness=robustness,
             min_padding=min_padding,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
             psf_relative_size=psf_relative_size,
             inject_transients=inject_transients,
             epsilon=epsilon,
@@ -198,6 +205,7 @@ def stokes_image(
     robustness=None,
     min_padding=2.0,
     filter_counts_level=10.0,
+    npix_super=0,
     psf_relative_size=None,
     inject_transients=None,
     epsilon=1e-7,
@@ -332,13 +340,8 @@ def stokes_image(
 
     cell_deg = np.rad2deg(cell_rad)
 
-    # make sure ra is in (0, 2pi)
     # need a copy since write only
     radec = radec.copy()
-    if radec[0] < 0:
-        radec[0] += 2 * np.pi
-    elif radec[0] > 2 * np.pi:
-        radec[0] -= 2 * np.pi
 
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     signu = -1.0 if flip_u else 1.0
@@ -582,6 +585,7 @@ def stokes_image(
         )
 
         counts = filter_extreme_counts(counts, level=filter_counts_level)
+        counts = box_sum_counts(counts, npix_super)
 
         weight = counts_to_weights(
             counts,
@@ -699,10 +703,10 @@ def stokes_image(
 
         residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
 
-    else:
+    elif beam_model is not None:
         residual *= pbeam / (pbeam**2 + eta)
 
-    unix_time = quantity(f"{time_out}s").to_unix_time()
+    unix_time = to_unix_time(time_out)
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # set corr coords (removing duplicates and sorting)

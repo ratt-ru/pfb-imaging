@@ -9,7 +9,7 @@ from africanus.coordinates import radec_to_lm
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import rimage_data_products, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import get_coordinates
@@ -42,6 +42,7 @@ def grid(
     nx: int | None = None,
     ny: int | None = None,
     filter_counts_level: float = 5.0,
+    npix_super: int = 0,
     target: str | None = None,
     l2_reweight_dof: int = None,
     epsilon: float = 1e-7,
@@ -54,6 +55,7 @@ def grid(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    ray_address: str = "local",
     keep_ray_alive: bool = False,
 ):
     """
@@ -126,14 +128,14 @@ def grid(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
             "worker_process_setup_hook": setup_ray_worker,
         },
+        log=log,
     )
 
     time_start = time.time()
@@ -162,15 +164,15 @@ def grid(
     ntime_in = times_in.size
     nband = freqs_out.size
 
-    # max uv coords over all datasets
-    uv_max = 0
+    # max baseline length over all datasets
+    max_blength = 0
     max_freq = 0
     for ds in xds:
-        uv_max = np.maximum(uv_max, ds.uv_max)
+        max_blength = np.maximum(max_blength, ds.max_blength)
         max_freq = np.maximum(max_freq, ds.max_freq)
 
     nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
-        uv_max, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
+        max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
     )
     cell_size = cell_deg * 3600
     log.info(f"Super resolution factor = {cell_n / cell_rad}")
@@ -239,8 +241,8 @@ def grid(
                     xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                     xds_dct[tbid]["time_out"] = times_out[0]
                     xds_dct[tbid]["freq_out"] = freqs_out[b]
-                    xds_dct[tbid]["chan_low"] = ds.chan_low
-                    xds_dct[tbid]["chan_high"] = ds.chan_high
+                    # xds_dct[tbid]["chan_low"] = ds.chan_low
+                    # xds_dct[tbid]["chan_high"] = ds.chan_high
     else:
         ntime = ntime_in
         times_out = times_in
@@ -255,8 +257,8 @@ def grid(
                         xds_dct[tbid]["radec"] = (ds.ra, ds.dec)
                         xds_dct[tbid]["time_out"] = times_out[t]
                         xds_dct[tbid]["freq_out"] = freqs_out[b]
-                        xds_dct[tbid]["chan_low"] = ds.chan_low
-                        xds_dct[tbid]["chan_high"] = ds.chan_high
+                        # xds_dct[tbid]["chan_low"] = ds.chan_low
+                        # xds_dct[tbid]["chan_high"] = ds.chan_high
 
     ncorr = ds.corr.size
     corrs = ds.corr.values
@@ -290,8 +292,8 @@ def grid(
         dsl = ds_dct["dsl"]
         time_out = ds_dct["time_out"]
         freq_out = ds_dct["freq_out"]
-        chan_low = ds_dct["chan_low"]
-        chan_high = ds_dct["chan_high"]
+        # chan_low = ds_dct["chan_low"]
+        # chan_high = ds_dct["chan_high"]
         iter0 = 0
         if from_cache:
             out_ds_name = f"{dds_store.url}/time{timeid}_band{bandid}.zarr"
@@ -343,8 +345,8 @@ def grid(
             "field_of_view": field_of_view,
             "product": product,
             "niters": iter0,
-            "chan_low": chan_low,
-            "chan_high": chan_high,
+            # "chan_low": chan_low,
+            # "chan_high": chan_high,
         }
 
         # get the model
@@ -414,6 +416,7 @@ def grid(
             do_noise=noise,
             do_beam=beam,
             filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
         )
         tasks.append(task)
 

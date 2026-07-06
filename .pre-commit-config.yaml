@@ -19,12 +19,31 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        exclude: ^CHANGELOG\.md$
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
       - id: check-merge-conflict
       - id: check-toml
       - id: mixed-line-ending
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.1.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - refactor
+          - perf
+          - docs
+          - deps
+          - chore
+          - ci
+          - style
+          - test
+          - build
 
   # Local hooks run after external hooks, ensuring they see formatted code
   - repo: local

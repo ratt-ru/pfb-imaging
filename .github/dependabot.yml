@@ -1,31 +1,26 @@
 version: 2
 updates:
-  # Monitor Python dependencies
-  - package-ecosystem: "pip"
+  # Monitor Python dependencies (uses uv under the hood; updates pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
     open-pull-requests-limit: 5
-    reviewers:
-      - "landmanbester"
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
     groups:
-      development-dependencies:
-        dependency-type: "development"
-        patterns:
-          - "pytest*"
-          - "ruff*"
-          - "coverage*"
-      production-dependencies:
-        dependency-type: "production"
-        patterns:
-          - "typer*"
-          - "pyyaml*"
-          - "typing-extensions*"
+      # Batch all minor/patch bumps (direct + transitive) into a single weekly PR
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      # Major bumps stay individual so each can be reviewed on its own
+      python-major:
+        update-types:
+          - "major"
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"
@@ -35,8 +30,6 @@ updates:
       day: "monday"
       time: "09:00"
     open-pull-requests-limit: 3
-    reviewers:
-      - "landmanbester"
     commit-message:
       prefix: "ci"
     groups:

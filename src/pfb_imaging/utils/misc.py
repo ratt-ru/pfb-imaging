@@ -1,6 +1,4 @@
 import logging
-import pdb
-import sys
 from contextlib import nullcontext
 
 import dask
@@ -9,41 +7,26 @@ import jax
 import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
-from africanus.constants import c as lightspeed
 from dask.diagnostics import ProgressBar
 from dask.distributed import performance_report
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms import xds_from_storage_table as xds_from_table
-from daskms.experimental.zarr import xds_from_zarr
 from ducc0.fft import c2r, good_size, r2c
 from jax import value_and_grad
 from numba import njit, prange
 from numba.extending import overload
 from omegaconf import ListConfig
+from scipy.constants import c as lightspeed
 from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
-
-from pfb_imaging.utils.fits import load_fits
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
 
 
-class ForkedPdb(pdb.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
-
-    """
-
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open("/dev/stdin")
-            pdb.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
+def to_unix_time(times):
+    # MJD_UNIX_OFFSET = 3506716800.0
+    return times - 3506716800.0
 
 
 def compute_context(scheduler, output_filename, boring=True):
@@ -258,6 +241,11 @@ def construct_mappings(
     time_mapping    - dict[MS][IDT] utimes per dataset
 
     """
+    # daskms pulls in python-casacore; import it locally so this module stays
+    # importable on the casacore-free (arcae/ducc0) imaging path.
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
+    from daskms.experimental.zarr import xds_from_zarr
 
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig):
         ms_name = [ms_name]
@@ -275,11 +263,14 @@ def construct_mappings(
     radecs = {}
     antpos = {}
     poltype = {}
-    uv_maxs = []
+    max_blengths = []
     idts = {}
     for ims, ms in enumerate(ms_name):
         xds = xds_from_ms(
-            ms, chunks={"row": -1}, columns=("TIME", "UVW"), group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
+            ms,
+            chunks={"row": -1},
+            columns=("TIME", "UVW"),
+            group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
         )
 
         # subtables
@@ -314,16 +305,14 @@ def construct_mappings(
             chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
-            u_max = abs(uvw[:, 0]).max()
-            v_max = abs(uvw[:, 1]).max()
-            uv_maxs.append(da.maximum(u_max, v_max))
+            max_blengths.append(da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
 
     # Early compute to get metadata
-    times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype = dask.compute(
-        times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype
+    times, freqs, radecs, chan_widths, max_blengths, antpos, poltype = dask.compute(
+        times, freqs, radecs, chan_widths, max_blengths, antpos, poltype
     )
 
-    uv_max = max(uv_maxs)
+    max_blength = max(max_blengths)
     all_times = []
     freq_mapping = {}
     row_mapping = {}
@@ -379,6 +368,13 @@ def construct_mappings(
                 freq_mapping[ms][idt]["counts"] = np.array((nchan,), dtype=int)
 
             time = times[ms][idt]
+            if not np.all(time[1:] >= time[:-1]):
+                raise NotImplementedError(
+                    f"Time column in {ms} for {idt} is not monotonically "
+                    f"non-decreasing. pfb-imaging currently requires "
+                    f"time-ordered measurement sets. See "
+                    f"https://github.com/ratt-ru/pfb-imaging/issues/153"
+                )
             utime = np.unique(time)
             utimes[ms][idt] = utime
             all_times.append(utime)
@@ -466,7 +462,7 @@ def construct_mappings(
         gains,
         radecs,
         chan_widths,
-        uv_max,
+        max_blength,
         antpos,
         poltype,
     )
@@ -476,30 +472,31 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     """
     xin         - grid of x coordinates
     yin         - grid of y coordinates
-    gausspar    - (emaj, emin, pa) with emaj/emin in units of xin/yin and pa in radians.
+    gausspar    - (emaj, emin, pa) with emaj/emin as FWHM in units of xin/yin and pa in radians.
     normalise   - normalise kernel to have volume 1
-    nsigma      - compute kernel out to this many sigmas
+    nsigma      - compute kernel out to this many standard deviations of the major axis
     """
     smaj, smin, pa = gausspar
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
     amat = np.array([[1.0 / smaj**2, 0], [0, 1.0 / smin**2]])
     # R = np.array([[np.cos(pa), -np.sin(pa)],
     #               [np.sin(pa), np.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = np.array([[np.sin(pa), -np.cos(pa)], [np.cos(pa), np.sin(pa)]])
-    amat = np.dot(np.dot(rmat.T, amat), rmat)
+    rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
+    amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
-    # only compute the result out to 5 * emaj
-    extent = (nsigma * smaj) ** 2
+    # only compute the result out to nsigma standard deviations
+    sigma_maj = smaj / fwhm_conv
+    extent = (nsigma * sigma_maj) ** 2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
     idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     rmat = np.einsum("nb,bc,cn->n", x.T, amat, x)
-    # need to adjust for the fact that gausspar corresponds to FWHM
-    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-    tmp = np.exp(-fwhm_conv * rmat)
+    # adjust for the fact that gausspar corresponds to FWHM
+    tmp = np.exp(-0.5 * fwhm_conv**2 * rmat)
     gausskern = np.zeros(xflat.shape, dtype=np.float64)
     gausskern[idx, idy] = tmp
 
@@ -520,30 +517,30 @@ def psf_errorsq(x, data, xy):
     # R = jnp.array([[jnp.cos(pa), -jnp.sin(pa)],
     #                 [jnp.sin(pa), jnp.cos(pa)]])
     # this parametrisation is equivalent to the above with
-    # t = np.pi/2 - pa
+    # t = np.pi/2 + pa
     # use this for compatibility with fits
-    rmat = jnp.array([[jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), jnp.sin(pa)]])
-    bmat = jnp.dot(jnp.dot(rmat.T, amat), rmat)
+    rmat = jnp.array([[-jnp.sin(pa), -jnp.cos(pa)], [jnp.cos(pa), -jnp.sin(pa)]])
+    bmat = jnp.dot(jnp.dot(rmat, amat), rmat.T)
     qvec = jnp.einsum("nb,bc,cn->n", xy.T, bmat, xy)
     # gausspar should corresponds to FWHM
     fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
-    model = jnp.exp(-fwhm_conv * qvec)
+    model = jnp.exp(-0.5 * fwhm_conv**2 * qvec)
     res = data - model
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, extent: float = 5.0):
+def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
-    then fit Gaussian out to a radius of extent * max(x, y) where
-    x and y are the coordinates where PSF > level.
+    then fit Gaussian out to a radius of nsigma standard deviations
+    of the initial beam estimate.
 
     Args:
         psf     - (nband, nx, ny) array containing the PSF for each band.
         level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
         pixsize - pixel size in same units as desired Gaussian parameters.
-        extent   - fit Gaussian out to this many times the radius of the main lobe. Should be a positive number.
+        nsigma  - fit Gaussian out to this many standard deviations of the estimated major axis.
     Returns:
         Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
@@ -572,44 +569,48 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
 
-        # initial guess for emaj and emin
-        # x and y are reversed because of the parametrisation
-        # of the 2D Gaussian (for fits)
-        xdiff = np.maximum(y.max() - y.min(), 1)
-        ydiff = np.maximum(x.max() - x.min(), 1)
-
-        # initial guess for pa
-        dx = x - np.mean(x)
-        dy = y - np.mean(y)
+        # initial guess for pa via weighted second moments
         psftmp = psfv[islands == ncenter]
-        mxx = np.mean(psftmp * dx**2)
-        myy = np.mean(psftmp * dy**2)
-        mxy = np.mean(psftmp * dx * dy)
+        wsum = psftmp.sum()
+        dx = x - np.sum(psftmp * x) / wsum
+        dy = y - np.sum(psftmp * y) / wsum
+        mxx = np.sum(psftmp * dx**2) / wsum
+        myy = np.sum(psftmp * dy**2) / wsum
+        mxy = np.sum(psftmp * dx * dy) / wsum
         pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
         # ensure pa is in (0, pi)
-        pa0 = np.maximum(pa0, 0.0)
-        pa0 = np.minimum(pa0, np.pi)
+        pa0 = float(np.clip(pa0, 0.0, np.pi))
 
-        rsq = np.abs(x).max() ** 2 + np.abs(y).max() ** 2
+        # rotate main lobe coordinates to estimate axis extents.
+        # PA is anticlockwise from the positive y-axis so the major axis
+        # is at angle (pi/2 + pa0) from the positive x-axis. Rotating
+        # by -(pi/2 + pa0) aligns the major axis with the x-axis.
+        t = np.pi / 2 + pa0
+        ct, st = np.cos(t), np.sin(t)
+        dx_rot = ct * dx + st * dy
+        dy_rot = -st * dx + ct * dy
+        # bounding box in the rotated frame gives FWHM estimates
+        emaj0 = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
+        emin0 = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
+
+        # select psf in fit region out to nsigma standard deviations.
+        # the main lobe above level extends to ~FWHM/2 from center,
+        # so use emaj0 as a proxy for the FWHM of the major axis
+        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+        sigma_est = emaj0 / fwhm_conv
         rrsq = xx**2 + yy**2
-        idxs = rrsq < extent * rsq
-
-        # select psf in fit region
+        idxs = rrsq < (nsigma * sigma_est) ** 2
         psfv = psfv[idxs]
         x = xx[idxs]
         y = yy[idxs]
         xy = np.vstack((x, y))
-        if xdiff > ydiff:  # x is major axis
-            emaj0 = xdiff
-            emin0 = ydiff
-            # pa0 = 0.0
-        else:  # y is the major axis
-            emaj0 = ydiff
-            emin0 = xdiff
-            # pa0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(
-            dfunc, np.array((emaj0, emin0, pa0)), args=(psfv, xy), bounds=((0, None), (0, None), (0, np.pi)), factr=1e7
+            dfunc,
+            np.array((emaj0, emin0, pa0)),
+            args=(psfv, xy),
+            bounds=((0, None), (0, None), (0, np.pi)),
+            factr=1e7,
         )
         if d["warnflag"] != 0:
             print("WARNING - warning flag raised during psf fit")
@@ -639,6 +640,9 @@ def init_mask(mask, model, output_type, log):
         mask = np.ones((nx, ny), dtype=output_type)
     elif mask.endswith(".fits"):
         try:
+            # avoids circular import
+            from pfb_imaging.utils.fits import load_fits
+
             mask = load_fits(mask, dtype=output_type).squeeze()
             assert mask.shape == (nx, ny)
             print("Using provided fits mask")
@@ -885,7 +889,7 @@ def combine_columns(x, y, dc, dc1, dc2):
 
 
 def set_image_size(
-    uv_max,
+    max_blength,
     max_freq,
     field_of_view,
     super_resolution_factor,
@@ -899,7 +903,7 @@ def set_image_size(
         log = logging.getLogger(__name__)
 
     # max cell size
-    cell_n = 1.0 / (2 * uv_max * max_freq / lightspeed)
+    cell_n = 1.0 / (2 * max_blength * max_freq / lightspeed)
 
     if cell_size is not None:
         cell_rad = cell_size * np.pi / 60 / 60 / 180

@@ -5,12 +5,12 @@ import numexpr as ne
 import numpy as np
 import ray
 import xarray as xr
-from casacore.quanta import quantity
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
+from pfb_imaging.utils.misc import to_unix_time
 from pfb_imaging.utils.weighting import weight_data
 
 
@@ -53,6 +53,8 @@ def stokes_vis(
     max_field_of_view=3.0,
     beam_model=None,
     wgt_mode="l2",
+    max_blength=None,
+    max_freq=None,
 ):
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -227,10 +229,6 @@ def stokes_vis(
     # we need this for averaging
     flag = np.tile(flag.any(axis=-1, keepdims=True), (1, 1, ncorr))
 
-    # do before averaging
-    uv_max = np.maximum(np.abs(uvw[:, 0]).max(), np.abs(uvw[:, 1]).max())
-    max_freq = freq.max()
-
     # set corr coords (removing duplicates and sorting)
     corr = list("".join(dict.fromkeys(sorted(product))))
     ncorr = len(corr)
@@ -292,7 +290,7 @@ def stokes_vis(
 
     # TODO - better beam interpolation
     fov = max_field_of_view
-    cell_rad = 1.0 / (uv_max * max_freq / lightspeed)
+    cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
     cell_deg = np.rad2deg(cell_rad)
     npix = int(fov / cell_deg)
     l_beam = (-(npix // 2) + np.arange(npix)) * cell_deg
@@ -341,7 +339,7 @@ def stokes_vis(
         "corr": (("corr",), corr),
     }
 
-    unix_time = quantity(f"{time_out}s").to_unix_time()
+    unix_time = to_unix_time(time_out)
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
@@ -364,7 +362,7 @@ def stokes_vis(
         "product": product,
         "utc": utc,
         "max_freq": max_freq,
-        "uv_max": uv_max,
+        "max_blength": max_blength,
         "beam_model": beam_model,
     }
 

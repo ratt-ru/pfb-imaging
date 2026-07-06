@@ -23,25 +23,13 @@ cabs:
         default: main
         metadata:
           rich_help_panel: Naming
-      log-directory:
-        info:
-          Directory to write logs and performance reports to.
-        metadata:
-          rich_help_panel: Naming
       product:
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
         metadata:
-          rich_help_panel: Naming
-      fits-output-folder:
-        info:
-          Optional path to write fits files to.
-          Set to output-filename if not provided.
-          The same naming conventions apply.
-        metadata:
-          rich_help_panel: Naming
+          rich_help_panel: Data Selection
       fits-mfs:
         info:
           Output MFS fits files
@@ -109,7 +97,7 @@ cabs:
       hess-norm:
         info:
           Spectral norm of hessian approximation.
-        dtype: float
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Hessian
       hess-approx:
@@ -150,7 +138,7 @@ cabs:
         info:
           Number of basis functions to use while fitting the frequency axis.
           Default is to use the number of non-null imaging bands (interpolation).
-        dtype: int
+        dtype: Optional[int]
         metadata:
           rich_help_panel: PFB
       positivity:
@@ -212,9 +200,9 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: int
+        dtype: Optional[int]
         metadata:
-          rich_help_panel: WGridder
+          rich_help_panel: Performance
       epsilon:
         info:
           Gridder accuracy.
@@ -373,3 +361,36 @@ cabs:
           Output component model.
         implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
         must_exist: false
+      log-directory:
+        dtype: Directory
+        info:
+          Directory to write logs and performance reports to.
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      fits-output-folder:
+        dtype: Directory
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
+      numba-cache-dir:
+        dtype: Directory
+        info:
+          Directory to use for numba caching.
+          Currently not configurable.
+          Exists to ensure the directory is mounted.
+        implicit: '/tmp/numba'
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true

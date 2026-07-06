@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Numba AOT cache (local test runs)
+.numba_cache/
+
+# Claude Code transient session locks (rules/ is intentionally tracked)
+.claude/*.lock
+
 # C extensions
 *.so
 
@@ -108,3 +114,12 @@ ENV/
 
 # test data
 tests/data/
+
+# random
+rich_help_panels.md
+setup-docs.sh
+docs-deploy.sh
+src/pfb_imaging/wavelets/convolutions_jax.py
+src/pfb_imaging/deconv/fskclean.py
+src/pfb_imaging/cabs/pfb.yml
+tmp

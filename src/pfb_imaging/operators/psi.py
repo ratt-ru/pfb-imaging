@@ -1,7 +1,6 @@
 import concurrent.futures as cf
 import os
 from collections import OrderedDict
-from typing import Protocol, runtime_checkable
 
 import numba
 import numpy as np
@@ -819,10 +818,3 @@ class PsiNocopytRay:
         results = ray.get(refs)
         for b, result in enumerate(results):
             xo[b] = result
-
-
-@runtime_checkable
-class PsiOperatorProtocol(Protocol):
-    def dot(self, x, alphao): ...
-
-    def hdot(self, alpha, xo): ...

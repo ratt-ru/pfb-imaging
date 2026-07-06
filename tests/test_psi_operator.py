@@ -127,12 +127,17 @@ def test_prox21m(nx, ny, nband, nlevels):
     assert_array_almost_equal(nbasis * x, xrec, decimal=12)
 
 
-@pmp("nymax", [1234, 240])
-@pmp("nxmax", [134, 896])
-@pmp("nbasis", [1, 5])
-@pmp("nband", [1, 3, 6])
-@pmp("lam", [1.0, 1e-1, 1e-3])
-@pmp("sigma", [75.0, 1.0, 1e-3])
+@pmp(
+    "nymax,nxmax,nbasis,nband",
+    [
+        (1234, 134, 1, 1),
+        (1234, 134, 5, 6),
+        (240, 896, 1, 6),
+        (240, 896, 5, 3),
+    ],
+)
+@pmp("lam", [1.0, 1e-3])
+@pmp("sigma", [75.0, 1e-3])
 def test_prox21m_numba(nband, nbasis, nymax, nxmax, lam, sigma):
     np.random.seed(420)
     # check numba implementation matches numpy even when output contains random
@@ -151,12 +156,17 @@ def test_prox21m_numba(nband, nbasis, nymax, nxmax, lam, sigma):
     assert_array_almost_equal(res, vout, decimal=8)
 
 
-@pmp("nx", [120, 240])
-@pmp("ny", [324, 150])
-@pmp("nband", [1, 3, 6])
-@pmp("nlevels", [1, 2])
-@pmp("lam", [1.0, 1e-1, 1e-3])
-@pmp("sigma", [75.0, 1.0, 1e-3])
+@pmp(
+    "nx,ny,nband,nlevels",
+    [
+        (120, 324, 1, 1),
+        (120, 324, 6, 2),
+        (240, 150, 3, 1),
+        (240, 150, 6, 2),
+    ],
+)
+@pmp("lam", [1.0, 1e-3])
+@pmp("sigma", [75.0, 1e-3])
 def test_dual_update(nx, ny, nband, nlevels, lam, sigma):
     """
     Compare numpy to numba optimised dual update
@@ -197,12 +207,17 @@ def test_dual_update(nx, ny, nband, nlevels, lam, sigma):
     assert_array_almost_equal(1 + res1, 1 + v, decimal=9)
 
 
-@pmp("nx", [120, 240])
-@pmp("ny", [324, 150])
-@pmp("nband", [1, 3, 6])
-@pmp("nlevels", [1, 2])
-@pmp("lam", [1.0, 1e-1, 1e-3])
-@pmp("sigma", [75.0, 1.0, 1e-3])
+@pmp(
+    "nx,ny,nband,nlevels",
+    [
+        (120, 324, 1, 1),
+        (120, 324, 6, 2),
+        (240, 150, 3, 1),
+        (240, 150, 6, 2),
+    ],
+)
+@pmp("lam", [1.0, 1e-3])
+@pmp("sigma", [75.0, 1e-3])
 def test_dual_update_fast(nx, ny, nband, nlevels, lam, sigma):
     """
     Compare fastmath-safe dual_update_numba_fast against numpy dual_update

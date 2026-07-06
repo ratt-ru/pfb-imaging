@@ -436,6 +436,83 @@ class HessPSF(object):
         return self.xout.copy()
 
 
+class HessianTree(object):
+    """Sum-over-partitions PSF-convolution Hessian for the DataTree imager.
+
+    Applies ``H x = (1/Σ_p wsum_p) Σ_p B_pᵀ (PSF_p ⊛ (B_p x)) + η x`` using the
+    per-partition ``PSFHAT`` and ``BEAM`` precomputed in pass 2, so no gridding
+    happens on the inner (minor-cycle) hot path. Generalises ``HessPSF`` to a
+    sum over a band node's partition children, each with its own beam. The exact
+    degrid/grid path lives in ``gridder.residual_from_partitions`` (the
+    per-major-cycle gradient), not here.
+
+    Args:
+        partitions: list of per-partition dicts with ``psfhat`` ``(corr, nx_psf, nyo2)``,
+            ``beam`` ``(corr, nx, ny)`` and ``wsum`` ``(corr,)``.
+        nx, ny: image dimensions.
+        nx_psf, ny_psf: PSF dimensions (``ny_psf`` is the real-FFT last size).
+        eta: Tikhonov parameter.
+        nthreads: FFT threads.
+    """
+
+    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta=0.0, nthreads=1):
+        if not partitions:
+            raise ValueError("HessianTree requires at least one partition")
+        self.parts = partitions
+        self.nx = nx
+        self.ny = ny
+        self.nx_psf = nx_psf
+        self.ny_psf = ny_psf
+        self.eta = eta
+        self.nthreads = nthreads
+        self.ncorr = partitions[0]["wsum"].size
+        self.wsum = np.zeros(self.ncorr)
+        for p in partitions:
+            self.wsum += p["wsum"]
+        # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
+        # iterations does not reallocate each dot(); safe because actor calls are
+        # single-threaded (matches HessPSF)
+        self.xpad = empty_noncritical((self.nx_psf, self.ny_psf), dtype="f8")
+        self.xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
+
+    def dot(self, x):
+        # leading axis is the correlation axis (HessianTree acts per output image;
+        # the band/time axis is distributed by Ray, not carried here)
+        xtmp = x if x.ndim == 3 else x[None, :, :]
+        ncorr, nx, ny = xtmp.shape
+        assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
+        assert nx == self.nx and ny == self.ny
+        out = np.zeros_like(xtmp)
+        xpad = self.xpad
+        xhat = self.xhat
+        for p in self.parts:
+            beam = p["beam"]
+            psfhat = p["psfhat"]
+            for c in range(self.ncorr):
+                xpad.fill(0.0)
+                xpad[0:nx, 0:ny] = xtmp[c] * beam[c]
+                r2c(xpad, axes=(0, 1), nthreads=self.nthreads, forward=True, inorm=0, out=xhat)
+                xhat *= psfhat[c]
+                c2r(
+                    xhat,
+                    axes=(0, 1),
+                    forward=False,
+                    out=xpad,
+                    lastsize=self.ny_psf,
+                    inorm=2,
+                    nthreads=self.nthreads,
+                    allow_overwriting_input=True,
+                )
+                out[c] += beam[c] * xpad[0:nx, 0:ny]
+        out /= self.wsum[:, None, None]
+        out += self.eta * xtmp
+        return out
+
+    def hdot(self, x):
+        # Hermitian operator
+        return self.dot(x)
+
+
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
 def hessian_slice_jax(nx, ny, nx_psf, ny_psf, eta, psfhat, x):
     psfh = jax.lax.stop_gradient(psfhat)
