@@ -1,3 +1,4 @@
+import gc
 from datetime import datetime, timezone
 
 import numexpr as ne
@@ -19,7 +20,15 @@ from pfb_imaging.utils.weighting import _compute_counts, weight_data
 # wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
-    return stokes_vis(*args, **kwargs)
+    # Loaded xarray objects (deserialised DataTree nodes and the datasets built
+    # from them) end up in reference cycles that refcounting cannot free, so
+    # each completed task would otherwise leave its fully loaded node behind
+    # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
+    # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
+    try:
+        return stokes_vis(*args, **kwargs)
+    finally:
+        gc.collect()
 
 
 def stokes_vis(
@@ -72,9 +81,25 @@ def stokes_vis(
         beam_model: model to use for beam correction. Can be "katbeam" or None.
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
     """
-    # load in all data
-    node_dt.load()
-    ds = node_dt.ds
+    # Load only the variables this task consumes. The MSv4 node exposes every
+    # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
+    # auxiliaries like TIME_CENTROID; a blanket node_dt.load() reads them all
+    # from disk and holds them in memory even though only the selected
+    # data/weight/flag columns are used. The small antenna_xds/field_and_source
+    # subtables are loaded lazily on access below.
+    needed = [dc1]
+    if dc2 is not None:
+        needed.append(dc2)
+    if sigma_column is not None:
+        needed.append(sigma_column)
+    elif weight_column is not None:
+        needed.append(weight_column)
+    needed += ["FLAG", "UVW"]
+    for name in ("EFFECTIVE_INTEGRATION_TIME", "INTEGRATION_TIME", "CHANNEL_WIDTH"):
+        if name in node_dt.ds.data_vars:
+            needed.append(name)
+    needed = list(dict.fromkeys(needed))
+    ds = node_dt.ds[needed].load()
     field_name = np.unique(ds.field_name.values).item()
     spw_name = ds.frequency.attrs["spectral_window_name"]
     scan_name = np.unique(ds.scan_name.values).item()

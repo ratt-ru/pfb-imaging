@@ -1,3 +1,4 @@
+import gc
 import time
 import warnings
 from pathlib import Path
@@ -186,6 +187,11 @@ def _grid_image(
         attrs=band_attrs,
     )
     band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
+
+    # break the reference cycles holding the loaded pieces so a reused Ray
+    # worker doesn't accumulate them across tasks (see safe_stokes_vis)
+    del pieces, groups, part
+    gc.collect()
 
     return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum}
 
