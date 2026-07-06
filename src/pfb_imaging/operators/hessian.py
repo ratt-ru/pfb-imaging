@@ -453,9 +453,13 @@ class HessianTree(object):
         nx_psf, ny_psf: PSF dimensions (``ny_psf`` is the real-FFT last size).
         eta: Tikhonov parameter.
         nthreads: FFT threads.
+        wsum: optional normalisation override (defaults to the sum of
+            per-partition ``wsum``). A ``HessTreeRay`` band actor passes the
+            TOTAL wsum across all bands so the per-band operator matches the
+            legacy total-normalised convention.
     """
 
-    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta=0.0, nthreads=1):
+    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta=0.0, nthreads=1, wsum=None):
         if not partitions:
             raise ValueError("HessianTree requires at least one partition")
         self.parts = partitions
@@ -466,9 +470,14 @@ class HessianTree(object):
         self.eta = eta
         self.nthreads = nthreads
         self.ncorr = partitions[0]["wsum"].size
-        self.wsum = np.zeros(self.ncorr)
-        for p in partitions:
-            self.wsum += p["wsum"]
+        if wsum is None:
+            self.wsum = np.zeros(self.ncorr)
+            for p in partitions:
+                self.wsum += p["wsum"]
+        else:
+            # explicit normalisation (e.g. TOTAL wsum across all bands so the
+            # per-band operator matches the legacy total-normalised convention)
+            self.wsum = np.broadcast_to(np.asarray(wsum, dtype=float), (self.ncorr,)).copy()
         # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
         # iterations does not reallocate each dot(); safe because actor calls are
         # single-threaded (matches HessPSF)
@@ -511,6 +520,199 @@ class HessianTree(object):
     def hdot(self, x):
         # Hermitian operator
         return self.dot(x)
+
+
+class _HessBandActorImpl:
+    """Ray actor holding one band's HessianTree (see _PsiBandActorImpl).
+
+    The HessianTree (with its preallocated FFT scratch) is built once in
+    the actor process; per-call payloads are plain numpy arrays.
+    """
+
+    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta, nthreads, wsum=None):
+        # Load TBB in this actor process (ctypes.CDLL in the main process
+        # does not carry over to forked/spawned Ray workers).
+        import ctypes
+        import importlib.metadata
+
+        import numba
+
+        dist = importlib.metadata.distribution("tbb")
+        for f in dist.files:
+            if str(f).endswith("/libtbb.so"):
+                ctypes.CDLL(str(dist.locate_file(f).resolve()))
+                break
+        numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
+
+        self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=nthreads, wsum=wsum)
+        self._nx = nx
+        self._ny = ny
+
+    def dot(self, x):
+        return self._hess.dot(x)
+
+    def cg(self, rhs, x0, tol, maxit, minit, verbosity):
+        from pfb_imaging.opt.pcg import pcg_numba
+
+        return pcg_numba(
+            lambda z: self._hess.dot(z)[0],
+            rhs,
+            x0=x0,
+            tol=tol,
+            maxit=maxit,
+            minit=minit,
+            verbosity=verbosity,
+        )
+
+    def warmup(self):
+        """Trigger JIT/FFT-plan warmup so the first real call is fast."""
+        self._hess.dot(np.zeros((self._nx, self._ny)))
+
+    def get_mem(self):
+        """Post-gc memory telemetry (docs/msv4-memory-patterns.md)."""
+        import gc
+        import os
+        import resource
+
+        import psutil
+
+        gc.collect()
+        return {
+            "pid": os.getpid(),
+            "rss_gb": psutil.Process().memory_info().rss / 2**30,
+            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
+        }
+
+
+class HessTreeRay:
+    """Cube-level Hessian distributing per-band HessianTree over Ray actors.
+
+    Satisfies the ``LinearOperator`` Protocol on ``(nband, nx, ny)`` cubes.
+    One actor per band (bands couple only through the prox, so Hessian
+    applications and CG solves are embarrassingly parallel over bands).
+    ``cg`` is the distributed fast path sniffed by ``opt.pcg.PCG``: each
+    band iterates its own CG to convergence inside its actor — one Ray
+    dispatch per forward solve, not per CG iteration.
+
+    For ``nband == 1`` a local HessianTree is used (no Ray overhead).
+
+    Args:
+        partitions_per_band: list (over bands) of partition-dict lists, each
+            dict with ``psfhat``/``beam``/``wsum`` as for ``HessianTree``.
+        nx, ny, nx_psf, ny_psf: image/PSF geometry.
+        etas: Tikhonov parameter, scalar or per-band sequence.
+        nthreads: total FFT threads, divided across actors.
+        wsums: optional normalisation override, scalar or per-band sequence
+            (pass the total wsum for the legacy convention).
+        cg_tol, cg_maxit, cg_minit, cg_verbose: defaults for ``cg``.
+    """
+
+    def __init__(
+        self,
+        partitions_per_band,
+        nx,
+        ny,
+        nx_psf,
+        ny_psf,
+        etas=0.0,
+        nthreads=1,
+        wsums=None,
+        cg_tol=1e-3,
+        cg_maxit=150,
+        cg_minit=1,
+        cg_verbose=0,
+    ):
+        self.nband = len(partitions_per_band)
+        self.nx = nx
+        self.ny = ny
+        self.cg_tol = cg_tol
+        self.cg_maxit = cg_maxit
+        self.cg_minit = cg_minit
+        self.cg_verbose = cg_verbose
+        etas = np.broadcast_to(np.asarray(etas, dtype=float), (self.nband,))
+        if wsums is None:
+            wsums = [None] * self.nband
+        else:
+            wsums = np.broadcast_to(np.asarray(wsums, dtype=float), (self.nband,))
+
+        if self.nband == 1:
+            self._local = HessianTree(
+                partitions_per_band[0], nx, ny, nx_psf, ny_psf, eta=etas[0], nthreads=nthreads, wsum=wsums[0]
+            )
+            self._actors = None
+        else:
+            import ray
+
+            self._local = None
+            # cpus_per_actor is Ray's *scheduling* resource claim, kept fractional
+            # (nthreads / nband, not a floor with a minimum of 1) so that nband
+            # actors fit within a cluster with fewer logical CPUs than bands —
+            # e.g. the test suite's single-CPU Ray cluster — without deadlocking
+            # on ray.get(warmup): Ray never preempts an already-scheduled actor,
+            # so requesting a whole CPU per actor when nthreads < nband leaves
+            # later actors permanently unschedulable. The actor's own compute
+            # thread count (numba/FFT) still gets at least 1 whole thread.
+            cpus_per_actor = max(nthreads / self.nband, 1e-2)
+            actor_nthreads = max(1, nthreads // self.nband)
+            actor_cls = ray.remote(num_cpus=cpus_per_actor)(_HessBandActorImpl)
+            self._actors = [
+                actor_cls.remote(partitions_per_band[b], nx, ny, nx_psf, ny_psf, etas[b], actor_nthreads, wsums[b])
+                for b in range(self.nband)
+            ]
+            ray.get([a.warmup.remote() for a in self._actors])
+
+    def dot(self, x):
+        out = np.zeros_like(x)
+        if self._actors is None:
+            out[0] = self._local.dot(x[0])[0]
+            return out
+        import ray
+
+        refs = [self._actors[b].dot.remote(x[b]) for b in range(self.nband)]
+        for b, res in enumerate(ray.get(refs)):
+            out[b] = res[0]
+        return out
+
+    def hdot(self, x):
+        return self.dot(x)
+
+    def cg(self, rhs, x0=None, tol=None, maxit=None, minit=None):
+        """Distributed per-band CG solve of ``hess @ update = rhs``."""
+        tol = self.cg_tol if tol is None else tol
+        maxit = self.cg_maxit if maxit is None else maxit
+        minit = self.cg_minit if minit is None else minit
+        out = np.zeros_like(rhs)
+        if self._actors is None:
+            from pfb_imaging.opt.pcg import pcg_numba
+
+            x00 = None if x0 is None else x0[0]
+            out[0] = pcg_numba(
+                lambda z: self._local.dot(z)[0],
+                rhs[0],
+                x0=x00,
+                tol=tol,
+                maxit=maxit,
+                minit=minit,
+                verbosity=self.cg_verbose,
+            )
+            return out
+        import ray
+
+        refs = [
+            self._actors[b].cg.remote(rhs[b], None if x0 is None else x0[b], tol, maxit, minit, self.cg_verbose)
+            for b in range(self.nband)
+        ]
+        for b, res in enumerate(ray.get(refs)):
+            out[b] = res
+        return out
+
+    def get_mem(self):
+        """Per-actor post-gc memory telemetry (empty for the local path)."""
+        if self._actors is None:
+            return []
+        import ray
+
+        return ray.get([a.get_mem.remote() for a in self._actors])
 
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
