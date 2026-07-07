@@ -163,7 +163,7 @@ def print_memory_breakdown(nx, ny, nband, psi_ray):
     print(f"  Main process RSS:   {get_rss_mb():.0f}MB")
     print(f"  Data arrays:        {nband} x ({nx},{ny}) x 8 bytes = {nband * nx * ny * 8 / 1e6:.0f}MB")
 
-    actor_mem = query_actor_memory(psi_ray._actors)
+    actor_mem = query_actor_memory(psi_ray._pool.actors)
     nactors = len(actor_mem)
     total_rss = sum(m["rss"] for m in actor_mem)
     total_uss = sum(m["uss"] for m in actor_mem)
@@ -196,7 +196,6 @@ def main():
     parser.add_argument("--repeats", type=int, default=10, help="Timed iterations")
     parser.add_argument("--nlevel", type=int, default=3, help="Wavelet decomposition levels")
     parser.add_argument("--psi-nthreads", type=int, default=1, help="Threads for Psi operators")
-    parser.add_argument("--nactors", type=int, default=None, help="Number of Ray actors (default: nband)")
     parser.add_argument("--no-ray", action="store_true", help="Skip PsiNocopytRay benchmark")
     args = parser.parse_args()
 
@@ -257,9 +256,7 @@ def main():
     # ── PsiNocopytRay ───────────────────────────────────────────────
     if not args.no_ray:
         sys_pre = get_system_used_mb()
-        nactors = args.nactors
-        nact_str = f"{nactors} actors" if nactors else f"{nband} actors (default)"
-        print(f"Setting up PsiNocopytRay ({nact_str}) ...")
+        print(f"Setting up PsiNocopytRay ({nband} band workers) ...")
         psi_ray = PsiNocopytRay(
             nband,
             nx,
@@ -267,15 +264,7 @@ def main():
             bases,
             nlev,
             nthreads=args.psi_nthreads,
-            nactors=nactors,
         )
-        # Verify threading in actor processes
-        threading_info = ray.get([a.get_threading_info.remote() for a in psi_ray._actors])
-        for i, info in enumerate(threading_info):
-            print(
-                f"  actor {i}: pid={info['pid']}  layer={info['threading_layer']}  "
-                f"threads={info['num_threads']}/{info['NUMBA_NUM_THREADS']}"
-            )
 
         alpha_ray = np.zeros((nband, nbasis, psi_ray.nxmax, psi_ray.nymax))
         xrec_ray = np.zeros_like(data)
@@ -284,12 +273,12 @@ def main():
         sys_post = get_system_used_mb()
         err_ray = np.max(np.abs(nbasis * data - xrec_ray))
 
-        actor_mem = query_actor_memory(psi_ray._actors)
+        actor_mem = query_actor_memory(psi_ray._pool.actors)
         total_uss = sum(m["uss"] for m in actor_mem)
         total_rss = sum(m["rss"] for m in actor_mem)
         extra_ray = (
             f"system +{sys_post - sys_pre:.0f}MB, "
-            f"{psi_ray._nactors} actors: "
+            f"{psi_ray._pool.nband} band workers: "
             f"USS {total_uss:.0f}MB total, RSS {total_rss:.0f}MB total"
         )
         entries.append(("PsiNocopytRay", dt_ray, ht_ray, err_ray, rss_d_ray, extra_ray))

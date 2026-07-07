@@ -7,6 +7,7 @@ registering a factory here ("kclean" will slot in as OneShot + ClarkProx).
 import numpy as np
 
 from pfb_imaging.deconv.pfb import PFBSolver
+from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.hessian import HessTreeRay
 from pfb_imaging.operators.psi import IdentityPsi, PsiNocopytRay
 from pfb_imaging.opt.forward_backward import ForwardBackward
@@ -20,7 +21,7 @@ from pfb_imaging.utils import logging as pfb_logging
 log = pfb_logging.get_logger("DECONV")
 
 
-def _build_hess(partitions_per_band, geometry, opts):
+def _build_hess(partitions_per_band, geometry, opts, workers=None):
     """HessTreeRay with the legacy total-wsum normalisation convention."""
     wsum_b = np.array([sum(float(np.sum(p["wsum"])) for p in parts) for parts in partitions_per_band])
     wsum_tot = wsum_b.sum()
@@ -37,6 +38,7 @@ def _build_hess(partitions_per_band, geometry, opts):
         cg_tol=opts["cg_tol"],
         cg_maxit=opts["cg_maxit"],
         cg_verbose=opts["cg_verbose"],
+        workers=workers,
     )
 
 
@@ -80,30 +82,39 @@ def _common_kwargs(model, update, opts):
     )
 
 
-def make_sara(partitions_per_band, geometry, model, update, opts):
-    """SARA: l21 over a wavelet dictionary, PD or FB backward."""
+def make_sara(partitions_per_band, geometry, model, update, opts, workers=None):
+    """SARA: l21 over a wavelet dictionary, PD or FB backward.
+
+    Psi and the Hessian share one ``BandWorkerPool`` (co-located per-band
+    state, one worker process per band); the driver passes its pool so the
+    exact-residual role lands in the same workers.
+    """
     nband = len(partitions_per_band)
+    if workers is None:
+        workers = BandWorkerPool(nband, opts["nthreads"])
     bases = tuple(opts["bases"]) if not isinstance(opts["bases"], str) else tuple(opts["bases"].split(","))
-    psi = PsiNocopytRay(nband, geometry["nx"], geometry["ny"], bases, opts["nlevels"], opts["nthreads"])
+    psi = PsiNocopytRay(
+        nband, geometry["nx"], geometry["ny"], bases, opts["nlevels"], opts["nthreads"], workers=workers
+    )
     # nu = ||Psi Psi^T|| = nbasis for a concatenation of orthonormal bases;
     # legacy sara passes nu=nbasis to primal_dual. Leaving the tight-frame
     # default of 1.0 makes the PD dual step ~nbasis x too large and the
     # backward solve diverges (observed on multi-band runs).
     reg = L21(psi, bases, nu=len(bases), rmsfactor=opts["rmsfactor"], alpha=opts["alpha"])
-    hess = _build_hess(partitions_per_band, geometry, opts)
+    hess = _build_hess(partitions_per_band, geometry, opts, workers=workers)
     fwd = PCG(
         tol=opts["cg_tol"], maxit=opts["cg_maxit"], verbosity=opts["cg_verbose"], report_freq=opts["cg_report_freq"]
     )
     return PFBSolver(hess, fwd, _build_backward(opts), reg, **_common_kwargs(model, update, opts))
 
 
-def make_ista(partitions_per_band, geometry, model, update, opts):
+def make_ista(partitions_per_band, geometry, model, update, opts, workers=None):
     """ISTA: image-domain l1, forward-backward without acceleration."""
     if opts.get("opt_backend") == "primal-dual":
         log.warning("ista always uses forward-backward; opt_backend='primal-dual' is ignored.")
     nband = len(partitions_per_band)
     reg = L1(IdentityPsi(nband, geometry["nx"], geometry["ny"]))
-    hess = _build_hess(partitions_per_band, geometry, opts)
+    hess = _build_hess(partitions_per_band, geometry, opts, workers=workers)
     fwd = PCG(
         tol=opts["cg_tol"], maxit=opts["cg_maxit"], verbosity=opts["cg_verbose"], report_freq=opts["cg_report_freq"]
     )

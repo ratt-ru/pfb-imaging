@@ -1,47 +1,22 @@
-import gc
 import time
 from copy import deepcopy
 
 import numpy as np
 import psutil
-import ray
 import xarray as xr
 from ducc0.misc import resize_thread_pool
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.deconv import DeconvSolver
 from pfb_imaging.deconv.presets import PRESETS
-from pfb_imaging.operators.gridder import residual_from_partitions, wgridder_conventions
+from pfb_imaging.operators.band_worker import BandWorkerPool
+from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
 from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
 from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
-
-
-def _band_residual(dirty, parts, model, cell_rad, nthreads, epsilon, do_wgridding, double_accum):
-    """Ray task: exact residual for one band node (raw, un-normalised).
-
-    Wrapped in try/finally with gc.collect() per the Ray-task memory
-    discipline (docs/msv4-memory-patterns.md, architecture.md §8): the task
-    deserialises xarray Datasets that sit in reference cycles, and
-    residual_from_partitions allocates large per-partition model_vis arrays
-    on long-lived workers each major cycle.
-    """
-    try:
-        return residual_from_partitions(
-            dirty,
-            parts,
-            model,
-            cell_rad,
-            nthreads=nthreads,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-        )
-    finally:
-        gc.collect()
 
 
 def deconv(
@@ -138,16 +113,6 @@ def deconv(
 
     time_start = time.time()
 
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env={
-            "env_vars": env_vars,
-            "worker_process_setup_hook": setup_ray_worker,
-        },
-        log=log,
-    )
-
     dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
     image_names = sorted(n for n in dt.children if n.startswith("band"))
     if not image_names:
@@ -163,6 +128,21 @@ def deconv(
         log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
 
     nband = len(nodes)
+
+    # every deconv worker claims a nominal CPU (they are thread-pool-bound,
+    # see BandWorkerPool), so num_cpus only sets the raylet's worker-process
+    # startup throttle (max(1, num_cpus)); size it for the nband band
+    # workers plus the driver so startup is not serialised and the raylet
+    # does not warn about exceeding its expected startup concurrency.
+    init_ray(
+        max(nworkers, nband + 1),
+        ray_address=ray_address,
+        runtime_env={
+            "env_vars": env_vars,
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+        log=log,
+    )
     nx, ny = first.x.size, first.y.size
     nx_psf, ny_psf = first.x_psf.size, first.y_psf.size
     cell_rad = first.attrs["cell_rad"]
@@ -180,7 +160,7 @@ def deconv(
     dirty_raw = np.zeros((nband, nx, ny))
     wsums = np.zeros(nband)
     partitions_per_band = []  # plain-numpy dicts for HessTreeRay
-    parts_refs = []  # per-band ray.put of the gridding-input Datasets
+    parts_per_band = []  # per-band gridding-input Datasets, pinned in the band workers
     band_attrs = []  # original band attrs (bandid, freq_out, cell_rad, ...) to merge back on write
 
     for b, n in enumerate(nodes):
@@ -216,7 +196,7 @@ def deconv(
             )
             pg.append(pds)
         partitions_per_band.append(ph)
-        parts_refs.append(ray.put(pg))  # serialised once, reused every major cycle
+        parts_per_band.append(pg)
 
     wsum = wsums.sum()
     residual = residual_raw / wsum
@@ -236,16 +216,19 @@ def deconv(
 
     if minor_cycle not in PRESETS:
         log.error_and_raise(f"Unknown minor_cycle '{minor_cycle}'", ValueError)
-    solver = PRESETS[minor_cycle](partitions_per_band, geometry, model, update, opts_dict)
+
+    # one worker process per band co-locating all per-band state: the
+    # Hessian and Psi (initialised by the preset's facades) and the exact
+    # residual (gridding inputs pinned in-worker for the life of the run,
+    # rather than re-fetched from the object store every major cycle).
+    workers = BandWorkerPool(nband, nthreads)
+    workers.set_residual_inputs(parts_per_band, dirty_raw[:, None])
+    del parts_per_band  # the workers hold their own copies
+
+    solver = PRESETS[minor_cycle](partitions_per_band, geometry, model, update, opts_dict, workers=workers)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
-    del partitions_per_band  # the actors hold their own copies
-
-    # nominal CPU claim: like the HessTreeRay/PsiNocopytRay actor pools, this
-    # task is thread-pool-bound (nthreads controls the internal FFT/gridding
-    # thread count below), not Ray-scheduler-bound, so it should schedule
-    # regardless of nworkers.
-    _residual_remote = ray.remote(num_cpus=1e-2)(_band_residual)
+    del partitions_per_band  # the workers hold their own copies
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
@@ -344,25 +327,13 @@ def deconv(
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{iter0 + k + 1}.fits", hdr_mfs)
 
         log.info("Computing residual")
-        # all nband tasks run concurrently; divide nthreads between them so
-        # the aggregate thread count doesn't exceed nthreads (up to
-        # nband * nthreads otherwise).
-        residual_nthreads = max(1, nthreads // nband)
-        refs = [
-            _residual_remote.remote(
-                dirty_raw[b][None],
-                parts_refs[b],
-                model[b][None],
-                cell_rad,
-                residual_nthreads,
-                epsilon,
-                do_wgridding,
-                double_accum,
-            )
-            for b in range(nband)
-        ]
-        for b, res in enumerate(ray.get(refs)):
-            residual_raw[b] = res[0]
+        residual_raw = workers.residual(
+            model[:, None],
+            cell_rad,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+        )[:, 0]
         residual = residual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{iter0 + k + 1}.fits", hdr_mfs)

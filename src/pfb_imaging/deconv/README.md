@@ -6,10 +6,15 @@ and issue #185):
 
     PFBSolver(hess, forward_alg, backward_alg, prox)
 
-- `hess` satisfies `operators.LinearOperator` (e.g. `HessTreeRay`, Ray band-actors)
+- `hess` satisfies `operators.LinearOperator` (e.g. `HessTreeRay`)
 - `forward_alg` satisfies `opt.ForwardSolver` (e.g. `PCG`)
 - `backward_alg` satisfies `opt.BackwardSolver` (`PrimalDual`, `ForwardBackward`)
 - `prox` satisfies `deconv.Regulariser` (`prox.L21`, `prox.L1`; owns its weights)
+
+Per-band state is co-located: one `operators.band_worker.BandWorkerPool`
+worker process per band holds the band's Hessian, wavelet dictionary and
+exact-residual gridding inputs, and the `HessTreeRay`/`PsiNocopytRay`
+facades (plus the driver's residual step) share that pool.
 
 No inheritance anywhere: the interfaces are `typing.Protocol` classes, satisfied
 structurally. Conformance is enforced at the seams — `PFBSolver.__init__`

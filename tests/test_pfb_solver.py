@@ -316,6 +316,57 @@ def test_make_sara_sets_dictionary_nu():
     assert solver.reg.nu == len(bases)
 
 
+def test_make_sara_colocates_band_state():
+    """Hess and Psi share one BandWorkerPool: one worker process per band.
+
+    Co-location is the whole point of the pool (one JIT warm-up, one thread
+    pool and one process per band); a second pool sneaking in would silently
+    double the worker count.
+    """
+    from pfb_imaging.deconv.presets import make_sara
+
+    nband = 2
+    geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32}
+    model = np.zeros((nband, 16, 16))
+    opts = dict(
+        bases=["self", "db1"],
+        nlevels=1,
+        rmsfactor=1.0,
+        alpha=2.0,
+        gamma=1.0,
+        positivity=0,
+        eta=0.5,
+        l1_reweight_from=-1,
+        hess_norm=1.0,
+        opt_backend="primal-dual",
+        acceleration=True,
+        nthreads=1,
+        verbosity=0,
+        pd_tol=1e-6,
+        pd_maxit=10,
+        pd_verbose=0,
+        pd_report_freq=100,
+        fb_tol=1e-6,
+        fb_maxit=10,
+        fb_verbose=0,
+        fb_report_freq=100,
+        cg_tol=1e-6,
+        cg_maxit=10,
+        cg_verbose=0,
+        cg_report_freq=100,
+        pm_tol=1e-3,
+        pm_maxit=10,
+        pm_verbose=0,
+        pm_report_freq=100,
+    )
+    solver = make_sara(_delta_partitions(nband, 16, 16), geometry, model.copy(), model.copy(), opts)
+    pool = solver.hess._pool
+    assert pool is solver.reg.psi._pool
+    assert pool.actors is not None and len(pool.actors) == nband
+    pids = {m["pid"] for m in solver.hess.get_mem()}
+    assert len(pids) == nband
+
+
 def test_forward_requires_first():
     """forward() consumes the residual stored by first(); skipping first() fails loudly."""
     b = np.ones((1, 4, 4))

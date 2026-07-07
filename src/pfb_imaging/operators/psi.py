@@ -1,5 +1,4 @@
 import concurrent.futures as cf
-import os
 from collections import OrderedDict
 
 import numba
@@ -668,94 +667,22 @@ class PsiNocopyt(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
-class _PsiBandActorImpl:
-    """Ray actor that holds a PsiBandNocopyt jitclass.
-
-    The jitclass is created inside the actor process, avoiding the need
-    to pickle it.  Large numpy arrays are passed through Ray's object
-    store automatically (zero-copy for reads on the same node).
-
-    Output buffers are pre-allocated once and reused across calls to
-    avoid repeated allocation + zeroing (the jitclass zeros internally).
-    """
-
-    def __init__(self, nx, ny, bases, nlevel, nthreads):
-        # Load TBB in this actor process — ctypes.CDLL in the main
-        # process does not carry over to forked/spawned Ray workers.
-        import ctypes
-        import importlib.metadata
-
-        dist = importlib.metadata.distribution("tbb")
-        for f in dist.files:
-            if str(f).endswith("/libtbb.so"):
-                ctypes.CDLL(str(dist.locate_file(f).resolve()))
-                break
-
-        effective = min(nthreads, numba.config.NUMBA_NUM_THREADS)
-        numba.set_num_threads(effective)
-        self._psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
-        self._nx = nx
-        self._ny = ny
-        # pre-allocate output buffers (reused every call)
-        nbasis = self._psib.nbasis
-        nxmax = self._psib.nxmax
-        nymax = self._psib.nymax
-        self._alphao = np.empty((nbasis, nxmax, nymax))
-        self._xo = np.empty((nx, ny))
-
-    def dot(self, x):
-        self._psib.dot(x, self._alphao)
-        return self._alphao
-
-    def hdot(self, alpha):
-        self._psib.hdot(alpha, self._xo)
-        return self._xo
-
-    def warmup(self):
-        """Trigger JIT compilation so first real call is fast."""
-        x = np.zeros((self._nx, self._ny))
-        self._psib.dot(x, self._alphao)
-        self._psib.hdot(self._alphao, self._xo)
-
-    def get_shape(self):
-        return int(self._psib.nxmax), int(self._psib.nymax)
-
-    def get_threading_info(self):
-        """Return threading diagnostics for this actor process."""
-        return {
-            "threading_layer": numba.threading_layer(),
-            "num_threads": numba.get_num_threads(),
-            "NUMBA_NUM_THREADS": numba.config.NUMBA_NUM_THREADS,
-            "pid": os.getpid(),
-        }
-
-    def get_memory_mb(self):
-        """Return memory stats for this actor process in MB.
-
-        Returns dict with:
-          rss  - Resident Set Size (includes shared pages, inflated)
-          uss  - Unique Set Size (private pages only, true per-process cost)
-        """
-        import psutil
-
-        info = psutil.Process().memory_full_info()
-        return {"rss": info.rss / 1e6, "uss": info.uss / 1e6}
-
-
 class PsiNocopytRay:
-    """Ray-parallelized Psi operator using actor processes.
+    """Ray-parallelized Psi operator over per-band band workers.
 
-    Bands are distributed round-robin across ``nactors`` actor processes.
-    Each actor holds a PsiBandNocopyt jitclass created in-process (avoids
-    pickling).  Using fewer actors than bands saves memory (each actor
-    carries ~300MB of Python/numba/TBB runtime) at the cost of some
-    bands being processed sequentially within an actor.
+    Satisfies the ``PsiOperator`` Protocol on ``(nband, ...)`` cubes. A thin
+    facade over a ``BandWorkerPool``: each worker holds a PsiBandNocopyt
+    jitclass created in-process (avoids pickling) with pre-allocated output
+    buffers. Pass ``workers`` to co-locate with the other per-band roles
+    (Hessian, exact residual) in the same worker processes; without it a
+    private pool is created.
 
-    For nband=1, falls back to a local jitclass (no Ray overhead).
+    For nband=1 the pool runs in-process (no Ray overhead).
     """
 
-    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, nactors=None):
-        import ray
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
+        # deferred to break the import cycle (band_worker imports psi helpers)
+        from pfb_imaging.operators.band_worker import BandWorkerPool
 
         self.nband = nband
         self.nx = nx
@@ -763,72 +690,24 @@ class PsiNocopytRay:
         self.nbasis = len(bases)
         self.nthreads = nthreads
 
-        if nband == 1:
-            # single band: local jitclass, no Ray overhead
-            effective = min(nthreads, numba.config.NUMBA_NUM_THREADS)
-            numba.set_num_threads(effective)
-            self._local_psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
-            self.nxmax = self._local_psib.nxmax
-            self.nymax = self._local_psib.nymax
-            self._actors = None
-            self._nactors = 0
-        else:
-            self._local_psib = None
-            if nactors is None:
-                nactors = nband
-            nactors = min(nactors, nband)
-            self._nactors = nactors
-            # cpus_per_actor is Ray's *scheduling* resource claim, kept nominal
-            # (not scaled with nthreads/nactors) because the actors are
-            # thread-pool-bound, not Ray-scheduler-bound: the actual compute
-            # concurrency comes from each actor's own numba thread count
-            # (actor_nthreads below), and Ray never preempts an
-            # already-scheduled actor, so any claim that scales with nactors
-            # (fractional or not) can exceed the cluster's num_cpus for large
-            # enough nactors and deadlock on ray.get(warmup) -- e.g. the
-            # default nworkers=1 driver cluster with nband > 1. A flat
-            # near-zero claim lets all nactors actors schedule regardless of
-            # cluster size. Mirrors HessTreeRay's allocation.
-            cpus_per_actor = 1e-2
-            actor_nthreads = max(1, nthreads // nactors)
-            actorband = ray.remote(
-                num_cpus=cpus_per_actor,
-            )(_PsiBandActorImpl)
-            self._actors = [actorband.remote(nx, ny, bases, nlevel, actor_nthreads) for _ in range(nactors)]
-            # trigger JIT compilation in all actors in parallel
-            ray.get([a.warmup.remote() for a in self._actors])
-            self.nxmax, self.nymax = ray.get(self._actors[0].get_shape.remote())
+        if workers is None:
+            workers = BandWorkerPool(nband, nthreads)
+        elif workers.nband != nband:
+            raise ValueError(f"workers pool has {workers.nband} bands, expected {nband}")
+        self._pool = workers
+        self.nxmax, self.nymax = self._pool.init_psi(nx, ny, bases, nlevel)
 
     def dot(self, x, alphao):
         """
         image to coeffs
         """
-        if self._actors is None:
-            self._local_psib.dot(x[0], alphao[0])
-            return
-
-        import ray
-
-        # distribute bands round-robin across actors
-        refs = [self._actors[b % self._nactors].dot.remote(x[b]) for b in range(self.nband)]
-        results = ray.get(refs)
-        for b, result in enumerate(results):
-            alphao[b] = result
+        self._pool.psi_dot(x, alphao)
 
     def hdot(self, alpha, xo):
         """
         coeffs to image
         """
-        if self._actors is None:
-            self._local_psib.hdot(alpha[0], xo[0])
-            return
-
-        import ray
-
-        refs = [self._actors[b % self._nactors].hdot.remote(alpha[b]) for b in range(self.nband)]
-        results = ray.get(refs)
-        for b, result in enumerate(results):
-            xo[b] = result
+        self._pool.psi_hdot(alpha, xo)
 
 
 class IdentityPsi:

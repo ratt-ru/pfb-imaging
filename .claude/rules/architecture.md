@@ -144,6 +144,13 @@ distributed by Ray, the sum over a band's partitions is not):
   per-partition inputs, **never recomputing the PSF** (per-major-cycle gradient). This mirrors
   the legacy `image_data_products`/`compute_residual` split and owns the exact path, so
   `HessianTree` is PSF-convolution only.
+* `operators/band_worker.BandWorkerPool` — one Ray worker process per band co-locating all
+  per-band deconv state (the band's `HessianTree` with in-worker CG, the wavelet jitclass, and
+  the pinned gridding inputs for the exact residual). The `HessTreeRay`/`PsiNocopytRay` facades
+  and the `pfb deconv` driver's residual step share one pool, so a run needs exactly nband
+  workers; workers claim nominal (1e-2) CPUs because they are thread-pool-bound (a real claim
+  can deadlock scheduling), and the driver sizes the local cluster's `num_cpus` to
+  `max(nworkers, nband+1)` so worker startup is not throttled.
 
 **arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
 python-casacore coexist in one process, so the suite runs as a single `pytest tests/` and the

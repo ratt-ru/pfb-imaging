@@ -522,93 +522,32 @@ class HessianTree(object):
         return self.dot(x)
 
 
-class _HessBandActorImpl:
-    """Ray actor holding one band's HessianTree (see _PsiBandActorImpl).
-
-    The HessianTree (with its preallocated FFT scratch) is built once in
-    the actor process; per-call payloads are plain numpy arrays.
-    """
-
-    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta, nthreads, wsum=None):
-        # Load TBB in this actor process (ctypes.CDLL in the main process
-        # does not carry over to forked/spawned Ray workers).
-        import ctypes
-        import importlib.metadata
-
-        import numba
-
-        dist = importlib.metadata.distribution("tbb")
-        for f in dist.files:
-            if str(f).endswith("/libtbb.so"):
-                ctypes.CDLL(str(dist.locate_file(f).resolve()))
-                break
-        numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
-
-        self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=nthreads, wsum=wsum)
-        self._nx = nx
-        self._ny = ny
-
-    def dot(self, x):
-        return self._hess.dot(x)
-
-    def cg(self, rhs, x0, tol, maxit, minit, verbosity):
-        from pfb_imaging.opt.pcg import pcg_numba
-
-        if x0 is not None:
-            # Ray deserialises task args as read-only zero-copy views;
-            # pcg_numba updates x0 in place
-            x0 = x0.copy()
-        return pcg_numba(
-            lambda z: self._hess.dot(z)[0],
-            rhs,
-            x0=x0,
-            tol=tol,
-            maxit=maxit,
-            minit=minit,
-            verbosity=verbosity,
-        )
-
-    def warmup(self):
-        """Trigger JIT/FFT-plan warmup so the first real call is fast."""
-        self._hess.dot(np.zeros((self._nx, self._ny)))
-
-    def get_mem(self):
-        """Post-gc memory telemetry (docs/msv4-memory-patterns.md)."""
-        import gc
-        import os
-        import resource
-
-        import psutil
-
-        gc.collect()
-        return {
-            "pid": os.getpid(),
-            "rss_gb": psutil.Process().memory_info().rss / 2**30,
-            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-        }
-
-
 class HessTreeRay:
-    """Cube-level Hessian distributing per-band HessianTree over Ray actors.
+    """Cube-level Hessian over per-band HessianTrees held in band workers.
 
     Satisfies the ``LinearOperator`` Protocol on ``(nband, nx, ny)`` cubes.
-    One actor per band (bands couple only through the prox, so Hessian
-    applications and CG solves are embarrassingly parallel over bands).
-    ``cg`` is the distributed fast path sniffed by ``opt.pcg.PCG``: each
-    band iterates its own CG to convergence inside its actor — one Ray
-    dispatch per forward solve, not per CG iteration.
+    A thin facade over a ``BandWorkerPool`` (one worker per band; bands
+    couple only through the prox, so Hessian applications and CG solves are
+    embarrassingly parallel over bands). Pass ``workers`` to co-locate with
+    the other per-band roles (Psi, exact residual) in the same worker
+    processes; without it a private pool is created. ``cg`` is the
+    distributed fast path sniffed by ``opt.pcg.PCG``: each band iterates its
+    own CG to convergence inside its worker — one Ray dispatch per forward
+    solve, not per CG iteration.
 
-    For ``nband == 1`` a local HessianTree is used (no Ray overhead).
+    For ``nband == 1`` the pool runs in-process (no Ray overhead).
 
     Args:
         partitions_per_band: list (over bands) of partition-dict lists, each
             dict with ``psfhat``/``beam``/``wsum`` as for ``HessianTree``.
         nx, ny, nx_psf, ny_psf: image/PSF geometry.
         etas: Tikhonov parameter, scalar or per-band sequence.
-        nthreads: total FFT threads, divided across actors.
+        nthreads: total FFT threads (ignored when ``workers`` is passed; the
+            pool's per-band thread budget applies).
         wsums: optional normalisation override, scalar or per-band sequence
             (pass the total wsum for the legacy convention).
         cg_tol, cg_maxit, cg_minit, cg_verbose: defaults for ``cg``.
+        workers: optional shared ``BandWorkerPool``.
     """
 
     def __init__(
@@ -625,7 +564,11 @@ class HessTreeRay:
         cg_maxit=150,
         cg_minit=1,
         cg_verbose=0,
+        workers=None,
     ):
+        # deferred to break the import cycle (band_worker imports HessianTree)
+        from pfb_imaging.operators.band_worker import BandWorkerPool
+
         self.nband = len(partitions_per_band)
         self.nx = nx
         self.ny = ny
@@ -639,45 +582,15 @@ class HessTreeRay:
         else:
             wsums = np.broadcast_to(np.asarray(wsums, dtype=float), (self.nband,))
 
-        if self.nband == 1:
-            self._local = HessianTree(
-                partitions_per_band[0], nx, ny, nx_psf, ny_psf, eta=etas[0], nthreads=nthreads, wsum=wsums[0]
-            )
-            self._actors = None
-        else:
-            import ray
-
-            self._local = None
-            # cpus_per_actor is Ray's *scheduling* resource claim, kept nominal
-            # (not scaled with nthreads/nband) because the actors are
-            # thread-pool-bound, not Ray-scheduler-bound: the actual compute
-            # concurrency comes from each actor's own numba/FFT thread count
-            # (actor_nthreads below), and Ray never preempts an
-            # already-scheduled actor, so any claim that scales with nband
-            # (fractional or not) can exceed the cluster's num_cpus for large
-            # enough nband and deadlock on ray.get(warmup) -- e.g. the default
-            # nworkers=1 driver cluster with nband > 1. A flat near-zero claim
-            # lets all nband actors schedule regardless of cluster size.
-            cpus_per_actor = 1e-2
-            actor_nthreads = max(1, nthreads // self.nband)
-            actor_cls = ray.remote(num_cpus=cpus_per_actor)(_HessBandActorImpl)
-            self._actors = [
-                actor_cls.remote(partitions_per_band[b], nx, ny, nx_psf, ny_psf, etas[b], actor_nthreads, wsums[b])
-                for b in range(self.nband)
-            ]
-            ray.get([a.warmup.remote() for a in self._actors])
+        if workers is None:
+            workers = BandWorkerPool(self.nband, nthreads)
+        elif workers.nband != self.nband:
+            raise ValueError(f"workers pool has {workers.nband} bands, expected {self.nband}")
+        self._pool = workers
+        self._pool.init_hess(partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums)
 
     def dot(self, x):
-        out = np.zeros_like(x)
-        if self._actors is None:
-            out[0] = self._local.dot(x[0])[0]
-            return out
-        import ray
-
-        refs = [self._actors[b].dot.remote(x[b]) for b in range(self.nband)]
-        for b, res in enumerate(ray.get(refs)):
-            out[b] = res[0]
-        return out
+        return self._pool.hess_dot(x)
 
     def hdot(self, x):
         return self.dot(x)
@@ -687,38 +600,11 @@ class HessTreeRay:
         tol = self.cg_tol if tol is None else tol
         maxit = self.cg_maxit if maxit is None else maxit
         minit = self.cg_minit if minit is None else minit
-        out = np.zeros_like(rhs)
-        if self._actors is None:
-            from pfb_imaging.opt.pcg import pcg_numba
-
-            x00 = None if x0 is None else x0[0]
-            out[0] = pcg_numba(
-                lambda z: self._local.dot(z)[0],
-                rhs[0],
-                x0=x00,
-                tol=tol,
-                maxit=maxit,
-                minit=minit,
-                verbosity=self.cg_verbose,
-            )
-            return out
-        import ray
-
-        refs = [
-            self._actors[b].cg.remote(rhs[b], None if x0 is None else x0[b], tol, maxit, minit, self.cg_verbose)
-            for b in range(self.nband)
-        ]
-        for b, res in enumerate(ray.get(refs)):
-            out[b] = res
-        return out
+        return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
 
     def get_mem(self):
-        """Per-actor post-gc memory telemetry (empty for the local path)."""
-        if self._actors is None:
-            return []
-        import ray
-
-        return ray.get([a.get_mem.remote() for a in self._actors])
+        """Per-worker post-gc memory telemetry (empty for the local path)."""
+        return self._pool.get_mem()
 
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
