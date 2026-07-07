@@ -16,7 +16,8 @@ opts:
 gosara:
   name: pfb-sara
   info:
-    Example stimela recipe using the SARA algorithm.
+    Stimela recipe for the SARA algorithm with presets.
+    Minimal algorithmic parameters exposed.
 
   inputs:
     ms:
