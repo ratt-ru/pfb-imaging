@@ -245,7 +245,8 @@ def deconv(
     nworkers: Annotated[
         int,
         typer.Option(
-            help="Number of Ray workers.",
+            help="Number of Ray workers. "
+            "Band actors use nominal CPU claims, so nworkers does not need to scale with nband.",
             rich_help_panel="Performance",
         ),
     ] = 1,

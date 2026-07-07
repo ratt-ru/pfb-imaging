@@ -15,6 +15,9 @@ from pfb_imaging.opt.primal_dual import PrimalDual
 from pfb_imaging.prox.l1 import L1
 from pfb_imaging.prox.l21 import L21
 from pfb_imaging.prox.positivity import positivity_prox
+from pfb_imaging.utils import logging as pfb_logging
+
+log = pfb_logging.get_logger("DECONV")
 
 
 def _build_hess(partitions_per_band, geometry, opts):
@@ -92,6 +95,8 @@ def make_sara(partitions_per_band, geometry, model, update, opts):
 
 def make_ista(partitions_per_band, geometry, model, update, opts):
     """ISTA: image-domain l1, forward-backward without acceleration."""
+    if opts.get("opt_backend") == "primal-dual":
+        log.warning("ista always uses forward-backward; opt_backend='primal-dual' is ignored.")
     nband = len(partitions_per_band)
     reg = L1(IdentityPsi(nband, geometry["nx"], geometry["ny"]))
     hess = _build_hess(partitions_per_band, geometry, opts)

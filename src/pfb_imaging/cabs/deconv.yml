@@ -192,6 +192,7 @@ cabs:
       nworkers:
         info:
           Number of Ray workers.
+          Band actors use nominal CPU claims, so nworkers does not need to scale with nband.
         dtype: int
         default: 1
         metadata:
