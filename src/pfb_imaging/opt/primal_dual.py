@@ -3,6 +3,8 @@ from time import time
 import numpy as np
 from numba import njit, prange
 
+from pfb_imaging.deconv import Regulariser
+from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.prox.positivity import positivity as _positivity_fn
 from pfb_imaging.prox.positivity import positivity_band as _positivity_band_fn
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
@@ -321,6 +323,8 @@ class PrimalDual:
 
     def setup(self, prox, hessnorm: float) -> None:
         """Bind the regulariser, compute step sizes, allocate the dual."""
+        require_protocol(prox, Regulariser, "prox")
+        require_protocol(prox.psi, PsiOperator, "prox.psi")
         self._reg = prox
         self.hessnorm = hessnorm
         nu = prox.nu

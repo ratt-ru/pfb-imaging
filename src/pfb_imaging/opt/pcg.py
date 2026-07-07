@@ -9,6 +9,7 @@ import ray
 from ducc0.misc import empty_noncritical
 from numba import njit, prange
 
+from pfb_imaging.operators import LinearOperator, require_protocol
 from pfb_imaging.utils.misc import norm_diff
 from pfb_imaging.utils.naming import xds_from_list
 
@@ -594,6 +595,7 @@ class PCG:
         """Solve ``hess @ update = residual`` for update."""
         if hasattr(hess, "cg"):
             return hess.cg(residual, x0=x0, tol=self.tol, maxit=self.maxit, minit=self.minit)
+        require_protocol(hess, LinearOperator, "hess")
         return pcg_numba(
             hess.dot,
             residual,

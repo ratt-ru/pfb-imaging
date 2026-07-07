@@ -86,3 +86,101 @@ def test_positivity_prox_modes():
     positivity_band(y)
     assert y[0, 0, 1] == 0.0 and y[1, 0, 1] == 0.0
     assert y[0, 0, 0] == 1.0 and y[1, 1, 1] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Protocol enforcement: seams raise clear TypeErrors on non-conforming pieces
+# ---------------------------------------------------------------------------
+
+
+class _Bad:
+    """Conforms to nothing."""
+
+
+def test_require_protocol_error_names_missing_members():
+    import pytest
+
+    from pfb_imaging.operators import require_protocol
+
+    with pytest.raises(TypeError, match=r"hess must satisfy the LinearOperator Protocol.*missing.*dot"):
+        require_protocol(_Bad(), LinearOperator, "hess")
+    # conforming objects pass silently
+    require_protocol(Psi(1, 32, 32, ("self",), 1, 1), PsiOperator, "psi")
+
+
+def test_pfb_solver_rejects_nonconforming_pieces():
+    import pytest
+
+    from pfb_imaging.deconv.pfb import PFBSolver
+    from pfb_imaging.operators.psi import IdentityPsi
+    from pfb_imaging.opt.forward_backward import ForwardBackward
+    from pfb_imaging.opt.pcg import PCG
+    from pfb_imaging.prox.l1 import L1
+
+    class IdOp:
+        def dot(self, x):
+            return x.copy()
+
+        def hdot(self, x):
+            return x.copy()
+
+    b = np.zeros((1, 4, 4))
+    reg = L1(IdentityPsi(1, 4, 4))
+
+    def kwargs():
+        return dict(model=b.copy(), update=b.copy(), hessnorm=1.0, l1_reweight_from=-1)
+
+    with pytest.raises(TypeError, match="hess must satisfy the LinearOperator Protocol"):
+        PFBSolver(_Bad(), PCG(), ForwardBackward(verbosity=0), reg, **kwargs())
+    with pytest.raises(TypeError, match="forward_alg must satisfy the ForwardSolver Protocol"):
+        PFBSolver(IdOp(), _Bad(), ForwardBackward(verbosity=0), reg, **kwargs())
+    with pytest.raises(TypeError, match="backward_alg must satisfy the BackwardSolver Protocol"):
+        PFBSolver(IdOp(), PCG(), _Bad(), reg, **kwargs())
+    with pytest.raises(TypeError, match="prox must satisfy the Regulariser Protocol"):
+        PFBSolver(IdOp(), PCG(), ForwardBackward(verbosity=0), _Bad(), **kwargs())
+
+
+def test_backward_solvers_validate_regulariser_in_setup():
+    import pytest
+
+    from pfb_imaging.opt.forward_backward import ForwardBackward
+    from pfb_imaging.opt.primal_dual import PrimalDual
+
+    with pytest.raises(TypeError, match="prox must satisfy the Regulariser Protocol"):
+        ForwardBackward(verbosity=0).setup(_Bad(), 1.0)
+    with pytest.raises(TypeError, match="prox must satisfy the Regulariser Protocol"):
+        PrimalDual(verbosity=0).setup(_Bad(), 1.0)
+
+    class BadPsiReg:
+        def __init__(self):
+            self.psi = _Bad()  # psi lacking the PsiOperator surface
+            self.nu = 1.0
+
+        def prox(self, v, vout, lam, sigma=1.0):
+            np.copyto(vout, v)
+
+    with pytest.raises(TypeError, match=r"prox\.psi must satisfy the PsiOperator Protocol"):
+        ForwardBackward(verbosity=0).setup(BadPsiReg(), 1.0)
+    with pytest.raises(TypeError, match=r"prox\.psi must satisfy the PsiOperator Protocol"):
+        PrimalDual(verbosity=0).setup(BadPsiReg(), 1.0)
+
+
+def test_regularisers_validate_psi():
+    import pytest
+
+    from pfb_imaging.prox.l1 import L1
+    from pfb_imaging.prox.l21 import L21
+
+    with pytest.raises(TypeError, match="psi must satisfy the PsiOperator Protocol"):
+        L1(_Bad())
+    with pytest.raises(TypeError, match="psi must satisfy the PsiOperator Protocol"):
+        L21(_Bad(), bases=("self",))
+
+
+def test_pcg_generic_path_validates_hess():
+    import pytest
+
+    from pfb_imaging.opt.pcg import PCG
+
+    with pytest.raises(TypeError, match="hess must satisfy the LinearOperator Protocol"):
+        PCG(verbosity=0).solve(_Bad(), np.ones((1, 2, 2)))

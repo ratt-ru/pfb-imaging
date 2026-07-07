@@ -12,7 +12,11 @@ and issue #185):
 - `prox` satisfies `deconv.Regulariser` (`prox.L21`, `prox.L1`; owns its weights)
 
 No inheritance anywhere: the interfaces are `typing.Protocol` classes, satisfied
-structurally. To contribute an algorithm:
+structurally. Conformance is enforced at the seams — `PFBSolver.__init__`
+validates all four pieces, the backward solvers validate the regulariser (and
+its `psi`) in `setup()`, and the regularisers validate `psi` — via
+`operators.require_protocol`, which raises a `TypeError` naming the missing
+methods/attributes. To contribute an algorithm:
 
 1. Write a regulariser: a plain class with `psi`, `nu` and
    `prox(v, vout, lam, sigma=1.0)` = `prox_{(lam/sigma) g}(v/sigma)` in-place.

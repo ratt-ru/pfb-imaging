@@ -4,6 +4,7 @@ from functools import partial
 
 import numpy as np
 
+from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast, prox_21m_numba
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import l1reweight_func
@@ -25,6 +26,7 @@ class L21:
     """
 
     def __init__(self, psi, bases, nu: float = 1.0, rmsfactor: float = 1.0, alpha: float = 2.0):
+        require_protocol(psi, PsiOperator, "psi")
         self.psi = psi
         self.nu = nu
         self.bases = tuple(bases)

@@ -10,6 +10,8 @@ from time import time
 
 import numpy as np
 
+from pfb_imaging.deconv import Regulariser
+from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.opt.primal_dual import _nb_any_nonzero, _nb_norm_diff
 from pfb_imaging.utils import logging as pfb_logging
 
@@ -59,6 +61,8 @@ class ForwardBackward:
 
     def setup(self, prox, hessnorm: float) -> None:
         """Bind the regulariser, compute the step size, size buffers."""
+        require_protocol(prox, Regulariser, "prox")
+        require_protocol(prox.psi, PsiOperator, "prox.psi")
         self._reg = prox
         self.hessnorm = hessnorm
         self.step = 2.0 * self.gamma / hessnorm

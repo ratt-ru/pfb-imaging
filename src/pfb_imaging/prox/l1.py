@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from pfb_imaging.operators import PsiOperator, require_protocol
+
 
 class L1:
     """Satisfies the ``Regulariser`` Protocol.
@@ -12,6 +14,7 @@ class L1:
     """
 
     def __init__(self, psi, nu: float = 1.0):
+        require_protocol(psi, PsiOperator, "psi")
         self.psi = psi
         self.nu = nu
         self.weight = np.ones((psi.nbasis, psi.nymax, psi.nxmax))

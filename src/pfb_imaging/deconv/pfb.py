@@ -2,6 +2,9 @@
 
 import numpy as np
 
+from pfb_imaging.deconv import Regulariser
+from pfb_imaging.operators import LinearOperator, require_protocol
+from pfb_imaging.opt import BackwardSolver, ForwardSolver
 from pfb_imaging.opt.power_method import power_method_numba as power_method
 from pfb_imaging.utils import logging as pfb_logging
 
@@ -95,6 +98,10 @@ class PFBSolver:
         pm_report_freq: int = 25,
         verbosity: int = 1,
     ):
+        require_protocol(hess, LinearOperator, "hess")
+        require_protocol(forward_alg, ForwardSolver, "forward_alg")
+        require_protocol(backward_alg, BackwardSolver, "backward_alg")
+        require_protocol(prox, Regulariser, "prox")
         self.hess = hess
         self.forward_alg = forward_alg
         self.backward_alg = backward_alg
