@@ -14,7 +14,9 @@ and issue #185):
 Per-band state is co-located: one `operators.band_worker.BandWorkerPool`
 worker process per band holds the band's Hessian, wavelet dictionary and
 exact-residual gridding inputs, and the `HessTreeRay`/`PsiNocopytRay`
-facades (plus the driver's residual step) share that pool.
+facades (plus the driver's residual step) share that pool. Workers read
+their own band's vis-scale inputs straight from the `.dt` store
+(`load_bands`); the driver only handles image-scale cubes and attrs.
 
 No inheritance anywhere: the interfaces are `typing.Protocol` classes, satisfied
 structurally. Conformance is enforced at the seams — `PFBSolver.__init__`

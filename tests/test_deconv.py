@@ -337,3 +337,68 @@ def test_deconv_two_band_smoke(tmp_path):
         assert "MODEL" in ds and "UPDATE" in ds
         assert ds.attrs["niters"] == 1
         assert np.isfinite(ds.MODEL.values).all()
+
+
+@pytest.mark.timeout(120)
+def test_band_workers_load_matches_driver_side(tmp_path):
+    """Worker-side load_bands reproduces driver-side reads exactly.
+
+    The band workers read their own vis-scale inputs (PSFHAT/BEAM/wsum for
+    the Hessian, UVW/WEIGHT/MASK/FREQ/BEAM/DIRTY for the exact residual)
+    straight from the .dt store; this checks the resulting operators against
+    the same data loaded in the test process.
+    """
+    from numpy.testing import assert_allclose
+
+    from pfb_imaging.operators.band_worker import BandWorkerPool
+    from pfb_imaging.operators.gridder import residual_from_partitions
+    from pfb_imaging.operators.hessian import HessianTree, HessTreeRay
+
+    rng = np.random.default_rng(99)
+    nx = ny = 16
+    nrow, nchan = 32, 1
+    dt_name = str(tmp_path / "synth_I.dt")
+    _write_synthetic_dt(dt_name, nx, ny, nrow, nchan, rng)
+
+    # randomise the PSF magnitudes so the Hessian check is non-trivial
+    import zarr
+
+    root = zarr.open_group(dt_name, mode="a")
+    for _, grp in root.groups():
+        for _, child in grp.groups():
+            child["PSFHAT"][:] = rng.uniform(0.5, 2.0, size=child["PSFHAT"].shape)
+    zarr.consolidate_metadata(dt_name)
+
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    nodes = sorted(n for n in dt.children if n.startswith("band"))
+    nband = len(nodes)
+    cell_rad = dt[nodes[0]].ds.attrs["cell_rad"]
+
+    pool = BandWorkerPool(nband, nthreads=1)
+    pool.load_bands(dt_name, nodes)
+    hess = HessTreeRay(None, nx, ny, 2 * nx, 2 * ny, etas=0.1, wsums=1.0, workers=pool)
+
+    x = rng.standard_normal((nband, nx, ny))
+    out_pool = hess.dot(x)
+    model = rng.standard_normal((nband, 1, nx, ny))
+    res_pool = pool.residual(model, cell_rad)
+
+    for b, n in enumerate(nodes):
+        band = dt[n]
+        parts, hess_parts = [], []
+        for cname in sorted(band.children):
+            child = band[cname].ds
+            pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+            pds.attrs.update(child.attrs)
+            hess_parts.append(
+                {
+                    "psfhat": np.abs(child.PSFHAT.values),
+                    "beam": pds.BEAM.values,
+                    "wsum": np.asarray(child.attrs["wsum"]),
+                }
+            )
+            parts.append(pds)
+        ref_hess = HessianTree(hess_parts, nx, ny, 2 * nx, 2 * ny, eta=0.1, wsum=1.0)
+        assert_allclose(out_pool[b], ref_hess.dot(x[b])[0], rtol=1e-12, atol=1e-12)
+        ref_res = residual_from_partitions(band.ds.DIRTY.values, parts, model[b], cell_rad)
+        assert_allclose(res_pool[b], ref_res, rtol=1e-12, atol=1e-12)

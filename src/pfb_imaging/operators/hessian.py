@@ -539,7 +539,9 @@ class HessTreeRay:
 
     Args:
         partitions_per_band: list (over bands) of partition-dict lists, each
-            dict with ``psfhat``/``beam``/``wsum`` as for ``HessianTree``.
+            dict with ``psfhat``/``beam``/``wsum`` as for ``HessianTree``; or
+            None to build from data the workers loaded themselves via
+            ``BandWorkerPool.load_bands`` (requires ``workers``).
         nx, ny, nx_psf, ny_psf: image/PSF geometry.
         etas: Tikhonov parameter, scalar or per-band sequence.
         nthreads: total FFT threads (ignored when ``workers`` is passed; the
@@ -569,7 +571,12 @@ class HessTreeRay:
         # deferred to break the import cycle (band_worker imports HessianTree)
         from pfb_imaging.operators.band_worker import BandWorkerPool
 
-        self.nband = len(partitions_per_band)
+        if partitions_per_band is None:
+            if workers is None:
+                raise ValueError("partitions_per_band=None requires a workers pool with loaded bands")
+            self.nband = workers.nband
+        else:
+            self.nband = len(partitions_per_band)
         self.nx = nx
         self.ny = ny
         self.cg_tol = cg_tol

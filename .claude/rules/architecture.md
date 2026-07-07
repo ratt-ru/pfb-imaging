@@ -150,7 +150,10 @@ distributed by Ray, the sum over a band's partitions is not):
   and the `pfb deconv` driver's residual step share one pool, so a run needs exactly nband
   workers; workers claim nominal (1e-2) CPUs because they are thread-pool-bound (a real claim
   can deadlock scheduling), and the driver sizes the local cluster's `num_cpus` to
-  `max(nworkers, nband+1)` so worker startup is not throttled.
+  `max(nworkers, nband+1)` so worker startup is not throttled. Each worker reads its own band's
+  vis-scale inputs (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`/`DIRTY`) straight from the
+  `.dt` store (`load_bands`), so that data never enters the driver or the Ray object store —
+  the driver reads only image-scale cubes (`RESIDUAL`/`MODEL`/`UPDATE`), `WSUM` and attrs.
 
 **arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
 python-casacore coexist in one process, so the suite runs as a single `pytest tests/` and the

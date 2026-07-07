@@ -49,11 +49,63 @@ class _BandWorkerImpl:
         self._parts = None
         self._dirty = None
 
+    # --- band loading (worker-side reads; the driver never touches these arrays) ---
+
+    def load_band(self, store_url, node_name):
+        """Read this band's worker-side inputs straight from the ``.dt`` store.
+
+        Loads the per-partition gridding inputs (``UVW``/``WEIGHT``/``MASK``/
+        ``FREQ``/``BEAM``), the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
+        and the raw ``DIRTY`` in this process, so vis-scale data never enters
+        the driver or the Ray object store. Selective loads only, then the
+        Dataset handles are released and cycles collected (the ``stokes_vis``
+        discipline; docs/msv4-memory-patterns.md). Everything loaded is held
+        for the life of the run — a deliberate RSS-for-work trade, visible in
+        get_mem telemetry.
+        """
+        import gc
+
+        import xarray as xr
+
+        try:
+            band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
+            self._dirty = band.ds.DIRTY.values  # (corr, nx, ny)
+            parts = []
+            hess_parts = []
+            for cname in sorted(band.children):
+                child = band[cname].ds
+                pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+                pds.attrs.update(child.attrs)
+                hess_parts.append(
+                    {
+                        # HessianTree expects the real, non-negative
+                        # Fourier-domain PSF magnitude (the legacy sara()
+                        # `abspsf` convention) -- the stored PSFHAT is the raw
+                        # complex FFT of the PSF, so it must be abs()'d here,
+                        # else the "Hessian" carries a phase and is no longer
+                        # Hermitian-positive, breaking CG.
+                        "psfhat": np.abs(child.PSFHAT.values),
+                        "beam": pds.BEAM.values,
+                        "wsum": np.asarray(child.attrs["wsum"]),
+                    }
+                )
+                parts.append(pds)
+            self._parts = parts
+            self._hess_parts = hess_parts
+        finally:
+            # deserialised/lazy xarray objects sit in reference cycles that
+            # refcounting cannot free
+            gc.collect()
+
     # --- Hessian role ---
 
     def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum):
         from pfb_imaging.operators.hessian import HessianTree
 
+        if partitions is None:
+            partitions = getattr(self, "_hess_parts", None)
+            if partitions is None:
+                raise RuntimeError("no partitions passed and none loaded; call load_band first")
         self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=self._nthreads, wsum=wsum)
         self._hess.dot(np.zeros((nx, ny)))  # warm up the FFT plans
 
@@ -100,20 +152,6 @@ class _BandWorkerImpl:
         return self._xo
 
     # --- exact residual role ---
-
-    def init_residual(self, parts, dirty):
-        """Pin the gridding-input Datasets and raw dirty image in this process.
-
-        Held for the life of the run (a deliberate RSS-for-work trade: no
-        per-cycle re-fetch/deserialise; visible in get_mem telemetry).
-        """
-        import gc
-
-        self._parts = parts
-        self._dirty = dirty
-        # deserialised xarray Datasets sit in reference cycles that
-        # refcounting cannot free (docs/msv4-memory-patterns.md)
-        gc.collect()
 
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         from pfb_imaging.operators.gridder import residual_from_partitions
@@ -191,12 +229,32 @@ class BandWorkerPool:
 
         return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
 
+    # --- band loading ---
+
+    def load_bands(self, store_url, node_names):
+        """Each worker reads its own band node from the ``.dt`` store."""
+        if len(node_names) != self.nband:
+            raise ValueError(f"got {len(node_names)} band nodes for {self.nband} workers")
+        self._map("load_band", [(store_url, node_names[b]) for b in range(self.nband)])
+
     # --- Hessian role ---
 
     def init_hess(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums):
+        """Build per-band HessianTrees; ``partitions_per_band=None`` uses load_bands data."""
         self._map(
             "init_hess",
-            [(partitions_per_band[b], nx, ny, nx_psf, ny_psf, etas[b], wsums[b]) for b in range(self.nband)],
+            [
+                (
+                    None if partitions_per_band is None else partitions_per_band[b],
+                    nx,
+                    ny,
+                    nx_psf,
+                    ny_psf,
+                    etas[b],
+                    wsums[b],
+                )
+                for b in range(self.nband)
+            ],
         )
 
     def hess_dot(self, x):
@@ -227,10 +285,6 @@ class BandWorkerPool:
             xo[b] = res
 
     # --- exact residual role ---
-
-    def set_residual_inputs(self, parts_per_band, dirty):
-        """Pin per-band gridding Datasets and raw dirty ``(nband, corr, nx, ny)``."""
-        self._map("init_residual", [(parts_per_band[b], dirty[b]) for b in range(self.nband)])
 
     def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
         """Exact per-band residual for a ``(nband, corr, nx, ny)`` model cube."""

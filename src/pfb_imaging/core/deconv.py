@@ -153,50 +153,25 @@ def deconv(
     iter0 = int(first.attrs.get("niters", 0))
     geometry = {"nx": nx, "ny": ny, "nx_psf": nx_psf, "ny_psf": ny_psf}
 
-    # --- load band cubes and partition inputs (selective, memory-disciplined) ---
+    # --- load band cubes and attrs (image-scale only; vis-scale partition
+    # data -- UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY -- is read worker-side
+    # by BandWorkerPool.load_bands and never enters the driver or the Ray
+    # object store) ---
     residual_raw = np.zeros((nband, nx, ny))
     model = np.zeros((nband, nx, ny))
     update = np.zeros((nband, nx, ny))
-    dirty_raw = np.zeros((nband, nx, ny))
     wsums = np.zeros(nband)
-    partitions_per_band = []  # plain-numpy dicts for HessTreeRay
-    parts_per_band = []  # per-band gridding-input Datasets, pinned in the band workers
     band_attrs = []  # original band attrs (bandid, freq_out, cell_rad, ...) to merge back on write
 
     for b, n in enumerate(nodes):
-        band = dt[n]
-        bds = band.ds
+        bds = dt[n].ds
         band_attrs.append(dict(bds.attrs))
-        dirty_raw[b] = bds.DIRTY.values[0]
         residual_raw[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
         if "MODEL" in bds:
             model[b] = bds.MODEL.values[0]
         if "UPDATE" in bds:
             update[b] = bds.UPDATE.values[0]
         wsums[b] = bds.WSUM.values[0]
-
-        ph = []
-        pg = []
-        for cname in sorted(band.children):
-            child = band[cname].ds
-            pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
-            pds.attrs.update(child.attrs)
-            ph.append(
-                {
-                    # HessianTree/HessTreeRay expect the real, non-negative
-                    # Fourier-domain PSF magnitude (see test_hess_tree_ray.py's
-                    # _rand_part and the legacy sara() `abspsf` convention) --
-                    # the stored PSFHAT is the raw complex FFT of the PSF, so
-                    # it must be abs()'d here, else the "Hessian" carries a
-                    # phase and is no longer Hermitian-positive, breaking CG.
-                    "psfhat": np.abs(child.PSFHAT.values),
-                    "beam": pds.BEAM.values,
-                    "wsum": np.asarray(child.attrs["wsum"]),
-                }
-            )
-            pg.append(pds)
-        partitions_per_band.append(ph)
-        parts_per_band.append(pg)
 
     wsum = wsums.sum()
     residual = residual_raw / wsum
@@ -219,16 +194,14 @@ def deconv(
 
     # one worker process per band co-locating all per-band state: the
     # Hessian and Psi (initialised by the preset's facades) and the exact
-    # residual (gridding inputs pinned in-worker for the life of the run,
-    # rather than re-fetched from the object store every major cycle).
+    # residual. Each worker reads its own band's vis-scale inputs straight
+    # from the store and pins them for the life of the run.
     workers = BandWorkerPool(nband, nthreads)
-    workers.set_residual_inputs(parts_per_band, dirty_raw[:, None])
-    del parts_per_band  # the workers hold their own copies
+    workers.load_bands(dt_name, nodes)
 
-    solver = PRESETS[minor_cycle](partitions_per_band, geometry, model, update, opts_dict, workers=workers)
+    solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
-    del partitions_per_band  # the workers hold their own copies
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
