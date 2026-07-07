@@ -85,7 +85,11 @@ def make_sara(partitions_per_band, geometry, model, update, opts):
     nband = len(partitions_per_band)
     bases = tuple(opts["bases"]) if not isinstance(opts["bases"], str) else tuple(opts["bases"].split(","))
     psi = PsiNocopytRay(nband, geometry["nx"], geometry["ny"], bases, opts["nlevels"], opts["nthreads"])
-    reg = L21(psi, bases, rmsfactor=opts["rmsfactor"], alpha=opts["alpha"])
+    # nu = ||Psi Psi^T|| = nbasis for a concatenation of orthonormal bases;
+    # legacy sara passes nu=nbasis to primal_dual. Leaving the tight-frame
+    # default of 1.0 makes the PD dual step ~nbasis x too large and the
+    # backward solve diverges (observed on multi-band runs).
+    reg = L21(psi, bases, nu=len(bases), rmsfactor=opts["rmsfactor"], alpha=opts["alpha"])
     hess = _build_hess(partitions_per_band, geometry, opts)
     fwd = PCG(
         tol=opts["cg_tol"], maxit=opts["cg_maxit"], verbosity=opts["cg_verbose"], report_freq=opts["cg_report_freq"]

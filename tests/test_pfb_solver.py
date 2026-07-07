@@ -268,6 +268,54 @@ def test_make_sara_opt_backend_selects_solver():
     assert isinstance(s_fb.backward_alg, FB)
 
 
+def test_make_sara_sets_dictionary_nu():
+    """make_sara must pass nu=nbasis to L21, matching legacy sara's nu=nbasis.
+
+    A concatenation of nbasis orthonormal bases has ||Psi Psi^T|| = nbasis;
+    leaving L21's tight-frame default of nu=1.0 makes the PD dual step
+    ~nbasis x too large and the backward solve can diverge (observed on
+    multi-band runs at the first reweighted solve).
+    """
+    from pfb_imaging.deconv.presets import make_sara
+
+    bases = ["self", "db1", "db2", "db3"]
+    geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32}
+    model = np.zeros((1, 16, 16))
+    opts = dict(
+        bases=bases,
+        nlevels=1,
+        rmsfactor=1.0,
+        alpha=2.0,
+        gamma=1.0,
+        positivity=0,
+        eta=0.5,
+        l1_reweight_from=-1,
+        hess_norm=1.0,
+        opt_backend="primal-dual",
+        acceleration=True,
+        nthreads=1,
+        verbosity=0,
+        pd_tol=1e-6,
+        pd_maxit=10,
+        pd_verbose=0,
+        pd_report_freq=100,
+        fb_tol=1e-6,
+        fb_maxit=10,
+        fb_verbose=0,
+        fb_report_freq=100,
+        cg_tol=1e-6,
+        cg_maxit=10,
+        cg_verbose=0,
+        cg_report_freq=100,
+        pm_tol=1e-3,
+        pm_maxit=10,
+        pm_verbose=0,
+        pm_report_freq=100,
+    )
+    solver = make_sara(_delta_partitions(1, 16, 16), geometry, model.copy(), model.copy(), opts)
+    assert solver.reg.nu == len(bases)
+
+
 def test_forward_requires_first():
     """forward() consumes the residual stored by first(); skipping first() fails loudly."""
     b = np.ones((1, 4, 4))
