@@ -170,10 +170,12 @@ def deconv(
     wsums = np.zeros(nband)
     partitions_per_band = []  # plain-numpy dicts for HessTreeRay
     parts_refs = []  # per-band ray.put of the gridding-input Datasets
+    band_attrs = []  # original band attrs (bandid, freq_out, cell_rad, ...) to merge back on write
 
     for b, n in enumerate(nodes):
         band = dt[n]
         bds = band.ds
+        band_attrs.append(dict(bds.attrs))
         dirty_raw[b] = bds.DIRTY.values[0]
         residual_raw[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
         if "MODEL" in bds:
@@ -376,9 +378,21 @@ def deconv(
             }
             if (model == best_model).all():
                 data_vars["MODEL_BEST"] = (("corr", "x", "y"), best_model[b][None])
+            # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
+            # variables, which merge), so start from the band's original
+            # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the
+            # legacy sara() convention of ds.assign_attrs(**attrs) onto a
+            # dataset read from the existing dds, which merges rather than
+            # replaces.
             ds_out = xr.Dataset(
                 data_vars,
-                attrs={"rms": best_rms, "rmax": best_rmax, "niters": iter0 + k + 1, "hess_norm": hess_norm},
+                attrs={
+                    **band_attrs[b],
+                    "rms": best_rms,
+                    "rmax": best_rmax,
+                    "niters": iter0 + k + 1,
+                    "hess_norm": hess_norm,
+                },
             )
             ds_out.to_zarr(dt_name, group=n, mode="a")
 
