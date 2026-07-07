@@ -79,7 +79,8 @@ def test_one_major_cycle_diagonal_hess():
     assert_allclose(model, expected, atol=1e-4)
 
     solver.last()  # reweighting disabled: must be a no-op
-    assert solver.reweight_active is False
+    # nothing to trigger for a plain L1 regulariser: driver must stop at convergence
+    assert solver.reweight_active is True
 
 
 def test_power_method_when_hessnorm_none():

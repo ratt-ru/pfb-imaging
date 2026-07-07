@@ -168,8 +168,10 @@ class PFBSolver:
 
     @property
     def reweight_active(self) -> bool:
-        """True once l1 reweighting has been armed."""
-        return getattr(self.reg, "reweight_active", False)
+        """True when the driver should stop at convergence rather than trigger reweighting."""
+        if not hasattr(self.reg, "init_reweighting") or self._l1_reweight_from < 0:
+            return True  # no reweighting to trigger (plain regulariser, or disabled)
+        return self.reg.reweight_active
 
     def trigger_reweight(self) -> None:
         """Force reweighting to arm at the next :meth:`last` call."""
