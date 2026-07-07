@@ -1,9 +1,5 @@
 _include:
-  - (pfb_imaging.cabs)init.yml
-  - (pfb_imaging.cabs)grid.yml
-  - (pfb_imaging.cabs)sara.yml
-  - (pfb_imaging.cabs)restore.yml
-  - (pfb_imaging.cabs)degrid.yml
+  - (pfb_imaging.cabs)cabs.yml
 
 opts:
   log:
@@ -13,11 +9,12 @@ opts:
   backend:
     select: native
 
-gosara:
-  name: pfb-sara
+gospotless:
+  name: go-spotless
   info:
-    Stimela recipe for the SARA algorithm with presets.
-    Minimal algorithmic parameters exposed.
+    Stimela recipe for the deconvolution interface.
+    This uses the the new imager+deconv track to test reproduce the SARA algorithm.
+    Mainly for testing purposes at the moment.
 
   inputs:
     ms:
@@ -53,14 +50,16 @@ gosara:
       dtype: str
       info:
         Sigma column (preferred over weight-column if provided)
-    fields:
-      dtype: List[int]
+    field-names:
+      dtype: List[str]
       info:
         List of fields to image
-    scans:
-      dtype: List[int]
+    spw-names:
+      dtype: List[str]
       info:
-        List of scans to image
+        List of spectral windows to image
+    scan-names:
+      dtype: List[str]
     gains:
       dtype: List[URI]
       info:
@@ -185,8 +184,8 @@ gosara:
 
   steps:
     initialize:
-      cab: init
-      info: 'Initialise imaging data products'
+      cab: pfb.image
+      info: Initialise imaging data products
       params:
         ms: =recipe.ms
         gain-table: =IFSET(recipe.gains)
@@ -202,33 +201,21 @@ gosara:
         bda-decorr: =recipe.bda-decorr
         freq-range: =IFSET(recipe.freq-range)
         overwrite: =recipe.overwrite
-        check-ants: false
-        fields: =IFSET(recipe.fields)
-        scans: =IFSET(recipe.scans)
+        field-names: =IFSET(recipe.field-names)
+        scan-names: =IFSET(recipe.scan-names)
         product: =recipe.product
         wgt-mode: =recipe.wgt-mode
-
-    gridimage:
-      cab: grid
-      info: 'Setup grid for imaging'
-      params:
         super-resolution-factor: =IFSET(recipe.super-resolution-factor)
         field-of-view: =IFSET(recipe.field-of-view)
         cell-size: =IFSET(recipe.cell-size)
         nx: =IFSET(recipe.nx)
         ny: =IFSET(recipe.ny)
         robustness: =recipe.robustness
-        nthreads: =recipe.nthreads
-        nworkers: =recipe.nworkers
         psf-oversize: =recipe.psf-oversize
-        overwrite: =recipe.overwrite
-        l2-reweight-dof: =IFSET(recipe.l2-reweight-dof)
-        # product: =recipe.product
-        transfer-model-from: =IFSET(recipe.transfer-model-from)
 
-    saradeconv:
-      cab: sara
-      info: Deconvolution step
+    deconvolve:
+      cab: pfb.deconv
+      info: Deconvolve with your favourite algorithm
       params:
         niter: =recipe.niter
         bases: 'self,db1,db2,db3'
@@ -246,21 +233,3 @@ gosara:
         positivity: =IF( recipe.product == 'I', 1, 0)
         nthreads: =recipe.nworkers * recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
-
-    # restoreimage:
-    #   cab: restore
-    #   info: Produce restored image.
-    #   params:
-    #     nworkers: =recipe.nworkers
-    #     nthreads: =recipe.nthreads
-    #     outputs: iI
-
-    # degridimage:
-    #   cab: degrid
-    #   info: Render model to visibilities
-    #   params:
-    #     ms: =recipe.ms
-    #     model-column: =recipe.model-column
-    #     nworkers: =recipe.nworkers
-    #     nthreads: =recipe.nthreads
-    #     freq-range: =IFSET(recipe.freq-range)
