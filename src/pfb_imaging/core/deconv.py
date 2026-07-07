@@ -119,7 +119,11 @@ def deconv(
 
     basename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"
-    dt_name = f"{basename}_{suffix}.dt"
+    # unlike the legacy .dds (which the `suffix` convention comes from),
+    # imager() never appends a suffix to the .dt tree name (see
+    # architecture.md §8: "<output>_<PRODUCT>.dt") -- `suffix` still
+    # namespaces the FITS/.mds outputs below, just not the .dt path itself.
+    dt_name = f"{basename}.dt"
 
     time_start = time.time()
 

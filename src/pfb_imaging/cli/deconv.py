@@ -22,7 +22,7 @@ Directory = NewType("Directory", Path)
     dtype="Directory",
     name="dt-out",
     info="DataTree dataset updated in place.",
-    implicit="{current.output-filename}_{current.product}_{current.suffix}.dt",
+    implicit="{current.output-filename}_{current.product}.dt",
     must_exist=False,
 )
 @stimela_output(
