@@ -21,21 +21,34 @@ class IdOp:
         return x.copy()
 
 
-def _solver(b, lam_unused=None, **kwargs):
+class DiagOp:
+    """Diagonal Hessian with distinct entries (avoids exact 1-step CG convergence)."""
+
+    def __init__(self, d):
+        self.d = d
+
+    def dot(self, x):
+        return self.d * x
+
+    def hdot(self, x):
+        return self.dot(x)
+
+
+def _solver(b, hess=None, hessnorm=1.0, **kwargs):
     from pfb_imaging.deconv.pfb import PFBSolver
 
     nband, nx, ny = b.shape
     reg = L1(IdentityPsi(nband, nx, ny))
     fb = ForwardBackward(tol=1e-10, maxit=5000, verbosity=0, gamma=0.45)
     return PFBSolver(
-        IdOp(),
+        hess if hess is not None else IdOp(),
         PCG(tol=1e-12, maxit=200, minit=1, verbosity=0),
         fb,
         reg,
         model=np.zeros_like(b),
         update=np.zeros_like(b),
         gamma=1.0,
-        hessnorm=1.0,
+        hessnorm=hessnorm,
         l1_reweight_from=-1,  # reweighting disabled
         **kwargs,
     )
@@ -46,20 +59,24 @@ def test_satisfies_deconv_solver_protocol():
     assert isinstance(_solver(b), DeconvSolver)
 
 
-def test_one_major_cycle_identity_hess():
-    """With H = I and model0 = 0: update = residual = b, xtilde = b,
-    and backward solves min 0.5||x-b||^2 + lam||x||_1 -> soft(b, lam)."""
+def test_one_major_cycle_diagonal_hess():
+    """With H = diag(d) and model0 = 0: update = b/d, xtilde = b/d, and
+    backward solves min_x sum_i d_i/2 (x_i - xtilde_i)^2 + lam|x_i|, whose
+    solution is the per-element soft threshold with threshold lam/d_i."""
     rng = np.random.default_rng(0)
     b = rng.standard_normal((1, 30, 4))
+    d = rng.uniform(1.0, 2.0, size=b.shape)
     lam = 0.3
 
-    solver = _solver(b)
+    solver = _solver(b, hess=DiagOp(d), hessnorm=2.0)
     solver.first(b)
     update = solver.forward(b)
-    assert_allclose(update, b, atol=1e-10)  # I^{-1} b
+    assert_allclose(update, b / d, rtol=1e-6, atol=1e-10)  # hess^{-1} b
 
+    xtilde = b / d
     model = solver.backward(lam)
-    assert_allclose(model, np.sign(b) * np.maximum(np.abs(b) - lam, 0.0), atol=1e-4)
+    expected = np.sign(xtilde) * np.maximum(np.abs(xtilde) - lam / d, 0.0)
+    assert_allclose(model, expected, atol=1e-4)
 
     solver.last()  # reweighting disabled: must be a no-op
     assert solver.reweight_active is False
@@ -122,13 +139,13 @@ def test_trigger_reweight_arms_last():
     psi = SlicePsi(1, 16, 16, 2, 20, 20)
     reg = L21(psi, bases=("self", "db1"))
     solver = PFBSolver(
-        IdOp(),
+        DiagOp(rng.uniform(1.0, 2.0, size=b.shape)),
         PCG(tol=1e-10, maxit=100, minit=1, verbosity=0),
         ForwardBackward(tol=1e-8, maxit=500, verbosity=0, gamma=0.45),
         reg,
         model=np.zeros_like(b),
         update=np.zeros_like(b),
-        hessnorm=1.0,
+        hessnorm=2.0,
         l1_reweight_from=100,  # far in the future
     )
     solver.first(b)

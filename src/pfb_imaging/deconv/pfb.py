@@ -169,7 +169,7 @@ class PFBSolver:
     @property
     def reweight_active(self) -> bool:
         """True once l1 reweighting has been armed."""
-        return getattr(self.reg, "reweight_active", True)
+        return getattr(self.reg, "reweight_active", False)
 
     def trigger_reweight(self) -> None:
         """Force reweighting to arm at the next :meth:`last` call."""
