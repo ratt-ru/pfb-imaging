@@ -14,6 +14,7 @@ from pathlib import Path
 import dask
 import dask.array as da
 import numpy as np
+import pytest
 import xarray as xr
 from daskms import xds_to_table
 from ducc0.wgridder.experimental import dirty2vis
@@ -229,3 +230,110 @@ def test_deconv_matches_legacy_sara(ms_name, ms_meta, image_geometry, tmp_path):
     # same kernels; residual slack covers CG/PD convergence and the distinct
     # (legacy Psi vs new PsiNocopytRay) wavelet-operator implementations.
     assert rdiff < 1e-2, f"model mismatch: rdiff = {rdiff:.3e}"
+
+
+def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng):
+    """Build a minimal synthetic 2-band .dt store matching what core/deconv.py reads.
+
+    No MS / imager pipeline involved -- just the native DataTree groups the
+    driver's ``deconv()`` opens directly (see architecture.md §8 tree layout).
+    """
+    nx_psf, ny_psf = 2 * nx, 2 * ny
+    yo2 = ny + 1
+    freqs = [1e9, 1.1e9]
+
+    for b, freq in enumerate(freqs):
+        bandname = f"band{b:04d}_time0000"
+        band_ds = xr.Dataset(
+            data_vars={
+                "DIRTY": (("corr", "x", "y"), rng.standard_normal((1, nx, ny))),
+                "RESIDUAL": (("corr", "x", "y"), rng.standard_normal((1, nx, ny))),
+                "PSF": (("corr", "x_psf", "y_psf"), np.ones((1, nx_psf, ny_psf))),
+                "WSUM": (("corr",), np.array([1.0])),
+            },
+            coords={"corr": ["I"]},
+            attrs={
+                "bandid": b,
+                "timeid": 0,
+                "freq_out": freq,
+                "time_out": 1.7e9,
+                "ra": 0.0,
+                "dec": 0.0,
+                "cell_rad": 2.5e-6,
+                "niters": 0,
+            },
+        )
+        band_ds.to_zarr(store, group=bandname, mode="a")
+
+        uvw = rng.uniform(-50.0, 50.0, size=(nrow, 3))
+        part_ds = xr.Dataset(
+            data_vars={
+                # delta-function PSF -> Fourier-domain magnitude is all ones,
+                # matching the abs()'d PSFHAT convention core/deconv.py expects.
+                "PSFHAT": (("corr", "x_psf", "yo2"), np.ones((1, nx_psf, yo2))),
+                "BEAM": (("corr", "x", "y"), np.ones((1, nx, ny))),
+                "UVW": (("row", "three"), uvw),
+                "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, nchan))),
+                "MASK": (("row", "chan"), np.ones((nrow, nchan), dtype=np.uint8)),
+                "FREQ": (("chan",), np.array([freq])),
+            },
+            attrs={
+                "wsum": [1.0],
+                "l0": 0.0,
+                "m0": 0.0,
+                "msid": 0,
+                "field_name": "f0",
+                "spw_name": "s0",
+                "baseline_group": "all",
+            },
+        )
+        part_ds.to_zarr(store, group=f"{bandname}/part0000", mode="a")
+
+
+@pytest.mark.timeout(120)
+def test_deconv_two_band_smoke(tmp_path):
+    """Multi-band driver smoke test: regression guard for the nband>1 Ray deadlock.
+
+    Builds a synthetic 2-band .dt store directly (no MS/imager needed) and
+    runs the deconv driver with default-ish worker settings (nworkers=1):
+    this MUST NOT hang (see the HessTreeRay/PsiNocopytRay actor-pool CPU
+    claim fix -- previously the aggregate actor CPU claim could exceed the
+    driver's Ray cluster capacity for nband > 1).
+    """
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(42)
+    nx = ny = 32
+    nrow, nchan = 64, 1
+
+    output_filename = str(tmp_path / "synth")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, nx, ny, nrow, nchan, rng)
+
+    deconv_core(
+        output_filename,
+        product="I",
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=1,
+        hess_norm=1.0,
+        pd_maxit=20,
+        cg_maxit=20,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=2,
+        nworkers=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+    )
+
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    nodes = sorted(n for n in dt.children if n.startswith("band"))
+    assert len(nodes) == 2
+    for n in nodes:
+        ds = dt[n].ds
+        assert "MODEL" in ds and "UPDATE" in ds
+        assert ds.attrs["niters"] == 1
+        assert np.isfinite(ds.MODEL.values).all()
