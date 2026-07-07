@@ -4,7 +4,7 @@ cabs:
     command: pfb_imaging.core.deconv.deconv
     name: deconv
     info:
-      pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+      General deconvolution of the imager DataTree via composable forward/backward algorithms.
     image: ghcr.io/ratt-ru/pfb-imaging:gendeconv
     inputs:
       output-filename:
@@ -47,10 +47,9 @@ cabs:
       minor-cycle:
         info:
           Which minor cycle algorithm to use.
-          Options are 'sara' and 'kclean'.
         choices:
         - sara
-        - kclean
+        - ista
         default: sara
         metadata:
           rich_help_panel: PFB
@@ -98,19 +97,6 @@ cabs:
         info:
           Spectral norm of hessian approximation.
         dtype: Optional[float]
-        metadata:
-          rich_help_panel: Hessian
-      hess-approx:
-        info:
-          Which Hessian approximation to use.
-          wgt -> vis space approximation.
-          psf -> for zero-padded image space approximation.
-          direct -> for direct inversion.
-        choices:
-        - wgt
-        - psf
-        - direct
-        default: psf
         metadata:
           rich_help_panel: Hessian
       rmsfactor:
@@ -201,6 +187,19 @@ cabs:
           Total number of threads to use.
           Defaults to half the total number available.
         dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
+      nworkers:
+        info:
+          Number of Ray workers.
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: Performance
+      ray-address:
+        info:
+          Address of the Ray cluster to connect to.
+        default: local
         metadata:
           rich_help_panel: Performance
       epsilon:
@@ -349,11 +348,11 @@ cabs:
         metadata:
           rich_help_panel: ConjugateGradient
     outputs:
-      dds-out:
+      dt-out:
         dtype: Directory
         info:
-          Output dataset directory.
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+          DataTree dataset updated in place.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dt'
         must_exist: false
       mds-out:
         dtype: Directory

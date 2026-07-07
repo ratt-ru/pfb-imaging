@@ -1,23 +1,36 @@
-import concurrent.futures as cf
 import time
 from copy import deepcopy
 
 import numpy as np
 import psutil
+import ray
 import xarray as xr
-from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
-from numba import threading_layer
 
-from pfb_imaging import pfb_version, set_envs
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.deconv import DeconvSolver
-from pfb_imaging.operators.gridder import compute_residual
+from pfb_imaging.deconv.presets import PRESETS
+from pfb_imaging.operators.gridder import residual_from_partitions, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import dds2fits, save_fits, set_wcs
+from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
 from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
-from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
+from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
+
+
+def _band_residual(dirty, parts, model, cell_rad, nthreads, epsilon, do_wgridding, double_accum):
+    """Ray task: exact residual for one band node (raw, un-normalised)."""
+    return residual_from_partitions(
+        dirty,
+        parts,
+        model,
+        cell_rad,
+        nthreads=nthreads,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        double_accum=double_accum,
+    )
 
 
 def deconv(
@@ -35,7 +48,6 @@ def deconv(
     l1_reweight_from: int = 5,
     alpha: float = 2.0,
     hess_norm: float | None = None,
-    hess_approx: str = "psf",
     rmsfactor: float = 1.0,
     eta: float = 0.001,
     gamma: float = 0.95,
@@ -48,6 +60,8 @@ def deconv(
     init_factor: float = 0.5,
     verbosity: int = 1,
     nthreads: int | None = None,
+    nworkers: int = 1,
+    ray_address: str = "local",
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     double_accum: bool = True,
@@ -70,9 +84,10 @@ def deconv(
     cg_report_freq: int = 10,
 ):
     """
-    General preconditioned forward-backward deconvolution loop.
+    General preconditioned forward-backward deconvolution of the imager DataTree.
 
-    All regulariser-specific logic lives in the solver that is initialised based on the minor_cycle argument.
+    The minor_cycle preset assembles (hess, forward_alg, backward_alg, prox) into
+    a PFBSolver; any object satisfying the DeconvSolver Protocol can drive the loop.
     """
     opts_dict = locals().copy()
 
@@ -95,7 +110,7 @@ def deconv(
     opts_dict["nthreads"] = nthreads
     log.info(f"Using {nthreads} threads total")
     resize_thread_pool(nthreads)
-    set_envs(nthreads, ncpu, log)
+    env_vars = set_envs(nthreads, ncpu, log=log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/deconv_{timestamp}.log"
@@ -104,152 +119,114 @@ def deconv(
 
     basename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"
-    dds_name = f"{basename}_{suffix}.dds"
+    dt_name = f"{basename}_{suffix}.dt"
 
     time_start = time.time()
 
-    dds, dds_list = xds_from_url(dds_name)
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
+        runtime_env={
+            "env_vars": env_vars,
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+        log=log,
+    )
 
-    if dds[0].corr.size > 1:
-        log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    image_names = sorted(n for n in dt.children if n.startswith("band"))
+    if not image_names:
+        log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
 
-    nx, ny = dds[0].x.size, dds[0].y.size
-    freq_out = []
-    time_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-        time_out.append(ds.time_out)
-    freq_out = np.unique(np.array(freq_out))
-    time_out = np.unique(np.array(time_out))
-    if time_out.size > 1:
+    timeids = {int(dt[n].ds.attrs["timeid"]) for n in image_names}
+    if len(timeids) > 1:
         log.error_and_raise("Only static models currently supported", NotImplementedError)
 
-    nband = freq_out.size
+    nodes = sorted(image_names, key=lambda n: int(dt[n].ds.attrs["bandid"]))
+    first = dt[nodes[0]].ds
+    if first.corr.size > 1:
+        log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
 
-    if "RESIDUAL" in dds[0]:
-        residual = np.stack([ds.RESIDUAL.values[0] for ds in dds], axis=0)
-        dds = [ds.drop_vars("DIRTY") for ds in dds]
-        dds = [ds.drop_vars("RESIDUAL") for ds in dds]
-    else:
-        residual = np.stack([ds.DIRTY.values[0] for ds in dds], axis=0)
-        dds = [ds.drop_vars("DIRTY") for ds in dds]
-    if "MODEL" in dds[0]:
-        model = np.stack([ds.MODEL.values[0] for ds in dds], axis=0)
-        dds = [ds.drop_vars("MODEL") for ds in dds]
-    else:
-        model = np.zeros((nband, nx, ny))
-    if "UPDATE" in dds[0]:
-        update = np.stack([ds.UPDATE.values[0] for ds in dds], axis=0)
-        dds = [ds.drop_vars("UPDATE") for ds in dds]
-    else:
-        update = np.zeros((nband, nx, ny))
-    abspsf = np.stack([np.abs(ds.PSFHAT.values[0]) for ds in dds], axis=0)
-    dds = [ds.drop_vars("PSFHAT") for ds in dds]
-    beam = np.stack([ds.BEAM.values[0] for ds in dds], axis=0)
-    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
-    fsel = wsums > 0
-
-    wsum = np.sum(wsums)
-    wsums /= wsum
-    abspsf /= wsum
-    residual /= wsum
-    residual_mfs = np.sum(residual, axis=0)
-    model_mfs = np.mean(model[fsel], axis=0)
-
-    nx = dds[0].x.size
-    ny = dds[0].y.size
-    ra = dds[0].ra
-    dec = dds[0].dec
-    radec = [ra, dec]
-    cell_rad = dds[0].cell_rad
+    nband = len(nodes)
+    nx, ny = first.x.size, first.y.size
+    nx_psf, ny_psf = first.x_psf.size, first.y_psf.size
+    cell_rad = first.attrs["cell_rad"]
     cell_deg = np.rad2deg(cell_rad)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq, casambm=False)
-    if "niters" in dds[0].attrs:
-        iter0 = dds[0].niters
-    else:
-        iter0 = 0
+    radec = [first.attrs["ra"], first.attrs["dec"]]
+    freq_out = np.array([dt[n].ds.attrs["freq_out"] for n in nodes])
+    time_out = np.array([first.attrs["time_out"]])
+    iter0 = int(first.attrs.get("niters", 0))
+    geometry = {"nx": nx, "ny": ny, "nx_psf": nx_psf, "ny_psf": ny_psf}
 
+    # --- load band cubes and partition inputs (selective, memory-disciplined) ---
+    residual_raw = np.zeros((nband, nx, ny))
+    model = np.zeros((nband, nx, ny))
+    update = np.zeros((nband, nx, ny))
+    dirty_raw = np.zeros((nband, nx, ny))
+    wsums = np.zeros(nband)
+    partitions_per_band = []  # plain-numpy dicts for HessTreeRay
+    parts_refs = []  # per-band ray.put of the gridding-input Datasets
+
+    for b, n in enumerate(nodes):
+        band = dt[n]
+        bds = band.ds
+        dirty_raw[b] = bds.DIRTY.values[0]
+        residual_raw[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
+        if "MODEL" in bds:
+            model[b] = bds.MODEL.values[0]
+        if "UPDATE" in bds:
+            update[b] = bds.UPDATE.values[0]
+        wsums[b] = bds.WSUM.values[0]
+
+        ph = []
+        pg = []
+        for cname in sorted(band.children):
+            child = band[cname].ds
+            pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+            pds.attrs.update(child.attrs)
+            ph.append(
+                {
+                    "psfhat": child.PSFHAT.values,
+                    "beam": pds.BEAM.values,
+                    "wsum": np.asarray(child.attrs["wsum"]),
+                }
+            )
+            pg.append(pds)
+        partitions_per_band.append(ph)
+        parts_refs.append(ray.put(pg))  # serialised once, reused every major cycle
+
+    wsum = wsums.sum()
+    residual = residual_raw / wsum
+    residual_mfs = np.sum(residual, axis=0)
+    fsel = wsums > 0
+    model_mfs = np.mean(model[fsel], axis=0)
     if nbasisf is None:
         nbasisf = int(np.sum(fsel))
 
-    # hess_norm from DDS cache if available; solver estimates it otherwise
-    hess_norm = dds[0].hess_norm if "hess_norm" in dds[0].attrs else None
-    if hess_norm is not None:
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq_out), casambm=False)
+
+    # hess_norm from the tree cache when available; solver estimates it otherwise
+    if hess_norm is None and "hess_norm" in first.attrs:
+        hess_norm = first.attrs["hess_norm"]
+        opts_dict["hess_norm"] = hess_norm
         log.info(f"Using previously estimated hess_norm of {hess_norm:.3e}")
 
-    # construct solver based on minor_cycle + opt_backend
-    sara_common = dict(
-        nband=nband,
-        nx=nx,
-        ny=ny,
-        abspsf=abspsf,
-        beam=beam,
-        wsums=wsums,
-        model=model,
-        update=update,
-        nthreads=nthreads,
-        eta=eta,
-        hess_approx=hess_approx,
-        hess_norm=hess_norm,
-        cg_tol=cg_tol,
-        cg_maxit=cg_maxit,
-        cg_verbose=cg_verbose,
-        cg_report_freq=cg_report_freq,
-        pm_tol=pm_tol,
-        pm_maxit=pm_maxit,
-        pm_verbose=pm_verbose,
-        pm_report_freq=pm_report_freq,
-        bases=bases,
-        nlevels=nlevels,
-        gamma=gamma,
-        positivity=positivity,
-        l1_reweight_from=l1_reweight_from,
-        rmsfactor=rmsfactor,
-        alpha=alpha,
-    )
-    if minor_cycle == "sara":
-        if opt_backend == "primal-dual":
-            from pfb_imaging.deconv.sara_pd import SARAPrimalDual
-
-            solver = SARAPrimalDual(
-                **sara_common,
-                pd_tol=pd_tol,
-                pd_maxit=pd_maxit,
-                pd_verbose=pd_verbose,
-                pd_report_freq=pd_report_freq,
-            )
-        elif opt_backend == "forward-backward":
-            from pfb_imaging.deconv.sara_fb import SARAForwardBackward
-
-            solver = SARAForwardBackward(
-                **sara_common,
-                fb_tol=fb_tol,
-                fb_maxit=fb_maxit,
-                fb_verbose=fb_verbose,
-                fb_report_freq=fb_report_freq,
-                acceleration=acceleration,
-            )
-        else:
-            raise ValueError(f"Unknown opt_backend '{opt_backend}' for minor cycle 'sara'")
-    else:
-        raise NotImplementedError(f"Minor cycle '{minor_cycle}' not implemented")
-
+    if minor_cycle not in PRESETS:
+        log.error_and_raise(f"Unknown minor_cycle '{minor_cycle}'", ValueError)
+    solver = PRESETS[minor_cycle](partitions_per_band, geometry, model, update, opts_dict)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
 
+    _residual_remote = ray.remote(_band_residual)
+
     if rms_outside_model and model.any():
-        rms_mask = model_mfs == 0
-        rms = np.std(residual_mfs[rms_mask])
+        rms = np.std(residual_mfs[model_mfs == 0])
     else:
         rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-    best_rms = rms
-    best_rmax = rmax
+    best_rms, best_rmax = rms, rmax
     best_model = model.copy()
     diverge_count_curr = 0
-    eps = 1.0
-    write_futures = None
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
     for k in range(niter):
@@ -264,48 +241,48 @@ def deconv(
         log.info(f"Solving for model with lambda = {lam:.3e}")
         model = solver.backward(lam)
 
-        # write component model
+        # write component model (carried over from the legacy driver; .dt-native attrs)
         log.info(f"Writing model to {basename}_{suffix}_model.mds")
         try:
             coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
                 freq_out[fsel],
                 model[None, fsel, :, :],
-                wgt=wsums[None, fsel],
+                wgt=(wsums / wsum)[None, fsel],
                 nbasisf=nbasisf,
                 method="Legendre",
                 sigmasq=1e-6,
             )
-            data_vars = {
-                "coefficients": (("par", "comps"), coeffs),
-            }
-            coords = {
-                "location_x": (("x",), x_index),
-                "location_y": (("y",), y_index),
-                "params": (("par",), params),
-                "times": (("t",), time_out),
-                "freqs": (("f",), freq_out),
-            }
-            mattrs = {
-                "pfb-imaging-version": pfb_version,
-                "spec": "genesis",
-                "cell_rad_x": cell_rad,
-                "cell_rad_y": cell_rad,
-                "npix_x": nx,
-                "npix_y": ny,
-                "texpr": texpr,
-                "fexpr": fexpr,
-                "center_x": dds[0].x0,
-                "center_y": dds[0].y0,
-                "flip_u": dds[0].flip_u,
-                "flip_v": dds[0].flip_v,
-                "flip_w": dds[0].flip_w,
-                "ra": dds[0].ra,
-                "dec": dds[0].dec,
-                "stokes": product,
-                "parametrisation": expr,
-            }
-            coeff_dataset = xr.Dataset(data_vars=data_vars, coords=coords, attrs=mattrs)
+            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+            coeff_dataset = xr.Dataset(
+                data_vars={"coefficients": (("par", "comps"), coeffs)},
+                coords={
+                    "location_x": (("x",), x_index),
+                    "location_y": (("y",), y_index),
+                    "params": (("par",), params),
+                    "times": (("t",), time_out),
+                    "freqs": (("f",), freq_out),
+                },
+                attrs={
+                    "pfb-imaging-version": pfb_version,
+                    "spec": "genesis",
+                    "cell_rad_x": cell_rad,
+                    "cell_rad_y": cell_rad,
+                    "npix_x": nx,
+                    "npix_y": ny,
+                    "texpr": texpr,
+                    "fexpr": fexpr,
+                    "center_x": x0,
+                    "center_y": y0,
+                    "flip_u": flip_u,
+                    "flip_v": flip_v,
+                    "flip_w": flip_w,
+                    "ra": radec[0],
+                    "dec": radec[1],
+                    "stokes": product,
+                    "parametrisation": expr,
+                },
+            )
             coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds", mode="w")
 
             for b in range(nband):
@@ -323,14 +300,14 @@ def deconv(
                     ny,
                     cell_rad,
                     cell_rad,
-                    dds[0].x0,
-                    dds[0].y0,
+                    x0,
+                    y0,
                     nx,
                     ny,
                     cell_rad,
                     cell_rad,
-                    dds[0].x0,
-                    dds[0].y0,
+                    x0,
+                    y0,
                 )
         except Exception as e:
             log.info(f"Exception {e} raised during model fit.")
@@ -338,81 +315,68 @@ def deconv(
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{iter0 + k + 1}.fits", hdr_mfs)
 
-        if write_futures is not None:
-            cf.wait(write_futures)
-
         log.info("Computing residual")
-        write_futures = []
-        for ds_name, ds in zip(dds_list, dds):
-            b = int(ds.bandid)
-            resid, fut = compute_residual(
-                ds_name,
-                nx,
-                ny,
+        refs = [
+            _residual_remote.remote(
+                dirty_raw[b][None],
+                parts_refs[b],
+                model[b][None],
                 cell_rad,
-                cell_rad,
-                ds_name,
-                model[b][None, :, :],
-                nthreads=nthreads,
-                epsilon=epsilon,
-                do_wgridding=do_wgridding,
-                double_accum=double_accum,
-                verbosity=verbosity,
+                nthreads,
+                epsilon,
+                do_wgridding,
+                double_accum,
             )
-            write_futures.append(fut)
-            residual[b] = resid[0]
-
-        residual /= wsum
+            for b in range(nband)
+        ]
+        for b, res in enumerate(ray.get(refs)):
+            residual_raw[b] = res[0]
+        residual = residual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{iter0 + k + 1}.fits", hdr_mfs)
 
-        # post-iteration hook (e.g. l1 reweighting)
+        # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
 
-        rmsp = rms
+        # per-actor post-gc memory telemetry (docs/msv4-memory-patterns.md)
+        if verbosity > 1 and hasattr(getattr(solver, "hess", None), "get_mem"):
+            for m in solver.hess.get_mem():
+                log.info(f"hess actor pid {m['pid']} rss {m['rss_gb']:.2f} GB peak {m['peak_gb']:.2f} GB")
+
+        rmsp, rmaxp = rms, rmax
         if rms_outside_model:
-            rms_mask = model_mfs == 0
-            rms = np.std(residual_mfs[rms_mask])
+            rms = np.std(residual_mfs[model_mfs == 0])
         else:
             rms = np.std(residual_mfs)
-        rmaxp = rmax
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
         if rms < best_rms:
-            best_rms = rms
-            best_rmax = rmax
+            best_rms, best_rmax = rms, rmax
             best_model = model.copy()
 
-        # cache hess_norm from solver if available
         hess_norm = getattr(solver, "hess_norm", hess_norm)
 
-        for ds_name, ds in zip(dds_list, dds):
-            b = int(ds.bandid)
-            ds["UPDATE"] = (("corr", "x", "y"), update[b][None, :, :])
-            for var in ds.data_vars:
-                if var != "UPDATE":
-                    ds = ds.drop_vars(var)
-            if (model == best_model).all():
-                ds["MODEL_BEST"] = (("corr", "x", "y"), best_model[b][None, :, :])
-            attrs = {
-                "rms": best_rms,
-                "rmax": best_rmax,
-                "niters": iter0 + k + 1,
-                "hess_norm": hess_norm,
+        # write back into the band nodes (native DataTree API)
+        for b, n in enumerate(nodes):
+            data_vars = {
+                "MODEL": (("corr", "x", "y"), model[b][None]),
+                "UPDATE": (("corr", "x", "y"), update[b][None]),
+                "RESIDUAL": (("corr", "x", "y"), residual_raw[b][None]),
             }
-            ds = ds.assign_attrs(**attrs)
-            with cf.ThreadPoolExecutor(max_workers=1) as executor:
-                fut = executor.submit(ds.to_zarr, ds_name, mode="a")
-                write_futures.append(fut)
+            if (model == best_model).all():
+                data_vars["MODEL_BEST"] = (("corr", "x", "y"), best_model[b][None])
+            ds_out = xr.Dataset(
+                data_vars,
+                attrs={"rms": best_rms, "rmax": best_rmax, "niters": iter0 + k + 1, "hess_norm": hess_norm},
+            )
+            ds_out.to_zarr(dt_name, group=n, mode="a")
 
         log.info(f"Iter {iter0 + k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
         if eps < tol:
-            reweight_active = getattr(solver, "reweight_active", True)
-            if not reweight_active:
-                # trigger reweighting instead of stopping
-                solver.trigger_reweight()
+            if not getattr(solver, "reweight_active", True):
+                solver.trigger_reweight()  # reweight instead of stopping
             else:
                 log.info(f"Converged after {iter0 + k + 1} iterations.")
                 break
@@ -423,52 +387,18 @@ def deconv(
                 log.info("Algorithm is diverging. Terminating.")
                 break
 
-    cf.wait(write_futures)
-
-    dds, dds_list = xds_from_url(dds_name)
-
     if fits_mfs or fits_cubes:
-        dds_store = DaskMSStore(dds_name)
-        if "://" in dds_store.url:
-            protocol = dds_store.url.split("://")[0]
-        else:
-            protocol = "file"
-        psfpars_mfs = get_opts(dds_store.url, protocol, name="psfparsn_mfs.pkl")
         log.info(f"Writing fits files to {fits_oname}_{suffix}")
+        for column, norm in (("RESIDUAL", True), ("MODEL", False), ("UPDATE", False)):
+            dt2fits(
+                dt_name,
+                column,
+                f"{fits_oname}_{suffix}",
+                norm_wsum=norm,
+                nthreads=nthreads,
+                do_mfs=fits_mfs,
+                do_cube=fits_cubes,
+            )
+            log.info(f"Done writing {column}")
 
-        dds2fits(
-            dds_list,
-            "RESIDUAL",
-            f"{fits_oname}_{suffix}",
-            norm_wsum=True,
-            nthreads=nthreads,
-            do_mfs=fits_mfs,
-            do_cube=fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing RESIDUAL")
-        dds2fits(
-            dds_list,
-            "MODEL",
-            f"{fits_oname}_{suffix}",
-            norm_wsum=False,
-            nthreads=nthreads,
-            do_mfs=fits_mfs,
-            do_cube=fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing MODEL")
-        dds2fits(
-            dds_list,
-            "UPDATE",
-            f"{fits_oname}_{suffix}",
-            norm_wsum=False,
-            nthreads=nthreads,
-            do_mfs=fits_mfs,
-            do_cube=fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing UPDATE")
-
-    log.info(f"Numba uses the {threading_layer()} threading layer")
     log.info(f"All done after {time.time() - time_start:.1f}s")
