@@ -176,17 +176,18 @@ def add_beampars(hdr, gausspar, gausspars=None, unit2deg=1.0):
     pfb/utils/misc/gaussian2d
 
     """
-    if not isinstance(gausspar, np.ndarray):
-        gausspar = np.asarray(gausspar)
-    if len(gausspar.shape) == 2:
-        gausspar = gausspar[0]
-    elif gausspar.shape[0] != 3:
-        raise ValueError("Invalid value for gausspar")
+    if gausspar is not None:
+        if not isinstance(gausspar, np.ndarray):
+            gausspar = np.asarray(gausspar)
+        if len(gausspar.shape) == 2:
+            gausspar = gausspar[0]
+        elif gausspar.shape[0] != 3:
+            raise ValueError("Invalid value for gausspar")
 
-    if not np.isnan(gausspar).any():
-        hdr["BMAJ"] = gausspar[0] * unit2deg
-        hdr["BMIN"] = gausspar[1] * unit2deg
-        hdr["BPA"] = gausspar[2] * 180 / np.pi
+        if not np.isnan(gausspar).any():
+            hdr["BMAJ"] = gausspar[0] * unit2deg
+            hdr["BMIN"] = gausspar[1] * unit2deg
+            hdr["BPA"] = gausspar[2] * 180 / np.pi
 
     if gausspars is not None:
         gausspars = np.asarray(gausspars)
