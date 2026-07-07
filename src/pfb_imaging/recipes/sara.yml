@@ -182,6 +182,11 @@ gosara:
       info:
         Weighting mode to use in gridder.
         Options are 'minvar' or 'l2'.
+    hess-norm:
+      dtype: float
+      info:
+        Normalisation factor for the Hessian approximation.
+        This is used to regularise the inversion of the Hessian approximation.
 
   steps:
     initialize:
@@ -246,6 +251,7 @@ gosara:
         positivity: =IF( recipe.product == 'I', 1, 0)
         nthreads: =recipe.nworkers * recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
+        hess-norm: =IFSET(recipe.hess-norm)
 
     # restoreimage:
     #   cab: restore

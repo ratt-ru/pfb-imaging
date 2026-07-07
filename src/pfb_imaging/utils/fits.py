@@ -93,7 +93,7 @@ def set_wcs(
     if np.size(freq) > 1:
         nchan = freq.size
         crpix3 = nchan // 2 + 1
-        ref_freq = freq[crpix3]
+        ref_freq = freq[crpix3 - 1]  # zero-based indexing
         df = freq[1] - freq[0]
         w.wcs.cdelt[2] = df
     else:
