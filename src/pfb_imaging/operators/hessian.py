@@ -554,6 +554,10 @@ class _HessBandActorImpl:
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
         from pfb_imaging.opt.pcg import pcg_numba
 
+        if x0 is not None:
+            # Ray deserialises task args as read-only zero-copy views;
+            # pcg_numba updates x0 in place
+            x0 = x0.copy()
         return pcg_numba(
             lambda z: self._hess.dot(z)[0],
             rhs,
