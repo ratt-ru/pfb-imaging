@@ -288,7 +288,7 @@ def sara(
         def grad21(x):
             return -precond.dot(xtilde - x) / gamma
 
-        if iter0 == 0:
+        if iter0 == 0 and k == 0:
             lam = init_factor * rmsfactor * rms
         else:
             lam = rmsfactor * rms
