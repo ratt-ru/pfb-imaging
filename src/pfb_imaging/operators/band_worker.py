@@ -59,7 +59,7 @@ class _BandWorkerImpl:
         and the raw ``DIRTY`` in this process, so vis-scale data never enters
         the driver or the Ray object store. Selective loads only, then the
         Dataset handles are released and cycles collected (the ``stokes_vis``
-        discipline; docs/msv4-memory-patterns.md). Everything loaded is held
+        discipline; docs/wiki/memory-and-ray.md). Everything loaded is held
         for the life of the run — a deliberate RSS-for-work trade, visible in
         get_mem telemetry.
         """
@@ -170,7 +170,7 @@ class _BandWorkerImpl:
     # --- telemetry ---
 
     def get_mem(self):
-        """Post-gc memory telemetry (docs/msv4-memory-patterns.md)."""
+        """Post-gc memory telemetry (docs/wiki/memory-and-ray.md)."""
         import gc
         import os
         import resource
