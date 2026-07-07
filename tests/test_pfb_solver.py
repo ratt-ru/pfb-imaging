@@ -266,3 +266,11 @@ def test_make_sara_opt_backend_selects_solver():
     )
     assert isinstance(s_pd.backward_alg, PD)
     assert isinstance(s_fb.backward_alg, FB)
+
+
+def test_forward_requires_first():
+    """forward() consumes the residual stored by first(); skipping first() fails loudly."""
+    b = np.ones((1, 4, 4))
+    solver = _solver(b)
+    with pytest.raises(RuntimeError, match="first"):
+        solver.forward(b)

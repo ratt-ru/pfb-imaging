@@ -55,8 +55,13 @@ class L21:
         tmp = np.sum(self._outvar, axis=0)
         rms_comps = np.ones(self.psi.nbasis, dtype=float)
         for i, base in enumerate(self.bases):
-            tmpb = tmp[i]
-            rms_comps[i] = np.std(tmpb[tmpb != 0])
+            nonzero = tmp[i][tmp[i] != 0]
+            if nonzero.size == 0:
+                # np.std([]) is NaN and would poison the weights via
+                # l1reweight_func; keep the unit default instead
+                log.warning(f"No nonzero coefficients for base {base}; using rms_comps = 1.0")
+                continue
+            rms_comps[i] = np.std(nonzero)
             log.info(f"rms_comps for base {base} is {rms_comps[i]:.3e}")
         self._reweighter = partial(
             l1reweight_func,

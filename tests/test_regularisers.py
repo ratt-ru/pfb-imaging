@@ -106,3 +106,15 @@ def test_l21_reweighting_lifecycle():
     assert not np.array_equal(reg.l1weight, w0)
     # high-SNR coefficients get weights near (1+rmsfactor)/large, i.e. weights in (0, 1+rmsfactor]
     assert (reg.l1weight > 0).all() and (reg.l1weight <= 1.0 + reg.rmsfactor).all()
+
+
+def test_l21_reweighting_survives_zero_update():
+    """All-zero update (empty per-basis coefficients) must not poison the weights with NaN."""
+    reg, psi = _l21_reg()
+    reg.init_reweighting(np.zeros((psi.nband, psi.nx, psi.ny)))
+    assert reg.reweight_active
+
+    rng = np.random.default_rng(7)
+    model = np.abs(rng.standard_normal((psi.nband, psi.nx, psi.ny)))
+    reg.update_weights(model)
+    assert np.isfinite(reg.l1weight).all()

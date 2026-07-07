@@ -108,7 +108,7 @@ class PFBSolver:
         self.reg = prox
         self._model = model.copy()
         self._update = update.copy()
-        self._residual = np.zeros_like(model)
+        self._residual = None  # set by first()
         self._gamma = gamma
         self._l1_reweight_from = l1_reweight_from
         self._iter = 0
@@ -142,7 +142,15 @@ class PFBSolver:
         self._residual = residual
 
     def forward(self, residual: np.ndarray) -> np.ndarray:
-        """Forward solve; builds the grad closure for the backward step."""
+        """Forward solve; builds the grad closure for the backward step.
+
+        Consumes the residual stored by :meth:`first` (the per-iteration
+        preprocessing hook of the DeconvSolver contract, e.g. beam
+        application); the ``residual`` argument is part of the Protocol
+        signature and is not read directly.
+        """
+        if self._residual is None:
+            raise RuntimeError("residual not set; call first() before forward()")
         x0 = self._update if self._update.any() else None
         self._update = self.forward_alg.solve(self.hess, self._residual, x0=x0)
         xtilde = self._model + self._gamma * self._update
