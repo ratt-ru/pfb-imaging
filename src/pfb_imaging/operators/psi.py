@@ -778,12 +778,21 @@ class PsiNocopytRay:
                 nactors = nband
             nactors = min(nactors, nband)
             self._nactors = nactors
-            # distribute threads across actors to avoid oversubscription
-            cpus_per_actor = max(1, nthreads // nactors)
+            # cpus_per_actor is Ray's *scheduling* resource claim, kept fractional
+            # (nthreads / nactors, not a floor with a minimum of 1) so that nactors
+            # actors fit within a cluster with fewer logical CPUs than actors --
+            # e.g. the test suite's single-CPU Ray cluster -- without deadlocking
+            # on ray.get(warmup): Ray never preempts an already-scheduled actor, so
+            # requesting a whole CPU per actor when nthreads < nactors leaves later
+            # actors permanently unschedulable. Mirrors HessTreeRay's allocation.
+            # The actor's own compute thread count (numba/FFT) still gets at least
+            # one whole thread via actor_nthreads.
+            cpus_per_actor = max(nthreads / nactors, 1e-2)
+            actor_nthreads = max(1, nthreads // nactors)
             actorband = ray.remote(
                 num_cpus=cpus_per_actor,
             )(_PsiBandActorImpl)
-            self._actors = [actorband.remote(nx, ny, bases, nlevel, cpus_per_actor) for _ in range(nactors)]
+            self._actors = [actorband.remote(nx, ny, bases, nlevel, actor_nthreads) for _ in range(nactors)]
             # trigger JIT compilation in all actors in parallel
             ray.get([a.warmup.remote() for a in self._actors])
             self.nxmax, self.nymax = ray.get(self._actors[0].get_shape.remote())
