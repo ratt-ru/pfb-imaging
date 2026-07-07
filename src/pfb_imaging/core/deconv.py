@@ -190,7 +190,13 @@ def deconv(
             pds.attrs.update(child.attrs)
             ph.append(
                 {
-                    "psfhat": child.PSFHAT.values,
+                    # HessianTree/HessTreeRay expect the real, non-negative
+                    # Fourier-domain PSF magnitude (see test_hess_tree_ray.py's
+                    # _rand_part and the legacy sara() `abspsf` convention) --
+                    # the stored PSFHAT is the raw complex FFT of the PSF, so
+                    # it must be abs()'d here, else the "Hessian" carries a
+                    # phase and is no longer Hermitian-positive, breaking CG.
+                    "psfhat": np.abs(child.PSFHAT.values),
                     "beam": pds.BEAM.values,
                     "wsum": np.asarray(child.attrs["wsum"]),
                 }
