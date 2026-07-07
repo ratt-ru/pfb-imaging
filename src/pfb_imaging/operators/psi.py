@@ -778,16 +778,18 @@ class PsiNocopytRay:
                 nactors = nband
             nactors = min(nactors, nband)
             self._nactors = nactors
-            # cpus_per_actor is Ray's *scheduling* resource claim, kept fractional
-            # (nthreads / nactors, not a floor with a minimum of 1) so that nactors
-            # actors fit within a cluster with fewer logical CPUs than actors --
-            # e.g. the test suite's single-CPU Ray cluster -- without deadlocking
-            # on ray.get(warmup): Ray never preempts an already-scheduled actor, so
-            # requesting a whole CPU per actor when nthreads < nactors leaves later
-            # actors permanently unschedulable. Mirrors HessTreeRay's allocation.
-            # The actor's own compute thread count (numba/FFT) still gets at least
-            # one whole thread via actor_nthreads.
-            cpus_per_actor = max(nthreads / nactors, 1e-2)
+            # cpus_per_actor is Ray's *scheduling* resource claim, kept nominal
+            # (not scaled with nthreads/nactors) because the actors are
+            # thread-pool-bound, not Ray-scheduler-bound: the actual compute
+            # concurrency comes from each actor's own numba thread count
+            # (actor_nthreads below), and Ray never preempts an
+            # already-scheduled actor, so any claim that scales with nactors
+            # (fractional or not) can exceed the cluster's num_cpus for large
+            # enough nactors and deadlock on ray.get(warmup) -- e.g. the
+            # default nworkers=1 driver cluster with nband > 1. A flat
+            # near-zero claim lets all nactors actors schedule regardless of
+            # cluster size. Mirrors HessTreeRay's allocation.
+            cpus_per_actor = 1e-2
             actor_nthreads = max(1, nthreads // nactors)
             actorband = ray.remote(
                 num_cpus=cpus_per_actor,

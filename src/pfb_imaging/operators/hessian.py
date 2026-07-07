@@ -644,15 +644,17 @@ class HessTreeRay:
             import ray
 
             self._local = None
-            # cpus_per_actor is Ray's *scheduling* resource claim, kept fractional
-            # (nthreads / nband, not a floor with a minimum of 1) so that nband
-            # actors fit within a cluster with fewer logical CPUs than bands —
-            # e.g. the test suite's single-CPU Ray cluster — without deadlocking
-            # on ray.get(warmup): Ray never preempts an already-scheduled actor,
-            # so requesting a whole CPU per actor when nthreads < nband leaves
-            # later actors permanently unschedulable. The actor's own compute
-            # thread count (numba/FFT) still gets at least 1 whole thread.
-            cpus_per_actor = max(nthreads / self.nband, 1e-2)
+            # cpus_per_actor is Ray's *scheduling* resource claim, kept nominal
+            # (not scaled with nthreads/nband) because the actors are
+            # thread-pool-bound, not Ray-scheduler-bound: the actual compute
+            # concurrency comes from each actor's own numba/FFT thread count
+            # (actor_nthreads below), and Ray never preempts an
+            # already-scheduled actor, so any claim that scales with nband
+            # (fractional or not) can exceed the cluster's num_cpus for large
+            # enough nband and deadlock on ray.get(warmup) -- e.g. the default
+            # nworkers=1 driver cluster with nband > 1. A flat near-zero claim
+            # lets all nband actors schedule regardless of cluster size.
+            cpus_per_actor = 1e-2
             actor_nthreads = max(1, nthreads // self.nband)
             actor_cls = ray.remote(num_cpus=cpus_per_actor)(_HessBandActorImpl)
             self._actors = [

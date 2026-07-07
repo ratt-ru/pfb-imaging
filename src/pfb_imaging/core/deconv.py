@@ -1,3 +1,4 @@
+import gc
 import time
 from copy import deepcopy
 
@@ -20,17 +21,27 @@ log = pfb_logging.get_logger("DECONV")
 
 
 def _band_residual(dirty, parts, model, cell_rad, nthreads, epsilon, do_wgridding, double_accum):
-    """Ray task: exact residual for one band node (raw, un-normalised)."""
-    return residual_from_partitions(
-        dirty,
-        parts,
-        model,
-        cell_rad,
-        nthreads=nthreads,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        double_accum=double_accum,
-    )
+    """Ray task: exact residual for one band node (raw, un-normalised).
+
+    Wrapped in try/finally with gc.collect() per the Ray-task memory
+    discipline (docs/msv4-memory-patterns.md, architecture.md §8): the task
+    deserialises xarray Datasets that sit in reference cycles, and
+    residual_from_partitions allocates large per-partition model_vis arrays
+    on long-lived workers each major cycle.
+    """
+    try:
+        return residual_from_partitions(
+            dirty,
+            parts,
+            model,
+            cell_rad,
+            nthreads=nthreads,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+        )
+    finally:
+        gc.collect()
 
 
 def deconv(
@@ -228,8 +239,13 @@ def deconv(
     solver = PRESETS[minor_cycle](partitions_per_band, geometry, model, update, opts_dict)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+    del partitions_per_band  # the actors hold their own copies
 
-    _residual_remote = ray.remote(_band_residual)
+    # nominal CPU claim: like the HessTreeRay/PsiNocopytRay actor pools, this
+    # task is thread-pool-bound (nthreads controls the internal FFT/gridding
+    # thread count below), not Ray-scheduler-bound, so it should schedule
+    # regardless of nworkers.
+    _residual_remote = ray.remote(num_cpus=1e-2)(_band_residual)
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
@@ -328,13 +344,17 @@ def deconv(
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{iter0 + k + 1}.fits", hdr_mfs)
 
         log.info("Computing residual")
+        # all nband tasks run concurrently; divide nthreads between them so
+        # the aggregate thread count doesn't exceed nthreads (up to
+        # nband * nthreads otherwise).
+        residual_nthreads = max(1, nthreads // nband)
         refs = [
             _residual_remote.remote(
                 dirty_raw[b][None],
                 parts_refs[b],
                 model[b][None],
                 cell_rad,
-                nthreads,
+                residual_nthreads,
                 epsilon,
                 do_wgridding,
                 double_accum,
@@ -370,13 +390,14 @@ def deconv(
         hess_norm = getattr(solver, "hess_norm", hess_norm)
 
         # write back into the band nodes (native DataTree API)
+        is_best = (model == best_model).all()
         for b, n in enumerate(nodes):
             data_vars = {
                 "MODEL": (("corr", "x", "y"), model[b][None]),
                 "UPDATE": (("corr", "x", "y"), update[b][None]),
                 "RESIDUAL": (("corr", "x", "y"), residual_raw[b][None]),
             }
-            if (model == best_model).all():
+            if is_best:
                 data_vars["MODEL_BEST"] = (("corr", "x", "y"), best_model[b][None])
             # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
             # variables, which merge), so start from the band's original
