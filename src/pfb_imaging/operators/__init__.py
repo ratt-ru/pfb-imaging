@@ -90,18 +90,3 @@ class PsiOperator(Protocol):
     def dot(self, x, alphao): ...
 
     def hdot(self, alpha, xo): ...
-
-
-@runtime_checkable
-class PsiOperatorProtocol(Protocol):
-    """
-    The signal decomposition operator only needs to be able to apply the operator and its adjoint.
-    Methods:
-
-    - dot: applies the operator to a vector
-    - hdot: applies the adjoint of the operator to a vector
-    """
-
-    def dot(self, x, alphao): ...
-
-    def hdot(self, alpha, xo): ...

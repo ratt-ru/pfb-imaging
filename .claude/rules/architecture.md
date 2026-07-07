@@ -43,7 +43,15 @@ Every CLI command gets `--backend` (`auto`|`native`|`docker`|`podman`|`apptainer
 
 ## 5. Mathematical Operators
 
-Implement as callable classes with `dot` (forward/analysis) and `hdot` (adjoint/synthesis) methods. The Psi wavelet operator family (`Psi`, `PsiNocopyt`, `PsiNocopytRay`) follows this convention.
+Operators are callable classes with `dot` (forward/analysis) and `hdot`
+(adjoint/synthesis) methods. The composable deconvolution framework
+(`pfb deconv`, issue #185) formalises its seams as `typing.Protocol` classes —
+`LinearOperator`/`PsiOperator` (`operators/__init__.py`), `ForwardSolver`/
+`BackwardSolver` (`opt/__init__.py`), `Regulariser`/`DeconvSolver`
+(`deconv/__init__.py`). **Never introduce ABCs for these seams**; implementations
+are plain classes satisfying the Protocols structurally, composed by
+`deconv/pfb.PFBSolver` and the `deconv/presets.py` registry. Design:
+`docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`.
 
 ## 6. Processing Pipeline
 

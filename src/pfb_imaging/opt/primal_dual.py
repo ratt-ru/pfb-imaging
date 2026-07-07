@@ -3,8 +3,8 @@ from time import time
 import numpy as np
 from numba import njit, prange
 
-from pfb_imaging.prox.positivity import positivity as _nb_positivity  # noqa: F401
-from pfb_imaging.prox.positivity import positivity_band as _nb_positivity_band  # noqa: F401
+from pfb_imaging.prox.positivity import positivity as _positivity_fn
+from pfb_imaging.prox.positivity import positivity_band as _positivity_band_fn
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
 from pfb_imaging.utils import logging as pfb_logging
 
@@ -208,9 +208,9 @@ def primal_dual_numba(
 
         ti = time()
         if positivity == 1:
-            _nb_positivity(x)
+            _positivity_fn(x)
         elif positivity == 2:
-            _nb_positivity_band(x)
+            _positivity_band_fn(x)
         tpos += time() - ti
         # convergence check
         if _nb_any_nonzero(x):
