@@ -83,6 +83,26 @@ def primal_dual(
     gamma=1.0,
     verbosity=1,
 ):
+    """Legacy PDHG solver for min_x F(x) + lam*g(Psi^T x) (validation oracle).
+
+    Frozen legacy implementation kept as the test oracle for the composable
+    framework (``opt.primal_dual.PrimalDual`` is the maintained replacement);
+    see docs/wiki/deconv-primer.md. Do not change its behaviour.
+
+    Naming trap (differs from ``primal_dual_numba``!): here ``psi`` is the
+    SYNTHESIS operator (coefficients -> image, allocating, used in the primal
+    step) and ``psih`` is the ANALYSIS operator (image -> coefficients, used
+    in the dual step).
+
+    ``nu`` is the squared frame bound ||Psi Psi^T|| — ``nbasis`` for the SARA
+    concatenation of orthonormal bases, NOT the tight-frame 1.0. It sets the
+    step sizes ``sigma = hessnorm/(2*gamma)/nu`` and
+    ``tau = 0.9/(hessnorm/(2*gamma) + sigma*nu**2)``; an underestimated nu
+    violates the convergence condition (observed as multi-band divergence).
+
+    The duals ``v`` are warm-started by the caller across major cycles;
+    returns ``(x, v)``.
+    """
     # initialise
     xp = x.copy()
     vp = v.copy()
@@ -164,6 +184,29 @@ def primal_dual_numba(
     verbosity=1,
     maxreweight=20,
 ):
+    """Legacy numba-kernel PDHG with inner l1 reweighting (validation oracle).
+
+    Frozen legacy implementation kept as the test oracle for
+    ``opt.primal_dual.PrimalDual`` + ``prox.l21.L21`` (rdiff < 1e-10 in
+    tests/test_primal_dual.py); see docs/wiki/deconv-primer.md. Do not change
+    its behaviour.
+
+    Naming trap (INVERTED relative to ``primal_dual``!): here ``psih`` is the
+    SYNTHESIS operator and ``psi`` is the ANALYSIS operator — both in-place
+    two-argument callables (``psi(image, coeffs_out)``,
+    ``psih(coeffs, image_out)``, the ``Psi.dot``/``Psi.hdot`` convention).
+    Read the loop body, not the parameter names.
+
+    ``nu`` is ||Psi Psi^T|| = nbasis for the SARA dictionary (see
+    ``primal_dual``'s docstring for the step-size consequences). ``prox`` is
+    accepted for signature compatibility; the dual update is the fused
+    ``dual_update_numba_fast`` with ``l1weight``. ``reweighter`` (or None)
+    fires on inner convergence, up to ``maxreweight`` consecutive times.
+
+    Warning:
+        Contains ``pdb.set_trace()`` breakpoints on the zero-model and
+        NaN-eps paths — an unattended run hangs if those trigger.
+    """
     # initialise
     xp = x.copy()
     vp = v.copy()

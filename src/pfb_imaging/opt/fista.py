@@ -20,6 +20,14 @@ def fista(
     report_freq=50,
     verbosity=1,
 ):
+    """Legacy FISTA solver of min_x f(x) + R(x) (validation oracle).
+
+    Frozen legacy implementation kept as the oracle for the accelerated
+    ``opt.forward_backward.ForwardBackward``; do not change its behaviour.
+    ``fprime(x)`` returns ``(f(x), grad_f(x))``; ``prox(x)`` applies the
+    primal-domain prox of R at the implicit step ``1/hessnorm``, which is
+    doubled (up to 10 times) whenever the objective increases.
+    """
     # start iterations
     t = 1.0
     x = x0.copy()
