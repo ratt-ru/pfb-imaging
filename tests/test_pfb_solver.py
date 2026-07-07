@@ -157,3 +157,112 @@ def test_trigger_reweight_arms_last():
     solver.trigger_reweight()
     solver.last()
     assert solver.reweight_active  # armed by trigger
+
+
+def _delta_partitions(nband, nx, ny, wsum=1.0):
+    """Delta-function psfhat partitions: the Hessian acts as (wsum_b/wsum_tot)*I + eta."""
+    psfhat = np.ones((1, 2 * nx, ny + 1))
+    beam = np.ones((1, nx, ny))
+    return [[{"psfhat": psfhat.copy(), "beam": beam.copy(), "wsum": np.array([wsum])}] for _ in range(nband)]
+
+
+def test_presets_registry_builds_deconv_solvers():
+    from pfb_imaging.deconv.presets import PRESETS
+
+    nband, nx, ny = 1, 16, 16
+    geometry = {"nx": nx, "ny": ny, "nx_psf": 2 * nx, "ny_psf": 2 * ny}
+    model = np.zeros((nband, nx, ny))
+    opts = dict(
+        bases=["self", "db1"],
+        nlevels=2,
+        rmsfactor=1.0,
+        alpha=2.0,
+        gamma=1.0,
+        positivity=1,
+        eta=0.5,
+        l1_reweight_from=-1,
+        hess_norm=1.0,
+        opt_backend="primal-dual",
+        acceleration=True,
+        nthreads=1,
+        verbosity=0,
+        pd_tol=1e-6,
+        pd_maxit=50,
+        pd_verbose=0,
+        pd_report_freq=100,
+        fb_tol=1e-6,
+        fb_maxit=50,
+        fb_verbose=0,
+        fb_report_freq=100,
+        cg_tol=1e-6,
+        cg_maxit=50,
+        cg_verbose=0,
+        cg_report_freq=100,
+        pm_tol=1e-3,
+        pm_maxit=50,
+        pm_verbose=0,
+        pm_report_freq=100,
+    )
+
+    for name in ("sara", "ista"):
+        solver = PRESETS[name](_delta_partitions(nband, nx, ny), geometry, model.copy(), model.copy(), dict(opts))
+        assert isinstance(solver, DeconvSolver), name
+        rng = np.random.default_rng(0)
+        residual = rng.standard_normal((nband, nx, ny))
+        solver.first(residual)
+        update = solver.forward(residual)
+        assert np.isfinite(update).all()
+        out = solver.backward(1e-3)
+        assert np.isfinite(out).all()
+        solver.last()
+
+
+def test_make_sara_opt_backend_selects_solver():
+    from pfb_imaging.deconv.presets import make_sara
+    from pfb_imaging.opt.forward_backward import ForwardBackward as FB  # noqa: N817
+    from pfb_imaging.opt.primal_dual import PrimalDual as PD  # noqa: N817
+
+    geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32}
+    model = np.zeros((1, 16, 16))
+    base_opts = dict(
+        bases=["self"],
+        nlevels=1,
+        rmsfactor=1.0,
+        alpha=2.0,
+        gamma=1.0,
+        positivity=0,
+        eta=0.5,
+        l1_reweight_from=-1,
+        hess_norm=1.0,
+        acceleration=True,
+        nthreads=1,
+        verbosity=0,
+        pd_tol=1e-6,
+        pd_maxit=10,
+        pd_verbose=0,
+        pd_report_freq=100,
+        fb_tol=1e-6,
+        fb_maxit=10,
+        fb_verbose=0,
+        fb_report_freq=100,
+        cg_tol=1e-6,
+        cg_maxit=10,
+        cg_verbose=0,
+        cg_report_freq=100,
+        pm_tol=1e-3,
+        pm_maxit=10,
+        pm_verbose=0,
+        pm_report_freq=100,
+    )
+    s_pd = make_sara(
+        _delta_partitions(1, 16, 16), geometry, model.copy(), model.copy(), dict(base_opts, opt_backend="primal-dual")
+    )
+    s_fb = make_sara(
+        _delta_partitions(1, 16, 16),
+        geometry,
+        model.copy(),
+        model.copy(),
+        dict(base_opts, opt_backend="forward-backward"),
+    )
+    assert isinstance(s_pd.backward_alg, PD)
+    assert isinstance(s_fb.backward_alg, FB)
