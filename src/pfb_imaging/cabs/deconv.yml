@@ -186,15 +186,16 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
-        dtype: Optional[int]
+        dtype: int
+        default: 2
         metadata:
           rich_help_panel: Performance
       nworkers:
         info:
           Number of Ray workers.
+          Uses nworkers = nband by default.
           Band actors use nominal CPU claims, so nworkers does not need to scale with nband.
-        dtype: int
-        default: 1
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
       ray-address:

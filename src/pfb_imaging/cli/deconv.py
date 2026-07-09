@@ -236,20 +236,20 @@ def deconv(
         ),
     ] = 1,
     nthreads: Annotated[
-        int | None,
+        int,
         typer.Option(
             help="Total number of threads to use. Defaults to half the total number available.",
             rich_help_panel="Performance",
         ),
-    ] = None,
+    ] = 2,
     nworkers: Annotated[
-        int,
+        int | None,
         typer.Option(
-            help="Number of Ray workers. "
+            help="Number of Ray workers. Uses nworkers = nband by default. "
             "Band actors use nominal CPU claims, so nworkers does not need to scale with nband.",
             rich_help_panel="Performance",
         ),
-    ] = 1,
+    ] = None,
     ray_address: Annotated[
         str,
         typer.Option(

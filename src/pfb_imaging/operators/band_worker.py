@@ -43,6 +43,11 @@ class _BandWorkerImpl:
                 ctypes.CDLL(str(dist.locate_file(f).resolve()))
                 break
         numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
+
+        # resize thread ducc thread pool for worker
+        from ducc0.misc import resize_thread_pool
+
+        resize_thread_pool(nthreads)
         self._nthreads = nthreads
         self._hess = None
         self._psib = None
@@ -202,7 +207,7 @@ class BandWorkerPool:
 
     def __init__(self, nband, nthreads=1):
         self.nband = nband
-        self.nthreads_per_band = max(1, nthreads // nband) if nband > 1 else nthreads
+        self.nthreads_per_band = max(1, nthreads)
         if nband == 1:
             # single band: in-process worker, no Ray overhead
             self._local = _BandWorkerImpl(nthreads)
@@ -210,9 +215,9 @@ class BandWorkerPool:
         else:
             import ray
 
-            # num_cpus is Ray's *scheduling* resource claim, kept nominal
-            # because the workers are thread-pool-bound, not
-            # Ray-scheduler-bound: compute concurrency comes from each
+            # num_cpus is Ray's *scheduling* resource claim,
+            # kept nominal because the workers are thread-pool-bound,
+            # not Ray-scheduler-bound: compute concurrency comes from each
             # worker's own numba/FFT thread count, and any claim that scales
             # with nband can exceed the cluster's num_cpus and deadlock on
             # the init ray.get for large enough nband (e.g. the default
