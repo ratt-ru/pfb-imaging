@@ -117,7 +117,7 @@ def deconv(
     ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
     opts_dict["nthreads"] = nthreads
     opts_dict["nworkers"] = nworkers
-    log.info(f"Using {nworkers} workers with {nthreads} per worker")
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
 
@@ -224,7 +224,7 @@ def deconv(
         solver.first(residual)
         update = solver.forward(residual)
         update_mfs = np.mean(update, axis=0)
-        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs)
 
         modelp = deepcopy(model)
         lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
@@ -307,7 +307,7 @@ def deconv(
             log.info(f"Exception {e} raised during model fit.")
 
         model_mfs = np.mean(model[fsel], axis=0)
-        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
 
         log.info("Computing residual")
         residual_raw = workers.residual(
@@ -319,7 +319,7 @@ def deconv(
         )[:, 0]
         residual = residual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
 
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
@@ -365,19 +365,19 @@ def deconv(
                     **band_attrs[b],
                     "rms": best_rms,
                     "rmax": best_rmax,
-                    "niters": iter0 + k + 1,
+                    "niters": k + 1,
                     "hess_norm": hess_norm,
                 },
             )
             ds_out.to_zarr(dt_name, group=n, mode="a")
 
-        log.info(f"Iter {iter0 + k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
+        log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
         if eps < tol:
             if not getattr(solver, "reweight_active", True):
                 solver.trigger_reweight()  # reweight instead of stopping
             else:
-                log.info(f"Converged after {iter0 + k + 1} iterations.")
+                log.info(f"Converged after {k + 1} iterations.")
                 break
 
         if (rms > rmsp) and (rmax > rmaxp):

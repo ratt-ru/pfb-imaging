@@ -158,7 +158,6 @@ gospotless:
         Model to start from
     nworkers:
       dtype: int
-      default: 8
       info:
         Number of workers.
         This controls the level of horizontal scaling.
@@ -166,7 +165,6 @@ gospotless:
         Set to the expected number of imaging bands if unsure.
     nthreads:
       dtype: int
-      default: 8
       info:
         Number of threads per worker.
         This controls the degree of vertical parallelism.
@@ -217,6 +215,7 @@ gospotless:
         ny: =IFSET(recipe.ny)
         robustness: =recipe.robustness
         psf-oversize: =recipe.psf-oversize
+      skip_if_outputs: exist
 
     deconvolve:
       cab: pfb.deconv
