@@ -23,14 +23,14 @@ Directory = NewType("Directory", Path)
     name="dt-out",
     info="DataTree dataset updated in place.",
     implicit="{current.output-filename}_{current.product}.dt",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
     info="Output component model.",
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
@@ -245,7 +245,8 @@ def deconv(
     nworkers: Annotated[
         int | None,
         typer.Option(
-            help="Number of Ray workers. Uses nworkers = nband by default. "
+            help="Number of Ray workers. "
+            "Uses nworkers = nband by default. "
             "Band actors use nominal CPU claims, so nworkers does not need to scale with nband.",
             rich_help_panel="Performance",
         ),

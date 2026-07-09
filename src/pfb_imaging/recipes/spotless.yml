@@ -186,6 +186,20 @@ gospotless:
       info:
         Normalisation factor for the Hessian approximation.
         This is used to regularise the inversion of the Hessian approximation.
+    minor-cycle:
+      info:
+        Which minor cycle algorithm to use.
+      choices:
+      - sara
+      - ista
+      default: sara
+    opt-backend:
+      info:
+        Optimization backend for the inner backward step.
+      choices:
+      - primal-dual
+      - forward-backward
+      default: primal-dual
 
   steps:
     initialize:
@@ -241,3 +255,5 @@ gospotless:
         nthreads: =recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
         hess-norm: =IFSET(recipe.hess-norm)
+        minor-cycle: =recipe.minor-cycle
+        opt-backend: =recipe.opt-backend

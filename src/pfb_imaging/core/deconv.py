@@ -232,7 +232,7 @@ def deconv(
         model = solver.backward(lam)
 
         # write component model (carried over from the legacy driver; .dt-native attrs)
-        log.info(f"Writing model to {basename}_{suffix}_model.mds")
+        log.info(f"Writing model to {basename}_{suffix}.mds")
         # TODO - this should be a function call to pfb-model-spec
         try:
             coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
@@ -274,7 +274,7 @@ def deconv(
                     "parametrisation": expr,
                 },
             )
-            coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds", mode="w")
+            coeff_dataset.to_zarr(f"{basename}_{suffix}.mds", mode="w")
 
             # need to re-evaluate the model after the fit to keep it consistent
             # this can be used to enforce smoothness in the model at the expense of increased residuals
