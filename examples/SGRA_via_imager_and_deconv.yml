@@ -39,7 +39,7 @@ gospotless:
     base-dir:
       default: '/home/bester/projects/GC/output/{recipe.obs}'
     image-name:
-      default: 'sara_{recipe.obs}'
+      default: 'spotless_{recipe.obs}'
     field-of-view:
       default: 3.5
       info:
