@@ -77,7 +77,7 @@ Shared downstream consumers (currently read the legacy `.dds`):
 ## 7. Performance
 
 * Numba JIT with TBB threading for critical loops.
-* DUCC0 for gridding and FFT.
+* DUCC0 for gridding anOne thing to note is that the raylets d FFT.
 * Dask for parallel chunk processing (`--nworkers`), threads for FFTs/gridding (`--nthreads`).
 * Ray actors for process-level parallelism in wavelet operators.
 * See `scripts/profiling.md` for profiling guides.
