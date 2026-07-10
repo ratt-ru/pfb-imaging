@@ -6,6 +6,17 @@
 
 *Note: Detailed domain logic, Python standards, and CI/CD rules have been modularized into the `.claude/rules/` directory for progressive disclosure.*
 
+## LLM wiki (`docs/wiki/`)
+
+Deep internal knowledge — the deconvolution math→code primer, the design-decisions
+ledger (with known debt and gotchas), and the Ray/memory discipline — lives in
+`docs/wiki/` (Open Knowledge Format v0.1; start at `docs/wiki/index.md`, which says
+when to read each page). Consult it before touching `deconv/`/`opt/`/`prox/`, before
+"fixing" something that looks wrong (it may be a documented decision), and when
+debugging memory or Ray behaviour. **Maintenance rule:** any change that invalidates a
+wiki page updates the page, its `timestamp` and its `last_verified_commit` stamp in the
+same session/PR.
+
 ## MSv4 DataTree imager (`pfb imager`)
 
 `pfb imager` is the MSv4 front-end that combines `init`+`grid` into a two-pass pipeline producing
@@ -26,7 +37,7 @@ a hard segfault constraint.
 **Memory/performance:** the Ray+MSv4 path carries hard-won memory discipline (selective variable
 loads, `gc.collect()` at Ray-task boundaries, xarray-ms table-cache eviction, per-task RSS
 telemetry in the progress lines). Before touching pass 1/2 or debugging footprint, read
-`docs/msv4-memory-patterns.md` and `.claude/rules/architecture.md` §8 — do not regress these.
+`docs/wiki/memory-and-ray.md` and `.claude/rules/architecture.md` §8 — do not regress these.
 
 ## Core Dependencies
 
@@ -51,7 +62,7 @@ rediscovery:
   `tmp/logs_dirty_and_init` as the legacy baseline vs `tmp/logs_imager*`). Start with
   `stimela.stats.summary.txt` (wall / CPU% / peak-mem / total-I/O per step), then the per-step
   logs. The imager progress lines carry per-task post-gc RSS telemetry — read it before
-  theorising about memory (interpretation guide: `docs/msv4-memory-patterns.md`).
+  theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`).
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
   (serialisation, lazy loading, retention) reproduces on `tests/data/test_ascii_1h60.0s.MS`
   with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task

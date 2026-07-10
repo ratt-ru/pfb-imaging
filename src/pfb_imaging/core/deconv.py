@@ -324,7 +324,7 @@ def deconv(
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
 
-        # per-actor post-gc memory telemetry (docs/msv4-memory-patterns.md)
+        # per-actor post-gc memory telemetry (docs/wiki/memory-and-ray.md)
         if verbosity > 1 and hasattr(getattr(solver, "hess", None), "get_mem"):
             for m in solver.hess.get_mem():
                 log.info(f"hess actor pid {m['pid']} rss {m['rss_gb']:.2f} GB peak {m['peak_gb']:.2f} GB")

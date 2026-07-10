@@ -98,6 +98,19 @@ def pcg_numba(
     backtrack=True,
     return_resid=False,
 ):
+    """Legacy CG solver of ``aop(x) = b`` with fused numba update kernels.
+
+    Frozen legacy implementation (the in-worker CG of the deconv band
+    workers and the oracle for ``opt.pcg.PCG``); do not change its
+    behaviour. See docs/wiki/deconv-primer.md.
+
+    Warning:
+        When ``x0`` is given it is bound as the iterate and updated
+        **in place** (the returned array IS ``x0``). Callers that must not
+        see their ``x0`` mutated pass a copy — Ray callers MUST copy anyway,
+        since Ray deserialises task arguments as read-only views and the
+        numba kernels crash on them (``_BandWorkerImpl.cg`` is the template).
+    """
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
 
@@ -199,6 +212,13 @@ def pcg(
     backtrack=True,
     return_resid=False,
 ):
+    """Legacy python-loop preconditioned CG (validation oracle).
+
+    Same contract and in-place ``x0`` mutation warning as ``pcg_numba``
+    (see its docstring); this variant supports a ``precond`` callable and
+    is used by the legacy ``.dds`` path (``HessPSF.idot``). Frozen; do not
+    change its behaviour.
+    """
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
 

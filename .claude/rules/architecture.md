@@ -51,7 +51,9 @@ Operators are callable classes with `dot` (forward/analysis) and `hdot`
 (`deconv/__init__.py`). **Never introduce ABCs for these seams**; implementations
 are plain classes satisfying the Protocols structurally, composed by
 `deconv/pfb.PFBSolver` and the `deconv/presets.py` registry. Design:
-`docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`.
+`docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`. Math→code map and
+the load-bearing numerical conventions (nu, wsum, λ schedule): `docs/wiki/deconv-primer.md`;
+rationale ledger: `docs/wiki/design-decisions.md`.
 
 ## 6. Processing Pipeline
 
@@ -75,7 +77,7 @@ Shared downstream consumers (currently read the legacy `.dds`):
 ## 7. Performance
 
 * Numba JIT with TBB threading for critical loops.
-* DUCC0 for gridding and FFT.
+* DUCC0 for gridding anOne thing to note is that the raylets d FFT.
 * Dask for parallel chunk processing (`--nworkers`), threads for FFTs/gridding (`--nthreads`).
 * Ray actors for process-level parallelism in wavelet operators.
 * See `scripts/profiling.md` for profiling guides.
@@ -116,7 +118,7 @@ vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`) and per-partition `PSF
 
 **Memory discipline (Ray + MSv4) — battle-tested, do not regress.** Ray workers are long-lived;
 anything a task leaves behind compounds across the run. Full story, measured numbers and the
-local repro harness: `docs/msv4-memory-patterns.md`.
+local repro harness: `docs/wiki/memory-and-ray.md`.
 * Never blanket-`.load()` an MSv4 node — it reads *every* correlated-data column
   (`VISIBILITY`, `CORRECTED_DATA`, `MODEL_DATA`, …). Load only the needed variables, extract
   to plain numpy, then release the Dataset *before* heavy processing (`stokes_vis` is the
