@@ -238,7 +238,7 @@ gospotless:
       info: Deconvolve with your favourite algorithm
       params:
         niter: =recipe.niter
-        bases: 'self,db1,db2,db3'
+        bases: ["self", "db1", "db2", "db3"]
         nlevels: 2
         l1-reweight-from: =recipe.l1-reweight-from
         pd-tol: 1.5e-4
