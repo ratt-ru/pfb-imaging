@@ -158,7 +158,7 @@ gospotless:
         Model to start from
     nworkers:
       dtype: int
-      default: 8
+      required: true
       info:
         Number of workers.
         This controls the level of horizontal scaling.
@@ -166,11 +166,11 @@ gospotless:
         Set to the expected number of imaging bands if unsure.
     nthreads:
       dtype: int
-      default: 8
+      required: true
       info:
         Number of threads per worker.
         This controls the degree of vertical parallelism.
-        The total number of threads used during imaging will be nworkers * nthreads.
+        The total number of threads used will be nworkers * nthreads.
     product:
       default: I
       aliases: ['*.product']
@@ -186,6 +186,20 @@ gospotless:
       info:
         Normalisation factor for the Hessian approximation.
         This is used to regularise the inversion of the Hessian approximation.
+    minor-cycle:
+      info:
+        Which minor cycle algorithm to use.
+      choices:
+      - sara
+      - ista
+      default: sara
+    opt-backend:
+      info:
+        Optimization backend for the inner backward step.
+      choices:
+      - primal-dual
+      - forward-backward
+      default: primal-dual
 
   steps:
     initialize:
@@ -217,13 +231,14 @@ gospotless:
         ny: =IFSET(recipe.ny)
         robustness: =recipe.robustness
         psf-oversize: =recipe.psf-oversize
+      skip_if_outputs: exist
 
     deconvolve:
       cab: pfb.deconv
       info: Deconvolve with your favourite algorithm
       params:
         niter: =recipe.niter
-        bases: 'self,db1,db2,db3'
+        bases: ["self", "db1", "db2", "db3"]
         nlevels: 2
         l1-reweight-from: =recipe.l1-reweight-from
         pd-tol: 1.5e-4
@@ -240,3 +255,5 @@ gospotless:
         nthreads: =recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
         hess-norm: =IFSET(recipe.hess-norm)
+        minor-cycle: =recipe.minor-cycle
+        opt-backend: =recipe.opt-backend

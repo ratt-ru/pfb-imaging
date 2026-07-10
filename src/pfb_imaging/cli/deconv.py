@@ -23,14 +23,14 @@ Directory = NewType("Directory", Path)
     name="dt-out",
     info="DataTree dataset updated in place.",
     implicit="{current.output-filename}_{current.product}.dt",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
     info="Output component model.",
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
@@ -121,7 +121,7 @@ def deconv(
             help="Wavelet bases to use. Give as comma separated str.",
             rich_help_panel="SARA",
         ),
-    ] = "self,db1,db2,db3",
+    ] = ["self", "db1", "db2", "db3"],
     nlevels: Annotated[
         int,
         typer.Option(
@@ -236,20 +236,21 @@ def deconv(
         ),
     ] = 1,
     nthreads: Annotated[
-        int | None,
+        int,
         typer.Option(
             help="Total number of threads to use. Defaults to half the total number available.",
             rich_help_panel="Performance",
         ),
-    ] = None,
+    ] = 2,
     nworkers: Annotated[
-        int,
+        int | None,
         typer.Option(
             help="Number of Ray workers. "
+            "Uses nworkers = nband by default. "
             "Band actors use nominal CPU claims, so nworkers does not need to scale with nband.",
             rich_help_panel="Performance",
         ),
-    ] = 1,
+    ] = None,
     ray_address: Annotated[
         str,
         typer.Option(

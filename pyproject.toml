@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo >= 0.2.1",
+    "hip-cargo>=0.2.1",
 ]
 
 [project.urls]
@@ -95,6 +95,9 @@ markers = [
     "integration: Integration tests",
     "slow: Tests that take more time to run",
 ]
+
+[tool.uv.sources]
+hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", branch = "main" }
 
 [dependency-groups]
 dev = [

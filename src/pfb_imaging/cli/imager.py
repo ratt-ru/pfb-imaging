@@ -24,7 +24,7 @@ URI = NewType("URI", Path)
     name="dt-out",
     info="Output imaging DataTree directory.",
     implicit="{current.output-filename}_{current.product}.dt",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",

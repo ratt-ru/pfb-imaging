@@ -45,7 +45,7 @@ def deconv(
     rms_outside_model: bool = False,
     init_factor: float = 0.5,
     verbosity: int = 1,
-    nthreads: int | None = None,
+    nthreads: int = 2,
     nworkers: int = 1,
     ray_address: str = "local",
     epsilon: float = 1e-7,
@@ -75,6 +75,7 @@ def deconv(
     The minor_cycle preset assembles (hess, forward_alg, backward_alg, prox) into
     a PFBSolver; any object satisfying the DeconvSolver Protocol can drive the loop.
     """
+    time_start = time.time()
     opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
@@ -87,31 +88,14 @@ def deconv(
     opts_dict["fits_output_folder"] = fits_output_folder
     opts_dict["log_directory"] = log_directory
 
-    ncpu = psutil.cpu_count(logical=False)
-    if nthreads is None:
-        nthreads = psutil.cpu_count(logical=True) // 2
-        ncpu = ncpu // 2
-    else:
-        ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
-    opts_dict["nthreads"] = nthreads
-    log.info(f"Using {nthreads} threads total")
-    resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu, log=log)
-
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/deconv_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
-    log.log_options_dict(opts_dict, title="DECONV options")
-
-    basename = output_filename
-    fits_oname = f"{fits_output_folder}/{oname}"
+    # Lazy load at the outset because we need nband to set default worker count
     # unlike the legacy .dds (which the `suffix` convention comes from),
     # imager() never appends a suffix to the .dt tree name (see
     # architecture.md §8: "<output>_<PRODUCT>.dt") -- `suffix` still
     # namespaces the FITS/.mds outputs below, just not the .dt path itself.
+    basename = output_filename
+    fits_oname = f"{fits_output_folder}/{oname}"
     dt_name = f"{basename}.dt"
-
-    time_start = time.time()
 
     dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
     image_names = sorted(n for n in dt.children if n.startswith("band"))
@@ -128,6 +112,19 @@ def deconv(
         log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
 
     nband = len(nodes)
+    if nworkers is None:
+        nworkers = nband
+    ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
+    opts_dict["nthreads"] = nthreads
+    opts_dict["nworkers"] = nworkers
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
+    resize_thread_pool(nthreads)
+    env_vars = set_envs(nthreads, ncpu, log=log)
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{str(log_directory)}/deconv_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
+    log.log_options_dict(opts_dict, title="DECONV options")
 
     # every deconv worker claims a nominal CPU (they are thread-pool-bound,
     # see BandWorkerPool), so num_cpus only sets the raylet's worker-process
@@ -135,7 +132,7 @@ def deconv(
     # workers plus the driver so startup is not serialised and the raylet
     # does not warn about exceeding its expected startup concurrency.
     init_ray(
-        max(nworkers, nband + 1),
+        nworkers,
         ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
@@ -153,10 +150,9 @@ def deconv(
     iter0 = int(first.attrs.get("niters", 0))
     geometry = {"nx": nx, "ny": ny, "nx_psf": nx_psf, "ny_psf": ny_psf}
 
-    # --- load band cubes and attrs (image-scale only; vis-scale partition
-    # data -- UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY -- is read worker-side
-    # by BandWorkerPool.load_bands and never enters the driver or the Ray
-    # object store) ---
+    # load band cubes and attrs required on driver (MODEL/RESIDUAL/UPDATE/WSUM)
+    # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
+    # They never enter the driver or the Ray object store
     residual_raw = np.zeros((nband, nx, ny))
     model = np.zeros((nband, nx, ny))
     update = np.zeros((nband, nx, ny))
@@ -192,10 +188,11 @@ def deconv(
     if minor_cycle not in PRESETS:
         log.error_and_raise(f"Unknown minor_cycle '{minor_cycle}'", ValueError)
 
-    # one worker process per band co-locating all per-band state: the
-    # Hessian and Psi (initialised by the preset's facades) and the exact
-    # residual. Each worker reads its own band's vis-scale inputs straight
-    # from the store and pins them for the life of the run.
+    # one worker process per band co-locating all per-band state:
+    # the Hessian and Psi (initialised by the preset's facades) and the exact residual.
+    # Each worker reads its own band's vis-scale inputs straight from the store and pins them for the life of the run.
+    # TODO - this only works for a local cluster, nworkers not configurable on remote cluster.
+    # Need to round robin bands across workers.
     workers = BandWorkerPool(nband, nthreads)
     workers.load_bands(dt_name, nodes)
 
@@ -208,17 +205,26 @@ def deconv(
     else:
         rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-    best_rms, best_rmax = rms, rmax
-    best_model = model.copy()
+    if "best_rms" in first.attrs:
+        best_rms = first.attrs["best_rms"]
+        best_rmax = first.attrs["best_rmax"]
+        best_model = np.zeros((nband, nx, ny))
+        for b, n in enumerate(nodes):
+            bds = dt[n].ds
+            if "MODEL_BEST" in bds:
+                best_model[b] = bds.MODEL_BEST.values[0]
+    else:
+        best_rms, best_rmax = rms, rmax
+        best_model = model.copy()
     diverge_count_curr = 0
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
-
-    for k in range(niter):
+    mrange = range(iter0, iter0 + niter)
+    for k in mrange:
         log.info("Solving for update")
         solver.first(residual)
         update = solver.forward(residual)
         update_mfs = np.mean(update, axis=0)
-        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs)
 
         modelp = deepcopy(model)
         lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
@@ -226,7 +232,8 @@ def deconv(
         model = solver.backward(lam)
 
         # write component model (carried over from the legacy driver; .dt-native attrs)
-        log.info(f"Writing model to {basename}_{suffix}_model.mds")
+        log.info(f"Writing model to {basename}_{suffix}.mds")
+        # TODO - this should be a function call to pfb-model-spec
         try:
             coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
@@ -267,8 +274,11 @@ def deconv(
                     "parametrisation": expr,
                 },
             )
-            coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds", mode="w")
+            coeff_dataset.to_zarr(f"{basename}_{suffix}.mds", mode="w")
 
+            # need to re-evaluate the model after the fit to keep it consistent
+            # this can be used to enforce smoothness in the model at the expense of increased residuals
+            # does not respect the positivity constraint
             for b in range(nband):
                 model[b] = eval_coeffs_to_slice(
                     time_out[0],
@@ -297,7 +307,7 @@ def deconv(
             log.info(f"Exception {e} raised during model fit.")
 
         model_mfs = np.mean(model[fsel], axis=0)
-        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
 
         log.info("Computing residual")
         residual_raw = workers.residual(
@@ -309,7 +319,7 @@ def deconv(
         )[:, 0]
         residual = residual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{iter0 + k + 1}.fits", hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
 
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
@@ -355,19 +365,19 @@ def deconv(
                     **band_attrs[b],
                     "rms": best_rms,
                     "rmax": best_rmax,
-                    "niters": iter0 + k + 1,
+                    "niters": k + 1,
                     "hess_norm": hess_norm,
                 },
             )
             ds_out.to_zarr(dt_name, group=n, mode="a")
 
-        log.info(f"Iter {iter0 + k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
+        log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
         if eps < tol:
             if not getattr(solver, "reweight_active", True):
                 solver.trigger_reweight()  # reweight instead of stopping
             else:
-                log.info(f"Converged after {iter0 + k + 1} iterations.")
+                log.info(f"Converged after {k + 1} iterations.")
                 break
 
         if (rms > rmsp) and (rmax > rmaxp):
