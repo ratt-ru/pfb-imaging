@@ -67,7 +67,11 @@ cabs:
           Wavelet bases to use.
           Give as comma separated str.
         dtype: List[str]
-        default: self,db1,db2,db3
+        default:
+        - self
+        - db1
+        - db2
+        - db3
         metadata:
           rich_help_panel: SARA
       nlevels:

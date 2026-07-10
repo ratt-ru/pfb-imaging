@@ -121,7 +121,7 @@ def deconv(
             help="Wavelet bases to use. Give as comma separated str.",
             rich_help_panel="SARA",
         ),
-    ] = "self,db1,db2,db3",
+    ] = ["self", "db1", "db2", "db3"],
     nlevels: Annotated[
         int,
         typer.Option(
