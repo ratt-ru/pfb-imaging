@@ -53,30 +53,67 @@ class Preconditioner(Protocol):
 
 
 @runtime_checkable
-class PsiOperatorProtocol(Protocol):
-    """
-    The signal decomposition operator only needs to be able to apply the operator and its adjoint.
+class LinearOperator(Protocol):
+    """Hermitian image-space operator (Hessian family). Allocating style.
+
     Methods:
 
-    - dot: applies the operator to a vector
-    - hdot: applies the adjoint of the operator to a vector
+    - dot: apply the operator; returns a new array
+    - hdot: apply the adjoint (same as dot for Hermitian operators)
     """
+
+    def dot(self, x): ...
+
+    def hdot(self, x): ...
+
+
+@runtime_checkable
+class PsiOperator(Protocol):
+    """Analysis/synthesis operator pair. In-place style.
+
+    Shape attributes are part of the contract; coefficient buffers have
+    shape ``(nband, nbasis, nymax, nxmax)`` and images ``(nband, nx, ny)``.
+
+    Methods:
+
+    - dot: analysis, image to coefficients, fills ``alphao`` in-place
+    - hdot: synthesis, coefficients to image, fills ``xo`` in-place
+    """
+
+    nband: int
+    nbasis: int
+    nymax: int
+    nxmax: int
+    nx: int
+    ny: int
 
     def dot(self, x, alphao): ...
 
     def hdot(self, alpha, xo): ...
 
 
-@runtime_checkable
-class ProxOperatorProtocol(Protocol):
+def _protocol_members(protocol) -> set:
+    """Public members a runtime_checkable Protocol requires (methods + annotated attrs)."""
+    members = {name for name in getattr(protocol, "__annotations__", {}) if not name.startswith("_")}
+    for name, value in vars(protocol).items():
+        if not name.startswith("_") and callable(value):
+            members.add(name)
+    return members
+
+
+def require_protocol(obj, protocol, arg_name: str) -> None:
+    """Raise a clear TypeError when ``obj`` does not satisfy a runtime_checkable Protocol.
+
+    Args:
+        obj: Object to validate.
+        protocol: The ``@runtime_checkable`` Protocol class to validate against.
+        arg_name: Argument name to use in the error message.
+
+    Raises:
+        TypeError: Naming the Protocol and the members ``obj`` is missing.
     """
-    The proximal operator needs to be able to apply the operator and its adjoint.
-    Methods:
-
-    - prox: applies the proximal operator to a vector
-    - hprox: applies the adjoint of the proximal operator to a vector
-    """
-
-    def prox(self, x, rho): ...
-
-    def hprox(self, x, rho): ...
+    if isinstance(obj, protocol):
+        return
+    missing = sorted(m for m in _protocol_members(protocol) if not hasattr(obj, m))
+    detail = f"is missing: {', '.join(missing)}" if missing else "does not conform"
+    raise TypeError(f"{arg_name} must satisfy the {protocol.__name__} Protocol; {type(obj).__name__} {detail}")

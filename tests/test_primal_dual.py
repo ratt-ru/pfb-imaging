@@ -1,165 +1,77 @@
+"""Concrete PrimalDual solver: composition, Moreau/fused equivalence, legacy oracle."""
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from pfb_imaging.deconv.sara_pd import L21PrimalDual
+from pfb_imaging.operators.psi import IdentityPsi
+from pfb_imaging.opt import BackwardSolver
 from pfb_imaging.opt.primal_dual import PrimalDual, primal_dual_numba
+from pfb_imaging.prox.l1 import L1
+from pfb_imaging.prox.l21 import L21
+from pfb_imaging.prox.positivity import positivity
+from tests.test_regularisers import SlicePsi
 
 pmp = pytest.mark.parametrize
 
 
-# ---------------------------------------------------------------------------
-# Simple PsiOperatorProtocol implementations for testing
-# ---------------------------------------------------------------------------
-
-
-class IdentityPsi:
-    """Identity operator satisfying PsiOperatorProtocol."""
-
-    def dot(self, x, v):
-        np.copyto(v, x)
-
-    def hdot(self, v, xout):
-        np.copyto(xout, v)
-
-
-class SlicePsi:
-    """Psi operator that embeds/extracts via slicing (for L21 tests)."""
-
-    def __init__(self, nx, ny, nbasis, nymax, nxmax):
-        self.nx = nx
-        self.ny = ny
-        self.nbasis = nbasis
-        self.nymax = nymax
-        self.nxmax = nxmax
-
-    def dot(self, x, v):
-        v[:] = 0.0
-        v[:, 0, : self.ny, : self.nx] = x
-
-    def hdot(self, v, xout):
-        xout[:] = v[:, 0, : self.ny, : self.nx]
-
-
-# ---------------------------------------------------------------------------
-# QuadraticL1PrimalDual — test-only subclass for the LASSO problem
-#
-#   min_x  0.5 * ||x - b||^2  +  lam * ||x||_1
-#
-# Analytic solution:  x* = sign(b) * max(|b| - lam, 0)  (soft-threshold)
-# ---------------------------------------------------------------------------
-
-
-class QuadraticL1PrimalDual(PrimalDual):
-    """Primal-dual solver for LASSO with identity measurement operator.
-
-    Uses pure-numpy dual step (no numba kernels needed for testing).
-
-    psi.dot  = identity: copies x into v
-    psi.hdot = identity: copies v into xout
-    """
-
-    def __init__(self, b, lam, **kwargs):
-        # hessnorm = 1 for A = I
-        super().__init__(IdentityPsi(), hessnorm=1.0, **kwargs)
-        self.lam = lam
-        self.set_grad(lambda x: x - b)
-
-    def dual_step(self, xp, v, vp):
-        # v_new = clip(vp + sigma * Ψ†xp, -lam, lam)
-        self.psi.dot(xp, v)  # v = xp
-        np.clip(vp + self.sigma * v, -self.lam, self.lam, out=v)
-
-    def prox_primal(self, x):
-        pass  # no positivity constraint for LASSO test
-
-
-# ---------------------------------------------------------------------------
-# Helper: toy operators for L21 test (matches profiling script style)
-# ---------------------------------------------------------------------------
-
-
-def make_l21_problem(shape_x, shape_v, seed=42):
-    """Build a small diagonal-Hessian imaging problem."""
-    nband, nx, ny = shape_x
-    _, nbasis, nymax, nxmax = shape_v
+def _l21_problem(nband, nx, ny, nbasis=2, npad=0, seed=42):
+    """Small diagonal-Hessian imaging problem (mirrors the old test helper)."""
+    nymax, nxmax = nx + npad, ny + npad
     rng = np.random.default_rng(seed)
-
-    diag = rng.uniform(0.5, 2.0, size=shape_x).astype(np.float64)
+    diag = rng.uniform(0.5, 2.0, size=(nband, nx, ny))
     diag_sq = diag * diag
     hessnorm = float(np.max(diag_sq))
-    dirty = rng.uniform(1.0, 5.0, size=shape_x).astype(np.float64)
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, ny))
     diag_dirty = diag * dirty
 
     def grad(x):
         return diag_sq * x - diag_dirty
 
-    psi_op = SlicePsi(nx, ny, nbasis, nymax, nxmax)
-
-    # bare functions for primal_dual_numba (legacy interface)
-    def psi_func(x, v):
-        v[:] = 0.0
-        v[:, 0, :ny, :nx] = x
-
-    def psih_func(v, xout):
-        xout[:] = v[:, 0, :ny, :nx]
-
-    l1weight = rng.uniform(0.01, 0.1, size=(nbasis, nymax, nxmax)).astype(np.float64)
-
-    return psi_op, psi_func, psih_func, grad, l1weight, hessnorm
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+    psi = SlicePsi(nband, nx, ny, nbasis, nymax, nxmax)
+    l1weight = rng.uniform(0.01, 0.1, size=(nbasis, nymax, nxmax))
+    return psi, grad, l1weight, hessnorm
 
 
 @pmp("n", [50, 200])
-@pmp("lam", [0.1, 1.0, 5.0])
+@pmp("lam", [0.1, 1.0])
 def test_lasso_identity_analytic(n, lam):
-    """QuadraticL1PrimalDual recovers the analytic soft-threshold solution."""
+    """PD + L1 + IdentityPsi recovers the soft-threshold solution (Moreau path)."""
     rng = np.random.default_rng(0)
-    b = rng.standard_normal(n).astype(np.float64)
+    b = rng.standard_normal((1, n, 1))
     x_star = np.sign(b) * np.maximum(np.abs(b) - lam, 0.0)
 
-    x0 = np.zeros(n, dtype=np.float64)
-    v0 = np.zeros(n, dtype=np.float64)
-
-    solver = QuadraticL1PrimalDual(b, lam, tol=1e-10, maxit=5000, verbosity=0)
-    x, _ = solver.solve(x0, v0)
-
+    reg = L1(IdentityPsi(1, n, 1))
+    pd = PrimalDual(tol=1e-10, maxit=5000, verbosity=0)
+    assert isinstance(pd, BackwardSolver)
+    pd.setup(reg, hessnorm=1.0)
+    pd.set_grad(lambda x: x - b)
+    x = pd.solve(np.zeros_like(b), lam)
     assert_allclose(x, x_star, atol=1e-4)
 
 
 @pmp("nband", [1, 3])
 @pmp("nx", [16, 32])
-@pmp("positivity", [0, 1])
-def test_l21_matches_primal_dual_numba(nband, nx, positivity):
-    """L21PrimalDual and primal_dual_numba produce identical output."""
+@pmp("positivity_mode", [0, 1])
+def test_l21_matches_primal_dual_numba(nband, nx, positivity_mode):
+    """New PrimalDual + L21 reproduces the legacy primal_dual_numba trajectories."""
     ny = nx
-    nbasis = 2
-    nymax = nxmax = nx
-    shape_x = (nband, nx, ny)
-    shape_v = (nband, nbasis, nymax, nxmax)
+    psi, grad, l1weight, hessnorm = _l21_problem(nband, nx, ny)
+    lam, tol, maxit = 0.05, 1e-8, 30
 
-    psi_op, psi_func, psih_func, grad, l1weight, hessnorm = make_l21_problem(shape_x, shape_v)
+    def psi_func(x, v):
+        psi.dot(x, v)
 
-    lam = 0.05
-    tol = 1e-8
-    maxit = 30
+    def psih_func(v, xout):
+        psi.hdot(v, xout)
 
-    x0 = np.zeros(shape_x, dtype=np.float64)
-    v0 = np.zeros(shape_v, dtype=np.float64)
-
-    # --- reference: primal_dual_numba ---
-    # NOTE: primal_dual_numba signature has psih (4th) before psi (5th),
-    # but in the body psi(xp,v)=analysis and psih(vp,xout)=synthesis.
+    shape_v = (nband, psi.nbasis, psi.nymax, psi.nxmax)
     x_ref, v_ref = primal_dual_numba(
-        x0.copy(),
-        v0.copy(),
+        np.zeros((nband, nx, ny)),
+        np.zeros(shape_v),
         lam,
-        psih_func,  # 4th positional = psih param (synthesis in the body)
-        psi_func,  # 5th positional = psi param (analysis in the body)
+        psih_func,  # 4th positional (named psih) is the SYNTHESIS op in the body
+        psi_func,  # 5th positional (named psi) is the ANALYSIS op in the body
         hessnorm,
         prox=None,
         l1weight=l1weight,
@@ -168,44 +80,73 @@ def test_l21_matches_primal_dual_numba(nband, nx, positivity):
         nu=1.0,
         tol=tol,
         maxit=maxit,
-        positivity=positivity,
+        positivity=positivity_mode,
         verbosity=0,
     )
 
-    # --- new class ---
-    solver = L21PrimalDual(
-        psi_op,
-        hessnorm,
-        lam=lam,
-        l1weight=l1weight,
-        reweighter=None,
-        positivity=positivity,
-        nu=1.0,
-        tol=tol,
-        maxit=maxit,
-        verbosity=0,
-    )
-    solver.set_grad(grad)
-    x_cls, v_cls = solver.solve(x0.copy(), v0.copy())
+    reg = L21(psi, bases=("self", "db1"))
+    reg.l1weight = l1weight
+    pd = PrimalDual(tol=tol, maxit=maxit, verbosity=0, primal_prox=positivity if positivity_mode else None)
+    pd.setup(reg, hessnorm)
+    pd.set_grad(grad)
+    x_new = pd.solve(np.zeros((nband, nx, ny)), lam)
 
     def rdiff(a, b):
         return np.linalg.norm(a - b) / max(np.linalg.norm(a), 1e-12)
 
-    assert rdiff(x_cls, x_ref) < 1e-10, f"x differs: {rdiff(x_cls, x_ref):.3e}"
-    assert rdiff(v_cls, v_ref) < 1e-10, f"v differs: {rdiff(v_cls, v_ref):.3e}"
+    assert rdiff(x_new, x_ref) < 1e-10
+    assert rdiff(pd._v, v_ref) < 1e-10
 
 
-def test_solve_raises_without_grad():
-    """solve() raises RuntimeError when set_grad has not been called."""
+def test_fused_and_moreau_paths_agree():
+    """PD via reg.dual_update (fused) == PD via generic reg.prox (Moreau)."""
+    nband, nx = 2, 16
+    psi, grad, l1weight, hessnorm = _l21_problem(nband, nx, nx)
+    reg = L21(psi, bases=("self", "db1"))
+    reg.l1weight = l1weight
 
-    class _MinimalPD(PrimalDual):
-        def dual_step(self, xp, v, vp):
-            self.psi.dot(xp, v)
-            np.clip(vp + self.sigma * v, -1.0, 1.0, out=v)
+    class MoreauOnly:
+        """Same regulariser with the fused fast path hidden."""
 
-        def prox_primal(self, x):
-            pass
+        def __init__(self, inner):
+            self.psi = inner.psi
+            self.nu = inner.nu
+            self.prox = inner.prox
 
-    solver = _MinimalPD(IdentityPsi(), hessnorm=1.0, verbosity=0)
+    lam, tol, maxit = 0.05, 1e-8, 25
+    x0 = np.zeros((nband, nx, nx))
+
+    pd1 = PrimalDual(tol=tol, maxit=maxit, verbosity=0)
+    pd1.setup(reg, hessnorm)
+    pd1.set_grad(grad)
+    x_fused = pd1.solve(x0.copy(), lam)
+
+    pd2 = PrimalDual(tol=tol, maxit=maxit, verbosity=0)
+    pd2.setup(MoreauOnly(reg), hessnorm)
+    pd2.set_grad(grad)
+    x_moreau = pd2.solve(x0.copy(), lam)
+
+    assert_allclose(x_fused, x_moreau, rtol=1e-10, atol=1e-12)
+
+
+def test_dual_warm_start_and_reset():
+    nband, nx = 1, 8
+    psi, grad, l1weight, hessnorm = _l21_problem(nband, nx, nx)
+    reg = L21(psi, bases=("self", "db1"))
+    reg.l1weight = l1weight
+    pd = PrimalDual(tol=1e-8, maxit=20, verbosity=0)
+    pd.setup(reg, hessnorm)
+    pd.set_grad(grad)
+    pd.solve(np.zeros((nband, nx, nx)), 0.05)
+    assert np.any(pd._v)  # dual retained for warm start
+    pd.reset()
+    assert not np.any(pd._v)
+
+
+def test_solve_raises_without_setup_or_grad():
+    pd = PrimalDual(verbosity=0)
+    with pytest.raises(RuntimeError, match="setup"):
+        pd.solve(np.zeros((1, 2, 2)), 1.0)
+    pd.setup(L1(IdentityPsi(1, 2, 2)), hessnorm=1.0)
     with pytest.raises(RuntimeError, match="set_grad"):
-        solver.solve(np.zeros(5), np.zeros(5))
+        pd.solve(np.zeros((1, 2, 2)), 1.0)

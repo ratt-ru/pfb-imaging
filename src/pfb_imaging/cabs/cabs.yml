@@ -1,0 +1,33 @@
+cabs:
+  pfb.deconv:
+    _include: deconv.yml::cabs.deconv
+
+  pfb.degrid:
+    _include: degrid.yml::cabs.degrid
+
+  pfb.fluxtractor:
+    _include: fluxtractor.yml::cabs.fluxtractor
+
+  pfb.grid:
+    _include: grid.yml::cabs.grid
+
+  pfb.hci:
+    _include: hci.yml::cabs.hci
+
+  pfb.image:
+    _include: imager.yml::cabs.imager
+
+  pfb.init:
+    _include: init.yml::cabs.init
+
+  pfb.kclean:
+    _include: kclean.yml::cabs.kclean
+
+  pfb.model2comps:
+    _include: model2comps.yml::cabs.model2comps
+
+  pfb.restore:
+    _include: restore.yml::cabs.restore
+
+  pfb.sara:
+    _include: sara.yml::cabs.sara

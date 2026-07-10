@@ -5,7 +5,7 @@ cabs:
     name: imager
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:gendeconv
     inputs:
       ms:
         info:
@@ -363,7 +363,7 @@ cabs:
         info:
           Output imaging DataTree directory.
         implicit: '{current.output-filename}_{current.product}.dt'
-        must_exist: false
+        must_exist: true
       log-directory:
         dtype: Directory
         info:

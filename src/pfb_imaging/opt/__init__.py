@@ -35,19 +35,39 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class OptimiserProtocol(Protocol):
-    """
-    The optimiser protocol defines the interface for optimisers.
-    It is used to ensure that all optimisers have the same interface.
+class ForwardSolver(Protocol):
+    """Solves the forward (preconditioned gradient) step.
+
     Methods:
 
-    - step: performs one iteration of the optimisation algorithm
-    - get_solution: returns the current solution
-    - get_history: returns the history of the optimisation
+    - solve: return ``update ≈ hess^{-1} residual``; ``hess`` satisfies
+      the ``LinearOperator`` Protocol and is passed per call
     """
 
-    def step(self): ...
+    def solve(self, hess, residual, x0=None): ...
 
-    def get_solution(self): ...
 
-    def get_history(self): ...
+@runtime_checkable
+class BackwardSolver(Protocol):
+    """Solves the backward (proximal) step.
+
+    Lifecycle: constructor takes algorithm options only; ``setup`` binds
+    the regulariser and step sizes once; ``set_grad`` is called each major
+    cycle; ``solve`` iterates.  Auxiliary state (e.g. a dual variable) is
+    internal and warm-started across calls; ``reset`` drops it.
+
+    Methods:
+
+    - setup: bind regulariser and hessnorm, size buffers
+    - set_grad: set the gradient of the smooth data-fidelity term
+    - solve: run the solve loop, return the updated x
+    - reset: drop warm-start state
+    """
+
+    def setup(self, prox, hessnorm): ...
+
+    def set_grad(self, grad): ...
+
+    def solve(self, x, lam): ...
+
+    def reset(self): ...

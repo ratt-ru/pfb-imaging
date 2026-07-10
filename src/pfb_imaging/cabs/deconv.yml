@@ -4,8 +4,8 @@ cabs:
     command: pfb_imaging.core.deconv.deconv
     name: deconv
     info:
-      pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+      General deconvolution of the imager DataTree via composable forward/backward algorithms.
+    image: ghcr.io/ratt-ru/pfb-imaging:gendeconv
     inputs:
       output-filename:
         info:
@@ -47,10 +47,9 @@ cabs:
       minor-cycle:
         info:
           Which minor cycle algorithm to use.
-          Options are 'sara' and 'kclean'.
         choices:
         - sara
-        - kclean
+        - ista
         default: sara
         metadata:
           rich_help_panel: PFB
@@ -68,7 +67,11 @@ cabs:
           Wavelet bases to use.
           Give as comma separated str.
         dtype: List[str]
-        default: self,db1,db2,db3
+        default:
+        - self
+        - db1
+        - db2
+        - db3
         metadata:
           rich_help_panel: SARA
       nlevels:
@@ -98,19 +101,6 @@ cabs:
         info:
           Spectral norm of hessian approximation.
         dtype: Optional[float]
-        metadata:
-          rich_help_panel: Hessian
-      hess-approx:
-        info:
-          Which Hessian approximation to use.
-          wgt -> vis space approximation.
-          psf -> for zero-padded image space approximation.
-          direct -> for direct inversion.
-        choices:
-        - wgt
-        - psf
-        - direct
-        default: psf
         metadata:
           rich_help_panel: Hessian
       rmsfactor:
@@ -200,7 +190,22 @@ cabs:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
+        dtype: int
+        default: 2
+        metadata:
+          rich_help_panel: Performance
+      nworkers:
+        info:
+          Number of Ray workers.
+          Uses nworkers = nband by default.
+          Band actors use nominal CPU claims, so nworkers does not need to scale with nband.
         dtype: Optional[int]
+        metadata:
+          rich_help_panel: Performance
+      ray-address:
+        info:
+          Address of the Ray cluster to connect to.
+        default: local
         metadata:
           rich_help_panel: Performance
       epsilon:
@@ -349,18 +354,18 @@ cabs:
         metadata:
           rich_help_panel: ConjugateGradient
     outputs:
-      dds-out:
+      dt-out:
         dtype: Directory
         info:
-          Output dataset directory.
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
-        must_exist: false
+          DataTree dataset updated in place.
+        implicit: '{current.output-filename}_{current.product}.dt'
+        must_exist: true
       mds-out:
         dtype: Directory
         info:
           Output component model.
         implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
-        must_exist: false
+        must_exist: true
       log-directory:
         dtype: Directory
         info:

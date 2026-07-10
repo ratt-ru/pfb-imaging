@@ -31,7 +31,7 @@ SOFTWARE.
 
 # defines deconvolution solver protocol for use within the PFB loop
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -80,3 +80,23 @@ class DeconvSolver(Protocol):
     def last(self) -> None:
         """Per-iteration post-processing (e.g. L1 weight updates)."""
         ...
+
+
+@runtime_checkable
+class Regulariser(Protocol):
+    """A separable regulariser ``R(x) = g(Psi^T x)``.  Owns its own state.
+
+    ``prox(v, vout, lam, sigma)`` computes ``vout = prox_{(lam/sigma) g}(v/sigma)``
+    in the coefficient domain, in-place (matches ``prox_21m_numba``).
+
+    Optional extensions sniffed by consumers (not required):
+
+    - ``dual_update(vp, v, lam, sigma)``: fused primal-dual fast path
+    - ``init_reweighting(update)`` / ``update_weights(x)`` /
+      ``reweight_active``: iterative reweighting state
+    """
+
+    psi: Any  # PsiOperator; identity implementation for image-domain regularisers
+    nu: float  # spectral norm of psi
+
+    def prox(self, v, vout, lam, sigma=1.0): ...

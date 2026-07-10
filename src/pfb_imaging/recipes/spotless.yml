@@ -1,9 +1,5 @@
 _include:
-  - (pfb_imaging.cabs)init.yml
-  - (pfb_imaging.cabs)grid.yml
-  - (pfb_imaging.cabs)sara.yml
-  - (pfb_imaging.cabs)restore.yml
-  - (pfb_imaging.cabs)degrid.yml
+  - (pfb_imaging.cabs)cabs.yml
 
 opts:
   log:
@@ -13,11 +9,12 @@ opts:
   backend:
     select: native
 
-gosara:
-  name: pfb-sara
+gospotless:
+  name: go-spotless
   info:
-    Stimela recipe for the SARA algorithm with presets.
-    Minimal algorithmic parameters exposed.
+    Stimela recipe for the deconvolution interface.
+    This uses the the new imager+deconv track to test reproduce the SARA algorithm.
+    Mainly for testing purposes at the moment.
 
   inputs:
     ms:
@@ -53,14 +50,16 @@ gosara:
       dtype: str
       info:
         Sigma column (preferred over weight-column if provided)
-    fields:
-      dtype: List[int]
+    field-names:
+      dtype: List[str]
       info:
         List of fields to image
-    scans:
-      dtype: List[int]
+    spw-names:
+      dtype: List[str]
       info:
-        List of scans to image
+        List of spectral windows to image
+    scan-names:
+      dtype: List[str]
     gains:
       dtype: List[URI]
       info:
@@ -159,7 +158,7 @@ gosara:
         Model to start from
     nworkers:
       dtype: int
-      default: 8
+      required: true
       info:
         Number of workers.
         This controls the level of horizontal scaling.
@@ -167,11 +166,11 @@ gosara:
         Set to the expected number of imaging bands if unsure.
     nthreads:
       dtype: int
-      default: 8
+      required: true
       info:
         Number of threads per worker.
         This controls the degree of vertical parallelism.
-        The total number of threads used during imaging will be nworkers * nthreads.
+        The total number of threads used will be nworkers * nthreads.
     product:
       default: I
       aliases: ['*.product']
@@ -187,11 +186,25 @@ gosara:
       info:
         Normalisation factor for the Hessian approximation.
         This is used to regularise the inversion of the Hessian approximation.
+    minor-cycle:
+      info:
+        Which minor cycle algorithm to use.
+      choices:
+      - sara
+      - ista
+      default: sara
+    opt-backend:
+      info:
+        Optimization backend for the inner backward step.
+      choices:
+      - primal-dual
+      - forward-backward
+      default: primal-dual
 
   steps:
     initialize:
-      cab: init
-      info: 'Initialise imaging data products'
+      cab: pfb.image
+      info: Initialise imaging data products
       params:
         ms: =recipe.ms
         gain-table: =IFSET(recipe.gains)
@@ -207,33 +220,22 @@ gosara:
         bda-decorr: =recipe.bda-decorr
         freq-range: =IFSET(recipe.freq-range)
         overwrite: =recipe.overwrite
-        check-ants: false
-        fields: =IFSET(recipe.fields)
-        scans: =IFSET(recipe.scans)
+        field-names: =IFSET(recipe.field-names)
+        scan-names: =IFSET(recipe.scan-names)
         product: =recipe.product
         wgt-mode: =recipe.wgt-mode
-
-    gridimage:
-      cab: grid
-      info: 'Setup grid for imaging'
-      params:
         super-resolution-factor: =IFSET(recipe.super-resolution-factor)
         field-of-view: =IFSET(recipe.field-of-view)
         cell-size: =IFSET(recipe.cell-size)
         nx: =IFSET(recipe.nx)
         ny: =IFSET(recipe.ny)
         robustness: =recipe.robustness
-        nthreads: =recipe.nthreads
-        nworkers: =recipe.nworkers
         psf-oversize: =recipe.psf-oversize
-        overwrite: =recipe.overwrite
-        l2-reweight-dof: =IFSET(recipe.l2-reweight-dof)
-        # product: =recipe.product
-        transfer-model-from: =IFSET(recipe.transfer-model-from)
+      skip_if_outputs: exist
 
-    saradeconv:
-      cab: sara
-      info: Deconvolution step
+    deconvolve:
+      cab: pfb.deconv
+      info: Deconvolve with your favourite algorithm
       params:
         niter: =recipe.niter
         bases: ["self", "db1", "db2", "db3"]
@@ -249,24 +251,9 @@ gosara:
         alpha: =recipe.alpha
         eta: 5e-4
         positivity: =IF( recipe.product == 'I', 1, 0)
-        nthreads: =recipe.nworkers * recipe.nthreads
+        nworkers: =recipe.nworkers
+        nthreads: =recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
         hess-norm: =IFSET(recipe.hess-norm)
-
-    # restoreimage:
-    #   cab: restore
-    #   info: Produce restored image.
-    #   params:
-    #     nworkers: =recipe.nworkers
-    #     nthreads: =recipe.nthreads
-    #     outputs: iI
-
-    # degridimage:
-    #   cab: degrid
-    #   info: Render model to visibilities
-    #   params:
-    #     ms: =recipe.ms
-    #     model-column: =recipe.model-column
-    #     nworkers: =recipe.nworkers
-    #     nthreads: =recipe.nthreads
-    #     freq-range: =IFSET(recipe.freq-range)
+        minor-cycle: =recipe.minor-cycle
+        opt-backend: =recipe.opt-backend
