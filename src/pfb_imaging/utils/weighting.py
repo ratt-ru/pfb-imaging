@@ -271,7 +271,7 @@ def _corr4_passthrough(x):
     return x[0], x[1], x[2], x[3]
 
 
-@njit(nogil=True, cache=False, parallel=False)
+@njit(nogil=True, cache=True, parallel=False)
 def weight_data(
     data,
     weight,
