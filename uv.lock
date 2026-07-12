@@ -3504,7 +3504,7 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
     { name = "pywavelets", marker = "extra == 'full'", specifier = ">=1.7.0" },
-    { name = "radiomesh", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/ratt-ru/radiomesh.git?rev=b5d17333097553c86f9dd6d4f690158f4f139386" },
+    { name = "radiomesh", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/ratt-ru/radiomesh.git?rev=58c3576490b42c2f1e08515fb6dbb1d13d51eb3e" },
     { name = "rarg-numba-patterns", marker = "extra == 'full'", specifier = ">=0.0.1" },
     { name = "ray", extras = ["default"], marker = "extra == 'full'", specifier = ">=2.55.0" },
     { name = "regions", marker = "extra == 'full'", specifier = ">=0.9" },
@@ -4377,7 +4377,7 @@ wheels = [
 [[package]]
 name = "radiomesh"
 version = "0.1.1"
-source = { git = "https://github.com/ratt-ru/radiomesh.git?rev=b5d17333097553c86f9dd6d4f690158f4f139386#b5d17333097553c86f9dd6d4f690158f4f139386" }
+source = { git = "https://github.com/ratt-ru/radiomesh.git?rev=58c3576490b42c2f1e08515fb6dbb1d13d51eb3e#58c3576490b42c2f1e08515fb6dbb1d13d51eb3e" }
 dependencies = [
     { name = "numba", marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
