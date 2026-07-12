@@ -99,8 +99,9 @@ in the `[full]` extra, swapped to a version pin once radiomesh releases.
   selected from `radiomesh.generated._stokes_expr.CONVERT_FNS` (`DIAGJONES` family for jones
   `ndim == 5`, `JONES` family for `ndim == 6`, `WEIGHT_MINVAR_DIAGJONES` for minvar).
 - `utils/weighting.py`: `nb_weight_data_impl` calls the selector and returns an `_impl`
-  specialised on `ns = len(product)` — four small statically-written variants using constant
-  tuple indexing (`vis_fns[0](...)`, `vis_fns[1](...)`, …); no `literal_unroll`. The nc == 2
+  with fixed per-stokes slots bound by constant tuple indexing in the overload (unused slots
+  alias slot 0; `if ns > k` branches on the compile-time constant `ns` fold away); no
+  `literal_unroll`. The nc == 2
   conventions (`w01 = w10 = 1.0`, `v01 = v10 = 0j`) and the diag/full jones scalar extraction
   (`jp00 = gp[chan, 0]`, … / `gp[chan, 0, 0]`, …) move inline into `_impl`.
 - **Do it by the book with `rarg-numba-patterns`** (already a radiomesh dependency): where
