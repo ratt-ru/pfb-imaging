@@ -52,7 +52,11 @@ churn is collapsed. Behaviour (numerics, output dtypes, error surface) is unchan
 
 ## Design
 
-### Part 1 — radiomesh (separate repo, lands first)
+### Part 1 — radiomesh (separate repo, lands first, **surgical**)
+
+The radiomesh stokes machinery was forked off pfb before minvar existed; this change brings
+minvar (and the diag variants it requires) home to the generator. Scope is strictly:
+the generator extension, the regenerated module, and one test module.
 
 Extend `radiomesh/scripts/gen_expr.py` and regenerate `radiomesh/generated/_stokes_expr.py`:
 
@@ -71,8 +75,13 @@ Extend `radiomesh/scripts/gen_expr.py` and regenerate `radiomesh/generated/_stok
 - **Registry.** `CONVERT_FNS` gains the new keys — data type `"WEIGHT_MINVAR"` and jones mode
   `"DIAGJONES"` — purely additively. Existing keys and the `data_conv_fn` intrinsic are
   untouched.
-- **Test** (radiomesh): numeric check that DIAGJONES == JONES evaluated with zero
-  off-diagonals, and that minvar matches a sympy-computed oracle.
+- **Test** (radiomesh): one test module in radiomesh's existing style (parametrized pytest,
+  see `radiomesh/tests/test_stokes_intrinsics.py`), holding the **sympy oracle** — the same
+  derivation `stokes_funcs` performs today (sympy is already in radiomesh's `test` dependency
+  group). It covers only the new functions pfb actually uses: DIAGJONES vis/weight equal the
+  oracle (and the JONES functions with zero off-diagonals), and WEIGHT_MINVAR_DIAGJONES equals
+  the oracle's `4*Min(*expand(w).args)`. The existing JONES/NOJONES functions stay covered by
+  `test_data_convert`; no new tests for them.
 
 pfb-imaging pins the resulting commit: `radiomesh @ git+https://github.com/ratt-ru/radiomesh@<sha>`
 in the `[full]` extra, swapped to a version pin once radiomesh releases.
@@ -81,25 +90,32 @@ in the `[full]` extra, swapped to a version pin once radiomesh releases.
 
 **Commit 1 — expression swap (fixes the uncacheable closure).**
 
-- `utils/stokes.py`: delete the sympy `stokes_funcs`; add a selector with the same
-  signature-in-spirit (`(data, jones, product, pol, nc, wgt_mode)` literals in, functions out)
-  that keeps today's validation logic verbatim (product availability vs `nc`/`pol`, `remprod`
-  check, mode check) and returns **tuples of plain radiomesh functions** — one vis fn and one
-  wgt fn per requested stokes — selected from `radiomesh.generated._stokes_expr.CONVERT_FNS`
-  (`DIAGJONES` family for jones `ndim == 5`, `JONES` family for `ndim == 6`,
-  `WEIGHT_MINVAR_DIAGJONES` for minvar).
+- `utils/stokes.py`: delete the sympy stokes derivation (`stokes_funcs` and its sympy
+  imports) entirely — the sympy code survives only as the oracle in radiomesh's tests. The
+  numpy helpers (`jones_to_mueller`, `mueller_to_stokes`, `corr_to_stokes`,
+  `stokes_to_corr`) are unrelated and stay. A new selector keeps today's validation logic
+  verbatim (product availability vs `nc`/`pol`, `remprod` check, mode check) and returns
+  **tuples of plain radiomesh functions** — one vis fn and one wgt fn per requested stokes —
+  selected from `radiomesh.generated._stokes_expr.CONVERT_FNS` (`DIAGJONES` family for jones
+  `ndim == 5`, `JONES` family for `ndim == 6`, `WEIGHT_MINVAR_DIAGJONES` for minvar).
 - `utils/weighting.py`: `nb_weight_data_impl` calls the selector and returns an `_impl`
   specialised on `ns = len(product)` — four small statically-written variants using constant
   tuple indexing (`vis_fns[0](...)`, `vis_fns[1](...)`, …); no `literal_unroll`. The nc == 2
   conventions (`w01 = w10 = 1.0`, `v01 = v10 = 0j`) and the diag/full jones scalar extraction
   (`jp00 = gp[chan, 0]`, … / `gp[chan, 0, 0]`, …) move inline into `_impl`.
+- **Do it by the book with `rarg-numba-patterns`** (already a radiomesh dependency): where
+  `_impl` extracts per-`(row, chan)` correlation tuples from arrays or writes per-stokes
+  tuples back, prefer the library's `load_data`/`accumulate_data` intrinsics — mirroring how
+  radiomesh's own kernels consume `CONVERT_FNS` (see `test_stokes_intrinsics.py`) — over
+  hand-rolled indexing. If pfb imports `rarg_numba_patterns` directly it is declared
+  explicitly in `[full]`.
 - **Cache-safety rule (load-bearing):** closure cells of `_impl` (and anything it calls) may
   contain only plain module-level functions and ints — never njit dispatchers. This is what
   makes the cache key stable.
 - Output dtypes preserved exactly (the current `_impl.returns` coercion to
-  complex128/float64); the oracle test pins this.
-- `pyproject.toml`: add the radiomesh git pin to `[full]`; drop `sympy` from runtime deps if
-  `stokes_funcs` was its last runtime consumer.
+  complex128/float64); the pfb consumer tests pin this.
+- `pyproject.toml`: add the radiomesh git pin to `[full]`. `sympy` stays a dependency — it is
+  still used by `utils/modelspec.py` and `core/degrid.py`.
 - Call sites (`stokes2im.py`, `stokes2vis.py`, `stokes2vis_msv4.py`) unchanged.
 
 **Commit 2 — end-to-end cacheability + regression test.**
@@ -121,11 +137,19 @@ in the `[full]` extra, swapped to a version pin once radiomesh releases.
 
 ### Testing
 
-- **`tests/test_stokes_expr.py`** (new): the old sympy derivation survives as an in-test
-  oracle; numeric equivalence of radiomesh-backed `weight_data` against it across
-  pol × product × nc × wgt_mode with random jones, flags, and weights; asserts output dtypes.
-- **Cache regression test** (commit 2, above).
-- Existing `tests/test_polproducts.py` (gains on/off) and the full suite as end-to-end guards.
+Expression correctness is owned by radiomesh's sympy-oracle test (Part 1). pfb tests cover
+the wiring and the three consumers of `weight_data` — more leeway here than in radiomesh:
+
+- **init** (`stokes2vis.py`): already covered end-to-end by `tests/test_polproducts.py`
+  (injected IQUV point source, gains on/off) — must keep passing unchanged.
+- **imager** (`stokes2vis_msv4.py`): already covered by `tests/test_imager.py` — must keep
+  passing unchanged.
+- **hci** (`stokes2im.py`): currently has no pytest (only the manual `test_hci.yml` stimela
+  recipe). Add an in-process test on `tests/data/test_ascii_1h60.0s.MS` that runs the hci
+  core and sanity-checks the output cube (finite images, positive wsum), including a
+  `wgt_mode="minvar"` case — the mode that motivated #273's production run.
+- **Cache regression test** (commit 2, above) — the direct #273 regression.
+- Full suite (`uv run pytest tests/`) as the overall guard.
 
 ### Error handling
 
@@ -136,7 +160,7 @@ Unchanged surface: same `ValueError`s for invalid product/pol/nc/mode combinatio
 ### Risks / notes
 
 - The exact output-dtype behaviour of the current `_impl.returns` coercion must be replicated;
-  the oracle test is the guard.
+  the consumer tests (`test_polproducts.py`, `test_imager.py`, new hci test) are the guard.
 - The readonly-view normalisation (commit 3) changes the arrays' flags as seen by *later* code
   in `stokes_image` only if the same references are reused — the normalised views are local
   to the `weight_data` call.
