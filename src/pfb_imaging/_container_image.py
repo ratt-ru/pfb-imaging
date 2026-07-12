@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:llmwiki"
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:issue273"

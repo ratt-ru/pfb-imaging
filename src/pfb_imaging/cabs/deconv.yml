@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:llmwiki
+    image: ghcr.io/ratt-ru/pfb-imaging:issue273
     inputs:
       output-filename:
         info:
