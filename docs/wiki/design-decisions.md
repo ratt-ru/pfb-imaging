@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-07T20:10:49Z
-last_verified_commit: f6c8a80
+timestamp: 2026-07-13T06:30:00Z
+last_verified_commit: 0964bd9
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -30,8 +30,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   wiring, not classes.
 - **Consequences:** New algorithm = regulariser + preset factory. Optional fast paths
   (`dual_update`, reweighting trio) are `hasattr`-sniffed, not Protocol members.
-- **Source:** issue #185; `docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`;
-  architecture.md §5.
+- **Source:** issue #185; architecture.md §5; `deconv-primer.md`.
 
 ### D2 — Legacy code is untouched and serves as the test oracle
 
@@ -203,6 +202,37 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** Bounds driver memory at `ngroups` grids on wide-band runs.
 - **Source:** `core/imager.py` (`counts_key`); `utils/weighting.reduce_counts`.
 
+### D16 — Super-uniform weighting is a box-filter preprocessing of counts
+
+- **Context:** Super-uniform (Briggs 1995) normalises each visibility by the counts
+  summed over a `(2·npix_super+1)²` uv-box instead of its own cell.
+- **Decision:** One function, `utils/weighting.box_sum_counts`, applied between
+  `filter_extreme_counts` and `counts_to_weights`; `npix_super=0` is a no-op,
+  bit-for-bit identical to standard uniform for any `robustness`.
+- **Rationale:** The existing Briggs normalisation inside `counts_to_weights` then
+  operates on the smoothed counts, yielding "super-robust" for free when `robustness`
+  is set alongside `npix_super`. No changes to the counting or weighting kernels.
+- **Source:** `utils/weighting.box_sum_counts`; `core/grid.py`; `tests/test_weighting.py`.
+
+### D17 — weight_data closures hold only plain functions (numba cache safety)
+
+- **Context:** `weight_data`'s `@overload` impl closed over sympy-lambdified njit
+  dispatchers built at every overload resolution. A `Dispatcher`'s pickled bytes embed a
+  per-process UUID, so the numba disk cache never hit: every fresh Ray worker paid a
+  full compile (~3.5 s) *and* appended a new `.nbc`, growing `/tmp/numba` without bound
+  (issue #273; #183 wanted the sympy machinery gone).
+- **Decision:** Per-Stokes expression functions are pre-generated into
+  `radiomesh.generated._stokes_expr` (diag-jones/minvar variants included) and
+  `register_jitable`'d; the overload closure holds **only plain module-level functions
+  and ints**; the outer njit is `cache=True`; `stokes_image` feeds `weight_data`
+  C-contiguous readonly views so Ray's per-task readonly/writable mix doesn't multiply
+  compiled signatures. The sympy derivation and its oracle test live in radiomesh
+  (`radiomesh/tests/test_stokes_expr.py`), not here.
+- **Consequences:** Never capture an njit `Dispatcher` in an `@overload` impl closure —
+  it silently poisons the cache key. Measured: fresh-process first call 3.5 s → 0.15 s.
+  Guard: `tests/test_weight_data_cache.py` (cross-process load-not-recompile).
+- **Source:** PR #274; ratt-ru/radiomesh#81; issues #273, #183.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -234,6 +264,11 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests
   (plasma reservation + resident worker processes), not data — don't chase them below
   ~1 GB/process.
+- **Transient-injection checks must read the raw `cube`, not `cube_mean`.** With zeroed
+  base data (`data_column="DATA-DATA"`), hci's per-bin RMS flag (`rms > 1.5·median_rms`,
+  median ≈ 0) flags exactly the bright transient bins and suppresses them in
+  `cube_mean`; the raw `cube` is unaffected. (`utils/transients.py`; the designed
+  end-to-end test is still unimplemented — see `docs/look-ahead.md`.)
 - **A resumed deconv run continues from the tree's MODEL/UPDATE/niters.** After a
   crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`UPDATE`
   arrays and the `niters`/`rms`/`rmax`/`hess_norm` attrs from each band group (zarr),

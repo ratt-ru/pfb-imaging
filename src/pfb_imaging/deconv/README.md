@@ -1,7 +1,7 @@
 # Deconvolution module
 
 The general deconvolution interface composes four pieces behind the
-`DeconvSolver` Protocol (see `docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`
+`DeconvSolver` Protocol (see `docs/wiki/deconv-primer.md`, `docs/wiki/design-decisions.md` D1
 and issue #185):
 
     PFBSolver(hess, forward_alg, backward_alg, prox)

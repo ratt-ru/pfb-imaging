@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-07T20:10:49Z
-last_verified_commit: f6c8a80
+timestamp: 2026-07-13T06:30:00Z
+last_verified_commit: 0964bd9
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -110,7 +110,7 @@ convergence" — it returns True when there is nothing to trigger (plain regular
 ## Composition: Protocols and the code map
 
 Seams are `typing.Protocol` classes satisfied structurally — **never introduce ABCs**
-(architecture.md §5; design: `docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`).
+(architecture.md §5; issue #185; design-decisions.md D1).
 Conformance is enforced at the seams by `operators.require_protocol` (TypeError naming
 missing members).
 
