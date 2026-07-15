@@ -3504,7 +3504,7 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
     { name = "pywavelets", marker = "extra == 'full'", specifier = ">=1.7.0" },
-    { name = "radiomesh", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/ratt-ru/radiomesh.git?rev=58c3576490b42c2f1e08515fb6dbb1d13d51eb3e" },
+    { name = "radiomesh", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.1.2" },
     { name = "rarg-numba-patterns", marker = "extra == 'full'", specifier = ">=0.0.1" },
     { name = "ray", extras = ["default"], marker = "extra == 'full'", specifier = ">=2.55.0" },
     { name = "regions", marker = "extra == 'full'", specifier = ">=0.9" },
@@ -4376,12 +4376,16 @@ wheels = [
 
 [[package]]
 name = "radiomesh"
-version = "0.1.1"
-source = { git = "https://github.com/ratt-ru/radiomesh.git?rev=58c3576490b42c2f1e08515fb6dbb1d13d51eb3e#58c3576490b42c2f1e08515fb6dbb1d13d51eb3e" }
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numba", marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "rarg-numba-patterns", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/8e/08030e320d55c5a7795011e64f00f158f0c343c7ce107e81a400a41a7fa2/radiomesh-0.1.2.tar.gz", hash = "sha256:4c9b7f9924aabe420805f76ee6d777fbd351d5d4712da20778a9b8ae94ce68e3", size = 74028, upload-time = "2026-07-14T14:16:09.607Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/4d/df0b52a08b76abb08aea7739a3f11241a9913d5971d9a7aff33cf5f67264/radiomesh-0.1.2-py3-none-any.whl", hash = "sha256:d2fa9a0fcbd185d319445b99a1d9af6b4d752ccec6a91f28b3b54ae10bda9001", size = 80626, upload-time = "2026-07-14T14:16:08.531Z" },
 ]
 
 [[package]]
