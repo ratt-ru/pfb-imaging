@@ -2,7 +2,6 @@ import string
 
 import numpy as np
 from numba.extending import register_jitable
-from radiomesh.generated._stokes_expr import CONVERT_FNS
 
 try:
     from radiomesh.generated._stokes_expr import CONVERT_FNS

@@ -2,6 +2,7 @@ import ctypes
 import importlib
 import logging
 import os
+import warnings
 from importlib.metadata import version
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -68,6 +69,7 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
     case cluster properties (num_cpus, object_store_memory) must not be
     passed to ray.init and are therefore dropped.
     """
+    # deferred: optional heavy runtime (ray)
     import ray
 
     logger = log or logging
@@ -108,8 +110,6 @@ def setup_ray_worker():
 
 
 def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=False, client_log_level=None):
-    import warnings
-
     warnings.filterwarnings("ignore", message="Port 8787 is already in use")
     if client_log_level == "error":
         logging.getLogger("distributed").setLevel(logging.ERROR)
@@ -128,11 +128,13 @@ def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=F
         logging.getLogger("bokeh").setLevel(logging.DEBUG)
         logging.getLogger("tornado").setLevel(logging.DEBUG)
 
+    # deferred: optional heavy runtime (dask/distributed)
     import dask
 
     # set up client
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
     if host_address is not None:
+        # deferred: optional heavy runtime (dask/distributed)
         from distributed import Client
 
         log.info("Initialising distributed client.")
@@ -141,6 +143,7 @@ def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=F
         else:
             client = Client(host_address)
     else:
+        # deferred: optional heavy runtime (dask/distributed)
         from dask.distributed import Client, LocalCluster
 
         log.info("Initialising client with LocalCluster.")

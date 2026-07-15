@@ -8,6 +8,7 @@ import numpy as np
 import psutil
 import ray
 import xarray as xr
+from africanus.averaging import bda, time_and_channel
 
 # from astropy.time import Time
 from katbeam import JimBeam
@@ -34,6 +35,7 @@ def _release_ms_caches():
     degrade gracefully if the pattern package changes.
     """
     try:
+        # deferred: private xarray-ms internals; degrade gracefully if absent
         from rarg_python_patterns.multiton import Multiton
 
         with Multiton._INSTANCE_LOCK:
@@ -319,8 +321,6 @@ def stokes_vis(
 
     # simple average over channels
     if chan_average > 1:
-        from africanus.averaging import time_and_channel
-
         res = time_and_channel(
             time,
             interval,
@@ -345,8 +345,6 @@ def stokes_vis(
         nchan = freq.size
 
     if bda_decorr < 1:
-        from africanus.averaging import bda
-
         res = bda(
             time,
             interval,

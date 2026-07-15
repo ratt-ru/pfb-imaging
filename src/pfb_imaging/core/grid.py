@@ -6,6 +6,8 @@ import psutil
 import ray
 import xarray as xr
 from africanus.coordinates import radec_to_lm
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
@@ -309,9 +311,6 @@ def grid(
             if len(tmp) == 1 and tmp[0] == target:
                 tra, tdec = get_coordinates(time_out, target=target)
             else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-                from astropy import units as u
-                from astropy.coordinates import SkyCoord
-
                 c = SkyCoord(tmp[0], tmp[1], frame="fk5", unit=(u.hourangle, u.deg))
                 tra = np.deg2rad(c.ra.value)
                 tdec = np.deg2rad(c.dec.value)
@@ -351,6 +350,7 @@ def grid(
 
         # get the model
         if transfer_model_from:
+            # deferred: modelspec pulls sympy; only needed when transferring a model
             from pfb_imaging.utils.modelspec import eval_coeffs_to_slice
 
             _, _, _, x0, y0 = wgridder_conventions(l0, m0)

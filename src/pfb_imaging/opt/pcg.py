@@ -343,6 +343,7 @@ def _pcg_psf_impl(
             return x / eta
     else:
         precond = None
+    # deferred: operators.hessian imports opt.pcg at module scope (import cycle)
     from pfb_imaging.operators.hessian import hessian_psf_slice
 
     for k in range(nband):
@@ -462,6 +463,7 @@ def pcg_dds(
     pcg for fluxtractor
     """
     # avoid circular import
+    # deferred: operators.hessian imports opt.pcg at module scope (import cycle)
     from pfb_imaging.operators.hessian import hessian_slice
 
     # expects a list

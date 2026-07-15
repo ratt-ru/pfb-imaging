@@ -32,6 +32,7 @@ class _BandWorkerImpl:
     def __init__(self, nthreads):
         # Load TBB in this process — ctypes.CDLL in the driver process does
         # not carry over to forked/spawned Ray workers.
+        # deferred: worker-side setup; keeps driver-side import of this module light
         import ctypes
         import importlib.metadata
 
@@ -44,7 +45,8 @@ class _BandWorkerImpl:
                 break
         numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
 
-        # resize thread ducc thread pool for worker
+        # deferred: worker-side setup; keeps driver-side import light
+        # resize ducc thread pool for worker
         from ducc0.misc import resize_thread_pool
 
         resize_thread_pool(nthreads)
@@ -68,6 +70,7 @@ class _BandWorkerImpl:
         for the life of the run — a deliberate RSS-for-work trade, visible in
         get_mem telemetry.
         """
+        # deferred: worker-side loading; keeps driver-side import light
         import gc
 
         import xarray as xr
@@ -105,6 +108,7 @@ class _BandWorkerImpl:
     # --- Hessian role ---
 
     def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum):
+        # deferred: import cycle with operators.hessian
         from pfb_imaging.operators.hessian import HessianTree
 
         if partitions is None:
@@ -118,6 +122,7 @@ class _BandWorkerImpl:
         return self._hess.dot(x)
 
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
+        # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.opt.pcg import pcg_numba
 
         if x0 is not None:
@@ -137,6 +142,7 @@ class _BandWorkerImpl:
     # --- Psi (wavelet dictionary) role ---
 
     def init_psi(self, nx, ny, bases, nlevel):
+        # deferred: import cycle with operators.psi
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
         self._psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
@@ -159,6 +165,7 @@ class _BandWorkerImpl:
     # --- exact residual role ---
 
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
+        # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.operators.gridder import residual_from_partitions
 
         return residual_from_partitions(
@@ -176,6 +183,7 @@ class _BandWorkerImpl:
 
     def get_mem(self):
         """Post-gc memory telemetry (docs/wiki/memory-and-ray.md)."""
+        # deferred: telemetry-only, worker-side
         import gc
         import os
         import resource
@@ -191,6 +199,7 @@ class _BandWorkerImpl:
 
     def get_memory_mb(self):
         """RSS/USS in MB (rss includes shared pages; uss is private only)."""
+        # deferred: telemetry-only, worker-side
         import psutil
 
         info = psutil.Process().memory_full_info()
@@ -213,6 +222,7 @@ class BandWorkerPool:
             self._local = _BandWorkerImpl(nthreads)
             self.actors = None
         else:
+            # deferred: optional heavy runtime (ray); the single-band local path never needs it
             import ray
 
             # num_cpus is Ray's *scheduling* resource claim,
@@ -230,6 +240,7 @@ class BandWorkerPool:
         """Run ``method(*args)`` on every band worker; return per-band results."""
         if self.actors is None:
             return [getattr(self._local, method)(*per_band_args[0])]
+        # deferred: optional heavy runtime (ray)
         import ray
 
         return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
@@ -302,6 +313,7 @@ class BandWorkerPool:
         """Per-worker post-gc memory telemetry (empty for the local path)."""
         if self.actors is None:
             return []
+        # deferred: optional heavy runtime (ray)
         import ray
 
         return ray.get([a.get_mem.remote() for a in self.actors])

@@ -142,6 +142,7 @@ def primal_dual(
         vp[...] = v[...]
 
         if np.isnan(eps) or np.isinf(eps):
+            # deferred: debug-only breakpoint in the frozen legacy oracle (wiki design-decisions: Known debt)
             import pdb
 
             pdb.set_trace()
@@ -263,6 +264,7 @@ def primal_dual_numba(
             eps = _nb_norm_diff(x, xp)
             tnorm += time() - ti
         else:
+            # deferred: debug-only breakpoint in the frozen legacy oracle (wiki design-decisions: Known debt)
             import pdb
 
             pdb.set_trace()
@@ -286,6 +288,7 @@ def primal_dual_numba(
         np.copyto(vp, v)
         tcopy += time() - ti
         if np.isnan(eps) or np.isinf(eps):
+            # deferred: debug-only breakpoint in the frozen legacy oracle (wiki design-decisions: Known debt)
             import pdb
 
             pdb.set_trace()

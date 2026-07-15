@@ -1,4 +1,6 @@
 import numpy as np
+from africanus.rime import parallactic_angles
+from africanus.rime.fast_beam_cubes import beam_cube_dde
 from astropy.wcs import WCS
 from katbeam import JimBeam
 from reproject import reproject_interp
@@ -51,11 +53,6 @@ def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_d
 
     if utime is None:
         return beam_amp.squeeze(), l_coord, m_coord
-
-    # africanus.rime pulls in python-casacore; import locally so this module
-    # stays importable on the casacore-free (arcae/ducc0) imaging path.
-    from africanus.rime import parallactic_angles
-    from africanus.rime.fast_beam_cubes import beam_cube_dde
 
     parangles = parallactic_angles(utime, ant_pos, phase_dir, backend="astropy")
     # mean over antanna nant -> 1
