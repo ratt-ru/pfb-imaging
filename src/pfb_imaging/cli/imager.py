@@ -21,10 +21,10 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
-    name="xds-out",
-    info="Output dataset directory.",
-    implicit="{current.output-filename}_{current.product}.xds",
-    must_exist=False,
+    name="dt-out",
+    info="Output imaging DataTree directory.",
+    implicit="{current.output-filename}_{current.product}.dt",
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
@@ -38,7 +38,9 @@ URI = NewType("URI", Path)
 @stimela_output(
     dtype="Directory",
     name="numba-cache-dir",
-    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    info="Implicit output ensuring the numba cache location is mounted. "
+    "The cache defaults to a per-user directory under the system temp directory. "
+    "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba",
     must_exist=False,
     mkdir=False,
@@ -114,6 +116,24 @@ def imager(
             rich_help_panel="Data Selection",
         ),
     ] = "DATA",
+    data_group: Annotated[
+        str,
+        typer.Option(
+            help="MSv4 data group used to resolve the 'DATA' column to its correlated_data variable. "
+            "Also selects the field_and_source subtable.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = "base",
+    partition_columns: Annotated[
+        ListStr | None,
+        typer.Option(
+            parser=parse_list_str,
+            help="Columns to partition the MSv4 store by (xarray-ms PARTITION_SCHEMA). "
+            "Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need SOURCE_ID. "
+            "Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = None,
     weight_column: Annotated[
         str | None,
         typer.Option(
@@ -161,6 +181,13 @@ def imager(
             rich_help_panel="Imaging",
         ),
     ] = -1,
+    concat_row: Annotated[
+        bool,
+        typer.Option(
+            help="Concatenate datasets by row",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
@@ -210,6 +237,13 @@ def imager(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -235,6 +269,136 @@ def imager(
             rich_help_panel="Weighting",
         ),
     ] = "l2",
+    weight_grouping: Annotated[
+        Literal["per-band-time", "mfs", "per-band", "per-time"],
+        typer.Option(
+            help="How uv counts are grouped before forming imaging weights. "
+            "per-band-time -> each output image weighted on its own counts. "
+            "mfs/per-time -> sum counts over bands within a time. "
+            "per-band -> sum counts over time within a band.",
+            rich_help_panel="Weighting",
+        ),
+    ] = "per-band-time",
+    robustness: Annotated[
+        float | None,
+        typer.Option(
+            help="Briggs robustness in [-2, 2]. Values > 2 (or None) use natural weighting.",
+            rich_help_panel="Weighting",
+        ),
+    ] = None,
+    field_of_view: Annotated[
+        float | None,
+        typer.Option(
+            help="Field of view in degrees. Used to set the image size.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    super_resolution_factor: Annotated[
+        float,
+        typer.Option(
+            help="Pixels per resolution element relative to Nyquist.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 2.0,
+    cell_size: Annotated[
+        float | None,
+        typer.Option(
+            help="Cell size in arcseconds. Overrides super-resolution-factor if set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    nx: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of pixels in x. Computed from field-of-view if not set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    ny: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of pixels in y. Computed from field-of-view if not set.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    psf_oversize: Annotated[
+        float,
+        typer.Option(
+            help="PSF size relative to the image size.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 1.4,
+    filter_counts_level: Annotated[
+        float,
+        typer.Option(
+            help="Replace uv cells with counts below median/level to avoid upweighting near-empty cells.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 5.0,
+    npix_super: Annotated[
+        int,
+        typer.Option(
+            help="Box half-size in pixels for super-uniform weighting. 0 -> standard uniform.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 0,
+    epsilon: Annotated[
+        float,
+        typer.Option(
+            help="Gridder accuracy.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 1e-07,
+    do_wgridding: Annotated[
+        bool,
+        typer.Option(
+            help="Use w-gridding (recommended for wide fields).",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
+    double_accum: Annotated[
+        bool,
+        typer.Option(
+            help="Use double precision accumulation when gridding.",
+            rich_help_panel="Imaging",
+        ),
+    ] = True,
+    keep_scratch: Annotated[
+        bool,
+        typer.Option(
+            help="Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.",
+            rich_help_panel="Control",
+        ),
+    ] = True,
+    fits_mfs: Annotated[
+        bool,
+        typer.Option(
+            help="Write MFS FITS images.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_cubes: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS image cubes.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Directory to write FITS files to. Required when output is on a non-file protocol.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
     log_directory: Annotated[
         Directory | None,
         typer.Option(
@@ -288,12 +452,15 @@ def imager(
                     freq_range=freq_range,
                     overwrite=overwrite,
                     data_column=data_column,
+                    data_group=data_group,
+                    partition_columns=partition_columns,
                     weight_column=weight_column,
                     sigma_column=sigma_column,
                     flag_column=flag_column,
                     gain_table=gain_table,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
+                    concat_row=concat_row,
                     precision=precision,
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
@@ -301,9 +468,27 @@ def imager(
                     chan_average=chan_average,
                     progressbar=progressbar,
                     product=product,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     wgt_mode=wgt_mode,
+                    weight_grouping=weight_grouping,
+                    robustness=robustness,
+                    field_of_view=field_of_view,
+                    super_resolution_factor=super_resolution_factor,
+                    cell_size=cell_size,
+                    nx=nx,
+                    ny=ny,
+                    psf_oversize=psf_oversize,
+                    filter_counts_level=filter_counts_level,
+                    npix_super=npix_super,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                    keep_scratch=keep_scratch,
+                    fits_mfs=fits_mfs,
+                    fits_cubes=fits_cubes,
+                    fits_output_folder=fits_output_folder,
                     log_directory=log_directory,
                 ),
             )
@@ -321,12 +506,15 @@ def imager(
                 freq_range=freq_range,
                 overwrite=overwrite,
                 data_column=data_column,
+                data_group=data_group,
+                partition_columns=partition_columns,
                 weight_column=weight_column,
                 sigma_column=sigma_column,
                 flag_column=flag_column,
                 gain_table=gain_table,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
+                concat_row=concat_row,
                 precision=precision,
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
@@ -334,9 +522,27 @@ def imager(
                 chan_average=chan_average,
                 progressbar=progressbar,
                 product=product,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
+                weight_grouping=weight_grouping,
+                robustness=robustness,
+                field_of_view=field_of_view,
+                super_resolution_factor=super_resolution_factor,
+                cell_size=cell_size,
+                nx=nx,
+                ny=ny,
+                psf_oversize=psf_oversize,
+                filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                keep_scratch=keep_scratch,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+                fits_output_folder=fits_output_folder,
                 log_directory=log_directory,
             )
             return
@@ -363,12 +569,15 @@ def imager(
             freq_range=freq_range,
             overwrite=overwrite,
             data_column=data_column,
+            data_group=data_group,
+            partition_columns=partition_columns,
             weight_column=weight_column,
             sigma_column=sigma_column,
             flag_column=flag_column,
             gain_table=gain_table,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
+            concat_row=concat_row,
             precision=precision,
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,
@@ -376,9 +585,27 @@ def imager(
             chan_average=chan_average,
             progressbar=progressbar,
             product=product,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,
+            weight_grouping=weight_grouping,
+            robustness=robustness,
+            field_of_view=field_of_view,
+            super_resolution_factor=super_resolution_factor,
+            cell_size=cell_size,
+            nx=nx,
+            ny=ny,
+            psf_oversize=psf_oversize,
+            filter_counts_level=filter_counts_level,
+            npix_super=npix_super,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            keep_scratch=keep_scratch,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+            fits_output_folder=fits_output_folder,
             log_directory=log_directory,
         ),
         image=image,

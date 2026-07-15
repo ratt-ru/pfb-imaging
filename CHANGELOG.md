@@ -5,6 +5,38 @@ All notable changes to pfb-imaging are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.10] - 2026-06-02
+
+### Build
+
+- Allow python 3.10 for lightweight installs (#249) ([#249](https://github.com/ratt-ru/pfb-imaging/pull/249))
+
+### CI
+
+- **deps**: Bump idna from 3.11 to 3.15 (#246) ([#246](https://github.com/ratt-ru/pfb-imaging/pull/246))
+- **deps**: Bump urllib3 from 2.6.3 to 2.7.0 (#240) ([#240](https://github.com/ratt-ru/pfb-imaging/pull/240))
+
+### Dependencies
+
+- Bump the python-major group across 1 directory with 3 updates (#248) ([#248](https://github.com/ratt-ru/pfb-imaging/pull/248))
+- Bump the python-minor-patch group across 1 directory with 5 updates (#247) ([#247](https://github.com/ratt-ru/pfb-imaging/pull/247))
+
+### Fixed
+
+- Don't set NUMBA_NUM_THREADS in set_envs() (#250) ([#250](https://github.com/ratt-ru/pfb-imaging/pull/250))
+
+### Other
+
+- Fatalii Busy Week hot fixes branch (#243) ([#243](https://github.com/ratt-ru/pfb-imaging/pull/243))
+- Support reading directly from the MeerKAT archive + transition to MSv4 format (#245) ([#245](https://github.com/ratt-ru/pfb-imaging/pull/245))
+- Reverse dependency constraint. (#242) ([#242](https://github.com/ratt-ru/pfb-imaging/pull/242))
+- Add super-uniform/robust weighting (#236) ([#236](https://github.com/ratt-ru/pfb-imaging/pull/236))
+
+### Testing
+
+- Session scope MS reads, prune parameterisations (#235) ([#235](https://github.com/ratt-ru/pfb-imaging/pull/235))
+
+
 ## [0.0.9] - 2026-04-17
 
 ### Other
@@ -185,6 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial commit
 
 
+[0.0.10]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.9rc1...v0.0.9
 [0.0.9rc1]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.8...v0.0.9rc1
 [0.0.8]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.7...v0.0.8

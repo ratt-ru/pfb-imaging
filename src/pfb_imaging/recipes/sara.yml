@@ -16,7 +16,8 @@ opts:
 gosara:
   name: pfb-sara
   info:
-    Example stimela recipe using the SARA algorithm.
+    Stimela recipe for the SARA algorithm with presets.
+    Minimal algorithmic parameters exposed.
 
   inputs:
     ms:
@@ -181,6 +182,11 @@ gosara:
       info:
         Weighting mode to use in gridder.
         Options are 'minvar' or 'l2'.
+    hess-norm:
+      dtype: float
+      info:
+        Normalisation factor for the Hessian approximation.
+        This is used to regularise the inversion of the Hessian approximation.
 
   steps:
     initialize:
@@ -230,7 +236,7 @@ gosara:
       info: Deconvolution step
       params:
         niter: =recipe.niter
-        bases: 'self,db1,db2,db3'
+        bases: ["self", "db1", "db2", "db3"]
         nlevels: 2
         l1-reweight-from: =recipe.l1-reweight-from
         pd-tol: 1.5e-4
@@ -245,21 +251,22 @@ gosara:
         positivity: =IF( recipe.product == 'I', 1, 0)
         nthreads: =recipe.nworkers * recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
+        hess-norm: =IFSET(recipe.hess-norm)
 
-    restoreimage:
-      cab: restore
-      info: Produce restored image.
-      params:
-        nworkers: =recipe.nworkers
-        nthreads: =recipe.nthreads
-        outputs: iI
+    # restoreimage:
+    #   cab: restore
+    #   info: Produce restored image.
+    #   params:
+    #     nworkers: =recipe.nworkers
+    #     nthreads: =recipe.nthreads
+    #     outputs: iI
 
-    degridimage:
-      cab: degrid
-      info: Render model to visibilities
-      params:
-        ms: =recipe.ms
-        model-column: =recipe.model-column
-        nworkers: =recipe.nworkers
-        nthreads: =recipe.nthreads
-        freq-range: =IFSET(recipe.freq-range)
+    # degridimage:
+    #   cab: degrid
+    #   info: Render model to visibilities
+    #   params:
+    #     ms: =recipe.ms
+    #     model-column: =recipe.model-column
+    #     nworkers: =recipe.nworkers
+    #     nthreads: =recipe.nthreads
+    #     freq-range: =IFSET(recipe.freq-range)

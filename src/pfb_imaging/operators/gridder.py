@@ -12,7 +12,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.utils.beam import eval_beam
-from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.misc import fitcleanbeam, parallel_standard_normal
 from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.weighting import _compute_counts, box_sum_counts, counts_to_weights, filter_extreme_counts
 
@@ -700,8 +700,6 @@ def image_data_products(
     if do_noise:
         # sample noise and project into image space
         _, nrow, nchan = vis.shape
-        from pfb_imaging.utils.misc import parallel_standard_normal
-
         noise = np.zeros((ncorr, nx, ny), dtype=float)
         for c in range(ncorr):
             vis = parallel_standard_normal((nrow, nchan)) + 1j * parallel_standard_normal((nrow, nchan))
@@ -757,6 +755,265 @@ def image_data_products(
     outputs["wsum"] = wsum
     outputs["timeid"] = attrs["timeid"]
     return outputs
+
+
+def grid_partition(
+    part,
+    counts,
+    nx,
+    ny,
+    nx_psf,
+    ny_psf,
+    cell_rad,
+    robustness=None,
+    nx_pad=None,
+    ny_pad=None,
+    l0=0.0,
+    m0=0.0,
+    nthreads=1,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+):
+    """Grid one data partition's image-space products with ducc0 (casacore-free).
+
+    Applies imaging weights from a reduced counts grid, then grids the dirty
+    image, PSF, its FT and the primary beam. This is the per-partition term of
+    the sum-over-partitions Hessian; the caller sums the returned image-space
+    products over a band's partitions.
+
+    Args:
+        part: Partition dataset with corr-first ``VIS``/``WEIGHT`` ``(corr,row,chan)``,
+            ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
+            ``BEAM`` ``(corr, l_beam, m_beam)`` on the small beam grid.
+        counts: Reduced counts grid ``(ncorr, nx_pad, ny_pad)`` (already passed
+            through ``filter_extreme_counts``/``box_sum_counts`` by the caller).
+            Ignored when ``robustness`` is ``None``; copied before in-place use.
+        nx, ny, nx_psf, ny_psf: Image and PSF sizes.
+        cell_rad: Image cell size (rad).
+        robustness: Briggs robustness; ``None`` (or ``> 2``) leaves natural weights.
+        nx_pad, ny_pad: Padded uv-grid size matching ``counts``.
+        l0, m0: Partition phase-centre offset (rad).
+        nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+
+    Returns:
+        dict with ``DIRTY`` ``(corr,nx,ny)``, ``PSF`` ``(corr,nx_psf,ny_psf)``,
+        ``PSFHAT`` ``(corr,nx_psf,ny_psf//2+1)``, ``BEAM`` ``(corr,nx,ny)``,
+        ``PSFPARSN`` ``(corr,3)``, ``WSUM`` ``(corr,)`` and the imaging
+        ``WEIGHT`` ``(corr,row,chan)``.
+    """
+    resize_thread_pool(nthreads)
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    n = np.sqrt(1 - x0**2 - y0**2)
+
+    uvw = part.UVW.values
+    vis = part.VIS.values
+    wgt = part.WEIGHT.values.copy()
+    mask = part.MASK.values
+    freq = part.FREQ.values
+    ncorr = part.corr.size
+
+    # imaging weights from the reduced counts grid (counts_to_weights mutates
+    # both weight and counts in place, so pass a copy of the shared counts)
+    if robustness is not None:
+        wgt = counts_to_weights(
+            counts.copy(),
+            uvw,
+            freq,
+            wgt,
+            mask,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
+
+    wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
+
+    # interpolate the small-grid beam onto the image grid
+    x = (-nx / 2 + np.arange(nx)) * cell_rad + x0
+    y = (-ny / 2 + np.arange(ny)) * cell_rad + y0
+    xx, yy = np.meshgrid(np.rad2deg(x), np.rad2deg(y), indexing="ij")
+    l_beam = part.l_beam.values
+    m_beam = part.m_beam.values
+    beam = np.zeros((ncorr, nx, ny), dtype=float)
+    for c in range(ncorr):
+        beam[c] = eval_beam(part.BEAM.values[c], l_beam, m_beam, xx, yy)
+
+    dirty = np.zeros((ncorr, nx, ny), dtype=float)
+    for c in range(ncorr):
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis[c],
+            wgt=wgt[c],
+            mask=mask,
+            npix_x=nx,
+            npix_y=ny,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,
+            nthreads=nthreads,
+            sigma_min=1.1,
+            sigma_max=3.0,
+            double_precision_accumulation=double_accum,
+            dirty=dirty[c],
+        )
+
+    # PSF visibilities carry a phase ramp when the field is off image centre
+    if x0 or y0:
+        freqfactor = 2j * np.pi * freq[None, :] / lightspeed
+        psf_vis = np.exp(
+            freqfactor * (signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n - 1))
+        )
+    else:
+        psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))
+
+    psf = np.zeros((ncorr, nx_psf, ny_psf), dtype=float)
+    for c in range(ncorr):
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=wgt[c],
+            mask=mask,
+            npix_x=nx_psf,
+            npix_y=ny_psf,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,
+            nthreads=nthreads,
+            sigma_min=1.1,
+            sigma_max=3.0,
+            double_precision_accumulation=double_accum,
+            dirty=psf[c],
+        )
+    psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
+    psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0))
+
+    return {
+        "DIRTY": dirty,
+        "PSF": psf,
+        "PSFHAT": psfhat,
+        "BEAM": beam,
+        "PSFPARSN": psfparsn,
+        "WSUM": wsum,
+        "WEIGHT": wgt,
+    }
+
+
+def residual_from_partitions(
+    dirty,
+    parts,
+    model,
+    cell_rad,
+    nthreads=1,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+):
+    """Recompute a band's residual by summing the exact degrid/grid over partitions.
+
+    The DataTree analogue of ``compute_residual``: it reuses the per-partition
+    gridding inputs already stored in pass 2 (``UVW``/``WEIGHT``/``MASK``/
+    ``FREQ``/image-grid ``BEAM``) and never recomputes the PSF, so it is cheap
+    enough to call once per major cycle. The beam is applied once on the degrid
+    side, matching the once-attenuated convention of ``compute_residual`` and of
+    the stored ``DIRTY``.
+
+    Args:
+        dirty: Band-node dirty image ``(corr, nx, ny)`` (sum over partitions,
+            un-normalised by wsum, as produced in pass 2).
+        parts: Iterable of partition datasets, each with corr-first ``WEIGHT``,
+            ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
+            image-grid ``BEAM`` ``(corr,nx,ny)``, plus ``l0``/``m0`` attrs (0 if absent).
+        model: Band model image ``(corr, nx, ny)``.
+        cell_rad: Image cell size (rad).
+        nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+
+    Returns:
+        Residual image ``(corr, nx, ny)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``.
+    """
+    resize_thread_pool(nthreads)
+    ncorr, nx, ny = dirty.shape
+    convim = np.zeros_like(dirty)
+    tmp = np.zeros((nx, ny), dtype=dirty.dtype)
+    for part in parts:
+        uvw = part.UVW.values
+        wgt = part.WEIGHT.values
+        mask = part.MASK.values
+        freq = part.FREQ.values
+        beam = part.BEAM.values
+        l0 = part.attrs.get("l0", 0.0)
+        m0 = part.attrs.get("m0", 0.0)
+        flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+        for c in range(ncorr):
+            model_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=beam[c] * model[c],
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                nthreads=nthreads,
+                divide_by_n=False,
+                sigma_min=1.1,
+                sigma_max=3.0,
+            )
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=model_vis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx,
+                npix_y=ny,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=nthreads,
+                sigma_min=1.1,
+                sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=tmp,
+            )
+            convim[c] += tmp
+
+    return dirty - convim
 
 
 def compute_residual(

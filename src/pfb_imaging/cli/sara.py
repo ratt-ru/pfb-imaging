@@ -48,7 +48,9 @@ Directory = NewType("Directory", Path)
 @stimela_output(
     dtype="Directory",
     name="numba-cache-dir",
-    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    info="Implicit output ensuring the numba cache location is mounted. "
+    "The cache defaults to a per-user directory under the system temp directory. "
+    "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba",
     must_exist=False,
     mkdir=False,
@@ -78,7 +80,7 @@ def sara(
             help="Wavelet bases to use. Give as comma separated str.",
             rich_help_panel="SARA",
         ),
-    ] = "self,db1,db2,db3",
+    ] = ["self", "db1", "db2", "db3"],
     nlevels: Annotated[
         int,
         typer.Option(

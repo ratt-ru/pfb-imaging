@@ -2,6 +2,7 @@ import numpy as np
 import sympy as sm
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
+from sympy.abc import a, f, t
 from sympy.parsing.sympy_parser import parse_expr
 from sympy.utilities.lambdify import lambdify
 
@@ -41,9 +42,6 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, meth
     nband = freq.size
     ref_time = time[0]
     ref_freq = freq[0]
-    import sympy as sm
-    from sympy.abc import a, f, t
-
     if nbasist is None:
         nbasist = ntime
     else:
@@ -164,9 +162,6 @@ def fit_image_fscube(freq, image, wgt=None, nbasisf=None, method="Legendre", sig
     """
     nband = freq.size
     ref_freq = freq[0]
-    import sympy as sm
-    from sympy.abc import f
-
     if nbasisf is None:
         nbasisf = nband
     else:

@@ -9,6 +9,7 @@ import ray
 from ducc0.misc import empty_noncritical
 from numba import njit, prange
 
+from pfb_imaging.operators import LinearOperator, require_protocol
 from pfb_imaging.utils.misc import norm_diff
 from pfb_imaging.utils.naming import xds_from_list
 
@@ -97,6 +98,19 @@ def pcg_numba(
     backtrack=True,
     return_resid=False,
 ):
+    """Legacy CG solver of ``aop(x) = b`` with fused numba update kernels.
+
+    Frozen legacy implementation (the in-worker CG of the deconv band
+    workers and the oracle for ``opt.pcg.PCG``); do not change its
+    behaviour. See docs/wiki/deconv-primer.md.
+
+    Warning:
+        When ``x0`` is given it is bound as the iterate and updated
+        **in place** (the returned array IS ``x0``). Callers that must not
+        see their ``x0`` mutated pass a copy — Ray callers MUST copy anyway,
+        since Ray deserialises task arguments as read-only views and the
+        numba kernels crash on them (``_BandWorkerImpl.cg`` is the template).
+    """
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
 
@@ -198,6 +212,13 @@ def pcg(
     backtrack=True,
     return_resid=False,
 ):
+    """Legacy python-loop preconditioned CG (validation oracle).
+
+    Same contract and in-place ``x0`` mutation warning as ``pcg_numba``
+    (see its docstring); this variant supports a ``precond`` callable and
+    is used by the legacy ``.dds`` path (``HessPSF.idot``). Frozen; do not
+    change its behaviour.
+    """
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
 
@@ -322,6 +343,7 @@ def _pcg_psf_impl(
             return x / eta
     else:
         precond = None
+    # deferred: operators.hessian imports opt.pcg at module scope (import cycle)
     from pfb_imaging.operators.hessian import hessian_psf_slice
 
     for k in range(nband):
@@ -441,6 +463,7 @@ def pcg_dds(
     pcg for fluxtractor
     """
     # avoid circular import
+    # deferred: operators.hessian imports opt.pcg at module scope (import cycle)
     from pfb_imaging.operators.hessian import hessian_slice
 
     # expects a list
@@ -558,3 +581,50 @@ def pcg_dds(
     ds.to_zarr(ds_name[0], mode="a")
 
     return resid, int(ds.bandid)
+
+
+class PCG:
+    """Conjugate-gradient ForwardSolver: ``update ≈ hess^{-1} residual``.
+
+    Satisfies the ``ForwardSolver`` Protocol.  When the operator exposes a
+    ``cg`` method (the distributed per-band fast path of ``HessTreeRay``),
+    the solve is delegated to it with this solver's controls; otherwise a
+    generic cube-level CG runs over ``hess.dot``.
+
+    Args:
+        tol: CG convergence tolerance.
+        maxit: Maximum CG iterations.
+        minit: Minimum CG iterations.
+        verbosity: 0 silent, > 1 per-iteration reporting.
+        report_freq: Reporting cadence at verbosity > 1.
+    """
+
+    def __init__(
+        self,
+        tol: float = 1e-3,
+        maxit: int = 150,
+        minit: int = 1,
+        verbosity: int = 0,
+        report_freq: int = 10,
+    ):
+        self.tol = tol
+        self.maxit = maxit
+        self.minit = minit
+        self.verbosity = verbosity
+        self.report_freq = report_freq
+
+    def solve(self, hess, residual, x0=None):
+        """Solve ``hess @ update = residual`` for update."""
+        if hasattr(hess, "cg"):
+            return hess.cg(residual, x0=x0, tol=self.tol, maxit=self.maxit, minit=self.minit)
+        require_protocol(hess, LinearOperator, "hess")
+        return pcg_numba(
+            hess.dot,
+            residual,
+            x0=x0,
+            tol=self.tol,
+            maxit=self.maxit,
+            minit=self.minit,
+            verbosity=self.verbosity,
+            report_freq=self.report_freq,
+        )

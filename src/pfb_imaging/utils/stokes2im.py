@@ -10,7 +10,6 @@ from africanus.coordinates import radec_to_lm
 from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
-from casacore.quanta import quantity
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
 from meerkat_beams.utils import BeamWizard
@@ -21,10 +20,11 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam
-from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import (
     _compute_counts,
+    as_contiguous_readonly_view,
     box_sum_counts,
     counts_to_weights,
     filter_extreme_counts,
@@ -411,14 +411,14 @@ def stokes_image(
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
-        data,
-        weight,
-        flag,
-        jones,
-        tbin_idx,
-        tbin_counts,
-        ant1,
-        ant2,
+        as_contiguous_readonly_view(data),
+        as_contiguous_readonly_view(weight),
+        as_contiguous_readonly_view(flag),
+        as_contiguous_readonly_view(jones),
+        as_contiguous_readonly_view(tbin_idx),
+        as_contiguous_readonly_view(tbin_counts),
+        as_contiguous_readonly_view(ant1),
+        as_contiguous_readonly_view(ant2),
         poltype,
         product,
         str(ncorr),
@@ -715,7 +715,7 @@ def stokes_image(
 
     # these will be in degrees
     gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
-    unix_time = quantity(f"{time_out}s").to_unix_time()
+    unix_time = to_unix_time(time_out)
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # set corr coords (removing duplicates and sorting)

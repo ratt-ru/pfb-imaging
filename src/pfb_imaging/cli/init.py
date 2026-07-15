@@ -38,7 +38,9 @@ URI = NewType("URI", Path)
 @stimela_output(
     dtype="Directory",
     name="numba-cache-dir",
-    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    info="Implicit output ensuring the numba cache location is mounted. "
+    "The cache defaults to a per-user directory under the system temp directory. "
+    "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba",
     must_exist=False,
     mkdir=False,
@@ -217,6 +219,13 @@ def init(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -325,6 +334,7 @@ def init(
                     progressbar=progressbar,
                     check_ants=check_ants,
                     product=product,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     wgt_mode=wgt_mode,
@@ -361,6 +371,7 @@ def init(
                 progressbar=progressbar,
                 check_ants=check_ants,
                 product=product,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
@@ -406,6 +417,7 @@ def init(
             progressbar=progressbar,
             check_ants=check_ants,
             product=product,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,

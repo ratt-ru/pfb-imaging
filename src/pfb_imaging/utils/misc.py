@@ -1,6 +1,4 @@
 import logging
-import pdb
-import sys
 
 import dask
 import dask.array as da
@@ -8,7 +6,6 @@ import jax
 import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
-from africanus.constants import c as lightspeed
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
@@ -17,30 +14,19 @@ from jax import value_and_grad
 from numba import njit, prange
 from numba.extending import overload
 from omegaconf import ListConfig
+from scipy.constants import c as lightspeed
 from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
-
-from pfb_imaging.utils.fits import load_fits
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
 
 
-class ForkedPdb(pdb.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
-
-    """
-
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open("/dev/stdin")
-            pdb.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
+def to_unix_time(times):
+    # MJD_UNIX_OFFSET = 3506716800.0
+    return times - 3506716800.0
 
 
 def kron_matvec(op, b):
@@ -246,7 +232,6 @@ def construct_mappings(
     time_mapping    - dict[MS][IDT] utimes per dataset
 
     """
-
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig):
         ms_name = [ms_name]
 
@@ -645,6 +630,9 @@ def init_mask(mask, model, output_type, log):
         mask = np.ones((nx, ny), dtype=output_type)
     elif mask.endswith(".fits"):
         try:
+            # avoids circular import
+            from pfb_imaging.utils.fits import load_fits
+
             mask = load_fits(mask, dtype=output_type).squeeze()
             assert mask.shape == (nx, ny)
             print("Using provided fits mask")

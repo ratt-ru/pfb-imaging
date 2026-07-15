@@ -7,7 +7,7 @@ import xarray as xr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.opt.pcg import pcg_dds
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import load_fits, rdds2fits
@@ -42,6 +42,7 @@ def fluxtractor(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    ray_address: str = "local",
     keep_ray_alive: bool = False,
 ):
     """
@@ -90,14 +91,14 @@ def fluxtractor(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
             "worker_process_setup_hook": setup_ray_worker,
         },
+        log=log,
     )
 
     time_start = time.time()

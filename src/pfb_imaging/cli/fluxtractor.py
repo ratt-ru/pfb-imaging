@@ -48,7 +48,9 @@ Directory = NewType("Directory", Path)
 @stimela_output(
     dtype="Directory",
     name="numba-cache-dir",
-    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    info="Implicit output ensuring the numba cache location is mounted. "
+    "The cache defaults to a per-user directory under the system temp directory. "
+    "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba",
     must_exist=False,
     mkdir=False,
@@ -179,6 +181,13 @@ def fluxtractor(
             rich_help_panel="ConjugateGradient",
         ),
     ] = 10,
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -295,6 +304,7 @@ def fluxtractor(
                     cg_maxit=cg_maxit,
                     cg_verbose=cg_verbose,
                     cg_report_freq=cg_report_freq,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
                     product=product,
@@ -327,6 +337,7 @@ def fluxtractor(
                 cg_maxit=cg_maxit,
                 cg_verbose=cg_verbose,
                 cg_report_freq=cg_report_freq,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
                 product=product,
@@ -368,6 +379,7 @@ def fluxtractor(
             cg_maxit=cg_maxit,
             cg_verbose=cg_verbose,
             cg_report_freq=cg_report_freq,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
             product=product,

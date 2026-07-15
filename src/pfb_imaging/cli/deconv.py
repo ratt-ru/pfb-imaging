@@ -16,21 +16,21 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="deconv",
-    info="pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.",
+    info="General deconvolution of the imager DataTree via composable forward/backward algorithms.",
 )
 @stimela_output(
     dtype="Directory",
-    name="dds-out",
-    info="Output dataset directory.",
-    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
-    must_exist=False,
+    name="dt-out",
+    info="DataTree dataset updated in place.",
+    implicit="{current.output-filename}_{current.product}.dt",
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
     info="Output component model.",
     implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
-    must_exist=False,
+    must_exist=True,
 )
 @stimela_output(
     dtype="Directory",
@@ -55,7 +55,9 @@ Directory = NewType("Directory", Path)
 @stimela_output(
     dtype="Directory",
     name="numba-cache-dir",
-    info="Directory to use for numba caching. Currently not configurable. Exists to ensure the directory is mounted.",
+    info="Implicit output ensuring the numba cache location is mounted. "
+    "The cache defaults to a per-user directory under the system temp directory. "
+    "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba",
     must_exist=False,
     mkdir=False,
@@ -101,9 +103,9 @@ def deconv(
         ),
     ] = True,
     minor_cycle: Annotated[
-        Literal["sara", "kclean"],
+        Literal["sara", "ista"],
         typer.Option(
-            help="Which minor cycle algorithm to use. Options are 'sara' and 'kclean'.",
+            help="Which minor cycle algorithm to use.",
             rich_help_panel="PFB",
         ),
     ] = "sara",
@@ -121,7 +123,7 @@ def deconv(
             help="Wavelet bases to use. Give as comma separated str.",
             rich_help_panel="SARA",
         ),
-    ] = "self,db1,db2,db3",
+    ] = ["self", "db1", "db2", "db3"],
     nlevels: Annotated[
         int,
         typer.Option(
@@ -152,16 +154,6 @@ def deconv(
             rich_help_panel="Hessian",
         ),
     ] = None,
-    hess_approx: Annotated[
-        Literal["wgt", "psf", "direct"],
-        typer.Option(
-            help="Which Hessian approximation to use. "
-            "wgt -> vis space approximation. "
-            "psf -> for zero-padded image space approximation. "
-            "direct -> for direct inversion.",
-            rich_help_panel="Hessian",
-        ),
-    ] = "psf",
     rmsfactor: Annotated[
         float,
         typer.Option(
@@ -246,12 +238,28 @@ def deconv(
         ),
     ] = 1,
     nthreads: Annotated[
-        int | None,
+        int,
         typer.Option(
             help="Total number of threads to use. Defaults to half the total number available.",
             rich_help_panel="Performance",
         ),
+    ] = 2,
+    nworkers: Annotated[
+        int | None,
+        typer.Option(
+            help="Number of Ray workers. "
+            "Uses nworkers = nband by default. "
+            "Band actors use nominal CPU claims, so nworkers does not need to scale with nband.",
+            rich_help_panel="Performance",
+        ),
     ] = None,
+    ray_address: Annotated[
+        str,
+        typer.Option(
+            help="Address of the Ray cluster to connect to.",
+            rich_help_panel="Performance",
+        ),
+    ] = "local",
     epsilon: Annotated[
         float,
         typer.Option(
@@ -444,7 +452,7 @@ def deconv(
     ] = False,
 ):
     """
-    pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+    General deconvolution of the imager DataTree via composable forward/backward algorithms.
     """
     if backend == "native" or backend == "auto":
         try:
@@ -466,7 +474,6 @@ def deconv(
                     l1_reweight_from=l1_reweight_from,
                     alpha=alpha,
                     hess_norm=hess_norm,
-                    hess_approx=hess_approx,
                     rmsfactor=rmsfactor,
                     eta=eta,
                     gamma=gamma,
@@ -479,6 +486,8 @@ def deconv(
                     init_factor=init_factor,
                     verbosity=verbosity,
                     nthreads=nthreads,
+                    nworkers=nworkers,
+                    ray_address=ray_address,
                     epsilon=epsilon,
                     do_wgridding=do_wgridding,
                     double_accum=double_accum,
@@ -521,7 +530,6 @@ def deconv(
                 l1_reweight_from=l1_reweight_from,
                 alpha=alpha,
                 hess_norm=hess_norm,
-                hess_approx=hess_approx,
                 rmsfactor=rmsfactor,
                 eta=eta,
                 gamma=gamma,
@@ -534,6 +542,8 @@ def deconv(
                 init_factor=init_factor,
                 verbosity=verbosity,
                 nthreads=nthreads,
+                nworkers=nworkers,
+                ray_address=ray_address,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
                 double_accum=double_accum,
@@ -585,7 +595,6 @@ def deconv(
             l1_reweight_from=l1_reweight_from,
             alpha=alpha,
             hess_norm=hess_norm,
-            hess_approx=hess_approx,
             rmsfactor=rmsfactor,
             eta=eta,
             gamma=gamma,
@@ -598,6 +607,8 @@ def deconv(
             init_factor=init_factor,
             verbosity=verbosity,
             nthreads=nthreads,
+            nworkers=nworkers,
+            ray_address=ray_address,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,

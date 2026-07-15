@@ -329,6 +329,13 @@ cabs:
         default: true
         metadata:
           rich_help_panel: WGridder
+      ray-address:
+        info:
+          Address of the ray cluster to connect to.
+          If not provided, will run locally.
+        default: local
+        metadata:
+          rich_help_panel: Performance
       nworkers:
         info:
           Number of worker processes.
@@ -442,9 +449,9 @@ cabs:
       numba-cache-dir:
         dtype: Directory
         info:
-          Directory to use for numba caching.
-          Currently not configurable.
-          Exists to ensure the directory is mounted.
+          Implicit output ensuring the numba cache location is mounted.
+          The cache defaults to a per-user directory under the system temp directory.
+          Override it by setting the NUMBA_CACHE_DIR environment variable.
         implicit: '/tmp/numba'
         must_exist: false
         mkdir: false

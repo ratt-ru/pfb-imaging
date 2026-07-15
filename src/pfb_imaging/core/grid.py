@@ -6,10 +6,12 @@ import psutil
 import ray
 import xarray as xr
 from africanus.coordinates import radec_to_lm
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import rimage_data_products, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import get_coordinates
@@ -55,6 +57,7 @@ def grid(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    ray_address: str = "local",
     keep_ray_alive: bool = False,
 ):
     """
@@ -127,14 +130,14 @@ def grid(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(
-        num_cpus=nworkers,
-        logging_level="INFO",
-        ignore_reinit_error=True,
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
         runtime_env={
             "env_vars": env_vars,
             "worker_process_setup_hook": setup_ray_worker,
         },
+        log=log,
     )
 
     time_start = time.time()
@@ -308,9 +311,6 @@ def grid(
             if len(tmp) == 1 and tmp[0] == target:
                 tra, tdec = get_coordinates(time_out, target=target)
             else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-                from astropy import units as u
-                from astropy.coordinates import SkyCoord
-
                 c = SkyCoord(tmp[0], tmp[1], frame="fk5", unit=(u.hourangle, u.deg))
                 tra = np.deg2rad(c.ra.value)
                 tdec = np.deg2rad(c.dec.value)
@@ -350,6 +350,7 @@ def grid(
 
         # get the model
         if transfer_model_from:
+            # deferred: modelspec pulls sympy; only needed when transferring a model
             from pfb_imaging.utils.modelspec import eval_coeffs_to_slice
 
             _, _, _, x0, y0 = wgridder_conventions(l0, m0)
