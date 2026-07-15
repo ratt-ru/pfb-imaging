@@ -1538,7 +1538,7 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.2.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?branch=main#1719a5e612da25c9a554b8ad5024dfbb9af5cd22" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#1719a5e612da25c9a554b8ad5024dfbb9af5cd22" }
 dependencies = [
     { name = "fsspec" },
     { name = "libcst" },
@@ -3503,7 +3503,7 @@ requires-dist = [
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2024.11.0" },
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?branch=main" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },

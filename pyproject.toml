@@ -101,7 +101,10 @@ markers = [
 ]
 
 [tool.uv.sources]
-hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", branch = "main" }
+# rev (not branch): meerkat-beams pins `hip-cargo @ git+...@main` (PEP 508), and
+# uv pip treats a branch-kind and a bare-rev-kind URL for the same ref as
+# conflicting URLs even though they print identically (broke the container build).
+hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", rev = "main" }
 
 [dependency-groups]
 dev = [
