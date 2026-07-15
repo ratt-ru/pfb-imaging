@@ -2,6 +2,7 @@ import ctypes
 import importlib
 import logging
 import os
+import tempfile
 import warnings
 from importlib.metadata import version
 
@@ -11,6 +12,14 @@ __version__ = "0.0.10"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+# Also before importing numba: default the cache dir to a per-user directory
+# so users on a shared host don't collide on ownership of /tmp/numba (#270).
+# setdefault so an explicit NUMBA_CACHE_DIR (native env, stimela backend env)
+# always wins. gettempdir() honours per-job TMPDIR on clusters.
+os.environ.setdefault(
+    "NUMBA_CACHE_DIR",
+    os.path.join(tempfile.gettempdir(), f"numba-cache-{os.getuid()}"),
+)
 
 
 def set_envs(nthreads, ncpu, log=None):
@@ -55,6 +64,7 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
+        "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
         "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars
