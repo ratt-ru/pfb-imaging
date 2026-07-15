@@ -2,12 +2,13 @@ import concurrent.futures as cf
 
 import numba
 import numpy as np
-from numba import literally, njit, prange, types
-from numba.extending import overload
+from numba import literally, njit, prange
+from numba.extending import overload, register_jitable
+from rarg_numba_patterns import load_data
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.utils.naming import xds_from_list
-from pfb_imaging.utils.stokes import stokes_funcs
+from pfb_imaging.utils.stokes import stokes_expr_funcs
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -253,7 +254,24 @@ def box_sum_counts(counts, npix_super):
     return out
 
 
-@njit(nogil=True, cache=False, parallel=False)
+@register_jitable(inline="always")
+def _corr2_to_full_vis(v):
+    # unsampled cross-hand visibilities are zero (legacy stokes_funcs convention)
+    return v[0], 0j, 0j, v[1]
+
+
+@register_jitable(inline="always")
+def _corr2_to_full_wgt(w):
+    # unsampled cross-hand weights are unity (legacy stokes_funcs convention)
+    return w[0], 1.0, 1.0, w[1]
+
+
+@register_jitable(inline="always")
+def _corr4_passthrough(x):
+    return x[0], x[1], x[2], x[3]
+
+
+@njit(nogil=True, cache=True, parallel=False)
 def weight_data(
     data,
     weight,
@@ -319,75 +337,135 @@ def nb_weight_data_impl(
     wgt_mode,
 ):
     try:
-        vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc, wgt_mode)
+        vis_fns, wgt_fns = stokes_expr_funcs(
+            product.literal_value,
+            pol.literal_value,
+            nc.literal_value,
+            wgt_mode.literal_value,
+            jones.ndim,
+        )
     except Exception as e:
         raise numba.core.errors.TypingError(f"Failed in overload resolution: {e}") from e
-    ns = len(product.literal_value)
 
-    def _impl(
-        data,
-        weight,
-        flag,
-        jones,
-        tbin_idx,
-        tbin_counts,
-        ant1,
-        ant2,
-        pol,
-        product,
-        nc,
-        wgt_mode,
-    ):
-        # for dask arrays we need to adjust the chunks to
-        # start counting from zero
-        tbin_idx = tbin_idx - tbin_idx.min()
-        nt = np.shape(tbin_idx)[0]
-        nrow, nchan, ncorr = data.shape
-        vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
-        wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
+    ns = len(vis_fns)
+    ncorr = int(nc.literal_value)
+    if ncorr == 2:
+        vext, wext = _corr2_to_full_vis, _corr2_to_full_wgt
+    else:
+        vext = _corr4_passthrough
+        wext = _corr4_passthrough
+    vf0, wf0 = vis_fns[0], wgt_fns[0]
+    vf1, wf1 = (vis_fns[1], wgt_fns[1]) if ns > 1 else (vis_fns[0], wgt_fns[0])
+    vf2, wf2 = (vis_fns[2], wgt_fns[2]) if ns > 2 else (vis_fns[0], wgt_fns[0])
+    vf3, wf3 = (vis_fns[3], wgt_fns[3]) if ns > 3 else (vis_fns[0], wgt_fns[0])
 
-        for t in prange(nt):
-            for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
-                p = int(ant1[row])
-                q = int(ant2[row])
-                gp = jones[t, p, :, 0]
-                gq = jones[t, q, :, 0]
-                for chan in range(nchan):
-                    if flag[row, chan].any():
-                        continue
-                    wgt[row, chan] = wgt_func(gp[chan], gq[chan], weight[row, chan])
-                    vis[row, chan] = vis_func(gp[chan], gq[chan], weight[row, chan], data[row, chan])
+    if jones.ndim == 5:  # DIAG mode
 
-        return (vis, wgt)
+        def _impl(
+            data,
+            weight,
+            flag,
+            jones,
+            tbin_idx,
+            tbin_counts,
+            ant1,
+            ant2,
+            pol,
+            product,
+            nc,
+            wgt_mode,
+        ):
+            # for dask arrays we need to adjust the chunks to
+            # start counting from zero
+            tbin_idx = tbin_idx - tbin_idx.min()
+            nt = np.shape(tbin_idx)[0]
+            nrow, nchan, _ = data.shape
+            vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
+            wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
 
-    _impl.returns = types.Tuple([types.Array(types.complex128, 3, "C"), types.Array(types.float64, 3, "C")])
+            for t in prange(nt):
+                for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
+                    p = int(ant1[row])
+                    q = int(ant2[row])
+                    for chan in range(nchan):
+                        if flag[row, chan].any():
+                            continue
+                        jp00 = jones[t, p, chan, 0, 0]
+                        jp11 = jones[t, p, chan, 0, 1]
+                        jq00 = jones[t, q, chan, 0, 0]
+                        jq11 = jones[t, q, chan, 0, 1]
+                        v00, v01, v10, v11 = vext(load_data(data, (row, chan), ncorr, -1))
+                        w00, w01, w10, w11 = wext(load_data(weight, (row, chan), ncorr, -1))
+                        vis[row, chan, 0] = vf0(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
+                        wgt[row, chan, 0] = wf0(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
+                        if ns > 1:
+                            vis[row, chan, 1] = vf1(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
+                            wgt[row, chan, 1] = wf1(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
+                        if ns > 2:
+                            vis[row, chan, 2] = vf2(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
+                            wgt[row, chan, 2] = wf2(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
+                        if ns > 3:
+                            vis[row, chan, 3] = vf3(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
+                            wgt[row, chan, 3] = wf3(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
+
+            return (vis, wgt)
+
+    else:  # full 2x2 jones mode
+
+        def _impl(
+            data,
+            weight,
+            flag,
+            jones,
+            tbin_idx,
+            tbin_counts,
+            ant1,
+            ant2,
+            pol,
+            product,
+            nc,
+            wgt_mode,
+        ):
+            # for dask arrays we need to adjust the chunks to
+            # start counting from zero
+            tbin_idx = tbin_idx - tbin_idx.min()
+            nt = np.shape(tbin_idx)[0]
+            nrow, nchan, _ = data.shape
+            vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
+            wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
+
+            for t in prange(nt):
+                for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
+                    p = int(ant1[row])
+                    q = int(ant2[row])
+                    for chan in range(nchan):
+                        if flag[row, chan].any():
+                            continue
+                        jp00 = jones[t, p, chan, 0, 0, 0]
+                        jp01 = jones[t, p, chan, 0, 0, 1]
+                        jp10 = jones[t, p, chan, 0, 1, 0]
+                        jp11 = jones[t, p, chan, 0, 1, 1]
+                        jq00 = jones[t, q, chan, 0, 0, 0]
+                        jq01 = jones[t, q, chan, 0, 0, 1]
+                        jq10 = jones[t, q, chan, 0, 1, 0]
+                        jq11 = jones[t, q, chan, 0, 1, 1]
+                        v00, v01, v10, v11 = vext(load_data(data, (row, chan), ncorr, -1))
+                        w00, w01, w10, w11 = wext(load_data(weight, (row, chan), ncorr, -1))
+                        vis[row, chan, 0] = vf0(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                        wgt[row, chan, 0] = wf0(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                        if ns > 1:
+                            vis[row, chan, 1] = vf1(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                            wgt[row, chan, 1] = wf1(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                        if ns > 2:
+                            vis[row, chan, 2] = vf2(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                            wgt[row, chan, 2] = wf2(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                        if ns > 3:
+                            vis[row, chan, 3] = vf3(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+                            wgt[row, chan, 3] = wf3(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
+
+            return (vis, wgt)
 
     return _impl
-
-
-@njit
-def weight_data_np(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, ns, vis_func, wgt_func):
-    # for dask arrays we need to adjust the chunks to
-    # start counting from zero
-    tbin_idx = tbin_idx - tbin_idx.min()
-    nt = np.shape(tbin_idx)[0]
-    nrow, nchan, ncorr = data.shape
-    vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
-    wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
-
-    for t in prange(nt):
-        for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
-            p = int(ant1[row])
-            q = int(ant2[row])
-            gp = jones[t, p, :, 0]
-            gq = jones[t, q, :, 0]
-            for chan in range(nchan):
-                if flag[row, chan].any():
-                    continue
-                wgt[row, chan] = wgt_func(gp[chan], gq[chan], weight[row, chan])
-                vis[row, chan] = vis_func(gp[chan], gq[chan], weight[row, chan], data[row, chan])
-
-    return (vis, wgt)
 
 
 def reduce_counts(counts, grouping):
@@ -425,3 +503,18 @@ def reduce_counts(counts, grouping):
             sums[key] = grid.copy() if key not in sums else sums[key] + grid
         return {(b, t): sums[b if fix_band else t] for (b, t) in counts}
     raise ValueError(f"Unknown weight grouping {grouping!r}; expected one of {valid}")
+
+
+def as_contiguous_readonly_view(a):
+    """
+    C-contiguous readonly view of ``a`` (copies only if non-contiguous).
+
+    weight_data never mutates its inputs, and numba specialises on each
+    array's layout and writeable flag: normalising here means one compiled
+    signature per dtype configuration instead of one per readonly/layout
+    permutation of the eight array arguments (issue #273).
+    """
+    a = np.ascontiguousarray(a)
+    v = a.view()
+    v.flags.writeable = False
+    return v

@@ -34,6 +34,8 @@ full = [
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "reproject",
     "ray[default]>=2.55.0",
+    "radiomesh>=0.1.2 ; python_version >= '3.11'",
+    "rarg-numba-patterns>=0.0.1",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",

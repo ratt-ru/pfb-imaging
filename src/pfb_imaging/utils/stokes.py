@@ -1,10 +1,17 @@
 import string
 
 import numpy as np
-import sympy as sm
-from numba import njit
-from numba.core import types
-from sympy.physics.quantum import TensorProduct
+from numba.extending import register_jitable
+from radiomesh.generated._stokes_expr import CONVERT_FNS
+
+try:
+    from radiomesh.generated._stokes_expr import CONVERT_FNS
+except ImportError as e:  # pragma: no cover
+    # This should fail early if the module is not available
+    raise ImportError(
+        "The radiomesh-generated _stokes_expr module is not available. "
+        "Ensure that the full extra is installed and use python 3.11+."
+    ) from e
 
 
 def jones_to_mueller(gp, gq):
@@ -71,17 +78,35 @@ def stokes_to_corr(x, axis=0, poltype="linear"):
     return np.stack((dirty0, dirty1, dirty2, dirty3), axis=axis)
 
 
-def stokes_funcs(data, jones, product, pol, nc, wgt_mode):
-    if isinstance(product, types.StringLiteral):
-        product = product.literal_value
-    if isinstance(pol, types.StringLiteral):
-        pol = pol.literal_value
-    if isinstance(nc, types.StringLiteral):
-        nc = nc.literal_value
-    if isinstance(wgt_mode, types.StringLiteral):
-        wgt_mode = wgt_mode.literal_value
+# Make every generated expression function callable from nopython code.
+# register_jitable returns the original plain function, so CONVERT_FNS
+# values stay plain module-level functions: capturing them in an @overload
+# impl closure keeps numba's cache key stable across processes (issue #273
+# in pfb-imaging) — never replace these with njit dispatchers.
+for _fn in set(CONVERT_FNS.values()):
+    register_jitable(inline="always")(_fn)
 
-    # check validity of inputs
+
+def stokes_expr_funcs(product, pol, nc, wgt_mode, jones_ndim):
+    """Select radiomesh per-Stokes expression functions for weight_data.
+
+    Args:
+        product: Stokes product string, subset of "IQUV" (any order).
+        pol: Polarisation type, "linear" or "circular".
+        nc: Number of correlations as a string, "2" or "4".
+        wgt_mode: Weighting mode, "l2" or "minvar".
+        jones_ndim: 5 for diagonal jones, 6 for full 2x2 jones.
+
+    Returns:
+        Tuple of (vis_fns, wgt_fns): equal-length tuples of plain functions
+        ordered I, Q, U, V. Diag functions take
+        (x00, x01, x10, x11, jp00, jp11, jq00, jq11); full-jones functions
+        take (x00, x01, x10, x11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11).
+
+    Raises:
+        ValueError: For invalid product/pol/nc/mode/ndim combinations.
+        NotImplementedError: For minvar with full 2x2 jones.
+    """
     if pol not in ("linear", "circular"):
         raise ValueError(f"Unknown polarisation type {pol}")
     if nc not in ("1", "2", "4"):
@@ -89,226 +114,43 @@ def stokes_funcs(data, jones, product, pol, nc, wgt_mode):
     if wgt_mode not in ("l2", "minvar"):
         raise ValueError(f"Unknown weighting mode {wgt_mode}")
 
-    # set up symbolic expressions
-    gp00, gp10, gp01, gp11 = sm.symbols("gp00 gp10 gp01 gp11", real=False)
-    gq00, gq10, gq01, gq11 = sm.symbols("gq00 gq10 gq01 gq11", real=False)
-    w0, w1, w2, w3 = sm.symbols("W0 W1 W2 W3", real=True)
-    v00, v10, v01, v11 = sm.symbols("v00 v10 v01 v11", real=False)
-
-    # Jones matrices
-    gp_matrix = sm.Matrix([[gp00, gp01], [gp10, gp11]])
-    gq_matrix = sm.Matrix([[gq00, gq01], [gq10, gq11]])
-
-    # Mueller matrix (row major form)
-    mpq = TensorProduct(gp_matrix, gq_matrix.conjugate())
-    mpq_inv = TensorProduct(gp_matrix.inv(), gq_matrix.conjugate().inv())
-
-    # inverse noise covariance
-    s_inv = sm.Matrix([[w0, 0, 0, 0], [0, w1, 0, 0], [0, 0, w2, 0], [0, 0, 0, w3]])
-    s = s_inv.inv()
-
-    # visibilities
-    vpq = sm.Matrix([[v00], [v01], [v10], [v11]])
-
-    # Full Stokes to corr operator
-    # Is this the only difference between linear and circular pol?
-    # What about paralactic angle rotation?
-    if pol == "linear":
-        t_matrix = sm.Matrix([[1.0, 1.0, 0, 0], [0, 0, 1.0, 1.0j], [0, 0, 1.0, -1.0j], [1.0, -1.0, 0, 0]])
-    elif pol == "circular":
-        t_matrix = sm.Matrix([[1.0, 0, 0, 1.0], [0, 1.0, 1.0j, 0], [0, 1.0, -1.0j, 0], [1.0, 0, 0, -1.0]])
-    else:
-        raise ValueError(f"Unknown pol {pol}")
-    t_inv = t_matrix.inv()
-
-    # Full Stokes weights
-    w = t_matrix.H * mpq.H * s_inv * mpq * t_matrix
-    w_inv = t_inv * mpq_inv * s * mpq_inv.H * t_inv.H
-
-    # Full Stokes coherencies
-    c = w_inv * (t_matrix.H * (mpq.H * (s_inv * vpq)))
-    # Only keep diagonal of weights
-    w = w.diagonal().T  # diagonal() returns row vector
-
-    # this should ensure that outputs are always ordered as
-    # [I, Q, U, V]
-    i = ()
+    # this ensures that outputs are always ordered as [I, Q, U, V]
+    stokes = []
     if "I" in product:
-        i += (0,)
-
+        stokes.append("I")
     if "Q" in product:
-        i += (1,)
         if pol == "circular" and nc == "2":
             raise ValueError("Q is not available in circular polarisation with 2 correlations")
-
+        stokes.append("Q")
     if "U" in product:
-        i += (2,)
-        if pol == "linear" and nc == "2":
-            raise ValueError("U is not available in linear polarisation with 2 correlations")
-        elif pol == "circular" and nc == "2":
-            raise ValueError("U is not available in circular polarisation with 2 correlations")
-
+        if nc == "2":
+            raise ValueError(f"U is not available in {pol} polarisation with 2 correlations")
+        stokes.append("U")
     if "V" in product:
-        i += (3,)
         if pol == "linear" and nc == "2":
             raise ValueError("V is not available in linear polarisation with 2 correlations")
-
+        stokes.append("V")
     remprod = product.strip("IQUV")
     if len(remprod):
         raise ValueError(f"Unknown polarisation product {remprod}")
 
-    if jones.ndim == 6:  # Full mode
+    polu = pol.upper()
+    if jones_ndim == 6:
         if wgt_mode == "minvar":
             raise NotImplementedError("Minvar weighting not yet implemented for full-Stokes")
-
-        w_symb = sm.lambdify(
-            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3),
-            sm.simplify(w[i, 0]),
-        )
-        w_jfn = njit(nogil=True, inline="always")(w_symb)
-
-        d_symb = sm.lambdify(
-            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3, v00, v01, v10, v11),
-            sm.simplify(c[i, 0]),
-        )
-        d_jfn = njit(nogil=True, inline="always")(d_symb)
-
-        @njit(nogil=True, inline="always")
-        def wfunc(gp, gq, w):
-            gp00 = gp[0, 0]
-            gp01 = gp[0, 1]
-            gp10 = gp[1, 0]
-            gp11 = gp[1, 1]
-            gq00 = gq[0, 0]
-            gq01 = gq[0, 1]
-            gq10 = gq[1, 0]
-            gq11 = gq[1, 1]
-            w00 = w[0]
-            w01 = w[1]
-            w10 = w[2]
-            w11 = w[3]
-            return w_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11).real.ravel()
-
-        @njit(nogil=True, inline="always")
-        def vfunc(gp, gq, w, v):
-            gp00 = gp[0, 0]
-            gp01 = gp[0, 1]
-            gp10 = gp[1, 0]
-            gp11 = gp[1, 1]
-            gq00 = gq[0, 0]
-            gq01 = gq[0, 1]
-            gq10 = gq[1, 0]
-            gq11 = gq[1, 1]
-            w00 = w[0]
-            w01 = w[1]
-            w10 = w[2]
-            w11 = w[3]
-            v00 = v[0]
-            v01 = v[1]
-            v10 = v[2]
-            v11 = v[3]
-            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
-
-    elif jones.ndim == 5:  # DIAG mode
-        w = w.subs(gp10, 0)
-        w = w.subs(gp01, 0)
-        w = w.subs(gq10, 0)
-        w = w.subs(gq01, 0)
-        c = c.subs(gp10, 0)
-        c = c.subs(gp01, 0)
-        c = c.subs(gq10, 0)
-        c = c.subs(gq01, 0)
-
-        if wgt_mode == "minvar":
-            # Take the minimum of the two terms in the sum
-            # Inspired by https://wsclean.readthedocs.io/en/latest/polarizations_and_weights.html
-            w_expr = w[i, 0].applyfunc(lambda element: 4 * sm.Min(*sm.expand(element).args))
-        elif wgt_mode == "l2":
-            # Standard Gaussian case
-            w_expr = sm.simplify(w[i, 0])
-        else:
-            raise ValueError(f"Unknown weighting mode {wgt_mode}")
-
-        w_symb = sm.lambdify(
-            (gp00, gp11, gq00, gq11, w0, w1, w2, w3),
-            w_expr,
-            modules=[
-                {
-                    "Min": np.minimum,  # can't use 'numpy' here else Min -> reduce(min(.))
-                    "conjugate": np.conjugate,
-                    "ImmutableDenseMatrix": np.array,
-                }
-            ],
-        )
-        w_jfn = njit(nogil=True, inline="always")(w_symb)
-
-        d_symb = sm.lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0]))
-        d_jfn = njit(nogil=True, inline="always")(d_symb)
-
-        if nc == "4":
-
-            @njit(nogil=True, inline="always")
-            def wfunc(gp, gq, w):
-                gp00 = gp[0]
-                gp11 = gp[1]
-                gq00 = gq[0]
-                gq11 = gq[1]
-                w00 = w[0]
-                w01 = w[1]
-                w10 = w[2]
-                w11 = w[3]
-                return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
-
-            @njit(nogil=True, inline="always")
-            def vfunc(gp, gq, w, v):
-                gp00 = gp[0]
-                gp11 = gp[1]
-                gq00 = gq[0]
-                gq11 = gq[1]
-                w00 = w[0]
-                w01 = w[1]
-                w10 = w[2]
-                w11 = w[3]
-                v00 = v[0]
-                v01 = v[1]
-                v10 = v[2]
-                v11 = v[3]
-                return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
-        elif nc == "2":
-
-            @njit(nogil=True, inline="always")
-            def wfunc(gp, gq, w):
-                gp00 = gp[0]
-                gp11 = gp[1]
-                gq00 = gq[0]
-                gq11 = gq[1]
-                w00 = w[0]
-                w01 = 1.0
-                w10 = 1.0
-                w11 = w[-1]
-                return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
-
-            @njit(nogil=True, inline="always")
-            def vfunc(gp, gq, w, v):
-                gp00 = gp[0]
-                gp11 = gp[1]
-                gq00 = gq[0]
-                gq11 = gq[1]
-                w00 = w[0]
-                w01 = 1.0
-                w10 = 1.0
-                w11 = w[-1]
-                v00 = v[0]
-                v01 = 0j
-                v10 = 0j
-                v11 = v[-1]
-                return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
-        else:
+        if nc != "4":
+            raise ValueError("Full 2x2 jones mode requires 4 correlation data")
+        wkey, jmode = "WEIGHT", "JONES"
+    elif jones_ndim == 5:
+        if nc not in ("2", "4"):
             raise ValueError(
-                f"Selected product is only available from 2 or 4correlation data while you have ncorr={nc}."
+                f"Selected product is only available from 2 or 4 correlation data while you have ncorr={nc}."
             )
-
+        wkey = "WEIGHT_MINVAR" if wgt_mode == "minvar" else "WEIGHT"
+        jmode = "DIAGJONES"
     else:
         raise ValueError("Jones term has incorrect number of dimensions")
 
-    return vfunc, wfunc
+    vis_fns = tuple(CONVERT_FNS[("VIS", polu, jmode, s)] for s in stokes)
+    wgt_fns = tuple(CONVERT_FNS[(wkey, polu, jmode, s)] for s in stokes)
+    return vis_fns, wgt_fns

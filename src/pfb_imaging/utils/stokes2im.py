@@ -22,6 +22,7 @@ from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import (
     _compute_counts,
+    as_contiguous_readonly_view,
     box_sum_counts,
     counts_to_weights,
     filter_extreme_counts,
@@ -444,14 +445,14 @@ def stokes_image(
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
-        data,
-        weight,
-        flag,
-        jones,
-        tbin_idx,
-        tbin_counts,
-        ant1,
-        ant2,
+        as_contiguous_readonly_view(data),
+        as_contiguous_readonly_view(weight),
+        as_contiguous_readonly_view(flag),
+        as_contiguous_readonly_view(jones),
+        as_contiguous_readonly_view(tbin_idx),
+        as_contiguous_readonly_view(tbin_counts),
+        as_contiguous_readonly_view(ant1),
+        as_contiguous_readonly_view(ant2),
         poltype,
         product,
         str(ncorr),
