@@ -4,7 +4,7 @@ Register of known-but-deferred work, recorded so it is not lost after the
 `imager` branch merges. Items are roughly ordered by when they should be picked
 up. Nothing here blocks the current merge; each is a follow-up.
 
-Context: the `pfb imager` two-pass DataTree pipeline (`<out>_<P>.dt` + `.scratch`)
+Context: the `pfb imager` two-pass DataTree pipeline (`<out>_<PRODUCT>.dt` + `.scratch`)
 landed on the `imager` branch. See `.claude/rules/architecture.md §8` and
 `docs/wiki/imager-pipeline.md`.
 

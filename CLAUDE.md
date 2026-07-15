@@ -29,7 +29,7 @@ commits and issues as sources, never spec/plan paths.
 ## MSv4 DataTree imager (`pfb imager`)
 
 `pfb imager` is the MSv4 front-end that combines `init`+`grid` into a two-pass pipeline producing
-a single unified `xarray.DataTree` (`<out>_<P>.dt`, one node per `(band,time)` output image with a
+a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,time)` output image with a
 `part####` child per data partition) plus a `.scratch` cache. It uses the **native** DataTree API
 (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
 `xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:

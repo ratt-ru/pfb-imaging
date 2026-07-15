@@ -29,8 +29,10 @@ line-by-line, so `help=` strings must match hip-cargo's canonical formatting exa
 * After editing any help text, run `uv run pytest tests/test_roundtrip.py` and
   regenerate the cabs.
 
-## 3. Lazy Imports for CLI Modules
-CLI modules must remain lightweight. Import heavy dependencies only inside the execution scope (within functions) rather than at the top of the file. This keeps CLI startup fast and allows lightweight installation for cab definitions only.
+## 3. Imports: Top-Level by Default
+Always place imports at the top of the file when possible. An in-function (lazy) import is acceptable only for the reasons listed in `.claude/rules/architecture.md` §3 — CLI-module lightweightness, optional heavy runtimes (e.g. `ray`), python-casacore-pulling imports on the MSv4 imaging path, or serialisation constraints — and **must be accompanied by a short inline comment documenting why it cannot be top-level**.
+
+In CLI modules (`src/pfb_imaging/cli/`) the lazy import of the core implementation is the established pattern (keeps `pfb --help` and cab generation fast, enables the lightweight install); no per-import comment is needed there.
 
 ## 4. Architectural Style & Autonomy
 * **Functions vs. Classes:** Prefer functional approaches, pure functions, and explicit over implicit behavior. However, you are empowered to use classes without asking permission when state management is truly beneficial or inheritance/polymorphism is needed.
