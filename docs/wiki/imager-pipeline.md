@@ -39,7 +39,7 @@ no-op later: just another `part{p}` child with its own `BEAM`.
 ## Tree layout (as built)
 
 ```
-<output>_<P>.dt/                      # opened via xr.open_datatree(...)
+<out>_<PRODUCT>.dt/                   # opened via xr.open_datatree(...)
   (root attrs) pfb-imaging-version, product, nband, ntime,
                nx, ny, nx_psf, ny_psf, cell_rad, max_blength, max_freq
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain

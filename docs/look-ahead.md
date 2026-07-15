@@ -69,9 +69,10 @@ is ever needed, match on `freq_out`, not on the band index.
 ## 5. Transient-injection end-to-end test (designed, unimplemented)
 
 The `hci` `inject_transients` feature (`utils/transients.py`, wired through
-`core/hci.py`/`stokes2im.py`) has no end-to-end test. A reviewed design exists (git
-history: `docs/superpowers/specs/2026-05-26-hci-inject-transients-test-design.md`,
-removed when specs became ephemeral). Key ingredients to preserve: isolate the
+`core/hci.py`/`stokes2im.py`) has no end-to-end test. A reviewed design existed and
+was removed with the other specs when `docs/superpowers/` became ephemeral scratch
+(recoverable from git history if ever needed); everything durable from it is
+summarised here. Key ingredients to preserve: isolate the
 transient with `data_column="DATA-DATA"` (zero base data); place it on an exact pixel
 centre by inverting the SIN projection so flux reads without PSF ambiguity; predict
 per-bin flux from `generate_transient_spectra` profiles averaged over contiguous
