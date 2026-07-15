@@ -33,20 +33,6 @@ ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 
 
-def _as_weight_data_input(a):
-    """C-contiguous readonly view of ``a`` (copies only if non-contiguous).
-
-    weight_data never mutates its inputs, and numba specialises on each
-    array's layout and writeable flag: normalising here means one compiled
-    signature per dtype configuration instead of one per readonly/layout
-    permutation of the eight array arguments (issue #273).
-    """
-    a = np.ascontiguousarray(a)
-    v = a.view()
-    v.flags.writeable = False
-    return v
-
-
 @ray.remote
 def batch_stokes_image(
     dc1=None,

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-13T06:30:00Z
-last_verified_commit: 0964bd9
+timestamp: 2026-07-15T00:00:00Z
+last_verified_commit: 5f84d67
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -222,11 +222,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   full compile (~3.5 s) *and* appended a new `.nbc`, growing `/tmp/numba` without bound
   (issue #273; #183 wanted the sympy machinery gone).
 - **Decision:** Per-Stokes expression functions are pre-generated into
-  `radiomesh.generated._stokes_expr` (diag-jones/minvar variants included) and
-  `register_jitable`'d; the overload closure holds **only plain module-level functions
-  and ints**; the outer njit is `cache=True`; `stokes_image` feeds `weight_data`
-  C-contiguous readonly views so Ray's per-task readonly/writable mix doesn't multiply
-  compiled signatures. The sympy derivation and its oracle test live in radiomesh
+  `radiomesh.generated._stokes_expr` (radiomesh ≥ 0.1.2; diag-jones/minvar variants
+  included) and `register_jitable`'d; the overload closure holds **only plain
+  module-level functions and ints**; the outer njit is `cache=True`; every front-end
+  call site (`stokes2im`, `stokes2vis`, `stokes2vis_msv4`) feeds `weight_data`
+  C-contiguous readonly views via `utils/weighting.as_contiguous_readonly_view` so
+  Ray's per-task readonly/writable mix doesn't multiply compiled signatures. The sympy
+  derivation and its oracle test live in radiomesh
   (`radiomesh/tests/test_stokes_expr.py`), not here.
 - **Consequences:** Never capture an njit `Dispatcher` in an `@overload` impl closure —
   it silently poisons the cache key. Measured: fresh-process first call 3.5 s → 0.15 s.
