@@ -34,7 +34,7 @@ full = [
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "reproject",
     "ray[default]>=2.55.0",
-    "radiomesh @ git+https://github.com/ratt-ru/radiomesh.git@58c3576490b42c2f1e08515fb6dbb1d13d51eb3e ; python_version >= '3.11'",
+    "radiomesh>=0.1.2 ; python_version >= '3.11'",
     "rarg-numba-patterns>=0.0.1",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",

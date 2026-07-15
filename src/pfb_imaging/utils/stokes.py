@@ -4,6 +4,15 @@ import numpy as np
 from numba.extending import register_jitable
 from radiomesh.generated._stokes_expr import CONVERT_FNS
 
+try:
+    from radiomesh.generated._stokes_expr import CONVERT_FNS
+except ImportError as e:  # pragma: no cover
+    # This should fail early if the module is not available
+    raise ImportError(
+        "The radiomesh-generated _stokes_expr module is not available. "
+        "Ensure that the full extra is installed and use python 3.11+."
+    ) from e
+
 
 def jones_to_mueller(gp, gq):
     shape = gp.shape
