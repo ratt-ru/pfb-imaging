@@ -30,7 +30,7 @@ line-by-line, so `help=` strings must match hip-cargo's canonical formatting exa
   regenerate the cabs.
 
 ## 3. Imports: Top-Level by Default
-Always place imports at the top of the file when possible. An in-function (lazy) import is acceptable only for the reasons listed in `.claude/rules/architecture.md` §3 — CLI-module lightweightness, optional heavy runtimes (e.g. `ray`), python-casacore-pulling imports on the MSv4 imaging path, or serialisation constraints — and **must be accompanied by a short inline comment documenting why it cannot be top-level**.
+Always place imports at the top of the file when possible. An in-function (lazy) import is acceptable only for the reasons listed in `.claude/rules/architecture.md` §3 — CLI-module lightweightness, optional heavy runtimes (`ray`, `dask`/`distributed`), import-cycle breakers, serialisation constraints, or heavy imports on rarely-taken paths — and **must be accompanied by a short inline comment documenting why it cannot be top-level**.
 
 In CLI modules (`src/pfb_imaging/cli/`) the lazy import of the core implementation is the established pattern (keeps `pfb --help` and cab generation fast, enables the lightweight install); no per-import comment is needed there.
 

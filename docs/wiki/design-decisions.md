@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-15T00:00:00Z
-last_verified_commit: 5f84d67
+timestamp: 2026-07-15T09:00:00Z
+last_verified_commit: b47760f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -185,15 +185,22 @@ update it (and this page's `last_verified_commit`) in the same session.
   off; ERFA "dubious year" warnings are the symptom.
 - **Source:** architecture.md §8; `memory-and-ray.md` related conventions.
 
-### D14 — The MSv4 imaging path stays casacore-free by choice
+### D14 — (Retired 2026-07-15) The MSv4 imaging path stayed casacore-free by choice
 
-- **Context:** arcae ≥ 0.5.2 coexists with python-casacore in one process, so this is
-  no longer a segfault constraint.
-- **Decision:** `stokes2vis_msv4`, `operators/gridder`, `operators/hessian`,
-  `utils/fits` and the `misc`/`beam` helpers keep `africanus`/`daskms`/`casacore`
-  imports out of module scope (deferred into functions) for a lightweight CLI install
-  and fast startup.
-- **Source:** architecture.md §3/§8.
+- **Context:** Before arcae 0.5.2, arcae and python-casacore could not coexist in one
+  process (hard segfault constraint), so the MSv4 imaging path deferred every
+  `africanus`/`daskms`/`casacore` import into functions. After the coexistence fix
+  (ratt-ru/arcae#211, #212) the deferrals were kept for a while as a
+  lightweight-startup preference.
+- **Decision (retired):** The preference was dropped once coexistence had soaked: the
+  deferred casacore-pulling imports moved to module scope (`construct_mappings`'s
+  daskms imports in `utils/misc.py`, `interp_beam`'s `africanus.rime` imports in
+  `utils/beam.py`, `africanus.averaging` in both `stokes2vis` modules). In-function
+  imports now need one of the documented reasons in architecture.md §3 (cycle,
+  optional runtime, serialisation, rare heavy path), each stated in an inline comment.
+- **Consequences:** No import-placement restriction remains on the imaging path. The
+  lightweight CLI install is unaffected (CLI modules still lazy-import the core).
+- **Source:** ratt-ru/arcae#211/#212; architecture.md §3/§8; branch `issue270`.
 
 ### D15 — Imager driver accumulates counts at `weight_grouping` granularity
 

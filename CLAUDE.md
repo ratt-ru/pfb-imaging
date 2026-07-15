@@ -36,12 +36,10 @@ a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,ti
 `.claude/rules/architecture.md §8` and `docs/wiki/imager-pipeline.md`.
 
 **arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
-python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/`. The
-imaging path (`stokes2vis_msv4`, `operators/gridder`, `operators/hessian`, `utils/fits`, and the
-`misc`/`beam` helpers) is nonetheless kept **casacore-free by choice** — for a lightweight CLI
-install and fast startup — so prefer deferring any `africanus`/`daskms`/`casacore` import into the
-function that needs it rather than adding it at module scope. This is a hygiene preference now, not
-a hard segfault constraint.
+python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/` and
+`africanus`/`daskms`/`casacore` imports live at module scope like any other (the old
+casacore-free-by-choice discipline was retired — wiki design-decisions D14). Imports are
+top-level unless a documented `.claude/rules/architecture.md` §3 exception applies.
 
 **Memory/performance:** the Ray+MSv4 path carries hard-won memory discipline (selective variable
 loads, `gc.collect()` at Ray-task boundaries, xarray-ms table-cache eviction, per-task RSS

@@ -17,12 +17,10 @@ process. Run the whole suite as a single command:
 uv run pytest -v tests/
 ```
 
-`tests/test_imager.py` (arcae / `pfb imager`) and the casacore-based tests (which pull in
-python-casacore via `construct_mappings`/daskms in `ms_meta`) therefore run together in one
-pytest session, sharing the session Ray fixture. New tests need no special placement. The
-imaging-path modules (`operators/gridder`, `operators/hessian`, `utils/fits`, …) remain
-casacore-free by design (see `.claude/rules/architecture.md` §3/§8) — a lightweight-install
-preference, not an isolation requirement.
+`tests/test_imager.py` (arcae / `pfb imager`) and the casacore-based tests therefore run
+together in one pytest session, sharing the session Ray fixture. New tests need no special
+placement, and modules impose no casacore-related import restrictions (the historical
+casacore-free discipline was retired — wiki design-decisions D14).
 
 ## 2. Commit Messages
 
