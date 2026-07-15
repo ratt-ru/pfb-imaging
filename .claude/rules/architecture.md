@@ -50,9 +50,8 @@ Operators are callable classes with `dot` (forward/analysis) and `hdot`
 `BackwardSolver` (`opt/__init__.py`), `Regulariser`/`DeconvSolver`
 (`deconv/__init__.py`). **Never introduce ABCs for these seams**; implementations
 are plain classes satisfying the Protocols structurally, composed by
-`deconv/pfb.PFBSolver` and the `deconv/presets.py` registry. Design:
-`docs/superpowers/specs/2026-07-06-gendeconv-protocols-design.md`. Math→code map and
-the load-bearing numerical conventions (nu, wsum, λ schedule): `docs/wiki/deconv-primer.md`;
+`deconv/pfb.PFBSolver` and the `deconv/presets.py` registry (issue #185). Math→code map
+and the load-bearing numerical conventions (nu, wsum, λ schedule): `docs/wiki/deconv-primer.md`;
 rationale ledger: `docs/wiki/design-decisions.md`.
 
 ## 6. Processing Pipeline
@@ -86,8 +85,7 @@ Shared downstream consumers (currently read the legacy `.dds`):
 
 `pfb imager` is the MSv4 front-end. It reads MSv4 data via the `arcae` `xarray-ms` engine and
 writes a single unified `xarray.DataTree`, replacing the legacy `.xds`+`.dds` split for this
-path. Design/plan: `docs/superpowers/specs/2026-06-04-imager-datatree-design.md` and
-`docs/superpowers/plans/2026-06-04-imager-datatree.md`.
+path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/imager-pipeline.md`.
 
 **Two passes (both Ray-distributed):**
 1. **Pass 1** — `utils/stokes2vis_msv4.stokes_vis`: reads raw MSv4 finely (per scan /

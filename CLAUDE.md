@@ -17,6 +17,15 @@ debugging memory or Ray behaviour. **Maintenance rule:** any change that invalid
 wiki page updates the page, its `timestamp` and its `last_verified_commit` stamp in the
 same session/PR.
 
+**Specs and plans are ephemeral.** Design specs and implementation plans (the
+brainstorming/planning skills write them to `docs/superpowers/specs/` and
+`docs/superpowers/plans/`) are working scratch for the duration of a feature branch:
+`docs/superpowers/` is gitignored and its files are never committed. Before finishing a
+branch, fold any durable knowledge (decisions, rationale, gotchas, layouts) into
+`docs/wiki/` — updating the affected pages per the maintenance rule — and let the spec
+and plan files die with the branch. Wiki pages and rules files cite code, tests, PRs,
+commits and issues as sources, never spec/plan paths.
+
 ## MSv4 DataTree imager (`pfb imager`)
 
 `pfb imager` is the MSv4 front-end that combines `init`+`grid` into a two-pass pipeline producing
@@ -24,7 +33,7 @@ a single unified `xarray.DataTree` (`<out>_<P>.dt`, one node per `(band,time)` o
 `part####` child per data partition) plus a `.scratch` cache. It uses the **native** DataTree API
 (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
 `xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
-`.claude/rules/architecture.md §8` and `docs/superpowers/specs/2026-06-04-imager-datatree-design.md`.
+`.claude/rules/architecture.md §8` and `docs/wiki/imager-pipeline.md`.
 
 **arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
 python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/`. The
