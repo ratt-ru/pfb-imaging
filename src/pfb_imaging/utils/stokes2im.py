@@ -22,6 +22,7 @@ from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import (
     _compute_counts,
+    as_contiguous_readonly_view,
     box_sum_counts,
     counts_to_weights,
     filter_extreme_counts,
@@ -30,20 +31,6 @@ from pfb_imaging.utils.weighting import (
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
-
-
-def _as_weight_data_input(a):
-    """C-contiguous readonly view of ``a`` (copies only if non-contiguous).
-
-    weight_data never mutates its inputs, and numba specialises on each
-    array's layout and writeable flag: normalising here means one compiled
-    signature per dtype configuration instead of one per readonly/layout
-    permutation of the eight array arguments (issue #273).
-    """
-    a = np.ascontiguousarray(a)
-    v = a.view()
-    v.flags.writeable = False
-    return v
 
 
 @ray.remote
@@ -458,14 +445,14 @@ def stokes_image(
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
-        _as_weight_data_input(data),
-        _as_weight_data_input(weight),
-        _as_weight_data_input(flag),
-        _as_weight_data_input(jones),
-        _as_weight_data_input(tbin_idx),
-        _as_weight_data_input(tbin_counts),
-        _as_weight_data_input(ant1),
-        _as_weight_data_input(ant2),
+        as_contiguous_readonly_view(data),
+        as_contiguous_readonly_view(weight),
+        as_contiguous_readonly_view(flag),
+        as_contiguous_readonly_view(jones),
+        as_contiguous_readonly_view(tbin_idx),
+        as_contiguous_readonly_view(tbin_counts),
+        as_contiguous_readonly_view(ant1),
+        as_contiguous_readonly_view(ant2),
         poltype,
         product,
         str(ncorr),

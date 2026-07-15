@@ -189,12 +189,12 @@ def test_box_sum_counts_3x3():
     assert out.dtype == counts.dtype
 
 
-def test_as_weight_data_input_flags():
-    from pfb_imaging.utils.stokes2im import _as_weight_data_input
+def test_as_contiguous_readonly_view_flags():
+    from pfb_imaging.utils.stokes2im import _as_contiguous_readonly_view
 
     # contiguous input: no copy, readonly view
     a = np.ones((4, 3, 2), dtype=np.float32)
-    v = _as_weight_data_input(a)
+    v = _as_contiguous_readonly_view(a)
     assert v.flags["C_CONTIGUOUS"] and not v.flags["WRITEABLE"]
     assert np.shares_memory(a, v)
     assert a.flags["WRITEABLE"]  # original untouched
@@ -202,6 +202,6 @@ def test_as_weight_data_input_flags():
     # non-contiguous input (like the jones swapaxes view): copied contiguous
     b = np.ones((4, 3, 2), dtype=np.complex64).swapaxes(0, 1)
     assert not b.flags["C_CONTIGUOUS"]
-    w = _as_weight_data_input(b)
+    w = _as_contiguous_readonly_view(b)
     assert w.flags["C_CONTIGUOUS"] and not w.flags["WRITEABLE"]
     assert not np.shares_memory(b, w)

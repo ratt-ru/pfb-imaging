@@ -503,3 +503,18 @@ def reduce_counts(counts, grouping):
             sums[key] = grid.copy() if key not in sums else sums[key] + grid
         return {(b, t): sums[b if fix_band else t] for (b, t) in counts}
     raise ValueError(f"Unknown weight grouping {grouping!r}; expected one of {valid}")
+
+
+def as_contiguous_readonly_view(a):
+    """
+    C-contiguous readonly view of ``a`` (copies only if non-contiguous).
+
+    weight_data never mutates its inputs, and numba specialises on each
+    array's layout and writeable flag: normalising here means one compiled
+    signature per dtype configuration instead of one per readonly/layout
+    permutation of the eight array arguments (issue #273).
+    """
+    a = np.ascontiguousarray(a)
+    v = a.view()
+    v.flags.writeable = False
+    return v

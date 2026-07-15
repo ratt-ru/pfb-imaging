@@ -11,7 +11,7 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.utils.misc import to_unix_time
-from pfb_imaging.utils.weighting import weight_data
+from pfb_imaging.utils.weighting import as_contiguous_readonly_view, weight_data
 
 
 @ray.remote
@@ -193,14 +193,14 @@ def stokes_vis(
 
     # apply gains and convert to Stokes
     data, weight = weight_data(
-        data,
-        weight,
-        flag,
-        jones,
-        tbin_idx,
-        tbin_counts,
-        ant1,
-        ant2,
+        as_contiguous_readonly_view(data),
+        as_contiguous_readonly_view(weight),
+        as_contiguous_readonly_view(flag),
+        as_contiguous_readonly_view(jones),
+        as_contiguous_readonly_view(tbin_idx),
+        as_contiguous_readonly_view(tbin_counts),
+        as_contiguous_readonly_view(ant1),
+        as_contiguous_readonly_view(ant2),
         poltype,
         product,
         str(ncorr),

@@ -956,7 +956,7 @@ regression test for issue #273."
 
 **Interfaces:**
 - Consumes: `weight_data` (Task 5).
-- Produces: `_as_weight_data_input(a) -> np.ndarray` in `pfb_imaging.utils.stokes2im` —
+- Produces: `as_contiguous_readonly_view(a) -> np.ndarray` in `pfb_imaging.utils.stokes2im` —
   C-contiguous readonly view (copy only when non-contiguous).
 
 - [ ] **Step 1: Write the failing test**
@@ -964,12 +964,12 @@ regression test for issue #273."
 Append to `tests/test_weighting.py`:
 
 ```python
-def test_as_weight_data_input_flags():
-    from pfb_imaging.utils.stokes2im import _as_weight_data_input
+def testas_contiguous_readonly_view_flags():
+    from pfb_imaging.utils.stokes2im import as_contiguous_readonly_view
 
     # contiguous input: no copy, readonly view
     a = np.ones((4, 3, 2), dtype=np.float32)
-    v = _as_weight_data_input(a)
+    v = as_contiguous_readonly_view(a)
     assert v.flags["C_CONTIGUOUS"] and not v.flags["WRITEABLE"]
     assert np.shares_memory(a, v)
     assert a.flags["WRITEABLE"]  # original untouched
@@ -977,7 +977,7 @@ def test_as_weight_data_input_flags():
     # non-contiguous input (like the jones swapaxes view): copied contiguous
     b = np.ones((4, 3, 2), dtype=np.complex64).swapaxes(0, 1)
     assert not b.flags["C_CONTIGUOUS"]
-    w = _as_weight_data_input(b)
+    w = as_contiguous_readonly_view(b)
     assert w.flags["C_CONTIGUOUS"] and not w.flags["WRITEABLE"]
     assert not np.shares_memory(b, w)
 ```
@@ -988,17 +988,17 @@ match style.
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-uv run pytest tests/test_weighting.py::test_as_weight_data_input_flags -q
+uv run pytest tests/test_weighting.py::testas_contiguous_readonly_view_flags -q
 ```
 
-Expected: FAIL — `ImportError: cannot import name '_as_weight_data_input'`.
+Expected: FAIL — `ImportError: cannot import name 'as_contiguous_readonly_view'`.
 
 - [ ] **Step 3: Implement the helper and normalise the call site**
 
 In `src/pfb_imaging/utils/stokes2im.py`, at module level (after the imports):
 
 ```python
-def _as_weight_data_input(a):
+def as_contiguous_readonly_view(a):
     """C-contiguous readonly view of ``a`` (copies only if non-contiguous).
 
     weight_data never mutates its inputs, and numba specialises on each
@@ -1016,14 +1016,14 @@ and change the `weight_data` call (currently lines 446-459) to:
 
 ```python
     data, weight = weight_data(
-        _as_weight_data_input(data),
-        _as_weight_data_input(weight),
-        _as_weight_data_input(flag),
-        _as_weight_data_input(jones),
-        _as_weight_data_input(tbin_idx),
-        _as_weight_data_input(tbin_counts),
-        _as_weight_data_input(ant1),
-        _as_weight_data_input(ant2),
+        as_contiguous_readonly_view(data),
+        as_contiguous_readonly_view(weight),
+        as_contiguous_readonly_view(flag),
+        as_contiguous_readonly_view(jones),
+        as_contiguous_readonly_view(tbin_idx),
+        as_contiguous_readonly_view(tbin_counts),
+        as_contiguous_readonly_view(ant1),
+        as_contiguous_readonly_view(ant2),
         poltype,
         product,
         str(ncorr),
