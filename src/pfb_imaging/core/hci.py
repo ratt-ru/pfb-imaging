@@ -1,3 +1,4 @@
+import gc
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -562,6 +563,11 @@ def hci(
                             timeid, bandid = ray.get(ready)[0]
                             log.info(f"Processed {ncompleted}/{ntasks}")
 
+            # release the main MS TableProxy before opening the next MS — see
+            # https://github.com/ratt-ru/pfb-imaging/issues/241
+            del xds
+            gc.collect()
+
         remaining_tasks = tasks.copy()
         while remaining_tasks:
             ncompleted += 1
@@ -820,6 +826,11 @@ def make_dummy_dataset(
                         tmax = np.minimum(tlow + tcounts, t0 + integrations_per_image)
                         time_slice = slice(t0, tmax)
                         out_times.append(np.mean(utimes[ms_name][idt][time_slice]))
+
+        # release the main MS TableProxy before opening the next MS — see
+        # https://github.com/ratt-ru/pfb-imaging/issues/241
+        del xds
+        gc.collect()
 
     # remove duplicates
     out_times = np.unique(out_times)

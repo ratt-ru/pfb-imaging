@@ -1,3 +1,4 @@
+import gc
 import logging
 
 import dask
@@ -241,6 +242,12 @@ def construct_mappings(
         assert len(ms_name) == len(gain_name)
 
     # collect times and frequencies per ms and ds
+    # Materialise per-MS metadata to numpy inside the loop so the underlying
+    # casacore TableProxies can be finalized before opening the next MS.
+    # Previously these were kept as dask arrays and only computed in bulk after
+    # the loop, which pinned the open subtables of every MS (~13 FDs each) and
+    # exhausted the OS FD limit at ~1000+ MSes.
+    # See https://github.com/ratt-ru/pfb-imaging/issues/241
     freqs = {}
     chan_widths = {}
     times = {}
@@ -264,8 +271,15 @@ def construct_mappings(
         pol_tab = xds_from_table(ms + "::POLARIZATION")[0]
         ant_tab = xds_from_table(ms + "::ANTENNA")[0]
 
-        antpos[ms] = ant_tab.POSITION.data
-        poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze())
+        antpos[ms] = np.asarray(ant_tab.POSITION.data)
+        # fetch_poltype is dask.delayed — compute immediately to get the str
+        poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze()).compute()
+        phase_dir_arr = np.asarray(field_tab.PHASE_DIR.data)
+        chan_freq_arr = np.asarray(spw_tab.CHAN_FREQ.data)
+        chan_width_arr = np.asarray(spw_tab.CHAN_WIDTH.data)
+        # subtable handles no longer needed — drop refs so TableProxies finalize
+        del field_tab, spw_tab, pol_tab, ant_tab
+
         idts[ms] = []
         freqs[ms] = {}
         times[ms] = {}
@@ -284,21 +298,21 @@ def construct_mappings(
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             idts[ms].append(idt)
-            radec = field_tab.PHASE_DIR.data[fid].squeeze()
+            radec = phase_dir_arr[fid].squeeze().copy()
             # force radec to lie in [0, 2*pi)
             if 0 < radec[0] < 2 * np.pi:
                 radec[0] = radec[0] % (2 * np.pi)
             radecs[ms][idt] = radec
-            freqs[ms][idt] = spw_tab.CHAN_FREQ.data[ddid]
-            chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
-            times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
-            uvw = ds.UVW.data
-            max_blengths.append(da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
+            freqs[ms][idt] = chan_freq_arr[ddid]
+            chan_widths[ms][idt] = chan_width_arr[ddid]
+            times[ms][idt] = np.atleast_1d(np.asarray(ds.TIME.data).squeeze())
+            uvw = np.asarray(ds.UVW.data)
+            max_blengths.append(float(np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
 
-    # Early compute to get metadata
-    times, freqs, radecs, chan_widths, max_blengths, antpos, poltype = dask.compute(
-        times, freqs, radecs, chan_widths, max_blengths, antpos, poltype
-    )
+        # main-table handles — drop refs so TableProxies finalize before the
+        # next MS is opened (issue #241)
+        del xds, phase_dir_arr, chan_freq_arr, chan_width_arr
+        gc.collect()
 
     max_blength = max(max_blengths)
     all_times = []
