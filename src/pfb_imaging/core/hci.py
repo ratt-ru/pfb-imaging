@@ -403,11 +403,10 @@ def hci(
 
     log.info("Scaffolding complete")
 
-    if beam_model is not None:
-        log.info("Initialising BeamWizard")
-        beam_wizard = BeamWizard(beam_model, output_dataset)
-    else:
-        beam_wizard = None
+    # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
+    if beam_model in ("U", "L", "S0", "S4"):
+        log.info("Assuming MeerKAT data and initialising BeamWizard")
+        beam_model = BeamWizard(image_name=output_dataset, band=beam_model)
 
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))
@@ -530,7 +529,7 @@ def hci(
                             product=product,
                             check_ants=check_ants,
                             phase_dir=phase_dir,
-                            beam_model=beam_wizard,
+                            beam_model=beam_model,
                             target=target,
                             robustness=robustness,
                             min_padding=min_padding,

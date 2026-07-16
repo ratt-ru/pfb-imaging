@@ -164,8 +164,9 @@ cabs:
           rich_help_panel: Imaging
       beam-model:
         info:
-          Path to beam model (bds produced by suricat-beams).
-        dtype: Optional[URI]
+          Path to a beam model or a MeerKAT band name.
+          One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       field-of-view:

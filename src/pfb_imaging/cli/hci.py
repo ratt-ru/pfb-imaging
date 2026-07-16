@@ -248,10 +248,10 @@ def hci(
         ),
     ] = "double",
     beam_model: Annotated[
-        URI | None,
+        str | None,
         typer.Option(
-            parser=parse_upath,
-            help="Path to beam model (bds produced by suricat-beams).",
+            help="Path to a beam model or a MeerKAT band name. "
+            "One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.",
             rich_help_panel="Input",
         ),
     ] = None,
