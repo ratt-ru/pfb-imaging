@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-15T13:45:00Z
-last_verified_commit: 4c6d59b
+timestamp: 2026-07-16T10:30:00Z
+last_verified_commit: 9a46876
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -270,6 +270,40 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** issue #270; `src/pfb_imaging/__init__.py`; `Dockerfile`;
   `tests/test_numba_cache_dir.py`.
 
+### D19 — Beam maps are (Y, X)-ordered; one documented transpose to wgridder order
+
+- **Context:** The `hci` BeamWizard beam path historically carried a
+  transpose+flip "hack to get the images to align" (`547458f`), later removed
+  (`330bc5d`), and then bypassed reprojection entirely (`a516530`) during the
+  jagged-beam-gain investigation (breifast#208). The hack compensated three real
+  bugs in `reproject_and_interp_scat_beam` (transposed array feed, target
+  `crpix` off by one, wrong target `CDELT1` sign) and was only approximately
+  correct because the MeerKAT beam is nearly circular — measured errors: 4.3 %
+  of peak (circular), 21 % (elliptical), rephasing offsets applied along the
+  wrong axis; it also required square images.
+- **Decision:** Beam maps flow through the pipeline in cube/FITS **(Y, X)**
+  order end to end — `get_rotation_averaged_beam` (native since meerkat-beams
+  `616906b`) → `reproject_and_interp_scat_beam` (fixed to the measured
+  reproject semantics; takes the 1D `l_beam`/`m_beam` coords so cdelt/crpix are
+  signed and direction-agnostic; target WCS equals the hci output header) —
+  with exactly **one** transpose to wgridder (X, Y) order at the end of
+  `beam_for_band`'s wizard branch, commented and citing the wiki page. No flips
+  anywhere.
+- **Rationale:** Every layer keeps the index order its producer defines
+  (astropy/reproject and the wizard are (Y, X); ducc's dirty images are
+  (X, Y)), so orientation is auditable at one seam instead of smeared across
+  compensating hacks. Conventions were pinned by measurement, not derivation:
+  see image-and-beam-orientation.md.
+- **Consequences:** Non-square images work. The zarr-beam branch
+  (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
+  question) is untouched, documented debt. Changing any transpose/flip on this
+  path must keep `tests/test_beam_orientation.py` green.
+- **Source:** `src/pfb_imaging/utils/beam.py`;
+  `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`);
+  `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
+  `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
+  landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -289,6 +323,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   visible overhead on small images (~3 s/major-cycle at 308²). Acceptable at production
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
+- The zarr-beam branch of `beam_for_band` (`reproject_and_interp_beam`) still carries
+  the transpose+flip hack and the pre-D19 reproject bugs, and the MdV feed-plane→sky
+  parity question ("transmissive or receptive?") is unresolved. Only correct-ish for
+  square images and near-circular beams; fix along D19 lines once parity is settled
+  (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas
 

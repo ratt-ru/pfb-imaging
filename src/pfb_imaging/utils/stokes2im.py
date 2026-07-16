@@ -19,7 +19,7 @@ from scipy.constants import c as lightspeed
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
-from pfb_imaging.utils.beam import reproject_and_interp_beam
+from pfb_imaging.utils.beam import reproject_and_interp_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import (
@@ -816,12 +816,15 @@ def beam_for_band(
         l_beam = bds.X.values
         m_beam = bds.Y.values
         t_beam = Time(utime / (24 * 3600), format="mjd")
-        # beam = np.zeros((len(product), l_beam.size, m_beam.size), dtype=real_type)
-        beam = np.zeros((len(product), nx, ny), dtype=real_type)
+        # get_rotation_averaged_beam returns (Y, X)-ordered maps
+        # (see docs/wiki/image-and-beam-orientation.md)
+        beam = np.zeros((len(product), m_beam.size, l_beam.size), dtype=real_type)
+        if isinstance(freq_out, np.ndarray):
+            freq_out = freq_out.item()
         for i, p in enumerate(set(product)):  # set to sort IQUV
             beam[i], _ = beam_model.get_rotation_averaged_beam(
-                # l=l_beam,
-                # m=m_beam,
+                l=l_beam,
+                m=m_beam,
                 times=t_beam,
                 freq=np.array([freq_out]),  # TODO - can we fold in the variance due to finite bandwidth?
                 time_stepping=1,
@@ -831,18 +834,19 @@ def beam_for_band(
                 j=p,
                 verbose=0,
             )
-        cell_deg_in = l_beam[1] - l_beam[0]
-        # pbeam = reproject_and_interp_scat_beam(
-        #     beam,
-        #     radec,
-        #     radec_new,
-        #     cell_deg_in,
-        #     cell_deg,
-        #     nx,
-        #     ny,
-        #     product,
-        # )
-        pbeam = beam
+        pbeam = reproject_and_interp_scat_beam(
+            beam,
+            l_beam,
+            m_beam,
+            radec,
+            radec_new,
+            cell_deg,
+            nx,
+            ny,
+            product,
+        )
+        # cube (Y, X) -> the wgridder (X, Y) order used throughout stokes_image
+        pbeam = np.ascontiguousarray(pbeam.transpose(0, 2, 1), dtype=real_type)
 
     elif beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here?

@@ -174,46 +174,69 @@ def reproject_and_interp_beam(
 
 def reproject_and_interp_scat_beam(
     beam,
+    l_beam,
+    m_beam,
     radec0,
     radecf,
-    cell_deg_in,
     cell_deg_out,
     nxo,
     nyo,
     product,
 ):
-    """
-    beam    - (nstokes, nx, ny)
-    radec0  - original pointing direction
-    radecf  - direction to project to
-    """
-    nstokes, nxi, nyi = beam.shape
-    assert nstokes == len(product), "Number of Stokes products in beam does not match length of product string"
+    """Reproject rotation-averaged beam maps onto the output image grid.
 
-    # reproject onto target field
+    Axis conventions (measured; see docs/wiki/image-and-beam-orientation.md):
+    reproject binds a numpy array to a celestial WCS as (row, col) =
+    (Dec-like, RA-like), so both the input maps and the returned maps are
+    (Y, X)-ordered. For RA---SIN the intermediate coordinate
+    (pixel - crpix) * cdelt is l itself, so signed cdelt taken from the actual
+    l/m coordinates describes either grid direction; the target WCS is the hci
+    output header verbatim (CDELT1 = -cell, CRPIX = 1 + n//2).
+
+    Args:
+        beam: (nstokes, m_beam.size, l_beam.size) beam maps in (Y, X) order,
+            as returned by BeamWizard.get_rotation_averaged_beam, centred on
+            the pointing direction radec0.
+        l_beam: 1D l coordinates of the beam columns (deg, East positive).
+        m_beam: 1D m coordinates of the beam rows (deg, North positive).
+        radec0: original pointing direction (rad).
+        radecf: output image phase centre to project to (rad).
+        cell_deg_out: output cell size (deg).
+        nxo: number of output X pixels.
+        nyo: number of output Y pixels.
+        product: Stokes product string.
+
+    Returns:
+        (nstokes, nyo, nxo) beam maps in cube (Y, X) order, zeroed where the
+        input maps have no coverage.
+    """
+    nstokes = beam.shape[0]
+    assert nstokes == len(product), "Number of Stokes products in beam does not match length of product string"
+    assert beam.shape[1:] == (m_beam.size, l_beam.size), "Beam maps must be (Y, X)-ordered on the l/m grid"
+
+    dl = l_beam[1] - l_beam[0]
+    dm = m_beam[1] - m_beam[0]
+
+    # WCS describing the beam grid around the pointing direction
     wcs_ref = WCS(naxis=2)
     wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
-    wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
+    wcs_ref.wcs.cdelt = np.array((dl, dm))
     wcs_ref.wcs.cunit = ["deg", "deg"]
-    wcs_ref.wcs.crval = np.array((radec0[0] * 180.0 / np.pi, radec0[1] * 180.0 / np.pi))
-    wcs_ref.wcs.crpix = [1 + nxi // 2, 1 + nyi // 2]
-    wcs_ref.array_shape = [nxi, nyi]
+    wcs_ref.wcs.crval = np.array((np.rad2deg(radec0[0]), np.rad2deg(radec0[1])))
+    # 1-based crpix of the zero-offset pixel
+    wcs_ref.wcs.crpix = [1.0 - l_beam[0] / dl, 1.0 - m_beam[0] / dm]
 
-    # header for target field
+    # target WCS = the hci output header (core/hci.py scaffold construction)
     wcs_target = WCS(naxis=2)
     wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
-    wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
+    wcs_target.wcs.cdelt = np.array((-cell_deg_out, cell_deg_out))
     wcs_target.wcs.cunit = ["deg", "deg"]
-    wcs_target.wcs.crval = np.array((radecf[0] * 180.0 / np.pi, radecf[1] * 180.0 / np.pi))
-    wcs_target.wcs.crpix = [nxo // 2, nyo // 2]
-    wcs_target.array_shape = [nxo, nyo]
+    wcs_target.wcs.crval = np.array((np.rad2deg(radecf[0]), np.rad2deg(radecf[1])))
+    wcs_target.wcs.crpix = [1 + nxo // 2, 1 + nyo // 2]
 
-    pbeam = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
-    pmask = np.zeros((nstokes, nxo, nyo), dtype=beam.dtype)
+    pbeam = np.zeros((nstokes, nyo, nxo), dtype=beam.dtype)
     for i in range(nstokes):
-        pbeam[i], pmask[i] = reproject_interp((beam[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))
-
-    # set beam to zero where it is not defined
-    pmask = pmask.astype(bool)
-    pbeam[~pmask] = 0.0
+        pbeam[i], pmask = reproject_interp((beam[i], wcs_ref), wcs_target, shape_out=(nyo, nxo))
+        # set beam to zero where it is not defined
+        pbeam[i][~pmask.astype(bool)] = 0.0
     return pbeam
