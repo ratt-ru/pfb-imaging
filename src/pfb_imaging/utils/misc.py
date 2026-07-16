@@ -299,9 +299,8 @@ def construct_mappings(
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             idts[ms].append(idt)
             radec = phase_dir_arr[fid].squeeze().copy()
-            # force radec to lie in [0, 2*pi)
-            if 0 < radec[0] < 2 * np.pi:
-                radec[0] = radec[0] % (2 * np.pi)
+            # force ra to lie in [0, 2*pi)
+            radec[0] = radec[0] % (2 * np.pi)
             radecs[ms][idt] = radec
             freqs[ms][idt] = chan_freq_arr[ddid]
             chan_widths[ms][idt] = chan_width_arr[ddid]
