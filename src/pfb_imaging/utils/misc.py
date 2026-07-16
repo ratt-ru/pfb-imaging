@@ -519,7 +519,9 @@ def psf_errorsq(x, data, xy):
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0):
+def fitcleanbeam(
+    psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0, yx_order: bool = False
+):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
@@ -527,13 +529,20 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsig
     of the initial beam estimate.
 
     Args:
-        psf     - (nband, nx, ny) array containing the PSF for each band.
+        psf     - (nband, nx, ny) array containing the PSF for each band,
+                  or (nband, ny, nx) with yx_order=True.
         level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
         pixsize - pixel size in same units as desired Gaussian parameters.
         nsigma  - fit Gaussian out to this many standard deviations of the estimated major axis.
+        yx_order - set True for cube/FITS (Y, X)-ordered input (see
+                  docs/wiki/image-and-beam-orientation.md). The fit is defined
+                  in wgridder (X, Y) order; this adapts via a zero-copy view so
+                  the returned parameters are identical for either order.
     Returns:
         Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
+    if yx_order:
+        psf = psf.transpose(0, 2, 1)
     nband, nx, ny = psf.shape
 
     # pixel coordinates

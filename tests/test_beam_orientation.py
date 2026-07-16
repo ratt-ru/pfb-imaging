@@ -22,6 +22,7 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
+from pfb_imaging.utils.misc import fitcleanbeam
 
 pmp = pytest.mark.parametrize
 
@@ -150,3 +151,23 @@ def test_reproject_scat_beam_matches_analytic(offset_lm):
 
     # bilinear interpolation of the 0.02-deg-sampled Gaussian: ~1e-3
     assert np.max(np.abs(pbeam[0] - ref)) < 5e-3
+
+
+def test_fitcleanbeam_yx_order_invariant():
+    """fitcleanbeam(yx_order=True) must return bitwise the same (emaj, emin,
+    pa) for a transposed PSF, so the hci path can hand it cube (Y, X)-ordered
+    arrays without changing the PA convention breifast consumes."""
+    nx, ny = 128, 96
+    x = -(nx // 2) + np.arange(nx)
+    y = -(ny // 2) + np.arange(ny)
+    xx, yy = np.meshgrid(x, y, indexing="ij")
+    # elliptical PSF main lobe, PA distinct from 0/45/90 deg
+    psf = _elliptical_beam(xx * 0.01, yy * 0.01)[None, :, :]  # (1, nx, ny)
+
+    ref = fitcleanbeam(psf, level=0.5, pixsize=1.0)
+    yx = fitcleanbeam(psf.transpose(0, 2, 1), level=0.5, pixsize=1.0, yx_order=True)
+    np.testing.assert_array_equal(ref, yx)
+    # sanity: the fit resolved an elongated beam at a nontrivial angle
+    emaj, emin, pa = ref[0]
+    assert emaj > emin
+    assert 0 < pa < np.pi

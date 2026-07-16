@@ -593,10 +593,13 @@ def stokes_image(
     nstokes = weight.shape[0]
     wsums = np.zeros((nstokes, nband), dtype=real_type)
     # TODO - cubes for MF deconvolution?
-    residual = np.zeros((nstokes, nx, ny), dtype=real_type)
-    psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
+    # all image-space arrays are cube/FITS (Y, X)-ordered; ducc's x-major world
+    # exists only at the vis2dirty seams below via transposed views
+    # (see docs/wiki/image-and-beam-orientation.md)
+    residual = np.zeros((nstokes, ny, nx), dtype=real_type)
+    psf = np.zeros((nstokes, ny_psf, nx_psf), dtype=real_type)
     rms = np.zeros(nstokes, dtype=real_type)
-    pbeam = np.zeros((nstokes, nx, ny), dtype=real_type)
+    pbeam = np.zeros((nstokes, ny, nx), dtype=real_type)
     for b, fi in enumerate(range(0, nchan, channels_per_bin)):
         ff = min(fi + channels_per_bin, nchan)
         datab = data[:, :, fi:ff]
@@ -629,7 +632,9 @@ def stokes_image(
         for c in range(nstokes):
             if weightb[c, ~flagb].sum() == 0:
                 continue
-            residualb = vis2dirty(
+            # ducc fills the (Y, X) buffers through zero-copy transposed views
+            residualb = np.zeros((ny, nx), dtype=real_type)
+            vis2dirty(
                 uvw=uvw,
                 freq=freqb,
                 vis=datab[c],
@@ -651,9 +656,11 @@ def stokes_image(
                 sigma_min=min_padding,
                 double_precision_accumulation=double_accum,
                 verbosity=0,
+                dirty=residualb.T,
             )
 
-            psfb = vis2dirty(
+            psfb = np.zeros((ny_psf, nx_psf), dtype=real_type)
+            vis2dirty(
                 uvw=uvw,
                 freq=freqb,
                 vis=psf_visb,
@@ -675,6 +682,7 @@ def stokes_image(
                 sigma_min=min_padding,
                 double_precision_accumulation=double_accum,
                 verbosity=0,
+                dirty=psfb.T,
             )
             # normalize by sum of weights to get Jy/beam units
             # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
@@ -690,7 +698,8 @@ def stokes_image(
 
                 abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psfb, axes=(0, 1)), axes=(0, 1), norm="backward"))
 
-                hess = partial(hessian_slice_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
+                # sizes follow the (Y, X) array axes
+                hess = partial(hessian_slice_jax, ny, nx, 2 * ny, 2 * nx, eta, abspsf)
 
                 residualb = cg(hess, residualb, tol=cg_tol, maxiter=cg_maxit)[0]
 
@@ -714,7 +723,7 @@ def stokes_image(
     rms = np.std(residual, axis=(1, 2))
 
     # these will be in degrees
-    gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
+    gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg, yx_order=True)
     unix_time = to_unix_time(time_out)
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -734,14 +743,14 @@ def stokes_image(
         "X": (("X",), out_ras),
         "Y": (("Y",), out_decs),
     }
-    # X and Y are transposed for compatibility with breifast
+    # image-space arrays are already cube (Y, X)-ordered
     data_vars = {}
-    residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
+    residual = residual.astype(np.float32)
     data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
     if psf_out:
         coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
         coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
-        psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
+        psf = psf.astype(np.float32)
         data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
 
     if robustness is not None and weight_grid_out:
@@ -756,8 +765,7 @@ def stokes_image(
     data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
 
     if beam_model is not None:
-        weight = pbeam**2 + eta
-        weight = np.transpose(weight.astype(np.float32), axes=(0, 2, 1))
+        weight = (pbeam**2 + eta).astype(np.float32)
         data_vars["beam_weight"] = (("STOKES", "FREQ", "TIME", "Y", "X"), weight[:, None, None, :, :])
 
     data_vars["rms"] = (("STOKES", "FREQ", "TIME"), rms[:, None, None].astype(np.float32))
@@ -810,6 +818,11 @@ def beam_for_band(
     weight,
     nthreads,
 ):
+    """Return the Stokes power beam on the output image grid.
+
+    Contract: (len(product), ny, nx) in cube/FITS (Y, X) order, matching the
+    image-space arrays in stokes_image (docs/wiki/image-and-beam-orientation.md).
+    """
     if isinstance(beam_model, BeamWizard):
         # should we compute a weighted mean over freq instead of interpolating here?
         bds = beam_model.bds
@@ -844,9 +857,7 @@ def beam_for_band(
             nx,
             ny,
             product,
-        )
-        # cube (Y, X) -> the wgridder (X, Y) order used throughout stokes_image
-        pbeam = np.ascontiguousarray(pbeam.transpose(0, 2, 1), dtype=real_type)
+        ).astype(real_type)
 
     elif beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here?
@@ -878,10 +889,12 @@ def beam_for_band(
             nthreads=nthreads,
         )
 
-        # this is a hack to get the images to align
+        # this is a hack to get the images to align: only correct-ish for
+        # square images and near-circular beams (documented debt, see
+        # design-decisions.md D19 and image-and-beam-orientation.md §5)
         pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
         pbeam = pbeam[:, ::-1, :]
 
     else:
-        pbeam = np.ones((len(product), nx, ny), dtype=real_type)
+        pbeam = np.ones((len(product), ny, nx), dtype=real_type)
     return pbeam

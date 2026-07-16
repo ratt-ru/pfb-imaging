@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-07-16T10:30:00Z
-last_verified_commit: 9a46876
+timestamp: 2026-07-16T12:00:00Z
+last_verified_commit: c4ae544
 ---
 
 # Image and beam orientation conventions (hci)
@@ -19,13 +19,19 @@ re-run the pinning test (planned, see Status) before "fixing" anything here.
 
 | Object | Index order | Axis directions |
 |--------|-------------|-----------------|
-| wgridder image (`vis2dirty` output, `stokes_image` working arrays: `residual`, `psf`, `pbeam`) | `arr[ix, iy]`, shape `(nx, ny)` | `ix`: l **descending** (East at low `ix`, RA descending); `iy`: m **ascending** (Dec ascending) |
-| hci cube / FITS data (`cube` dims `(STOKES, FREQ, TIME, Y, X)`; legacy `save_fits` writes `(..., ny, nx)`) | `arr[iy, ix]` | `X` coord `out_ras` descending (header `CDELT1 = -cell`); `Y` coord `out_decs` ascending (`CDELT2 = +cell`) |
+| ducc wgridder images (`vis2dirty`/`dirty2vis` view of the image) | `arr[ix, iy]`, shape `(nx, ny)` | `ix`: l **descending** (East at low `ix`, RA descending); `iy`: m **ascending** (Dec ascending) |
+| hci cube / FITS data (`cube` dims `(STOKES, FREQ, TIME, Y, X)`; legacy `save_fits` writes `(..., ny, nx)`); **all `stokes_image` working arrays** (`residual`, `psf`, `pbeam`) | `arr[iy, ix]` | `X` coord `out_ras` descending (header `CDELT1 = -cell`); `Y` coord `out_decs` ascending (`CDELT2 = +cell`) |
 | `BeamWizard.get_rotation_averaged_beam` maps (meerkat-beams ≥ `616906b`) and `bds` variables (dims `(..., Y, X)`) | `arr[iy, ix]` — FITS convention | direction follows the l/m grid handed in (or the wizard's image grid, which inherits the header's `CDELT` signs) |
 
-So the wgridder image and the cube/FITS layer are exactly each other's transpose
-(`stokes2im.py` line ~739 does `transpose(0, 2, 1)`, no flips), and the wizard's
-native output is already cube-ordered.
+The wgridder image and the cube/FITS layer are exactly each other's transpose
+(no flips). On the hci path the (Y, X) order is canonical end to end and **no
+data-moving transposes exist**: ducc's x-major world is confined to the
+`vis2dirty` call sites, which fill the `(ny, nx)` buffers through zero-copy
+transposed views (`dirty=buf.T` — ducc accepts strided output; verified to
+1e-12 against the C-ordered return path). The other x-major citizen is
+`fitcleanbeam` (shared with the legacy `.dds` path, PA convention defined by
+its input axes); `stokes_image` calls it with `yx_order=True`, which adapts via
+an internal zero-copy view and returns bitwise-identical parameters.
 
 ## 2. Measured ground truth for the wgridder image
 
@@ -118,7 +124,7 @@ and is owned by meerkat-beams for the wizard path (its PR #8 M1 validation).
 ## 6. The corrected construction (validated)
 
 Feed **(Y, X)-ordered** maps; describe the beam grid honestly; make the target
-WCS *equal* the real output header; transpose once at the end:
+WCS *equal* the real output header:
 
 ```python
 # beam[iy, ix] on the bds grid, around the pointing centre radec0
@@ -131,8 +137,8 @@ wcs_target.wcs.cdelt = (-cell_deg, cell_deg)
 wcs_target.wcs.crval = radec_new_deg
 wcs_target.wcs.crpix = (1 + nx // 2, 1 + ny // 2)
 
-out = reproject_interp((beam_yx, wcs_ref), wcs_target, shape_out=(ny, nx))[0]
-pbeam = out.T          # cube (Y, X) -> wgridder (X, Y) for use in stokes_image
+pbeam = reproject_interp((beam_yx, wcs_ref), wcs_target, shape_out=(ny, nx))[0]
+# already cube (Y, X)-ordered — used as-is by stokes_image
 ```
 
 Validated against the analytic reference: exact (≤ 5e-5, bilinear interpolation
@@ -146,14 +152,20 @@ The §6 construction is implemented: `reproject_and_interp_scat_beam` takes the
 1D `l_beam`/`m_beam` coordinates (signed cdelt, coord-derived crpix, target WCS
 = the hci header) and returns cube-ordered `(nstokes, ny, nx)` maps;
 `beam_for_band`'s wizard branch evaluates the beam on the coarse `bds` grid
-around the pointing, reprojects `radec → radec_new`, and does exactly one
-documented transpose to wgridder order (design-decisions.md D19). Non-square
-images work. Pinned by `tests/test_beam_orientation.py`: the point-source
-wgridder-orientation test and the elliptical-beam reproject-vs-analytic test
-(with rephasing, non-square output). The interim no-reprojection state
-(`a516530`, the jagged-gain sampling experiment for breifast#208 — which ruled
-out coarse sampling as the cause) is gone. The zarr-beam branch and its hack
-remain untouched, documented debt (§5, design-decisions.md Known debt).
+around the pointing and reprojects `radec → radec_new`. `stokes_image` works in
+(Y, X) order throughout, so the beam is used as returned and the cube/psf/
+beam_weight are written without transposition — the only x-major seams are the
+`vis2dirty` calls (zero-copy `dirty=buf.T` views) and the `fitcleanbeam` call
+(`yx_order=True`); see §1 and design-decisions.md D19. Non-square images work.
+Pinned by `tests/test_beam_orientation.py` (point-source wgridder orientation,
+elliptical-beam reproject vs analytic with rephasing and non-square output,
+`fitcleanbeam` order-invariance), and the refactor was verified bitwise-
+equivalent in output against the pre-refactor code on the test MS (cube/psf to
+single-precision threading noise ~1e-7; `psf_pa` exactly). The interim
+no-reprojection state (`a516530`, the jagged-gain sampling experiment for
+breifast#208 — which ruled out coarse sampling as the cause) is gone. The
+zarr-beam branch and its hack remain untouched, documented debt (§5,
+design-decisions.md Known debt).
 
 Sources: `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, coordinate
 assignment), `src/pfb_imaging/utils/beam.py`, `core/hci.py` (scaffold header),
