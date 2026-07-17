@@ -24,7 +24,7 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 2. **Optional heavy runtimes** (`ray`, `dask`/`distributed`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`distributed` deferred to `set_client`.
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
-5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the sympy-pulling `utils/modelspec` import in `core/grid.py`, needed only when transferring a model).
+5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s frozen legacy oracle).
 
 (A **python-casacore-pulling** exception previously applied to the MSv4 imaging path; it was retired once arcae ≥ 0.5.2 made arcae and python-casacore coexist in one process — see wiki design-decisions D14. `africanus`/`daskms` imports now live at module scope like any other.)
 
@@ -66,22 +66,21 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 
 ## 6. Processing Pipeline
 
-Two front-ends produce the intermediary products consumed by deconvolution:
+One MSv4 front-end produces the intermediary products consumed by deconvolution:
 
-**Legacy (MSv2, python-casacore):**
-1. `pfb init` — MS → vis-space Stokes datasets (.xds)
-2. `pfb grid` — dirty images, PSFs, weights (.dds)
+1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree` (`.dt`) plus a `.scratch` cache. See §8.
+2. `pfb deconv` — composable deconvolution of the `.dt` (see §5).
+3. `pfb degrid` — subtract model from visibilities.
 
-**MSv4 (arcae):**
-- `pfb imager` — combines init+grid in two passes over MSv4 data into a single `xarray.DataTree` (`.dt`) plus a `.scratch` cache. See §8.
+`pfb hci` is the separate high-cadence-imaging front-end. The legacy MSv2 subcommands
+(`init`, `grid`, `kclean`, `sara`, `fluxtractor`) were retired in 0.1.0 (#277); their
+correctness coverage lives in the ground-truth imager tests (`tests/test_imager*.py`,
+`tests/test_deconv.py`). `pfb restore` remains registered as **untested reference code**
+only — its `.dds` inputs can no longer be produced in-repo; its functionality moves into
+`deconv` eventually. `pfb model2comps` is likewise `.dds`-coupled and awaits the
+pfb-model-spec migration.
 
-Shared downstream consumers (currently read the legacy `.dds`):
-3. `pfb kclean` — classical deconvolution (Hogbom/Clark)
-4. `pfb sara` — sparsity-constrained deconvolution
-5. `pfb restore` — restore clean components
-6. `pfb degrid` — subtract model from visibilities
-
-**Data flow:** MS → `.xds`/`.dds` or `.dt` (Zarr) → FITS. Dask for lazy evaluation, distributed execution.
+**Data flow:** MS → `.dt` (Zarr) → FITS.
 
 ## 7. Performance
 
@@ -169,8 +168,8 @@ distributed by Ray, the sum over a band's partitions is not):
   the driver reads only image-scale cubes (`RESIDUAL`/`MODEL`/`UPDATE`), `WSUM` and attrs.
 
 **arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
-python-casacore coexist in one process, so the suite runs as a single `pytest tests/` and the
-imager↔`init`+`grid` equivalence test runs both paths in-process. The historical
-casacore-free discipline on the imaging path was retired (wiki design-decisions D14):
-`africanus`/`daskms`/`casacore` imports follow the ordinary §3 rules — top-level unless a
-documented §3 exception applies.
+python-casacore coexist in one process, so the suite runs as a single `pytest tests/`
+(the ground-truth fixture writes the test MS with python-casacore while the imager reads
+it with arcae). The historical casacore-free discipline on the imaging path was retired
+(wiki design-decisions D14): `africanus`/`daskms`/`casacore` imports follow the ordinary
+§3 rules — top-level unless a documented §3 exception applies.

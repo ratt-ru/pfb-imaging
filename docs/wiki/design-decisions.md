@@ -32,15 +32,20 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`dual_update`, reweighting trio) are `hasattr`-sniffed, not Protocol members.
 - **Source:** issue #185; architecture.md §5; `deconv-primer.md`.
 
-### D2 — Legacy code is untouched and serves as the test oracle
+### D2 — (Partially retired 2026-07-17) Legacy code served as the test oracle
 
 - **Context:** Rewrites of numerical code need ground truth.
-- **Decision:** `core/sara.py`, `core/kclean.py`, the `.dds` consumers and the legacy
-  `opt` functions (`primal_dual`, `primal_dual_numba`, `pcg*`, `fista`) are not
-  modified (behaviour-wise); new implementations are validated against them in a
+- **Decision (original):** `core/sara.py`, `core/kclean.py`, the `.dds` consumers and
+  the legacy `opt` functions (`primal_dual`, `primal_dual_numba`, `pcg*`, `fista`) were
+  not modified (behaviour-wise); new implementations were validated against them in a
   three-tier pyramid (unit rdiff < 1e-10, operator equality, e2e on a real MS).
+- **Status:** the e2e oracles (`core/sara.py`, `core/kclean.py`, `init`+`grid`) were
+  deleted in 0.1.0 (#277) once ground-truth tests against an injected sky replaced the
+  equivalence tests (which were vacuous in CI — the downloaded MS had zero DATA). The
+  frozen unit-level `opt` oracles (`primal_dual{,_numba}`, `pcg_numba`, `fista`) remain
+  and are still not to be modified.
 - **Rationale:** Mirrors the `init`+`grid` → `imager` strategy, which caught real bugs
-  at every tier.
+  at every tier; ground truth beats equivalence once the legacy side must go.
 - **Consequences:** Known legacy warts stay (see Debt); e2e comparisons must pin a
   shared `hess_norm` to remove power-method nondeterminism. Docstring-only additions
   to legacy code are fine.

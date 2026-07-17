@@ -17,7 +17,7 @@ The cabs can be included in stimela recipes using:
 
 ```yaml
 _include:
-  - (pfb_imaging.cabs)init.yml
+  - (pfb_imaging.cabs)imager.yml
 ```
 
 **Full stack:**
@@ -40,19 +40,19 @@ See the [Development](#development) section for instructions on how to set the p
 
 The easiest way to use `pfb-imaging` is via the `stimela` recipes given in the [recipes folder](recipes/).
 Once the package is installed, a recipe can be queried for its input and output parameters using the `stimela doc` command.
-For example, to see the inputs and outputs of the `sara` recipe, simply run
+For example, to see the inputs and outputs of the `spotless` recipe, simply run
 
 ```bash
-stimela doc 'pfb_imaging.recipes::sara.yaml'
+stimela doc 'pfb_imaging.recipes::spotless.yml'
 ```
 
 The recipe can then be run with the `stimela run` command:
 
 ```bash
-stimela run 'pfb_imaging.recipes::sara.yaml' sara \
+stimela run 'pfb_imaging.recipes::spotless.yml' gospotless \
   ms=path/to/data.ms \
   base-dir=path/to/base/output/directory \
-  image-name=saraout
+  image-name=spotlessout
 ```
 
 The recipe should contain sensible defaults for MeerKAT data at L-band.
@@ -69,7 +69,7 @@ pfb --help
 To get detailed documentation for a specific command including all parameters, types, and defaults:
 
 ```bash
-pfb init --help
+pfb imager --help
 ```
 
 This is often more useful than `stimela doc` as it shows the full parameter documentation with types and defaults directly in the terminal.
@@ -78,19 +78,18 @@ This is often more useful than `stimela doc` as it shows the full parameter docu
 
 The processing pipeline follows a modular pattern where each step is a separate command:
 
-1. `pfb init` -- Parse measurement sets into xarray datasets
-2. `pfb grid` -- Create dirty images, PSFs, and weights
-3. `pfb kclean` -- Classical deconvolution (Hogbom/Clark)
-4. `pfb sara` -- Advanced deconvolution with sparsity constraints
-5. `pfb restore` -- Restore clean components to final image
-6. `pfb degrid` -- Subtract model from visibilities
+1. `pfb imager` -- Image measurement sets (MSv4 via arcae) into a unified DataTree
+2. `pfb deconv` -- General composable deconvolution of the imager output
+3. `pfb degrid` -- Subtract model from visibilities
 
 Additional commands:
 
-- `pfb deconv` -- General deconvolution (replaces individual algorithm apps)
 - `pfb hci` -- High cadence imaging
-- `pfb fluxtractor` -- Flux extraction
 - `pfb model2comps` -- Convert model to components
+- `pfb restore` -- Restore clean components (reference code; being folded into `deconv`)
+
+The legacy MSv2 pipeline (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) was removed
+in 0.1.0 in favour of `imager`+`deconv`.
 
 ## Execution backends
 
@@ -112,13 +111,13 @@ Example usage:
 
 ```bash
 # Run natively (requires full install)
-pfb init --ms data.ms --output-filename out --backend native
+pfb imager --ms data.ms --output-filename out --backend native
 
 # Run in a Docker container (lightweight install only)
-pfb init --ms data.ms --output-filename out --backend docker
+pfb imager --ms data.ms --output-filename out --backend docker
 
 # Auto-detect: native if available, otherwise container
-pfb init --ms data.ms --output-filename out
+pfb imager --ms data.ms --output-filename out
 ```
 
 Volume mounts are resolved automatically from the command's type hints: input paths are mounted read-only, output paths read-write.
@@ -128,14 +127,13 @@ Docker and Podman run as the current user to avoid root-owned output files.
 
 Output files follow consistent naming patterns using `--output-filename`, `--product`, and `--suffix`:
 
-- XDS datasets: `{output_filename}_{product}.xds`
-- DDS datasets: `{output_filename}_{product}_{suffix}.dds`
-- Models: `{output_filename}_{product}_{suffix}_model.mds`
+- Imager DataTree: `{output_filename}_{product}.dt` (plus a `{...}.scratch` cache)
+- Models: `{output_filename}_{suffix}.mds`
 - FITS files: same convention with appropriate extensions
 
-The `--suffix` parameter (default `main`) allows imaging multiple fields from a single set of corrected Stokes visibilities.
-For example, the sun can be imaged by setting `--target sun --suffix sun`.
-The `--target` parameter accepts any object recognised by `astropy` or `HH:MM:SS,DD:MM:SS` format.
+The `--suffix` parameter (default `main`) namespaces the deconvolution outputs.
+In `pfb hci`, the sun can be imaged by setting `--target sun --suffix sun`;
+`--target` accepts any object recognised by `astropy` or `HH:MM:SS,DD:MM:SS` format.
 
 ## Parallelism settings
 
@@ -151,7 +149,7 @@ The product of `--nworkers` and `--nthreads` should not exceed available resourc
 ## Weighting
 
 Imaging weights control the tradeoff between point-source sensitivity and angular resolution.
-`pfb grid` and `pfb hci` expose the same set of options under the **Weighting** help panel:
+`pfb imager` and `pfb hci` expose the same set of options under the **Weighting** help panel:
 
 - `--robustness` -- Briggs robustness factor.
   Leaving this unset (the default) applies natural weighting, which simply uses the visibility weights from the measurement set and maximises point-source sensitivity.
@@ -163,14 +161,10 @@ Imaging weights control the tradeoff between point-source sensitivity and angula
   Combined with a non-default `--robustness`, this yields super-robust weighting.
 - `--filter-counts-level` -- Floor cells with extremely low counts at `median / level` before normalising.
   This prevents a handful of nearly empty uv-cells from being up-weighted far above the rest.
-- `--l2-reweight-dof` -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
-  Requires a reference model (via `--transfer-model-from` or cached from a previous iteration).
-  Small values reweight aggressively and should only be used once the model is reasonably complete.
+- `--l2-reweight-dof` (`pfb hci` only) -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
 
-Weights are computed by `pfb grid` and written to the `.dds` dataset; the dirty image, the PSF, and every subsequent forward/backward pass in `pfb kclean`, `pfb sara`, and `pfb hci` all grid with that same stored set.
-
-**Note:** re-running `pfb grid` is the supported way to change the weighting scheme after `pfb init` -- the weighting options above only take effect at this step, and none of them require redoing the MS ingestion.
-To keep multiple weighting choices side by side, pass a distinct `--suffix` to each `pfb grid` run (e.g. `--suffix robust0 --robustness 0` and `--suffix uniform --robustness -2`); the downstream deconvolution commands then pick a dataset by matching suffix.
+Weights are computed in `pfb imager` pass 2 and written to the `.dt` partitions; the dirty image, the PSF, and every subsequent forward/backward pass in `pfb deconv` grid with that same stored set.
+The pass-1 `.scratch` cache is retained by default, so re-running `pfb imager` with a different weighting scheme does not redo the MS ingestion.
 
 ## Package structure
 
