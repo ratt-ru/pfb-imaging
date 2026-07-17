@@ -30,6 +30,74 @@ def to_unix_time(times):
     return times - 3506716800.0
 
 
+def to_mjd_time(times):
+    """Inverse of :func:`to_unix_time`: unix seconds -> MJD seconds.
+
+    The MSv4 ``time`` coordinate is unix seconds; casacore measures and
+    :func:`pfb_imaging.utils.astrometry.get_coordinates` expect MJD seconds.
+    """
+    return times + 3506716800.0
+
+
+def radec_to_lm(radec, radec0):
+    """Direction cosines of ``radec`` w.r.t. the tangent point ``radec0``.
+
+    Pure-numpy equivalent of ``africanus.coordinates.radec_to_lm``. ``l``
+    increases towards increasing RA (East), ``m`` towards increasing Dec
+    (North).
+
+    Args:
+        radec: (ra, dec) of the direction, radians.
+        radec0: (ra, dec) of the tangent point, radians.
+
+    Returns:
+        ``np.ndarray`` (2,) with (l, m) in radians.
+    """
+    ra, dec = radec
+    ra0, dec0 = radec0
+    dra = ra - ra0
+    ell = np.cos(dec) * np.sin(dra)
+    emm = np.sin(dec) * np.cos(dec0) - np.cos(dec) * np.sin(dec0) * np.cos(dra)
+    return np.array([ell, emm])
+
+
+def radec_barycentre(radecs):
+    """Spherical mean of pointing directions (the mosaic default centre).
+
+    Args:
+        radecs: (n, 2) array of (ra, dec) in radians.
+
+    Returns:
+        ``np.ndarray`` (2,) with (ra, dec) in radians, RA wrapped to [0, 2pi).
+    """
+    radecs = np.atleast_2d(radecs)
+    x = np.cos(radecs[:, 1]) * np.cos(radecs[:, 0])
+    y = np.cos(radecs[:, 1]) * np.sin(radecs[:, 0])
+    z = np.sin(radecs[:, 1])
+    xm, ym, zm = x.mean(), y.mean(), z.mean()
+    ra = np.arctan2(ym, xm) % (2 * np.pi)
+    # (-eps) % (2*pi) rounds to exactly 2*pi in float64, violating [0, 2pi); snap the seam
+    if ra >= 2 * np.pi - 1e-10:
+        ra = 0.0
+    dec = np.arctan2(zm, np.hypot(xm, ym))
+    return np.array([ra, dec])
+
+
+def parse_sky_coords(coord_str):
+    """Parse ``'HH:MM:SS,DD:MM:SS'`` (fk5) into (ra, dec) radians.
+
+    The format used by the ``--phase-dir``/``--target`` CLI options
+    (matching hci/stokes2im).
+    """
+    # deferred: heavy astropy.coordinates import on a rarely-taken parse path
+    from astropy import units
+    from astropy.coordinates import SkyCoord
+
+    ra_str, dec_str = coord_str.split(",")
+    c = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
+    return np.array([np.deg2rad(c.ra.value), np.deg2rad(c.dec.value)])
+
+
 def kron_matvec(op, b):
     dim = len(op)
     npix = b.size

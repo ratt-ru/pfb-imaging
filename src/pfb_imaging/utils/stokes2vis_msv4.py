@@ -17,6 +17,7 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.misc import to_mjd_time
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
 
 
@@ -96,6 +97,7 @@ def stokes_vis(
     cell_rad=None,
     baseline_group="all",
     data_group="base",
+    radec_new=None,
     nthreads=1,
 ):
     """
@@ -120,6 +122,8 @@ def stokes_vis(
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
         beam_model: model to use for beam correction. Can be "katbeam" or None.
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
+        radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
+            phase centre / tangent point). None means image about the field centre.
         nthreads: threads available to the task (parallelises the COUNTS gridding).
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
@@ -279,6 +283,45 @@ def stokes_vis(
 
     # apply gains and convert to Stokes
     data = data.reshape(nrow, nchan, ncorr)
+
+    # rephase to the common phase centre (mosaic tangent point) BEFORE
+    # weighting, averaging and the COUNTS gridding so weights, decorrelation
+    # and uv counts are all consistent with the new centre automatically.
+    # chgcentre-style w-difference, as in stokes2im.
+    if radec_new is not None and not np.allclose(radec_new, np.asarray(radec).squeeze(), rtol=0, atol=1e-9):
+        # deferred: synthesize_uvw pulls pyrap (python-casacore); only
+        # mosaic / phase_dir runs pay the import
+        from pfb_imaging.utils.astrometry import synthesize_uvw
+
+        try:
+            # MSv4 time is unix seconds; casacore measures wants MJD seconds
+            mjd_time = to_mjd_time(time)
+            uvw_new = synthesize_uvw(antpos, mjd_time, ant1, ant2, np.asarray(radec_new))
+            # Recompute the *old* UVW via the same measures call (rather than
+            # diffing against the MS's own recorded UVW) so any systematic
+            # offset between pyrap's earth-orientation handling and whatever
+            # produced the MS's UVW (DUT1/precession-nutation model, etc.)
+            # cancels in the difference instead of contaminating w_diff.
+            # That mismatch is small in absolute terms (~1e-5 relative to the
+            # baseline length) but scales with baseline length, so at the
+            # longest baselines it is comparable to the true w-difference for
+            # small rephasing offsets and visibly decorrelates off-axis
+            # sources if left in.
+            uvw_old = synthesize_uvw(antpos, mjd_time, ant1, ant2, np.asarray(radec).squeeze())
+        except ImportError as e:
+            raise ImportError(
+                "Rephasing (multi-field mosaics or phase_dir) requires python-casacore. Install pfb-imaging[full]."
+            ) from e
+        w_diff = uvw_new[:, 2:] - uvw_old[:, 2:]
+        freqfactor = -2j * np.pi * freq[None, :] / lightspeed
+        # data may be a read-only view out of Ray's object store; don't use *=
+        data = data * np.exp(freqfactor * w_diff)[:, :, None]
+        # store the differentially rotated MS coordinates rather than the
+        # wholesale synthesized ones: the sampling stays anchored to the MS's
+        # own UVW (the same measures-vs-MS systematic that w_diff cancels
+        # would otherwise re-enter through the coordinates)
+        uvw = uvw + (uvw_new - uvw_old)
+
     data, weight = weight_data(
         as_contiguous_readonly_view(data),
         as_contiguous_readonly_view(weight),
@@ -456,10 +499,16 @@ def stokes_vis(
     # MSv2 MJD seconds); no epoch shift needed here
     utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    # ra/dec: the tangent point downstream consumers grid about (the new
+    # phase centre when rephasing); ra0/dec0: the field's original pointing
+    # (beam centre), needed for the (future) pass-2 beam reprojection (#281)
+    radec = np.asarray(radec).squeeze()
     attrs = {
         "pfb-imaging-version": pfb_version,
-        "ra": radec[0],
-        "dec": radec[1],
+        "ra": radec_new[0] if radec_new is not None else radec[0],
+        "dec": radec_new[1] if radec_new is not None else radec[1],
+        "ra0": radec[0],
+        "dec0": radec[1],
         "msid": msid,
         "field_name": field_name,
         "spw_name": spw_name,

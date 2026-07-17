@@ -72,6 +72,8 @@ def set_wcs(
     header=True,
     casambm=True,
     ncorr=1,
+    l0=0.0,
+    m0=0.0,
 ):
     """
     cell_x/y - cell sizes in degrees
@@ -85,6 +87,9 @@ def set_wcs(
         convention); otherwise it is MSv2 MJD seconds and is shifted to unix
     header - if True, return a header, otherwise return a WCS object
     casambm - if True, add the CASAMBM keyword to the header
+    l0/m0 - image-centre offset from the tangent point in radians (--target).
+        CRVAL stays the tangent point; CRPIX shifts so the centre pixel lands
+        on the target direction (facets share CRVAL and differ in CRPIX).
     """
 
     w = WCS(naxis=4)
@@ -110,7 +115,13 @@ def set_wcs(
         nchan = 1
         crpix3 = 1
     w.wcs.crval = [radec[0] * 180.0 / np.pi, radec[1] * 180.0 / np.pi, ref_freq, 1]
-    w.wcs.crpix = [1 + nx // 2, 1 + ny // 2, crpix3, 1]
+    # CRVAL stays the gridding tangent point; a --target offset shifts CRPIX
+    # so the image-centre pixel lands on the target. RA axis: cdelt = -cell_x,
+    # so l(p) = -cell*(p - crpix) and centre-at-l0 gives crpix = 1 + nx//2 +
+    # l0/cell; Dec axis has +cdelt, hence the opposite sign.
+    crpix_x = 1 + nx // 2 + np.rad2deg(l0) / cell_x
+    crpix_y = 1 + ny // 2 - np.rad2deg(m0) / cell_y
+    w.wcs.crpix = [crpix_x, crpix_y, crpix3, 1]
     w.wcs.equinox = 2000.0
 
     if header:
@@ -463,6 +474,8 @@ def dt2fits(
         wsum = wsums.sum(axis=0)  # (corr,)
         _, ncorr, ny, nx = cube.shape
         radec = (ref.attrs["ra"], ref.attrs["dec"])
+        l0 = float(ref.attrs.get("l0", 0.0))
+        m0 = float(ref.attrs.get("m0", 0.0))
         cell_deg = np.rad2deg(ref.attrs["cell_rad"])
         time_out = ref.attrs["time_out"]
 
@@ -490,6 +503,8 @@ def dt2fits(
                 ms_time=time_out,
                 time_is_unix=True,
                 gausspar=psfpars_mfs_timeid,
+                l0=l0,
+                m0=m0,
             )
             hdr["WSUM"] = float(wsum[0])
             if norm_wsum:
@@ -530,6 +545,8 @@ def dt2fits(
                 time_is_unix=True,
                 gausspar=psfpars_mfs_timeid,
                 gausspars=psfparsf_timeid,
+                l0=l0,
+                m0=m0,
             )
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])

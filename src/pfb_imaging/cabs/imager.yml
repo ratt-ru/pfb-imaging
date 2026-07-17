@@ -170,6 +170,21 @@ cabs:
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
+      phase-dir:
+        info:
+          Rephase visibilities to this phase center.
+          Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter).
+          Defaults to the barycentre of the selected fields when more than one field is selected.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
+      target:
+        info:
+          Predefined celestial objects known to astropy.
+          Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
       chan-average:
         info:
           Average this number if channels together

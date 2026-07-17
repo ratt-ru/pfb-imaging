@@ -27,7 +27,14 @@ from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import rdt2fits
-from pfb_imaging.utils.misc import fitcleanbeam, set_image_size
+from pfb_imaging.utils.misc import (
+    fitcleanbeam,
+    parse_sky_coords,
+    radec_barycentre,
+    radec_to_lm,
+    set_image_size,
+    to_mjd_time,
+)
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
@@ -129,6 +136,8 @@ def _grid_image(
             robustness=robustness,
             nx_pad=nx_pad,
             ny_pad=ny_pad,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
@@ -155,8 +164,10 @@ def _grid_image(
                 "baseline_group": key[3],
                 "ra": meta["ra"],
                 "dec": meta["dec"],
-                "l0": 0.0,
-                "m0": 0.0,
+                "ra0": float(part.attrs.get("ra0", meta["ra"])),
+                "dec0": float(part.attrs.get("dec0", meta["dec"])),
+                "l0": meta.get("l0", 0.0),
+                "m0": meta.get("m0", 0.0),
                 "wsum": prod["WSUM"].tolist(),
             },
         )
@@ -175,6 +186,8 @@ def _grid_image(
         "time_out": meta["time_out"],
         "ra": meta["ra"],
         "dec": meta["dec"],
+        "l0": meta.get("l0", 0.0),
+        "m0": meta.get("m0", 0.0),
         "cell_rad": cell_rad,
         "robustness": robustness,
         "niters": 0,
@@ -232,6 +245,8 @@ def imager(
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
     beam_model: str | None = None,
+    phase_dir: str | None = None,
+    target: str | None = None,
     chan_average: int = 1,
     progressbar: bool = True,
     log_directory: str | None = None,
@@ -441,7 +456,50 @@ def imager(
             # indices: the dispatch loop applies isel to the unsliced node, so
             # slices built on the trimmed axis must be shifted by it.
             chan0 = int(np.searchsorted(node.ds.frequency.load().values, freqs_node[0]))
-            selected.append((ims, node, freqs_node, ds.time.load().values, chan0))
+            # field pointing centre for phase-centre resolution / rephasing
+            grp = node.ds.attrs["data_groups"][data_group]
+            fns = node[grp["field_and_source"].rsplit("/", 1)[-1]].ds
+            field_radec = np.asarray(fns.FIELD_PHASE_CENTER_DIRECTION.sel(field_name=field_name).values).squeeze()
+            selected.append((ims, node, freqs_node, ds.time.load().values, chan0, field_radec))
+
+    if not selected:
+        log.error_and_raise("Selection matched no data", ValueError)
+
+    # resolve the common phase centre (mosaic tangent point): explicit
+    # phase_dir wins; multiple distinct field centres default to their
+    # barycentre; a single field keeps its own centre (no rephasing)
+    field_centres = np.unique(np.array([np.round(fc, 12) for *_, fc in selected]), axis=0)
+    if phase_dir is not None:
+        radec_new = parse_sky_coords(phase_dir)
+        log.info(
+            f"Rephasing all data to phase_dir "
+            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
+        )
+    elif field_centres.shape[0] > 1:
+        radec_new = radec_barycentre(field_centres)
+        log.info(
+            f"Multiple fields selected; rephasing to their barycentre "
+            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
+        )
+    else:
+        radec_new = None
+    # tangent point of the output image grid
+    grid_radec = radec_new if radec_new is not None else field_centres[0]
+
+    def target_offset(time_out):
+        """(l0, m0) of --target w.r.t. the tangent point, at time_out (unix s)."""
+        if target is None:
+            return 0.0, 0.0
+        tmp = target.split(",")
+        if len(tmp) == 2:
+            tradec = parse_sky_coords(target)
+        else:
+            # named body known to astropy; get_coordinates expects MJD seconds
+            from pfb_imaging.utils.astrometry import get_coordinates
+
+            tradec = np.array(get_coordinates(to_mjd_time(time_out), target=target))
+        ell, emm = radec_to_lm(tradec, grid_radec)
+        return float(ell), float(emm)
 
     # map the "DATA" sentinel to the data group's correlated_data variable
     if vis_col is not None:
@@ -491,7 +549,7 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_store.url, mode="a")
     created_parents = set()
-    for ims, node, freqs_node, times_node, chan0 in selected:
+    for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
         ntimes_node = times_node.size
@@ -554,6 +612,7 @@ def imager(
                     cell_rad=cell_rad,
                     baseline_group="all",
                     data_group=data_group,
+                    radec_new=radec_new,
                     nthreads=nthreads,
                 )
                 tasks.append(fut)
@@ -667,11 +726,10 @@ def imager(
             src_names = [name for name, _ in items]
             infos = [info for _, info in items]
             out_name = f"band{bandid:04d}_time0000"
-            # assumes one pointing per band: ra/dec are taken from the first node
-            # and time_out is the (unweighted) mean of the collapsed nodes' times.
-            # Rows are only concatenated within a partition key (same field), so a
-            # multi-field band would still grid its fields separately, but this
-            # band-node metadata would label them with a single pointing.
+            # ra/dec: the common tangent point (all nodes agree after phase-centre
+            # resolution above); time_out is the mean of the collapsed nodes' times
+            time_out = float(np.mean([info["time_out"] for info in infos]))
+            l0, m0 = target_offset(time_out)
             work.append(
                 (
                     out_name,
@@ -679,21 +737,20 @@ def imager(
                     {
                         "bandid": bandid,
                         "timeid": 0,
-                        "ra": infos[0]["ra"],
-                        "dec": infos[0]["dec"],
-                        "time_out": float(np.mean([info["time_out"] for info in infos])),
+                        "ra": float(grid_radec[0]),
+                        "dec": float(grid_radec[1]),
+                        "l0": l0,
+                        "m0": m0,
+                        "time_out": time_out,
                     },
                 )
             )
     else:
         for name, info in node_info.items():
-            work.append(
-                (
-                    name,
-                    [name],
-                    {k: info[k] for k in ("bandid", "timeid", "ra", "dec", "time_out")},
-                )
-            )
+            l0, m0 = target_offset(info["time_out"])
+            meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
+            meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
+            work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
     log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")

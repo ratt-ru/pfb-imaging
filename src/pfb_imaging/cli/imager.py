@@ -216,6 +216,23 @@ def imager(
             rich_help_panel="Input",
         ),
     ] = None,
+    phase_dir: Annotated[
+        str | None,
+        typer.Option(
+            help="Rephase visibilities to this phase center. "
+            "Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter). "
+            "Defaults to the barycentre of the selected fields when more than one field is selected.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    target: Annotated[
+        str | None,
+        typer.Option(
+            help="Predefined celestial objects known to astropy. "
+            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
     chan_average: Annotated[
         int,
         typer.Option(
@@ -465,6 +482,8 @@ def imager(
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
                     beam_model=beam_model,
+                    phase_dir=phase_dir,
+                    target=target,
                     chan_average=chan_average,
                     progressbar=progressbar,
                     product=product,
@@ -519,6 +538,8 @@ def imager(
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
                 beam_model=beam_model,
+                phase_dir=phase_dir,
+                target=target,
                 chan_average=chan_average,
                 progressbar=progressbar,
                 product=product,
@@ -582,6 +603,8 @@ def imager(
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,
             beam_model=beam_model,
+            phase_dir=phase_dir,
+            target=target,
             chan_average=chan_average,
             progressbar=progressbar,
             product=product,

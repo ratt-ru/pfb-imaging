@@ -323,7 +323,24 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     contains only the injected transient. The transient is placed on an exact
     pixel centre by choosing integer (l, m) offsets and inverting the SIN
     projection, with natural weighting so the per-bin flux is analytic.
+
+    The analytic expectation assumes every sample participates, so clear any
+    persistent flags another test's fixture left in the shared MS (sky_truth
+    writes ~10% flags plus a dead channel, which shifts the per-bin
+    normalisation by ~0.1% and breaks the tight tolerances here).
     """
+    import dask
+    import dask.array as da
+    from daskms import xds_from_ms, xds_to_table
+
+    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    nrow_, nchan_, ncorr_ = xds0.FLAG.shape
+    xds0 = xds0.assign(
+        FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+
     out = str(tmp_path / "hci_transients.zarr")
 
     # --- geometry: must match what hci computes internally ---

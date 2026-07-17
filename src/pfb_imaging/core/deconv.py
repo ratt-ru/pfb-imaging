@@ -184,7 +184,9 @@ def deconv(
     if nbasisf is None:
         nbasisf = int(np.sum(fsel))
 
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq_out), casambm=False)
+    l0 = float(first.attrs.get("l0", 0.0))
+    m0 = float(first.attrs.get("m0", 0.0))
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq_out), casambm=False, l0=l0, m0=m0)
 
     # hess_norm from the tree cache when available; solver estimates it otherwise
     if hess_norm is None and "hess_norm" in first.attrs:

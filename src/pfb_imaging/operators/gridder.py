@@ -3,7 +3,6 @@ import numpy as np
 from ducc0.fft import r2c
 from ducc0.misc import resize_thread_pool
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
-from scipy.constants import c as lightspeed
 
 from pfb_imaging.utils.beam import eval_beam
 from pfb_imaging.utils.misc import fitcleanbeam
@@ -297,12 +296,6 @@ def grid_partition(
     """
     resize_thread_pool(nthreads)
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
-    signu = -1.0 if flip_u else 1.0
-    signv = -1.0 if flip_v else 1.0
-    signx = -1.0 if flip_u else 1.0
-    signy = -1.0 if flip_v else 1.0
-    n = np.sqrt(1 - x0**2 - y0**2)
-
     uvw = part.UVW.values
     vis = part.VIS.values
     wgt = part.WEIGHT.values.copy()
@@ -371,11 +364,34 @@ def grid_partition(
             dirty=dirty[c].T,
         )
 
-    # PSF visibilities carry a phase ramp when the field is off image centre
+    # PSF visibilities carry a phase ramp when the field is off image centre:
+    # they must be the response of a delta function sitting at the image
+    # centre (l0, m0), so that re-gridding with the same center_x/center_y
+    # places its peak back at the PSF array's own centre. Predicting from an
+    # actual unit-peak image via dirty2vis (rather than a hand-rolled trig
+    # formula) guarantees the phase is the exact adjoint of the vis2dirty
+    # call below for these same center_x/center_y/flip_* conventions.
     if x0 or y0:
-        freqfactor = 2j * np.pi * freq[None, :] / lightspeed
-        psf_vis = np.exp(
-            freqfactor * (signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n - 1))
+        # match the weight dtype so single-precision runs get complex64 psf_vis
+        # (ducc rejects mixed complex128 vis + float32 wgt); (Y, X) raster with
+        # the ducc seam behind a zero-copy .T view, as everywhere else
+        delta_im = np.zeros((ny, nx), dtype=wgt.dtype)
+        delta_im[ny // 2, nx // 2] = 1.0
+        psf_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=delta_im.T,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,
+            nthreads=nthreads,
         )
     else:
         psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))

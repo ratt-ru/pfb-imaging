@@ -295,3 +295,178 @@ def test_imager_matches_dft(sky_truth, ms_name, tmp_path):
             val_dft += float(np.sum(wgt[mask] * np.real(vis[mask] * np.exp(phase)[mask])))
         val_grid = float(dirty.isel(x=ixm, y=iym).values)
         assert abs(val_grid - val_dft) < 1e-5 * peak, f"pixel ({ixm},{iym}): {val_grid} vs {val_dft}"
+
+
+def _open_first_vis_node(ms_name):
+    from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
+
+    from pfb_imaging.core.imager import get_engine
+
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    for node in dt.children.values():
+        if node.attrs.get("type") in VISIBILITY_XDS_TYPES:
+            return node
+    raise RuntimeError("no visibility node in test MS")
+
+
+def _run_stokes_vis(ms_name, scratch, radec_new=None):
+    """Drive stokes_vis directly (no Ray) on the test MS's first node."""
+    from pfb_imaging.utils.stokes2vis_msv4 import stokes_vis
+
+    node = _open_first_vis_node(ms_name)
+    dc1 = node.ds.attrs["data_groups"]["base"]["correlated_data"]
+    freq = node.ds.frequency.values
+    uvw = node.ds.UVW.values.reshape(-1, 3)
+    uvw = uvw[~np.isnan(uvw).all(axis=-1)]
+    max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
+
+    bandid, timeid, piece = stokes_vis(
+        dc1=dc1,
+        node_dt=node,
+        scratch_store=scratch,
+        bandid=0,
+        timeid=0,
+        msid=0,
+        freq_out=float(freq.mean()),
+        product="I",
+        max_blength=float(max_blength),
+        max_freq=float(freq.max()),
+        nx_pad=64,
+        ny_pad=64,
+        cell_rad=1e-5,
+        radec_new=radec_new,
+        nthreads=1,
+    )
+    ds = xr.open_datatree(scratch, engine="zarr", chunks=None)[f"band{bandid:04d}_time{timeid:04d}/{piece}"].ds
+    return ds.load()
+
+
+def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
+    """Rephasing changes phases and UVW only; attrs record both centres.
+
+    sky_truth guarantees non-zero DATA (the phases-differ assertion is
+    vacuous on a zero-signal MS).
+    """
+    ref = _run_stokes_vis(ms_name, str(tmp_path / "ref.scratch"))
+    # no rephasing: tangent point == field pointing
+    assert ref.attrs["ra"] == ref.attrs["ra0"]
+    assert ref.attrs["dec"] == ref.attrs["dec0"]
+
+    # rephase 60 arcsec north of the field centre
+    radec_new = np.array([ref.attrs["ra0"], ref.attrs["dec0"] + np.deg2rad(60.0 / 3600.0)])
+    new = _run_stokes_vis(ms_name, str(tmp_path / "new.scratch"), radec_new=radec_new)
+
+    assert_allclose([new.attrs["ra"], new.attrs["dec"]], radec_new, atol=1e-12)
+    assert new.attrs["ra0"] == ref.attrs["ra0"] and new.attrs["dec0"] == ref.attrs["dec0"]
+    # phase-only data change: amplitudes preserved, phases not
+    assert_allclose(np.abs(new.VIS.values), np.abs(ref.VIS.values), rtol=1e-9)
+    assert not np.allclose(new.VIS.values, ref.VIS.values)
+    # weights and mask untouched; UVW re-synthesized towards the new centre
+    assert_allclose(new.WEIGHT.values, ref.WEIGHT.values, rtol=1e-12)
+    np.testing.assert_array_equal(new.MASK.values, ref.MASK.values)
+    assert not np.allclose(new.UVW.values, ref.UVW.values)
+
+
+def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
+    """Rephasing to an offset phase_dir with target back at the original field
+    centre reproduces the unrephased image -- compared projection-aware.
+
+    The two runs live in DIFFERENT SIN projections (tangent at the field
+    centre vs at the offset phase_dir), whose frames are rotated w.r.t. each
+    other by ~dra*sin(dec) to first order (2.3 arcmin here; a 0.14 px
+    displacement at the fov edge, measured to match the analytic rotation).
+    A full-field pixel-wise comparison therefore CANNOT converge -- that was
+    misdiagnosed as an "RA-axis geometry bug" on the abandoned
+    imager_rephase_and_interp_beam branch. Valid oracles, used below:
+
+    1. WSUM: natural weights are phase-invariant -> tight.
+    2. Central box (+/-20 px), where the inter-frame displacement is < 0.01
+       px: pixel-wise DIRTY/PSF agreement at the numerical floor (measured
+       1.9e-4 of the dirty peak within +/-10 px; atol 2e-3 * psf_peak leaves
+       margin for per-band floors).
+    3. Ground truth through the WCS: every injected source must land at its
+       true (RA, Dec) in the round-trip FITS (whose header carries the
+       CRPIX-shifted target convention) at its injected flux.
+    """
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.io import fits as afits
+    from astropy.wcs import WCS
+
+    common = dict(
+        channels_per_image=2,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=None,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    base_ref = str(tmp_path / "ref")
+    imager_core([Path(ms_name)], base_ref, fits_mfs=False, **common)
+    dt_ref = xr.open_datatree(base_ref + "_I.dt", engine="zarr", chunks=None)
+    names = sorted(n for n in dt_ref.children if n.startswith("band"))
+    ra0 = dt_ref[names[0]].attrs["ra"]
+    dec0 = dt_ref[names[0]].attrs["dec"]
+
+    def fmt(ra_rad, dec_rad):
+        c = SkyCoord(ra_rad * u.rad, dec_rad * u.rad, frame="fk5")
+        ra_str = c.ra.to_string(u.hour, sep=":", precision=8)
+        dec_str = c.dec.to_string(u.deg, sep=":", precision=8)
+        return f"{ra_str},{dec_str}"
+
+    # rephase 3 arcmin north and 4 arcmin east (diagonal, to pin the RA/l
+    # axis as well as Dec/m); ask for the image centred back on the field
+    base_new = str(tmp_path / "rephased")
+    ra_offset = ra0 + np.deg2rad(4.0 / 60.0) / np.cos(dec0)
+    dec_offset = dec0 + np.deg2rad(3.0 / 60.0)
+    imager_core(
+        [Path(ms_name)],
+        base_new,
+        phase_dir=fmt(ra_offset, dec_offset),
+        target=fmt(ra0, dec0),
+        fits_mfs=True,
+        **common,
+    )
+    dt_new = xr.open_datatree(base_new + "_I.dt", engine="zarr", chunks=None)
+
+    half = 20  # central box: inter-frame displacement < 0.01 px here
+    ys = slice(sky_truth.ny // 2 - half, sky_truth.ny // 2 + half + 1)
+    xs = slice(sky_truth.nx // 2 - half, sky_truth.nx // 2 + half + 1)
+    for name in names:
+        ref = dt_ref[name].ds.load()
+        new = dt_new[name].ds.load()
+        # natural weights are phase-invariant
+        assert_allclose(new.WSUM.values, ref.WSUM.values, rtol=1e-9)
+        wsum = ref.WSUM.values[0]
+        psf_peak = ref.PSF.values[0].max() / wsum
+        d_new = new.DIRTY.isel(y=ys, x=xs).values[0] / wsum
+        d_ref = ref.DIRTY.isel(y=ys, x=xs).values[0] / wsum
+        assert_allclose(d_new, d_ref, atol=2e-3 * psf_peak)
+        p_new = new.PSF.isel(y_psf=ys, x_psf=xs).values[0] / wsum
+        p_ref = ref.PSF.isel(y_psf=ys, x_psf=xs).values[0] / wsum
+        assert_allclose(p_new, p_ref, atol=2e-3 * psf_peak)
+        # attrs record the rephased tangent point and the target offset
+        assert new.attrs["dec"] > ref.attrs["dec"]
+        assert new.attrs["ra"] > ref.attrs["ra"]
+        assert abs(new.attrs["m0"]) > 0.0
+        assert abs(new.attrs["l0"]) > 0.0
+
+    # ground truth through the WCS of the round-trip FITS (CRPIX-shifted
+    # target convention): sources land at their true positions and fluxes
+    fits_files = glob.glob(str(tmp_path / "*rephased*dirty*mfs.fits"))
+    assert len(fits_files) == 1
+    with afits.open(fits_files[0]) as hdul:
+        img = hdul[0].data.squeeze()
+        w = WCS(hdul[0].header).celestial
+    for src in range(sky_truth.lpix.size):
+        px, py = w.world_to_pixel(sky_truth.sky_coords[src])
+        iy, ix = int(round(float(py))), int(round(float(px)))
+        # peak within 1 px of the WCS-predicted position
+        box = img[iy - 1 : iy + 2, ix - 1 : ix + 2]
+        by, bx = np.unravel_index(int(np.argmax(box)), box.shape)
+        val = float(box[by, bx])
+        expected = sky_truth.ref_flux[src] / sky_truth.nvals[src]
+        assert abs(val - expected) < 0.15 * expected, f"source {src}: {val} vs {expected}"
