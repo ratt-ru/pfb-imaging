@@ -451,7 +451,7 @@ cabs:
         dtype: Directory
         info:
           Implicit output ensuring the numba cache location is mounted.
-          The cache defaults to a per-user directory under the system temp directory.
+          The cache defaults to a per-user directory under /tmp.
           Override it by setting the NUMBA_CACHE_DIR environment variable.
         implicit: '/tmp/numba-cache'
         must_exist: false
@@ -461,7 +461,9 @@ cabs:
       beam-cache-dir:
         dtype: Directory
         info:
-          output directory for primary beam cache
+          Implicit output ensuring the beam cache location is mounted.
+          The cache defaults to a per-user directory under /tmp.
+          Override it by setting the MBEAMS_CACHE_DIR environment variable.
         implicit: '/tmp/mbeams-cache'
         must_exist: false
         path_policies:

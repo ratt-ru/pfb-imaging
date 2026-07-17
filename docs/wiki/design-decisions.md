@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-16T12:00:00Z
-last_verified_commit: c4ae544
+timestamp: 2026-07-17T16:00:00Z
+last_verified_commit: 83be23f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -242,33 +242,42 @@ update it (and this page's `last_verified_commit`) in the same session.
   Guard: `tests/test_weight_data_cache.py` (cross-process load-not-recompile).
 - **Source:** PR #274; ratt-ru/radiomesh#81; issues #273, #183.
 
-### D18 — NUMBA_CACHE_DIR defaults to a per-user temp directory
+### D18 — Cache dirs (numba, meerkat-beams) default to per-user directories under /tmp
 
 - **Context:** `NUMBA_CACHE_DIR` was hard-coded to `/tmp/numba` (Dockerfile ENV plus
   implicit cab outputs as mount hints). On shared hosts the first user to create it
   owned it; everyone else got cryptic `PermissionError`s (issue #270). Bare `/tmp` is
   no fix: numba nests `<srcdirname>_<sha1(source dir)>` subdirs under the cache root,
   and identical install paths (guaranteed inside containers) collide one level down.
+  The meerkat-beams cache (`MBEAMS_CACHE_DIR`) later hit the same shared-ownership
+  problem and follows the same pattern.
 - **Decision:** `pfb_imaging/__init__.py` sets
-  `NUMBA_CACHE_DIR=<tempfile.gettempdir()>/numba-cache-<uid>` via
-  `os.environ.setdefault`, and `set_envs` forwards it to child processes. The
-  Dockerfile ENV is gone. The implicit `numba-cache-dir` cab outputs remain solely as
-  mount hints (`write_parent` mounts `/tmp` read-write).
+  `NUMBA_CACHE_DIR=/tmp/numba-cache-<uid>` and `MBEAMS_CACHE_DIR=/tmp/mbeams-cache-<uid>`
+  via `os.environ.setdefault`, and `set_envs` forwards both to child processes
+  (including raylets). The Dockerfile ENV is gone. The implicit `numba-cache-dir` and
+  `beam-cache-dir` cab outputs remain solely as mount hints (`write_parent` mounts
+  `/tmp` read-write).
 - **Rationale:** The package `__init__` runs before any submodule import, so the value
   is set before numba can be imported from any entry point — CLI, stimela-called core
-  functions, Ray workers, tests — with no numba import deferrals. `gettempdir()`
-  honours per-job `TMPDIR`; `getuid()` survives containers where `$USER` doesn't;
-  `setdefault` lets an explicit env (native export, stimela `backend.*.env`) win.
-  Same-user concurrent runs share one cache safely (atomic temp-file + `os.replace`
-  writes; stable keys since D17), so isolation is per-user only. A user-facing
-  `--numba-cache-dir` option was rejected: stimela invokes the core functions
-  directly, so a parameter arrives after module-level imports pulled numba in, and a
-  cab default cannot be computed by stimela formulas.
-- **Consequences:** Overriding the cache location is env-var-only. A containerised
+  functions, Ray workers, tests — with no numba import deferrals. The cache root is
+  hard-coded `/tmp`, **not** `gettempdir()`: the cab mount hints are static
+  `/tmp/...` strings, and apptainer leaks the host `TMPDIR` into the container, so a
+  `TMPDIR`-derived default can land on a path that is not mounted inside the
+  container (a first `gettempdir()`-based iteration failed exactly this way; per-job
+  `TMPDIR` isolation was deliberately given up for cab-mount consistency).
+  `getuid()` survives containers where `$USER` doesn't; `setdefault` lets an explicit
+  env (native export, stimela `backend.*.env`) win. Same-user concurrent runs share
+  one numba cache safely (atomic temp-file + `os.replace` writes; stable keys since
+  D17), so isolation is per-user only. A user-facing `--numba-cache-dir` option was
+  rejected: stimela invokes the core functions directly, so a parameter arrives after
+  module-level imports pulled numba in, and a cab default cannot be computed by
+  stimela formulas.
+- **Consequences:** Overriding a cache location is env-var-only, and `TMPDIR` does
+  not move the defaults (pinned by `tests/test_numba_cache_dir.py`). A containerised
   override outside `/tmp` additionally needs its mount expressed on the stimela side
   (backend `env` today; the cab-level env mechanism when it lands).
 - **Source:** issue #270; `src/pfb_imaging/__init__.py`; `Dockerfile`;
-  `tests/test_numba_cache_dir.py`.
+  `tests/test_numba_cache_dir.py`; commits `61d96f5`, `83be23f`.
 
 ### D19 — Image-space arrays on the hci path are (Y, X)-ordered end to end
 

@@ -62,7 +62,7 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="numba-cache-dir",
     info="Implicit output ensuring the numba cache location is mounted. "
-    "The cache defaults to a per-user directory under the system temp directory. "
+    "The cache defaults to a per-user directory under /tmp. "
     "Override it by setting the NUMBA_CACHE_DIR environment variable.",
     implicit="/tmp/numba-cache",
     must_exist=False,
@@ -72,7 +72,9 @@ URI = NewType("URI", Path)
 @stimela_output(
     dtype="Directory",
     name="beam-cache-dir",
-    info="output directory for primary beam cache",
+    info="Implicit output ensuring the beam cache location is mounted. "
+    "The cache defaults to a per-user directory under /tmp. "
+    "Override it by setting the MBEAMS_CACHE_DIR environment variable.",
     implicit="/tmp/mbeams-cache",
     must_exist=False,
     path_policies={"write_parent": True},

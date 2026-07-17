@@ -11,10 +11,13 @@ __version__ = "0.0.10"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
-# Also before importing numba: default the cache dir to a per-user directory
-# so users on a shared host don't collide on ownership of /tmp/numba (#270).
-# setdefault so an explicit NUMBA_CACHE_DIR (native env, stimela backend env)
-# always wins. gettempdir() honours per-job TMPDIR on clusters.
+# Also before importing numba: default the numba and meerkat-beams cache dirs
+# to per-user directories so users on a shared host don't collide on ownership
+# of a shared cache (#270). Hard-coded /tmp rather than gettempdir(): the
+# defaults must match the static /tmp mount hints in the cab definitions, and
+# apptainer leaks the host TMPDIR into the container where a TMPDIR-derived
+# path may not be mounted. setdefault so an explicit env var (native env,
+# stimela backend env) always wins.
 os.environ.setdefault(
     "NUMBA_CACHE_DIR",
     f"/tmp/numba-cache-{os.getuid()}",
