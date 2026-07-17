@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-17T20:00:00Z
-last_verified_commit: 4b571e9
+timestamp: 2026-07-18T00:15:00Z
+last_verified_commit: 502fe90
 ---
 
 # MSv4 DataTree imager pipeline
@@ -56,7 +56,8 @@ no-op later: just another `part{p}` child with its own `BEAM`.
           image-space: PSF, PSFHAT (corr, y_psf, xo2), BEAM, PSFPARSN
 ```
 
-All partitions in a band share one output grid (cell, common phase centre); per-field
+All partitions in a band share one output grid: multi-field selections are rephased in
+pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`
 offsets are the `l0, m0` attrs, with `x0,y0`/`flip_*` derived on demand from
 `wgridder_conventions(l0, m0)` rather than stored. `time_out` is **unix seconds** (the
 legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).

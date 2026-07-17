@@ -142,6 +142,13 @@ local repro harness: `docs/wiki/memory-and-ray.md`.
   Read this before theorising about memory: ratcheting post-gc rss per pid = below-Python
   retention; flat rss with high peak = per-task transients.
 
+**Rephasing / mosaics (D21).** Pass 1 rephases all selected data to a common tangent point
+(`--phase-dir`; barycentre default for multi-field selections) before weighting/averaging/COUNTS,
+using differential measures-synthesized UVW (the systematic vs the MS's own UVW cancels);
+`--target` is an in-plane image-centre offset carried as `l0/m0` attrs and a CRPIX shift in the
+FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are not
+yet reprojected (#281).
+
 **Time epochs.** The MSv4 `time` coordinate and the `.dt`'s `time_out` attrs are **unix
 seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. `utils/fits.set_wcs` takes
 `time_is_unix=` — applying the wrong convention shifts FITS `DATE-OBS` by ~111 years (ERFA

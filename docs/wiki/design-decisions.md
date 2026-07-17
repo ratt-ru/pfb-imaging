@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-17T22:00:00Z
-last_verified_commit: 8ebf292
+timestamp: 2026-07-18T00:15:00Z
+last_verified_commit: 502fe90
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -372,6 +372,49 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py`
   (ground truth + DFT oracle), `tests/test_imager_pol.py`,
   `tests/test_deconv.py`; spec/plan of 2026-07-17 (ephemeral).
+
+
+### D21 — Mosaics rephase to a common tangent plane; --target is an in-plane offset
+
+- **Context:** On-the-fly mosaicing (#1, #281) needs multiple fields on one
+  grid. Ported from the abandoned `imager_rephase_and_interp_beam` branch
+  onto the (Y, X) imager.
+- **Decision:** Pass 1 rephases data+UVW to a common phase centre
+  (`--phase-dir`, defaulting to the field barycentre for multi-field
+  selections) BEFORE weighting/averaging/COUNTS, chgcentre-style
+  (w-difference phase rotation). Both old and new UVW are synthesized through
+  the same casacore-measures call and only the DIFFERENCE is applied — to the
+  phases and to the stored coordinates (`uvw + (uvw_new - uvw_old)`) — so the
+  measures-vs-MS earth-orientation systematic (~1e-5 relative, scaling with
+  baseline length) cancels instead of decorrelating off-axis sources (#280
+  remains open for a katpoint-based synthesis). `--target` shifts the image
+  centre within the tangent plane via the existing `center_x/center_y`
+  machinery; the off-centre PSF ramp is predicted adjoint-by-construction
+  (dirty2vis of a unit delta), and `set_wcs` carries the offset as a CRPIX
+  shift (CRVAL stays the tangent point — facet convention). Beam handling is
+  UNCHANGED pending #281: the stored katbeam/unity BEAM is field-centred and
+  is not reprojected, so beam_model + rephasing is only approximate.
+- **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13):
+  `synthesize_uvw` wants MJD seconds, MSv4 time is unix — `to_mjd_time` at
+  the single call site. (2) **Frames about different tangent points are
+  mutually rotated** by ~dra*sin(dec) to first order: a full-field pixel-wise
+  round-trip comparison CANNOT converge (0.14 px displacement at a 0.5 deg
+  radius for a 4 arcmin RA offset at dec 30). The old branch died
+  misdiagnosing this as an "RA-axis geometry bug"; measured central-box floor
+  is ~2e-4 of the dirty peak, i.e. the rephasing itself is numerically sound.
+  Round-trip tests must compare the central box and WCS-mapped source
+  positions, never full-field pixels.
+- **Consequences:** `.dt` attrs: band/partition `ra/dec` = tangent point,
+  `ra0/dec0` = the field's own pointing (kept for the #281 beam
+  reprojection), `l0/m0` = target offset. Deconv consumers are unchanged
+  (HessianTree/residual_from_partitions read the stored beams and l0/m0
+  attrs). Acceptance on real data: `scripts/meerklass_mosaic.py
+  --expect-aligned` (3 MeerKLASS OTF pointings; ghosts at the pre-rephasing
+  positions collapse to ~1% of source; true positions carry the PB-weighted
+  average flux — full mosaic gain needs the #281 beam weighting).
+- **Source:** commit 502fe90 (port; original work 7dcc892/649c0ce/9bc16cc/
+  ef9ae6e on the abandoned branch); `tests/test_imager.py`
+  (rephase round-trip + stokes_vis rephase unit), `tests/test_coords.py`.
 
 ## Known debt
 

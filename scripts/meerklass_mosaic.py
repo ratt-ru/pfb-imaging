@@ -178,25 +178,42 @@ def main():
     # --- alignment: brightest source of each single, hunted in the joint ---
     print("\n--- alignment (joint frame) ---")
     img_j, w_j = load_mfs(out_joint)
-    ref_centre = centres[0]  # the joint band-node ra/dec is taken from the first piece
+    # the joint tangent point: pre-rephasing it was the first piece's centre,
+    # post-rephasing it is the barycentre -- read it from the tree
+    jdt = xr.open_datatree(out_joint + "_I.dt", engine="zarr", chunks=None)
+    jband = sorted(n for n in jdt.children if n.startswith("band"))[0]
+    tangent = SkyCoord(ra=np.rad2deg(jdt[jband].ds.attrs["ra"]), dec=np.rad2deg(jdt[jband].ds.attrs["dec"]), unit="deg")
+    cell_deg_j = np.rad2deg(float(jdt[jband].ds.attrs["cell_rad"]))
     aligned_ok = True
     for n, c, out in zip(args.pointings, centres, singles):
         img_s, w_s = load_mfs(out)
         sky, val, _ = peak_sky(img_s, w_s)
-        # where the source should be (true sky) and where centre-stacking puts it
-        dra = ref_centre.ra - c.ra
-        ddec = ref_centre.dec - c.dec
+        # where the source should be (true sky) and where centre-stacking
+        # (no rephasing) would put it: displaced by (tangent - field centre)
+        dra = tangent.ra - c.ra
+        ddec = tangent.dec - c.dec
         displaced = SkyCoord(ra=sky.ra + dra, dec=sky.dec + ddec)
+        disp_px = np.hypot(dra.deg * np.cos(c.dec.rad), ddec.deg) / cell_deg_j
         v_true, off_true = value_near(img_j, w_j, sky)
         v_disp, off_disp = value_near(img_j, w_j, displaced)
         print(
             f"pointing {n}: single peak {val:.4f} Jy/beam at {sky.to_string('hmsdms')}\n"
             f"    joint @ true position: {v_true:.4f} (box-peak offset {off_true})\n"
-            f"    joint @ centre-stacked position: {v_disp:.4f} (box-peak offset {off_disp})"
+            f"    joint @ centre-stacked position: {v_disp:.4f} (box-peak offset {off_disp}, "
+            f"{disp_px:.1f} px from true)"
         )
-        if args.expect_aligned and not (v_true > 0.5 * val and abs(v_true) > abs(v_disp)):
-            print(f"    [FAIL: pointing {n} not aligned at its true position]")
-            aligned_ok = False
+        if args.expect_aligned:
+            # true position must carry at least half the single-field peak
+            # (the joint value is a PB-weighted average across pointings --
+            # full mosaic gain needs the #281 beam weighting); the displaced
+            # ghost must be gone. Skip the ghost check when the displacement
+            # is too small to separate the two probes.
+            ok_here = v_true > 0.5 * val
+            if disp_px > 3 * 2 * args.field_of_view:  # ~3 psf widths in px at srf 2
+                ok_here = ok_here and abs(v_disp) < 0.2 * abs(v_true)
+            if not ok_here:
+                print(f"    [FAIL: pointing {n} not aligned at its true position]")
+                aligned_ok = False
 
     if args.expect_aligned:
         print("\nacceptance:", "PASS" if (ok and aligned_ok) else "FAIL")
