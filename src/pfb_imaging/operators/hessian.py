@@ -7,7 +7,6 @@ from ducc0.fft import c2r, r2c
 from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
-from pfb_imaging.operators.psf import psf_convolve_cube
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -140,73 +139,6 @@ def hessian_psf_slice(
     if eta:
         xout += x * eta
 
-    return xout
-
-
-def hessian_psf_cube(
-    xpad,  # preallocated array to store padded image
-    xhat,  # preallocated array to store FTd image
-    xout,  # preallocated array to store output image
-    beam,
-    abspsf,
-    lastsize,
-    x,  # input image, not overwritten
-    nthreads=1,
-    eta=1,
-    mode="forward",
-):
-    """
-    Tikhonov regularised Hessian approx
-    """
-    if mode == "forward":
-        if beam is not None:
-            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x * beam, nthreads=nthreads)
-        else:
-            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x, nthreads=nthreads)
-
-        if beam is not None:
-            xout *= beam
-
-        if eta:
-            xout += x * eta
-
-        return xout
-    else:
-        raise NotImplementedError
-
-
-def hess_direct(
-    x,  # input image, not overwritten
-    xpad=None,  # preallocated array to store padded image
-    xhat=None,  # preallocated array to store FTd image
-    xout=None,  # preallocated array to store output image
-    abspsf=None,
-    taperxy=None,
-    lastsize=None,
-    nthreads=1,
-    eta=1,
-    mode="forward",
-):
-    nband, nx, ny = x.shape
-    xpad.fill(0.0)
-    xpad[:, 0:nx, 0:ny] = x * taperxy[None]
-    r2c(xpad, out=xhat, axes=(1, 2), forward=True, inorm=0, nthreads=nthreads)
-    if mode == "forward":
-        xhat *= abspsf + eta
-    else:
-        xhat /= abspsf + eta
-    c2r(
-        xhat,
-        axes=(1, 2),
-        forward=False,
-        out=xpad,
-        lastsize=lastsize,
-        inorm=2,
-        nthreads=nthreads,
-        allow_overwriting_input=True,
-    )
-    np.copyto(xout, xpad[:, 0:nx, 0:ny])
-    xout *= taperxy[None]
     return xout
 
 
@@ -624,31 +556,3 @@ def hessian_slice_jax(nx, ny, nx_psf, ny_psf, eta, psfhat, x):
     xhat = jnp.fft.rfft2(x, s=(nx_psf, ny_psf), norm="backward")
     xout = jnp.fft.irfft2(xhat * psfh, s=(nx_psf, ny_psf), norm="backward")[0:nx, 0:ny]
     return xout + eta * x
-
-
-@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def hessian_jax(nx, ny, nx_psf, ny_psf, eta, psfhat, x):
-    psfh = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x, s=(nx_psf, ny_psf), norm="backward")
-    xout = jnp.fft.irfft2(xhat * psfh, s=(nx_psf, ny_psf), norm="backward")[:, 0:nx, 0:ny]
-    return xout + eta * x
-
-
-@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def fshessian_jax(nx, ny, nx_psf, ny_psf, eta, mask, psfhat, x):
-    """
-    Assumes both x and psfhat is a 4D cube with the last two dimensions
-    corresponding to spatial dimensions along which FFT us taken.
-
-    nx, ny          - int: npix in two spatial coordinates
-    nx_psf, ny_psf  - int: npix in two spatial coordinates of psf
-    eta             - float: regularisation parameter
-    mask            - ndarray(nx, ny): spatial mask
-    psfhat          - ndarray(nband, ncorr, nx, ny): psf in uv space
-    x               - ndarray(nband, ncorr, nx, ny): image
-    """
-    mask = jax.lax.stop_gradient(mask)[None, None, :, :]
-    psfhat = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x * mask, s=(nx_psf, ny_psf), norm="backward")
-    xout = jnp.fft.irfft2(xhat * psfhat, s=(nx_psf, ny_psf), norm="backward")[:, :, 0:nx, 0:ny]
-    return xout * mask + eta * x
