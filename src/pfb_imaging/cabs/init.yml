@@ -5,7 +5,7 @@ cabs:
     name: init
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
     inputs:
       ms:
         info:
@@ -211,6 +211,22 @@ cabs:
         default: l2
         metadata:
           rich_help_panel: Weighting
+      phase-dir-tolerance:
+        info:
+          Tolerance in radians for comparing phase centres.
+          pfb-imaging currently only supports imaging a single field at a time.
+          All phase centres must be within this tolerance of each other.
+        dtype: float
+        default: 1.0e-08
+        metadata:
+          rich_help_panel: Imaging
+      enforce-time-ordering:
+        info:
+          Enforce that time columns are monotonically non-decreasing.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Control
     outputs:
       xds-out:
         dtype: Directory

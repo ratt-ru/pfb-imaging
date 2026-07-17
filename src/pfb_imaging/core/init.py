@@ -45,6 +45,8 @@ def init(
     nworkers: int = 1,
     nthreads: int | None = None,
     wgt_mode: str = "l2",
+    phase_dir_tolerance: float = 1e-8,
+    enforce_time_ordering: bool = False,
     ray_address: str = "local",
     keep_ray_alive: bool = False,  # not used by CLI
 ):
@@ -182,6 +184,7 @@ def init(
         field_ids=fields,
         ddids=ddids,
         scans=scans,
+        enforce_time_ordering=enforce_time_ordering,
     )
 
     group_by = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
@@ -266,6 +269,7 @@ def init(
                     msddid2bid[ms_name][idt] = sgroup
 
     tasks = []
+    radec = None
     for ims, ms_name in enumerate(ms):
         xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by)
 
@@ -281,6 +285,16 @@ def init(
                 continue
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+
+            if radec is None:
+                radec = radecs[ms_name][idt]
+            # Note this does not protect against rephased measurement sets that had different phase centres
+            elif np.any((radec - radecs[ms_name][idt]) > phase_dir_tolerance):
+                log.error_and_raise(
+                    f"RADECs differ between groups. Found {radecs[ms_name][idt]} but expected {radec}. "
+                    "pfb-imaging currently only supports imaging a single field at a time.",
+                    NotImplementedError,
+                )
 
             idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
             if not idx.any():

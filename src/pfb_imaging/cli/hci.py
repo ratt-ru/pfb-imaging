@@ -4,8 +4,10 @@ from typing import Annotated, Literal, NewType
 import typer
 from hip_cargo import (
     ListInt,
+    ListStr,
     StimelaMeta,
     parse_list_int,
+    parse_list_str,
     parse_upath,
     stimela_cab,
     stimela_output,
@@ -41,6 +43,17 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
+    name="fits-output-folder",
+    info="Optional path to write fits files to. "
+    "Written next to output-dataset if not provided. "
+    "The same naming conventions apply.",
+    must_exist=False,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    metadata={"rich_help_panel": "Output"},
+)
+@stimela_output(
+    dtype="Directory",
     name="temp-dir",
     info="A temporary directory to store ephemeral files.",
     metadata={"rich_help_panel": "Output"},
@@ -49,11 +62,21 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="numba-cache-dir",
     info="Implicit output ensuring the numba cache location is mounted. "
-    "The cache defaults to a per-user directory under the system temp directory. "
+    "The cache defaults to a per-user directory under /tmp. "
     "Override it by setting the NUMBA_CACHE_DIR environment variable.",
-    implicit="/tmp/numba",
+    implicit="/tmp/numba-cache",
     must_exist=False,
     mkdir=False,
+    path_policies={"write_parent": True},
+)
+@stimela_output(
+    dtype="Directory",
+    name="beam-cache-dir",
+    info="Implicit output ensuring the beam cache location is mounted. "
+    "The cache defaults to a per-user directory under /tmp. "
+    "Override it by setting the MBEAMS_CACHE_DIR environment variable.",
+    implicit="/tmp/mbeams-cache",
+    must_exist=False,
     path_policies={"write_parent": True},
 )
 def hci(
@@ -217,6 +240,16 @@ def hci(
             rich_help_panel="Imaging",
         ),
     ] = -1,
+    channels_per_bin: Annotated[
+        int,
+        typer.Option(
+            help="Number of channels per frequency bin for beam correction, deconvolution etc. "
+            "This effectively upsamples the frequency resolution when doing beam correction and deconvolution. "
+            "Default of -1 results in one bin per output image. "
+            "Bins are collapsed via a weighted sum.",
+            rich_help_panel="Imaging",
+        ),
+    ] = -1,
     precision: Annotated[
         Literal["single", "double"],
         typer.Option(
@@ -225,10 +258,10 @@ def hci(
         ),
     ] = "double",
     beam_model: Annotated[
-        URI | None,
+        str | None,
         typer.Option(
-            parser=parse_upath,
-            help="Path to beam model as an xarray dataset backed by zarr",
+            help="Path to a beam model or a MeerKAT band name. "
+            "One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -444,13 +477,16 @@ def hci(
             rich_help_panel="Performance",
         ),
     ] = None,
-    cube_to_fits: Annotated[
-        bool,
+    fits_vars: Annotated[
+        ListStr | None,
         typer.Option(
-            help="Whether to convert the output cube to FITS format.",
+            parser=parse_list_str,
+            help="Write these variables to fits. "
+            "Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'. "
+            "Variables are written per band.",
             rich_help_panel="Output",
         ),
-    ] = False,
+    ] = None,
     wgt_mode: Annotated[
         Literal["l2", "minvar"],
         typer.Option(
@@ -479,6 +515,23 @@ def hci(
         typer.Option(
             parser=parse_upath,
             help="Directory to write logs and performance reports to.",
+            rich_help_panel="Output",
+        ),
+        StimelaMeta(
+            must_exist=False,
+            mkdir=False,
+            path_policies={
+                "write_parent": True,
+            },
+        ),
+    ] = None,
+    fits_output_folder: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Optional path to write fits files to. "
+            "Written next to output-dataset if not provided. "
+            "The same naming conventions apply.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
@@ -545,6 +598,7 @@ def hci(
                     images_per_chunk=images_per_chunk,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
+                    channels_per_bin=channels_per_bin,
                     precision=precision,
                     beam_model=beam_model,
                     field_of_view=field_of_view,
@@ -575,12 +629,13 @@ def hci(
                     cg_tol=cg_tol,
                     cg_maxit=cg_maxit,
                     object_store_memory=object_store_memory,
-                    cube_to_fits=cube_to_fits,
+                    fits_vars=fits_vars,
                     wgt_mode=wgt_mode,
                     obs_label=obs_label,
                     flag_excess_rms=flag_excess_rms,
                     output_dataset=output_dataset,
                     log_directory=log_directory,
+                    fits_output_folder=fits_output_folder,
                     temp_dir=temp_dir,
                 ),
             )
@@ -609,6 +664,7 @@ def hci(
                 images_per_chunk=images_per_chunk,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
+                channels_per_bin=channels_per_bin,
                 precision=precision,
                 beam_model=beam_model,
                 field_of_view=field_of_view,
@@ -639,11 +695,12 @@ def hci(
                 cg_tol=cg_tol,
                 cg_maxit=cg_maxit,
                 object_store_memory=object_store_memory,
-                cube_to_fits=cube_to_fits,
+                fits_vars=fits_vars,
                 wgt_mode=wgt_mode,
                 obs_label=obs_label,
                 flag_excess_rms=flag_excess_rms,
                 log_directory=log_directory,
+                fits_output_folder=fits_output_folder,
                 temp_dir=temp_dir,
             )
             return
@@ -680,6 +737,7 @@ def hci(
             images_per_chunk=images_per_chunk,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
+            channels_per_bin=channels_per_bin,
             precision=precision,
             beam_model=beam_model,
             field_of_view=field_of_view,
@@ -710,12 +768,13 @@ def hci(
             cg_tol=cg_tol,
             cg_maxit=cg_maxit,
             object_store_memory=object_store_memory,
-            cube_to_fits=cube_to_fits,
+            fits_vars=fits_vars,
             wgt_mode=wgt_mode,
             obs_label=obs_label,
             flag_excess_rms=flag_excess_rms,
             output_dataset=output_dataset,
             log_directory=log_directory,
+            fits_output_folder=fits_output_folder,
             temp_dir=temp_dir,
         ),
         image=image,

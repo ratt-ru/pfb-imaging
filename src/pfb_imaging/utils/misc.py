@@ -1,5 +1,5 @@
+import gc
 import logging
-from contextlib import nullcontext
 
 import dask
 import dask.array as da
@@ -7,8 +7,6 @@ import jax
 import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
-from dask.diagnostics import ProgressBar
-from dask.distributed import performance_report
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
@@ -30,16 +28,6 @@ JIT_OPTIONS = {"nogil": True, "cache": True}
 def to_unix_time(times):
     # MJD_UNIX_OFFSET = 3506716800.0
     return times - 3506716800.0
-
-
-def compute_context(scheduler, output_filename, boring=True):
-    if scheduler == "distributed":
-        return performance_report(filename=output_filename + "_dask_report.html")
-    else:
-        if boring:
-            return nullcontext()
-        else:
-            return ProgressBar()
 
 
 def kron_matvec(op, b):
@@ -211,6 +199,7 @@ def construct_mappings(
     field_ids=None,
     ddids=None,
     scans=None,
+    enforce_time_ordering=True,
 ):
     """
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
@@ -253,6 +242,12 @@ def construct_mappings(
         assert len(ms_name) == len(gain_name)
 
     # collect times and frequencies per ms and ds
+    # Materialise per-MS metadata to numpy inside the loop so the underlying
+    # casacore TableProxies can be finalized before opening the next MS.
+    # Previously these were kept as dask arrays and only computed in bulk after
+    # the loop, which pinned the open subtables of every MS (~13 FDs each) and
+    # exhausted the OS FD limit at ~1000+ MSes.
+    # See https://github.com/ratt-ru/pfb-imaging/issues/241
     freqs = {}
     chan_widths = {}
     times = {}
@@ -276,8 +271,15 @@ def construct_mappings(
         pol_tab = xds_from_table(ms + "::POLARIZATION")[0]
         ant_tab = xds_from_table(ms + "::ANTENNA")[0]
 
-        antpos[ms] = ant_tab.POSITION.data
-        poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze())
+        antpos[ms] = np.asarray(ant_tab.POSITION.data)
+        # fetch_poltype is dask.delayed — compute immediately to get the str
+        poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze()).compute()
+        phase_dir_arr = np.asarray(field_tab.PHASE_DIR.data)
+        chan_freq_arr = np.asarray(spw_tab.CHAN_FREQ.data)
+        chan_width_arr = np.asarray(spw_tab.CHAN_WIDTH.data)
+        # subtable handles no longer needed — drop refs so TableProxies finalize
+        del field_tab, spw_tab, pol_tab, ant_tab
+
         idts[ms] = []
         freqs[ms] = {}
         times[ms] = {}
@@ -296,18 +298,20 @@ def construct_mappings(
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             idts[ms].append(idt)
-            radecs[ms][idt] = field_tab.PHASE_DIR.data[fid].squeeze()
+            radec = phase_dir_arr[fid].squeeze().copy()
+            # force ra to lie in [0, 2*pi)
+            radec[0] = radec[0] % (2 * np.pi)
+            radecs[ms][idt] = radec
+            freqs[ms][idt] = chan_freq_arr[ddid]
+            chan_widths[ms][idt] = chan_width_arr[ddid]
+            times[ms][idt] = np.atleast_1d(np.asarray(ds.TIME.data).squeeze())
+            uvw = np.asarray(ds.UVW.data)
+            max_blengths.append(float(np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
 
-            freqs[ms][idt] = spw_tab.CHAN_FREQ.data[ddid]
-            chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
-            times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
-            uvw = ds.UVW.data
-            max_blengths.append(da.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
-
-    # Early compute to get metadata
-    times, freqs, radecs, chan_widths, max_blengths, antpos, poltype = dask.compute(
-        times, freqs, radecs, chan_widths, max_blengths, antpos, poltype
-    )
+        # main-table handles — drop refs so TableProxies finalize before the
+        # next MS is opened (issue #241)
+        del xds, phase_dir_arr, chan_freq_arr, chan_width_arr
+        gc.collect()
 
     max_blength = max(max_blengths)
     all_times = []
@@ -349,12 +353,14 @@ def construct_mappings(
                 continue
             freq = freq[idx]
             nchan = freq.size
+            # Use a local copy so the "unset" sentinel is re-evaluated
+            # for every dataset. Previously cpi was mutated inside the
+            # loop, which made -1 mean "all channels" only for the first
+            # dataset and silently inherited that chunk size for the rest.
             if cpi in [-1, 0, None]:
                 cpit = nchan
-                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
-                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
             tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]["start_indices"] = tmp
@@ -365,7 +371,7 @@ def construct_mappings(
                 freq_mapping[ms][idt]["counts"] = np.array((nchan,), dtype=int)
 
             time = times[ms][idt]
-            if not np.all(time[1:] >= time[:-1]):
+            if enforce_time_ordering and (not np.all(time[1:] >= time[:-1])):
                 raise NotImplementedError(
                     f"Time column in {ms} for {idt} is not monotonically "
                     f"non-decreasing. pfb-imaging currently requires "
@@ -526,7 +532,9 @@ def psf_errorsq(x, data, xy):
     return jnp.vdot(res, res)
 
 
-def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0):
+def fitcleanbeam(
+    psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsigma: float = 10.0, yx_order: bool = False
+):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
@@ -534,13 +542,20 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, nsig
     of the initial beam estimate.
 
     Args:
-        psf     - (nband, nx, ny) array containing the PSF for each band.
+        psf     - (nband, nx, ny) array containing the PSF for each band,
+                  or (nband, ny, nx) with yx_order=True.
         level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
         pixsize - pixel size in same units as desired Gaussian parameters.
         nsigma  - fit Gaussian out to this many standard deviations of the estimated major axis.
+        yx_order - set True for cube/FITS (Y, X)-ordered input (see
+                  docs/wiki/image-and-beam-orientation.md). The fit is defined
+                  in wgridder (X, Y) order; this adapts via a zero-copy view so
+                  the returned parameters are identical for either order.
     Returns:
         Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
+    if yx_order:
+        psf = psf.transpose(0, 2, 1)
     nband, nx, ny = psf.shape
 
     # pixel coordinates

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-15T13:45:00Z
-last_verified_commit: 4c6d59b
+timestamp: 2026-07-17T16:00:00Z
+last_verified_commit: 83be23f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -242,33 +242,88 @@ update it (and this page's `last_verified_commit`) in the same session.
   Guard: `tests/test_weight_data_cache.py` (cross-process load-not-recompile).
 - **Source:** PR #274; ratt-ru/radiomesh#81; issues #273, #183.
 
-### D18 — NUMBA_CACHE_DIR defaults to a per-user temp directory
+### D18 — Cache dirs (numba, meerkat-beams) default to per-user directories under /tmp
 
 - **Context:** `NUMBA_CACHE_DIR` was hard-coded to `/tmp/numba` (Dockerfile ENV plus
   implicit cab outputs as mount hints). On shared hosts the first user to create it
   owned it; everyone else got cryptic `PermissionError`s (issue #270). Bare `/tmp` is
   no fix: numba nests `<srcdirname>_<sha1(source dir)>` subdirs under the cache root,
   and identical install paths (guaranteed inside containers) collide one level down.
+  The meerkat-beams cache (`MBEAMS_CACHE_DIR`) later hit the same shared-ownership
+  problem and follows the same pattern.
 - **Decision:** `pfb_imaging/__init__.py` sets
-  `NUMBA_CACHE_DIR=<tempfile.gettempdir()>/numba-cache-<uid>` via
-  `os.environ.setdefault`, and `set_envs` forwards it to child processes. The
-  Dockerfile ENV is gone. The implicit `numba-cache-dir` cab outputs remain solely as
-  mount hints (`write_parent` mounts `/tmp` read-write).
+  `NUMBA_CACHE_DIR=/tmp/numba-cache-<uid>` and `MBEAMS_CACHE_DIR=/tmp/mbeams-cache-<uid>`
+  via `os.environ.setdefault`, and `set_envs` forwards both to child processes
+  (including raylets). The Dockerfile ENV is gone. The implicit `numba-cache-dir` and
+  `beam-cache-dir` cab outputs remain solely as mount hints (`write_parent` mounts
+  `/tmp` read-write).
 - **Rationale:** The package `__init__` runs before any submodule import, so the value
   is set before numba can be imported from any entry point — CLI, stimela-called core
-  functions, Ray workers, tests — with no numba import deferrals. `gettempdir()`
-  honours per-job `TMPDIR`; `getuid()` survives containers where `$USER` doesn't;
-  `setdefault` lets an explicit env (native export, stimela `backend.*.env`) win.
-  Same-user concurrent runs share one cache safely (atomic temp-file + `os.replace`
-  writes; stable keys since D17), so isolation is per-user only. A user-facing
-  `--numba-cache-dir` option was rejected: stimela invokes the core functions
-  directly, so a parameter arrives after module-level imports pulled numba in, and a
-  cab default cannot be computed by stimela formulas.
-- **Consequences:** Overriding the cache location is env-var-only. A containerised
+  functions, Ray workers, tests — with no numba import deferrals. The cache root is
+  hard-coded `/tmp`, **not** `gettempdir()`: the cab mount hints are static
+  `/tmp/...` strings, and apptainer leaks the host `TMPDIR` into the container, so a
+  `TMPDIR`-derived default can land on a path that is not mounted inside the
+  container (a first `gettempdir()`-based iteration failed exactly this way; per-job
+  `TMPDIR` isolation was deliberately given up for cab-mount consistency).
+  `getuid()` survives containers where `$USER` doesn't; `setdefault` lets an explicit
+  env (native export, stimela `backend.*.env`) win. Same-user concurrent runs share
+  one numba cache safely (atomic temp-file + `os.replace` writes; stable keys since
+  D17), so isolation is per-user only. A user-facing `--numba-cache-dir` option was
+  rejected: stimela invokes the core functions directly, so a parameter arrives after
+  module-level imports pulled numba in, and a cab default cannot be computed by
+  stimela formulas.
+- **Consequences:** Overriding a cache location is env-var-only, and `TMPDIR` does
+  not move the defaults (pinned by `tests/test_numba_cache_dir.py`). A containerised
   override outside `/tmp` additionally needs its mount expressed on the stimela side
   (backend `env` today; the cab-level env mechanism when it lands).
 - **Source:** issue #270; `src/pfb_imaging/__init__.py`; `Dockerfile`;
-  `tests/test_numba_cache_dir.py`.
+  `tests/test_numba_cache_dir.py`; commits `61d96f5`, `83be23f`.
+
+### D19 — Image-space arrays on the hci path are (Y, X)-ordered end to end
+
+- **Context:** The `hci` BeamWizard beam path historically carried a
+  transpose+flip "hack to get the images to align" (`547458f`), later removed
+  (`330bc5d`), and then bypassed reprojection entirely (`a516530`) during the
+  jagged-beam-gain investigation (breifast#208). The hack compensated three real
+  bugs in `reproject_and_interp_scat_beam` (transposed array feed, target
+  `crpix` off by one, wrong target `CDELT1` sign) and was only approximately
+  correct because the MeerKAT beam is nearly circular — measured errors: 4.3 %
+  of peak (circular), 21 % (elliptical), rephasing offsets applied along the
+  wrong axis; it also required square images.
+- **Decision:** Cube/FITS **(Y, X)** order is canonical for every image-space
+  array on the hci path — beam maps (`get_rotation_averaged_beam`, native since
+  meerkat-beams `616906b`; `reproject_and_interp_scat_beam`, fixed to the
+  measured reproject semantics with the 1D `l_beam`/`m_beam` coords, signed
+  cdelt/crpix, target WCS = the hci output header) *and* `stokes_image`'s
+  working arrays (`residual`/`psf`/`pbeam`) and cube outputs. **No data-moving
+  transposes and no flips exist.** ducc's x-major world is confined to the
+  `vis2dirty` call sites, which fill the `(ny, nx)` buffers through zero-copy
+  transposed views (`dirty=buf.T`; ducc accepts strided output). The other
+  x-major seam is `fitcleanbeam` — shared with the legacy `.dds` path, its PA
+  convention defined by its input axes — called with `yx_order=True`, an
+  explicit flag that adapts via an internal zero-copy view and returns
+  identical parameters for either order.
+- **Rationale:** Every layer keeps the index order its producer defines
+  (astropy/reproject, the wizard, the cube and FITS are (Y, X); only ducc and
+  legacy `fitcleanbeam` are x-major), so orientation is auditable at two
+  explicit seams instead of smeared across compensating transposes and hacks.
+  Conventions were pinned by measurement, not derivation:
+  image-and-beam-orientation.md.
+- **Consequences:** Non-square images work. The refactor was verified
+  output-equivalent against the pre-refactor code on the test MS (cube/psf to
+  single-precision threading noise ~1e-7; `psf_pa` bitwise). The legacy `.dds`
+  path and the `.dt` imager keep wgridder (X, Y) arrays — extending (Y, X)
+  canonicalisation there means an on-disk schema change; only worth it if the
+  schema is revised anyway. The zarr-beam branch
+  (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
+  question) is untouched, documented debt. Changing any transpose/flip on this
+  path must keep `tests/test_beam_orientation.py` green.
+- **Source:** `src/pfb_imaging/utils/beam.py`;
+  `src/pfb_imaging/utils/stokes2im.py` (`stokes_image`, `beam_for_band`);
+  `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
+  `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
+  `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
+  landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
 
 ## Known debt
 
@@ -289,6 +344,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   visible overhead on small images (~3 s/major-cycle at 308²). Acceptable at production
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
+- The zarr-beam branch of `beam_for_band` (`reproject_and_interp_beam`) still carries
+  the transpose+flip hack and the pre-D19 reproject bugs, and the MdV feed-plane→sky
+  parity question ("transmissive or receptive?") is unresolved. Only correct-ish for
+  square images and near-circular beams; fix along D19 lines once parity is settled
+  (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas
 

@@ -1,5 +1,4 @@
 from collections import namedtuple
-from pathlib import Path
 
 import dask
 import dask.array as da
@@ -23,7 +22,7 @@ pmp = pytest.mark.parametrize
 
 
 @pmp("do_gains", (True, False))
-def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_chunks):
+def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_chunks, tmp_path):
     """
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -32,7 +31,6 @@ def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_
     """
     np.random.seed(420)
 
-    test_dir = Path(ms_name).resolve().parent
     xds = ms_meta.xds
     utime = ms_meta.utime
     freq = ms_meta.freq
@@ -130,7 +128,7 @@ def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_
         }
         coords = {"gain_freq": (("gain_freq",), freq), "gain_time": (("gain_time",), utime)}
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
-        gain_path = str(test_dir / Path("gains.qc"))
+        gain_path = str(tmp_path / "gains.qc")
         dask.compute(xds_to_zarr(net_xds_list, f"{gain_path}::NET"))
         gain_path = [f"{gain_path}/NET"]
 
@@ -139,12 +137,12 @@ def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_
         dask.compute(xds_to_table(xds, ms_name, columns="DATA"))
         gain_path = None
 
-    outname = str(test_dir / "test")
+    outname = str(tmp_path / "test")
     dds_name = f"{outname}_I_main.dds"
 
     # initialize Stokes visibilities
     init_core(
-        [test_dir / "test_ascii_1h60.0s.MS"],
+        [ms_name],
         outname,
         data_column="DATA",
         flag_column="FLAG",

@@ -2,7 +2,6 @@ import ctypes
 import importlib
 import logging
 import os
-import tempfile
 import warnings
 from importlib.metadata import version
 
@@ -12,18 +11,28 @@ __version__ = "0.0.10"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
-# Also before importing numba: default the cache dir to a per-user directory
-# so users on a shared host don't collide on ownership of /tmp/numba (#270).
-# setdefault so an explicit NUMBA_CACHE_DIR (native env, stimela backend env)
-# always wins. gettempdir() honours per-job TMPDIR on clusters.
+# Also before importing numba: default the numba and meerkat-beams cache dirs
+# to per-user directories so users on a shared host don't collide on ownership
+# of a shared cache (#270). Hard-coded /tmp rather than gettempdir(): the
+# defaults must match the static /tmp mount hints in the cab definitions, and
+# apptainer leaks the host TMPDIR into the container where a TMPDIR-derived
+# path may not be mounted. setdefault so an explicit env var (native env,
+# stimela backend env) always wins.
 os.environ.setdefault(
     "NUMBA_CACHE_DIR",
-    os.path.join(tempfile.gettempdir(), f"numba-cache-{os.getuid()}"),
+    f"/tmp/numba-cache-{os.getuid()}",
+)
+os.environ.setdefault(
+    "MBEAMS_CACHE_DIR",
+    f"/tmp/mbeams-cache-{os.getuid()}",
 )
 
 
 def set_envs(nthreads, ncpu, log=None):
     # these seem to have more sensible defaults
+    # Note - do not set NUMBA_NUM_THREADS here.
+    # It should be initialised to the maximum and then we use numba.set_num_threads()
+    # in the worker processes to set it to the number of threads per worker.
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
@@ -65,6 +74,7 @@ def set_envs(nthreads, ncpu, log=None):
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
         "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
+        "MBEAMS_CACHE_DIR": os.environ["MBEAMS_CACHE_DIR"],
         "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars

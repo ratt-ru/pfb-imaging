@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
     inputs:
       ms:
         info:
@@ -143,6 +143,16 @@ cabs:
         default: '-1'
         metadata:
           rich_help_panel: Imaging
+      channels-per-bin:
+        info:
+          Number of channels per frequency bin for beam correction, deconvolution etc.
+          This effectively upsamples the frequency resolution when doing beam correction and deconvolution.
+          Default of -1 results in one bin per output image.
+          Bins are collapsed via a weighted sum.
+        dtype: int
+        default: '-1'
+        metadata:
+          rich_help_panel: Imaging
       precision:
         info:
           Gridding precision
@@ -154,8 +164,9 @@ cabs:
           rich_help_panel: Imaging
       beam-model:
         info:
-          Path to beam model as an xarray dataset backed by zarr
-        dtype: Optional[URI]
+          Path to a beam model or a MeerKAT band name.
+          One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       field-of-view:
@@ -362,11 +373,12 @@ cabs:
         dtype: Optional[float]
         metadata:
           rich_help_panel: Performance
-      cube-to-fits:
+      fits-vars:
         info:
-          Whether to convert the output cube to FITS format.
-        dtype: bool
-        default: false
+          Write these variables to fits.
+          Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'.
+          Variables are written per band.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Output
       wgt-mode:
@@ -417,6 +429,18 @@ cabs:
           write_parent: true
         metadata:
           rich_help_panel: Output
+      fits-output-folder:
+        dtype: Directory
+        info:
+          Optional path to write fits files to.
+          Written next to output-dataset if not provided.
+          The same naming conventions apply.
+        must_exist: false
+        mkdir: false
+        path_policies:
+          write_parent: true
+        metadata:
+          rich_help_panel: Output
       temp-dir:
         dtype: Directory
         info:
@@ -427,10 +451,20 @@ cabs:
         dtype: Directory
         info:
           Implicit output ensuring the numba cache location is mounted.
-          The cache defaults to a per-user directory under the system temp directory.
+          The cache defaults to a per-user directory under /tmp.
           Override it by setting the NUMBA_CACHE_DIR environment variable.
-        implicit: '/tmp/numba'
+        implicit: '/tmp/numba-cache'
         must_exist: false
         mkdir: false
+        path_policies:
+          write_parent: true
+      beam-cache-dir:
+        dtype: Directory
+        info:
+          Implicit output ensuring the beam cache location is mounted.
+          The cache defaults to a per-user directory under /tmp.
+          Override it by setting the MBEAMS_CACHE_DIR environment variable.
+        implicit: '/tmp/mbeams-cache'
+        must_exist: false
         path_policies:
           write_parent: true

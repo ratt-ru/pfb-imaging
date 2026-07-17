@@ -32,6 +32,7 @@ full = [
     "katbeam>=0.1",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
+    "distributed>=2026.3.0",  # still need this for degrid command
     "reproject",
     "ray[default]>=2.55.0",
     "radiomesh>=0.1.2 ; python_version >= '3.11'",
@@ -52,6 +53,7 @@ full = [
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
+    "meerkat-beams[full] @ git+https://github.com/landmanbester/meerkat-beams.git@dev001",
     "xarray-ms>=0.5.5 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
@@ -99,7 +101,10 @@ markers = [
 ]
 
 [tool.uv.sources]
-hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", branch = "main" }
+# rev (not branch): meerkat-beams pins `hip-cargo @ git+...@main` (PEP 508), and
+# uv pip treats a branch-kind and a bare-rev-kind URL for the same ref as
+# conflicting URLs even though they print identically (broke the container build).
+hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", rev = "main" }
 
 [dependency-groups]
 dev = [
