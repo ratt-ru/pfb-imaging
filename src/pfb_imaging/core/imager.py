@@ -92,8 +92,8 @@ def _grid_image(
     corr = next(iter(groups.values()))[0].corr.values
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
-    dirty_sum = np.zeros((ncorr, nx, ny))
-    psf_sum = np.zeros((ncorr, nx_psf, ny_psf))
+    dirty_sum = np.zeros((ncorr, ny, nx))
+    psf_sum = np.zeros((ncorr, ny_psf, nx_psf))
     wsum_sum = np.zeros(ncorr)
 
     for pid, key in enumerate(list(sorted(groups))):
@@ -142,9 +142,9 @@ def _grid_image(
                 "MASK": (("row", "chan"), part.MASK.values),
                 "UVW": (("row", "three"), part.UVW.values),
                 "FREQ": (("chan",), part.FREQ.values),
-                "PSF": (("corr", "x_psf", "y_psf"), prod["PSF"]),
-                "PSFHAT": (("corr", "x_psf", "yo2"), prod["PSFHAT"]),
-                "BEAM": (("corr", "x", "y"), prod["BEAM"]),
+                "PSF": (("corr", "y_psf", "x_psf"), prod["PSF"]),
+                "PSFHAT": (("corr", "y_psf", "xo2"), prod["PSFHAT"]),
+                "BEAM": (("corr", "y", "x"), prod["BEAM"]),
                 "PSFPARSN": (("corr", "bpar"), prod["PSFPARSN"]),
             },
             coords={"corr": corr, "bpar": bpar},
@@ -182,10 +182,13 @@ def _grid_image(
     band_attrs = {k: v for k, v in band_attrs.items() if v is not None}
     band_ds = xr.Dataset(
         {
-            "DIRTY": (("corr", "x", "y"), dirty_sum),
-            "RESIDUAL": (("corr", "x", "y"), dirty_sum.copy()),  # no model yet
-            "PSF": (("corr", "x_psf", "y_psf"), psf_sum),
-            "PSFPARSN": (("corr", "bpar"), np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None]))),
+            "DIRTY": (("corr", "y", "x"), dirty_sum),
+            "RESIDUAL": (("corr", "y", "x"), dirty_sum.copy()),  # no model yet
+            "PSF": (("corr", "y_psf", "x_psf"), psf_sum),
+            "PSFPARSN": (
+                ("corr", "bpar"),
+                np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True)),
+            ),
             "WSUM": (("corr",), wsum_sum),
         },
         coords={"corr": corr, "bpar": bpar},
@@ -759,7 +762,7 @@ def imager(
         for task in ready:
             res = ray.get(task)
             tid = res["timeid"]
-            psf_mfs.setdefault(tid, np.zeros((ncorr, nx_psf, ny_psf)))
+            psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf)))
             psf_mfs[tid] += res["psf"]
             wsum_mfs.setdefault(tid, np.zeros(ncorr))
             wsum_mfs[tid] += res["wsum"]
@@ -780,7 +783,7 @@ def imager(
     # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
     psfparsn = {}
     for tid in psf_mfs:
-        psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None]))
+        psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:

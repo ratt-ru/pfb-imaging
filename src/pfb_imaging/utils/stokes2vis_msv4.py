@@ -396,12 +396,14 @@ def stokes_vis(
         #     beamo = JimBeam('MKAT-AA-S-JIM-2020')
         else:
             raise ValueError("Freq range not covered by katbeam")
-        xx, yy = np.meshgrid(l_beam, m_beam, indexing="ij")
+        # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
+        # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
+        mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
         # katbeam expects freq in MHz
         fmhz = freq_out / 1e6
         beam = np.zeros((ncorr, npix, npix), dtype=np.float64)
         for i, product in enumerate(corr):
-            beam0 = getattr(beamo, product)(xx, yy, fmhz)
+            beam0 = getattr(beamo, product)(ll, mm, fmhz)
             step = 25
             angles = np.linspace(0, 359, step)
             for angle in angles:
@@ -440,7 +442,7 @@ def stokes_vis(
     data_vars["MASK"] = (("row", "chan"), mask)
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
-    data_vars["BEAM"] = (("corr", "l_beam", "m_beam"), beam)
+    data_vars["BEAM"] = (("corr", "m_beam", "l_beam"), beam)
     data_vars["COUNTS"] = (("corr", "u", "v"), counts)
 
     coords = {

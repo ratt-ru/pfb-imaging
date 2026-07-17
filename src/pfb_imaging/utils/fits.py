@@ -39,9 +39,15 @@ def load_fits(name, dtype=np.float32):
     return np.require(data, dtype=dtype, requirements="C")
 
 
-def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None):
+def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None, yx_order=False):
     hdu = fits.PrimaryHDU(header=hdr)
-    data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
+    if yx_order:
+        # data is already (..., ny, nx) = FITS row-major layout (wiki D19);
+        # only move band/corr onto the FITS STOKES/FREQ axis order
+        data = np.transpose(to4d(data), axes=(1, 0, 2, 3))
+    else:
+        # legacy x-major (..., nx, ny) input
+        data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements="F")
     if beams_hdu is not None:
         hdul = fits.HDUList([hdu, beams_hdu])
@@ -452,10 +458,10 @@ def dt2fits(
         ref = dst[0]
         nband = len(dst)
         freqs = np.array([ds.attrs["freq_out"] for ds in dst])
-        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, nx, ny)
+        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, ny, nx)
         wsums = np.stack([ds.WSUM.values for ds in dst], axis=0)  # (band, corr)
         wsum = wsums.sum(axis=0)  # (corr,)
-        _, ncorr, nx, ny = cube.shape
+        _, ncorr, ny, nx = cube.shape
         radec = (ref.attrs["ra"], ref.attrs["dec"])
         cell_deg = np.rad2deg(ref.attrs["cell_rad"])
         time_out = ref.attrs["time_out"]
@@ -491,7 +497,13 @@ def dt2fits(
             else:
                 cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
             save_fits(
-                cube_mfs, basename + f"_time{timeid}_mfs.fits", hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu
+                cube_mfs,
+                basename + f"_time{timeid}_mfs.fits",
+                hdr,
+                overwrite=True,
+                dtype=otype,
+                beams_hdu=beams_hdu,
+                yx_order=True,
             )
 
         if do_cube:
@@ -523,7 +535,13 @@ def dt2fits(
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
             cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube
             save_fits(
-                cube_out, basename + f"_time{timeid}.fits", hdr, overwrite=True, dtype=otype, beams_hdu=cube_beams
+                cube_out,
+                basename + f"_time{timeid}.fits",
+                hdr,
+                overwrite=True,
+                dtype=otype,
+                beams_hdu=cube_beams,
+                yx_order=True,
             )
 
     return column
