@@ -64,9 +64,17 @@ URI = NewType("URI", Path)
     info="Implicit output ensuring the numba cache location is mounted. "
     "The cache defaults to a per-user directory under the system temp directory. "
     "Override it by setting the NUMBA_CACHE_DIR environment variable.",
-    implicit="/tmp/numba",
+    implicit="/tmp/numba-cache",
     must_exist=False,
     mkdir=False,
+    path_policies={"write_parent": True},
+)
+@stimela_output(
+    dtype="Directory",
+    name="dir-beam-cache",
+    info="output directory for primary beam cache",
+    implicit="/tmp/mbeams-cache",
+    must_exist=False,
     path_policies={"write_parent": True},
 )
 def hci(
