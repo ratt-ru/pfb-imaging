@@ -140,8 +140,8 @@ def deconv(
         },
         log=log,
     )
-    nx, ny = first.x.size, first.y.size
-    nx_psf, ny_psf = first.x_psf.size, first.y_psf.size
+    ny, nx = first.y.size, first.x.size
+    ny_psf, nx_psf = first.y_psf.size, first.x_psf.size
     cell_rad = first.attrs["cell_rad"]
     cell_deg = np.rad2deg(cell_rad)
     radec = [first.attrs["ra"], first.attrs["dec"]]
@@ -153,9 +153,10 @@ def deconv(
     # load band cubes and attrs required on driver (MODEL/RESIDUAL/UPDATE/WSUM)
     # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
     # They never enter the driver or the Ray object store
-    residual_raw = np.zeros((nband, nx, ny))
-    model = np.zeros((nband, nx, ny))
-    update = np.zeros((nband, nx, ny))
+    # image rasters are (Y, X)-ordered end to end (wiki D19)
+    residual_raw = np.zeros((nband, ny, nx))
+    model = np.zeros((nband, ny, nx))
+    update = np.zeros((nband, ny, nx))
     wsums = np.zeros(nband)
     band_attrs = []  # original band attrs (bandid, freq_out, cell_rad, ...) to merge back on write
 
@@ -208,7 +209,7 @@ def deconv(
     if "best_rms" in first.attrs:
         best_rms = first.attrs["best_rms"]
         best_rmax = first.attrs["best_rmax"]
-        best_model = np.zeros((nband, nx, ny))
+        best_model = np.zeros((nband, ny, nx))
         for b, n in enumerate(nodes):
             bds = dt[n].ds
             if "MODEL_BEST" in bds:
@@ -224,7 +225,7 @@ def deconv(
         solver.first(residual)
         update = solver.forward(residual)
         update_mfs = np.mean(update, axis=0)
-        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs)
+        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
 
         modelp = deepcopy(model)
         lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
@@ -235,10 +236,12 @@ def deconv(
         log.info(f"Writing model to {basename}_{suffix}.mds")
         # TODO - this should be a function call to pfb-model-spec
         try:
+            # the .mds stays x-major (degrid/model2comps convention; see the
+            # pfb-model-spec migration in #277) -- adapt with zero-copy views
             coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
                 freq_out[fsel],
-                model[None, fsel, :, :],
+                model[None, fsel, :, :].transpose(0, 1, 3, 2),
                 wgt=(wsums / wsum)[None, fsel],
                 nbasisf=nbasisf,
                 method="Legendre",
@@ -280,6 +283,8 @@ def deconv(
             # this can be used to enforce smoothness in the model at the expense of increased residuals
             # does not respect the positivity constraint
             for b in range(nband):
+                # eval returns an x-major (nx, ny) raster (mds convention);
+                # transpose back into the (Y, X) model cube
                 model[b] = eval_coeffs_to_slice(
                     time_out[0],
                     freq_out[b],
@@ -302,12 +307,12 @@ def deconv(
                     cell_rad,
                     x0,
                     y0,
-                )
+                ).T
         except Exception as e:
             log.info(f"Exception {e} raised during model fit.")
 
         model_mfs = np.mean(model[fsel], axis=0)
-        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
+        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
 
         log.info("Computing residual")
         residual_raw = workers.residual(
@@ -319,7 +324,7 @@ def deconv(
         )[:, 0]
         residual = residual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
@@ -347,12 +352,12 @@ def deconv(
         is_best = (model == best_model).all()
         for b, n in enumerate(nodes):
             data_vars = {
-                "MODEL": (("corr", "x", "y"), model[b][None]),
-                "UPDATE": (("corr", "x", "y"), update[b][None]),
-                "RESIDUAL": (("corr", "x", "y"), residual_raw[b][None]),
+                "MODEL": (("corr", "y", "x"), model[b][None]),
+                "UPDATE": (("corr", "y", "x"), update[b][None]),
+                "RESIDUAL": (("corr", "y", "x"), residual_raw[b][None]),
             }
             if is_best:
-                data_vars["MODEL_BEST"] = (("corr", "x", "y"), best_model[b][None])
+                data_vars["MODEL_BEST"] = (("corr", "y", "x"), best_model[b][None])
             # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
             # variables, which merge), so start from the band's original
             # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the

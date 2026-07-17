@@ -447,8 +447,10 @@ class HessianTree(object):
     per-major-cycle gradient), not here.
 
     Args:
-        partitions: list of per-partition dicts with ``psfhat`` ``(corr, nx_psf, nyo2)``,
-            ``beam`` ``(corr, nx, ny)`` and ``wsum`` ``(corr,)``.
+        partitions: list of per-partition dicts with ``psfhat`` ``(corr, ny_psf, nxo2)``,
+            ``beam`` ``(corr, ny, nx)`` and ``wsum`` ``(corr,)``. Image-space
+            arrays are (Y, X)-ordered (wiki D19); ``nx``/``ny`` keep meaning
+            the X/Y pixel counts.
         nx, ny: image dimensions.
         nx_psf, ny_psf: PSF dimensions (``ny_psf`` is the real-FFT last size).
         eta: Tikhonov parameter.
@@ -481,16 +483,16 @@ class HessianTree(object):
         # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
         # iterations does not reallocate each dot(); safe because actor calls are
         # single-threaded (matches HessPSF)
-        self.xpad = empty_noncritical((self.nx_psf, self.ny_psf), dtype="f8")
-        self.xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
+        self.xpad = empty_noncritical((self.ny_psf, self.nx_psf), dtype="f8")
+        self.xhat = empty_noncritical((self.ny_psf, self.nx_psf // 2 + 1), dtype="c16")
 
     def dot(self, x):
         # leading axis is the correlation axis (HessianTree acts per output image;
         # the band/time axis is distributed by Ray, not carried here)
         xtmp = x if x.ndim == 3 else x[None, :, :]
-        ncorr, nx, ny = xtmp.shape
+        ncorr, ny, nx = xtmp.shape
         assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
-        assert nx == self.nx and ny == self.ny
+        assert ny == self.ny and nx == self.nx
         out = np.zeros_like(xtmp)
         xpad = self.xpad
         xhat = self.xhat
@@ -499,7 +501,7 @@ class HessianTree(object):
             psfhat = p["psfhat"]
             for c in range(self.ncorr):
                 xpad.fill(0.0)
-                xpad[0:nx, 0:ny] = xtmp[c] * beam[c]
+                xpad[0:ny, 0:nx] = xtmp[c] * beam[c]
                 r2c(xpad, axes=(0, 1), nthreads=self.nthreads, forward=True, inorm=0, out=xhat)
                 xhat *= psfhat[c]
                 c2r(
@@ -507,12 +509,13 @@ class HessianTree(object):
                     axes=(0, 1),
                     forward=False,
                     out=xpad,
-                    lastsize=self.ny_psf,
+                    # last (real-FFT) axis is x in (Y, X) order
+                    lastsize=self.nx_psf,
                     inorm=2,
                     nthreads=self.nthreads,
                     allow_overwriting_input=True,
                 )
-                out[c] += beam[c] * xpad[0:nx, 0:ny]
+                out[c] += beam[c] * xpad[0:ny, 0:nx]
         out /= self.wsum[:, None, None]
         out += self.eta * xtmp
         return out

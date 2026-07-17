@@ -110,16 +110,16 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng):
     driver's ``deconv()`` opens directly (see architecture.md §8 tree layout).
     """
     nx_psf, ny_psf = 2 * nx, 2 * ny
-    yo2 = ny + 1
+    xo2 = nx + 1
     freqs = [1e9, 1.1e9]
 
     for b, freq in enumerate(freqs):
         bandname = f"band{b:04d}_time0000"
         band_ds = xr.Dataset(
             data_vars={
-                "DIRTY": (("corr", "x", "y"), rng.standard_normal((1, nx, ny))),
-                "RESIDUAL": (("corr", "x", "y"), rng.standard_normal((1, nx, ny))),
-                "PSF": (("corr", "x_psf", "y_psf"), np.ones((1, nx_psf, ny_psf))),
+                "DIRTY": (("corr", "y", "x"), rng.standard_normal((1, ny, nx))),
+                "RESIDUAL": (("corr", "y", "x"), rng.standard_normal((1, ny, nx))),
+                "PSF": (("corr", "y_psf", "x_psf"), np.ones((1, ny_psf, nx_psf))),
                 "WSUM": (("corr",), np.array([1.0])),
             },
             coords={"corr": ["I"]},
@@ -141,8 +141,8 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng):
             data_vars={
                 # delta-function PSF -> Fourier-domain magnitude is all ones,
                 # matching the abs()'d PSFHAT convention core/deconv.py expects.
-                "PSFHAT": (("corr", "x_psf", "yo2"), np.ones((1, nx_psf, yo2))),
-                "BEAM": (("corr", "x", "y"), np.ones((1, nx, ny))),
+                "PSFHAT": (("corr", "y_psf", "xo2"), np.ones((1, ny_psf, xo2))),
+                "BEAM": (("corr", "y", "x"), np.ones((1, ny, nx))),
                 "UVW": (("row", "three"), uvw),
                 "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, nchan))),
                 "MASK": (("row", "chan"), np.ones((nrow, nchan), dtype=np.uint8)),

@@ -77,7 +77,7 @@ class _BandWorkerImpl:
 
         try:
             band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
-            self._dirty = band.ds.DIRTY.values  # (corr, nx, ny)
+            self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
             parts = []
             hess_parts = []
             for cname in sorted(band.children):
@@ -116,7 +116,7 @@ class _BandWorkerImpl:
             if partitions is None:
                 raise RuntimeError("no partitions passed and none loaded; call load_band first")
         self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=self._nthreads, wsum=wsum)
-        self._hess.dot(np.zeros((nx, ny)))  # warm up the FFT plans
+        self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
 
     def hess_dot(self, x):
         return self._hess.dot(x)
@@ -145,12 +145,13 @@ class _BandWorkerImpl:
         # deferred: import cycle with operators.psi
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
-        self._psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
+        # rasters are (Y, X)-ordered end to end (wiki D19): axis 0 = ny
+        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel)
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
-        self._xo = np.empty((nx, ny))
-        self._psib.dot(np.zeros((nx, ny)), self._alphao)
+        self._xo = np.empty((ny, nx))
+        self._psib.dot(np.zeros((ny, nx)), self._alphao)
         self._psib.hdot(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 

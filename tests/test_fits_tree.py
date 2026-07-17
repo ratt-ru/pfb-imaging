@@ -10,7 +10,7 @@ from pfb_imaging.utils.fits import dt2fits
 def _band_node(timeid, freq_out, val, wsum=10.0, nx=8):
     return xr.Dataset(
         {
-            "DIRTY": (("corr", "x", "y"), np.full((1, nx, nx), float(val))),
+            "DIRTY": (("corr", "y", "x"), np.full((1, nx, nx), float(val))),
             "WSUM": (("corr",), np.array([float(wsum)])),
         },
         coords={"corr": ["I"]},

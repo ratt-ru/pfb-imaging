@@ -127,7 +127,8 @@ def make_ista(partitions_per_band, geometry, model, update, opts, workers=None, 
     if partitions_per_band is None and workers is None:
         raise ValueError("partitions_per_band=None requires a workers pool with loaded bands")
     nband = workers.nband if partitions_per_band is None else len(partitions_per_band)
-    reg = L1(IdentityPsi(nband, geometry["nx"], geometry["ny"]))
+    # (Y, X) raster order: IdentityPsi buffer axes follow the image axes
+    reg = L1(IdentityPsi(nband, geometry["ny"], geometry["nx"]))
     hess = _build_hess(partitions_per_band, geometry, opts, workers=workers, wsums=wsums)
     fwd = PCG(
         tol=opts["cg_tol"], maxit=opts["cg_maxit"], verbosity=opts["cg_verbose"], report_freq=opts["cg_report_freq"]
