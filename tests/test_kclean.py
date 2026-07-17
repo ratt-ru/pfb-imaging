@@ -104,7 +104,12 @@ def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_
         )
 
         xds["DATA"] = (("row", "chan", "corr"), da.from_array(vis, chunks=(-1, -1, -1)))
-        dask.compute(xds_to_table(xds, ms_name, columns="DATA"))
+        # the sky_truth fixture leaves persistent flags in the shared MS;
+        # clear them so the per-band assertions below see every channel
+        nrow_, nchan_, ncorr_ = xds.DATA.shape
+        xds["FLAG"] = (("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1)))
+        xds["FLAG_ROW"] = (("row",), da.zeros(nrow_, dtype=bool, chunks=-1))
+        dask.compute(xds_to_table(xds, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
 
         # cast gain to QuartiCal format
         g = da.from_array(jones)
@@ -134,7 +139,12 @@ def test_kclean(do_gains, ms_name, ms_meta, image_geometry, gain_cholesky, time_
 
     else:
         xds["DATA"] = (("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1)))
-        dask.compute(xds_to_table(xds, ms_name, columns="DATA"))
+        # the sky_truth fixture leaves persistent flags in the shared MS;
+        # clear them so the per-band assertions below see every channel
+        nrow_, nchan_, ncorr_ = xds.DATA.shape
+        xds["FLAG"] = (("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1)))
+        xds["FLAG_ROW"] = (("row",), da.zeros(nrow_, dtype=bool, chunks=-1))
+        dask.compute(xds_to_table(xds, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
         gain_path = None
 
     outname = str(tmp_path / "test")

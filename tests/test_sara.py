@@ -92,7 +92,12 @@ def test_sara(ms_name, ms_meta, image_geometry, tmp_path):
 
     model_vis = da.from_array(model_vis, chunks=(-1, -1, -1))
     xds["DATA"] = (("row", "chan", "corr"), model_vis)
-    writes = [xds_to_table(xds, ms_name, columns="DATA")]
+    # the sky_truth fixture leaves persistent flags in the shared MS;
+    # clear them so the per-band assertions below see every channel
+    nrow_, nchan_, ncorr_ = xds.DATA.shape
+    xds["FLAG"] = (("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1)))
+    xds["FLAG_ROW"] = (("row",), da.zeros(nrow_, dtype=bool, chunks=-1))
+    writes = [xds_to_table(xds, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"])]
     dask.compute(writes)
 
     outname = str(tmp_path / "test")
