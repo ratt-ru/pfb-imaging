@@ -3,8 +3,9 @@
 This module loads the arcae ``xarray-ms:msv2`` engine. As of arcae 0.5.2
 (ratt-ru/arcae#211, #212) arcae and python-casacore coexist in one process, so
 this file runs in the same ``pytest tests/`` session as the casacore-based
-tests, and the equivalence test calls the legacy ``init``+``grid`` reference
-in-process (it previously ran them in a subprocess for arcae#72 isolation).
+tests. Correctness is pinned against the injected ``sky_truth`` fixture (WCS
+positions/fluxes and a brute-force DFT oracle), not against the legacy
+``init``+``grid`` path (retired, #277).
 """
 
 import glob
@@ -15,45 +16,6 @@ import xarray as xr
 from numpy.testing import assert_allclose
 
 from pfb_imaging.core.imager import imager as imager_core
-
-
-def _describe(name, num, den, per_node_wsum):
-    """Compact diagnostics for an (un-normalised) MFS numerator / wsum pair.
-
-    Printed before the equivalence assertion so a CI failure shows *which*
-    image went bad and why (empty store, zero wsum, NaNs in DIRTY, ...).
-    """
-    nnan = int(np.isnan(num).sum())
-    finite = num[np.isfinite(num)]
-    lo = float(finite.min()) if finite.size else float("nan")
-    hi = float(finite.max()) if finite.size else float("nan")
-    print(
-        f"[{name}] nodes={len(per_node_wsum)} den(sum wsum)={den:.6g} "
-        f"per-node wsum={per_node_wsum} DIRTY nan={nnan}/{num.size} "
-        f"finite-min/max={lo:.4g}/{hi:.4g}",
-        flush=True,
-    )
-
-
-def _mfs_dirty_from_dt(store):
-    dt = xr.open_datatree(store, engine="zarr", chunks=None)
-    nodes = [dt[n].ds for n in dt.children if n.startswith("band")]
-    num = sum(ds.DIRTY.values[0] for ds in nodes)  # corr 0 == Stokes I
-    per_node_wsum = [float(ds.WSUM.values[0]) for ds in nodes]
-    den = sum(per_node_wsum)
-    _describe(f"imager .dt {store}", num, den, per_node_wsum)
-    return num / den
-
-
-def _mfs_dirty_from_dds(store):
-    from pfb_imaging.utils.naming import xds_from_url
-
-    dds, _ = xds_from_url(store)
-    num = sum(ds.DIRTY.values[0] for ds in dds)
-    per_node_wsum = [float(ds.WSUM.values[0]) for ds in dds]
-    den = sum(per_node_wsum)
-    _describe(f"legacy .dds {store}", num, den, per_node_wsum)
-    return num / den
 
 
 def test_imager_writes_dt_tree(ms_name, tmp_path):
@@ -117,92 +79,6 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
     )
     assert DaskMSStore(outname + "_I.scratch").exists()
     assert DaskMSStore(outname + "_I.dt").exists()
-
-
-def test_imager_matches_init_grid_single_field(ms_name, tmp_path):
-    """imager .dt dirty matches the legacy init+grid .dds dirty (natural weights).
-
-    As of arcae 0.5.2 (ratt-ru/arcae#211, #212) arcae and python-casacore coexist
-    in one process, so the casacore-based init+grid reference now runs **in-process**
-    alongside the arcae-based imager (it used to run in a subprocess purely to keep
-    casacore out of the arcae process). All three calls share the session Ray
-    cluster, so each passes keep_ray_alive=True to avoid tearing it down mid-suite.
-
-    KNOWN LIMITATION (FIXME): the shared test MS downloaded from Google Drive
-    currently has an all-zero DATA column, so in CI both pipelines produce an
-    identically-zero dirty image and this test only verifies that the two paths
-    *agree* (and run end to end) -- it is a no-op on the actual gridding maths.
-    It becomes a real equivalence check only when the MS carries visibilities
-    (older locally-cached copies still do, which is why it is meaningful there).
-    To make it meaningful everywhere, populate DATA with a deterministic model
-    (predict point sources with ducc0 ``dirty2vis`` as test_kclean/test_sara do)
-    -- ideally once per session in conftest. Fully flagging one band at the same
-    time would additionally exercise the band-dropping path. Until then the
-    comparison is deliberately divide-by-zero-safe (see below) so a zero-signal MS
-    does not masquerade as a NaN failure.
-    """
-    from pfb_imaging.core.grid import grid
-    from pfb_imaging.core.init import init
-
-    nx = ny = 256
-
-    base_leg = str(tmp_path / "legacy")
-    init(
-        [Path(ms_name)],
-        base_leg,
-        channels_per_image=2,
-        integrations_per_image=-1,
-        product="I",
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-    grid(
-        base_leg,
-        nx=nx,
-        ny=ny,
-        psf=False,
-        residual=False,
-        noise=False,
-        beam=False,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-
-    base_new = str(tmp_path / "imager")
-    imager_core(
-        [Path(ms_name)],
-        base_new,
-        channels_per_image=2,
-        integrations_per_image=-1,
-        product="I",
-        nx=nx,
-        ny=ny,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-
-    leg = _mfs_dirty_from_dds(base_leg + "_I_main.dds")
-    new = _mfs_dirty_from_dt(base_new + "_I.dt")
-    assert new.shape == leg.shape == (nx, ny)
-
-    # finiteness is checked per-image first so a CI failure names the offending
-    # path (legacy vs imager) instead of collapsing both into a single nan diff
-    assert np.isfinite(leg).all(), "legacy init+grid MFS dirty contains NaN/Inf (see _describe output above)"
-    assert np.isfinite(new).all(), "imager .dt MFS dirty contains NaN/Inf (see _describe output above)"
-
-    # Both images are already wsum-normalised (sum DIRTY / sum WSUM), summed over
-    # all output-image nodes, so the comparison is MFS and independent of how the
-    # bands are indexed (imager keeps the original band id, init+grid reindexes
-    # contiguously when a band is dropped). init+grid and imager share the wsum
-    # convention, so they agree to ~1e-12 on real data. Use the 1 + x shift idiom
-    # (cf. test_sara) so the assertion stays well-defined when both images are
-    # identically zero -- an MS with no signal in DATA, or a fully-flagged band --
-    # rather than dividing by a zero peak.
-    assert_allclose(1 + new, 1 + leg, rtol=1e-4, atol=1e-4)
 
 
 def test_imager_concat_row_collapses_time(ms_name, tmp_path):
@@ -276,3 +152,81 @@ def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     # XX == YY (Stokes I only), cross-hands zero
     np.testing.assert_array_equal(data[:, :, 0], data[:, :, -1])
     assert not data[:, :, 1].any() and not data[:, :, 2].any()
+
+
+def _peak_yx(da_2d):
+    """(iy, ix) of the max of a 2D DataArray with dims ('x','y') or ('y','x')."""
+    arr = da_2d.values
+    iflat = int(np.argmax(arr))
+    i0, i1 = np.unravel_index(iflat, arr.shape)
+    if da_2d.dims == ("y", "x"):
+        return i0, i1
+    if da_2d.dims == ("x", "y"):
+        return i1, i0
+    raise AssertionError(f"unexpected image dims {da_2d.dims}")
+
+
+def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
+    """Injected sources land at their (RA, Dec) through the FITS WCS, at the
+    right flux; the .dt arrays agree via their dims names.
+
+    Written order-agnostically (WCS + dims, never raw index order) so it
+    passes identically before and after the (Y, X) switch -- it is the safety
+    net for that switch.
+    """
+    from astropy.io import fits as afits
+    from astropy.wcs import WCS
+
+    outname = str(tmp_path / "gt")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=2,
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=None,
+        fits_mfs=True,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    # --- FITS: WCS positions and fluxes ---
+    fits_files = glob.glob(str(tmp_path / "*dirty*mfs.fits"))
+    assert len(fits_files) == 1
+    with afits.open(fits_files[0]) as hdul:
+        img = hdul[0].data.squeeze()  # (ny, nx) FITS layout
+        w = WCS(hdul[0].header).celestial
+    assert img.shape == (sky_truth.ny, sky_truth.nx)
+
+    # brightest source: global argmax must sit at its WCS-predicted pixel
+    order = np.argsort(sky_truth.ref_flux)[::-1]
+    s0 = order[0]
+    px, py = w.world_to_pixel(sky_truth.sky_coords[s0])
+    iy, ix = np.unravel_index(np.argmax(img), img.shape)
+    assert (ix, iy) == (int(round(float(px))), int(round(float(py))))
+
+    # every source: flux at its own WCS pixel (MFS dirty is wsum-normalised
+    # Jy/beam; expected peak = ref_flux / n). Tolerance is 15%: the dirty
+    # peaks carry the other sources' PSF sidelobes and the 52% fractional
+    # bandwidth's spectral averaging -- measured contamination is 9.3% on the
+    # faintest source (its pixel value matches a brute-force DFT to 6
+    # decimals, so this is physics, not a pipeline bias). The precise
+    # numerical check is test_imager_matches_dft.
+    for s in range(sky_truth.lpix.size):
+        px, py = w.world_to_pixel(sky_truth.sky_coords[s])
+        val = img[int(round(float(py))), int(round(float(px)))]
+        expected = sky_truth.ref_flux[s] / sky_truth.nvals[s]
+        assert abs(val - expected) < 0.15 * expected, f"source {s}: {val} vs {expected}"
+
+    # --- .dt arrays: dims-aware peak position agrees with the FITS ---
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    nodes = [dt[n].ds for n in dt.children if n.startswith("band")]
+    num = sum(ds.DIRTY[0] for ds in nodes)
+    den = sum(float(ds.WSUM.values[0]) for ds in nodes)
+    iy_dt, ix_dt = _peak_yx(num)
+    assert (iy_dt, ix_dt) == (iy, ix)
+    np.testing.assert_allclose((num.values / den).max(), img.max(), rtol=1e-6)
