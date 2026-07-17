@@ -261,3 +261,18 @@ def test_imager_concat_row_collapses_time(ms_name, tmp_path):
     assert a.shape == b.shape
     assert np.isfinite(a).all() and np.isfinite(b).all()
     assert_allclose(1 + a, 1 + b, rtol=1e-4, atol=1e-4)
+
+
+def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
+    """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
+    from daskms import xds_from_ms
+
+    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    data = xds.DATA.values
+    flag = xds.FLAG.values
+    assert data.any(), "fixture wrote all-zero DATA"
+    np.testing.assert_array_equal(flag, sky_truth.flag)
+    assert flag[:, sky_truth.flagged_chan, :].all()
+    # XX == YY (Stokes I only), cross-hands zero
+    np.testing.assert_array_equal(data[:, :, 0], data[:, :, -1])
+    assert not data[:, :, 1].any() and not data[:, :, 2].any()
