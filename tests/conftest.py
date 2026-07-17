@@ -219,14 +219,15 @@ def manage_ray():
     ray.shutdown()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def sky_truth(ms_name, ms_meta, image_geometry):
     """Deterministic point-source sky + flag pattern injected into the test MS.
 
     Writes DATA (predicted vis, Stokes I into XX/YY), FLAG (~10% random
     samples plus one fully flagged channel) and FLAG_ROW into the shared MS.
-    Function-scoped and seeded (idempotent): legacy tests overwrite DATA
-    mid-session until they are retired, so every consumer re-injects.
+    Module-scoped: the injection is seeded and idempotent (same DATA/FLAG
+    every time), so re-injecting once per consuming module is cheap and safe
+    now that the mid-session DATA-overwriting legacy tests are gone.
 
     The truth WCS is built with plain astropy (not pfb's set_wcs) so the
     coordinate truth is independent of the code under test.

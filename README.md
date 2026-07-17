@@ -38,7 +38,7 @@ See the [Development](#development) section for instructions on how to set the p
 
 ## Quick start
 
-The easiest way to use `pfb-imaging` is via the `stimela` recipes given in the [recipes folder](recipes/).
+The easiest way to use `pfb-imaging` is via the `stimela` recipes given in the [recipes folder](src/pfb_imaging/recipes/).
 Once the package is installed, a recipe can be queried for its input and output parameters using the `stimela doc` command.
 For example, to see the inputs and outputs of the `spotless` recipe, simply run
 
@@ -164,7 +164,7 @@ Imaging weights control the tradeoff between point-source sensitivity and angula
 - `--l2-reweight-dof` (`pfb hci` only) -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
 
 Weights are computed in `pfb imager` pass 2 and written to the `.dt` partitions; the dirty image, the PSF, and every subsequent forward/backward pass in `pfb deconv` grid with that same stored set.
-The pass-1 `.scratch` cache is retained by default, so re-running `pfb imager` with a different weighting scheme does not redo the MS ingestion.
+The pass-1 `.scratch` cache is retained on disk for future reuse, but re-running `pfb imager` currently requires `--overwrite` (which deletes and regenerates it), redoing the MS ingestion each time.
 
 ## Package structure
 

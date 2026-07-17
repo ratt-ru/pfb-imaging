@@ -1,11 +1,14 @@
-"""Tier-3 end-to-end equivalence test: new .dt deconv vs legacy .dds sara.
+"""Tests for the ``.dt``-native ``pfb deconv`` driver.
 
-Runs both pipelines (legacy ``init``+``grid``+``sara`` on the ``.dds`` and the
-new ``imager``+``deconv`` on the ``.dt``) on the SAME simulated visibilities,
-with natural weighting and a pinned shared ``hess_norm`` (removes power-method
-nondeterminism), one major cycle, and reweighting disabled. This isolates the
-comparison to the forward/backward kernels themselves rather than convergence
-trajectories, giving a tight tolerance on the resulting model images.
+``test_deconv_groundtruth`` runs ``imager``+``deconv`` on simulated
+visibilities predicted from an injected ``sky_truth`` sky and checks recovery
+against that ground truth directly (no legacy oracle). The remaining tests
+build a synthetic ``.dt`` store in-process (``_write_synthetic_dt``, no
+MS/imager needed) for fast smoke coverage: ``test_deconv_two_band_smoke``
+guards the nband>1 Ray actor-pool deadlock, and
+``test_band_workers_load_matches_driver_side`` checks that band-worker-side
+loading of vis-scale inputs from the store reproduces driver-side reads
+exactly.
 """
 
 from pathlib import Path

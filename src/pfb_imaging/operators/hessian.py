@@ -40,8 +40,8 @@ def hessian_slice(
     conventions defined in pfb.operators.gridder.wgridder_conventions
 
     These are inputs here to allow for testing but should generally be taken
-    from the attrs of the datasets produced by
-    pfb.operators.gridder.image_data_products
+    from the attrs produced by pfb.operators.gridder.wgridder_conventions /
+    pfb.operators.gridder.grid_partition
     """
     if not x.any():
         return np.zeros_like(x)

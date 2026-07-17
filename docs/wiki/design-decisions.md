@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-17T20:00:00Z
-last_verified_commit: 4b571e9
+timestamp: 2026-07-17T22:00:00Z
+last_verified_commit: f904789
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -224,7 +224,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** The existing Briggs normalisation inside `counts_to_weights` then
   operates on the smoothed counts, yielding "super-robust" for free when `robustness`
   is set alongside `npix_super`. No changes to the counting or weighting kernels.
-- **Source:** `utils/weighting.box_sum_counts`; `core/grid.py`; `tests/test_weighting.py`.
+- **Source:** `utils/weighting.box_sum_counts`; formerly `core/grid.py`, now
+  `utils/weighting` + `core/imager.py`; `tests/test_weighting.py`.
 
 ### D17 — weight_data closures hold only plain functions (numba cache safety)
 
@@ -352,8 +353,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   FITS/astropy/reproject, auditable at explicit seams. Extending it to the
   `.dt` was gated on an on-disk schema change, which the 0.1.0 breaking
   release sanctions.
-- **Consequences:** **`.dt` stores written by ≤0.0.x are unreadable by this
-  version** (dims renamed) — release-notes line required. Verification method:
+- **Consequences:** **`.dt` stores written by ≤0.0.x must be regenerated**
+  (`pfb imager`) — release-notes line required. Old stores are not rejected on
+  open: `x`/`y`/`x_psf`/`y_psf` still exist as dim *names*, and every read is
+  positional, so without a guard a square-image pre-switch store would
+  deconvolve with silently transposed rasters (model/residual/update FITS
+  flipped about the diagonal). `core/deconv.py` therefore asserts
+  `first.DIRTY.dims == ("corr", "y", "x")` on open and raises loudly instead.
+  Verification method:
   the ground-truth tests (WCS positions/fluxes, brute-force DFT oracle,
   per-Stokes fluxes, deconv recovery — all written order-agnostically via WCS
   and dims names *before* the switch) pass unchanged across it, and non-square

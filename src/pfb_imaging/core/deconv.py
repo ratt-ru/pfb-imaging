@@ -108,6 +108,12 @@ def deconv(
 
     nodes = sorted(image_names, key=lambda n: int(dt[n].ds.attrs["bandid"]))
     first = dt[nodes[0]].ds
+    if first.DIRTY.dims != ("corr", "y", "x"):
+        log.error_and_raise(
+            f"{dt_name} has image dims {first.DIRTY.dims}; this version reads the "
+            "(corr, y, x) layout introduced in 0.1.0 -- re-run pfb imager to regenerate the .dt",
+            ValueError,
+        )
     if first.corr.size > 1:
         log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
 
