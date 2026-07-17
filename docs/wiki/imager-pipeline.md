@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-13T06:30:00Z
-last_verified_commit: 0964bd9
+timestamp: 2026-07-17T20:00:00Z
+last_verified_commit: 4b571e9
 ---
 
 # MSv4 DataTree imager pipeline
@@ -45,7 +45,7 @@ no-op later: just another `part{p}` child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters
-      vars:   DIRTY, RESIDUAL, PSF (corr, x[, _psf], y[, _psf]),
+      vars:   DIRTY, RESIDUAL, PSF (corr, y[, _psf], x[, _psf]),   # (Y, X), D20
               PSFPARSN (corr, bpar), WSUM (corr,)
               # MODEL / NOISE added later by the deconv consumer
       part{p:04d}/                    # ONE DATA PARTITION
@@ -53,7 +53,7 @@ no-op later: just another `part{p}` child with its own `BEAM`.
                   ra, dec, l0, m0, wsum
           vis-space:   VIS, WEIGHT (corr, row, chan), MASK (row, chan),
                        UVW (row, three), FREQ (chan,)
-          image-space: PSF, PSFHAT (corr, x_psf, yo2), BEAM, PSFPARSN
+          image-space: PSF, PSFHAT (corr, y_psf, xo2), BEAM, PSFPARSN
 ```
 
 All partitions in a band share one output grid (cell, common phase centre); per-field

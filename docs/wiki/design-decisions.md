@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-17T16:00:00Z
-last_verified_commit: 83be23f
+timestamp: 2026-07-17T20:00:00Z
+last_verified_commit: 4b571e9
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -311,10 +311,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   image-and-beam-orientation.md.
 - **Consequences:** Non-square images work. The refactor was verified
   output-equivalent against the pre-refactor code on the test MS (cube/psf to
-  single-precision threading noise ~1e-7; `psf_pa` bitwise). The legacy `.dds`
-  path and the `.dt` imager keep wgridder (X, Y) arrays — extending (Y, X)
-  canonicalisation there means an on-disk schema change; only worth it if the
-  schema is revised anyway. The zarr-beam branch
+  single-precision threading noise ~1e-7; `psf_pa` bitwise). The `.dt` imager
+  path has since followed (D20); only the legacy `.dds` reference code keeps
+  wgridder (X, Y) arrays. The zarr-beam branch
   (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
   question) is untouched, documented debt. Changing any transpose/flip on this
   path must keep `tests/test_beam_orientation.py` green.
@@ -324,6 +323,43 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
   `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
   landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
+
+
+### D20 — The imager+deconv (.dt) path is (Y, X)-ordered end to end
+
+- **Context:** #277 makes (Y, X) canonical everywhere when the legacy
+  subcommands are retired; the imager previously stored `.dt` image-space
+  arrays x-major with dims `("corr", "x", "y")` and the FITS layer axis-swapped
+  at write time.
+- **Decision:** All image-space arrays on the imager+deconv path are
+  `(..., ny, nx)` with `.dt` dims `("corr", "y", "x")` /
+  `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and the scratch
+  beam is `("corr", "m_beam", "l_beam")`. `nx`/`ny` keep meaning the X/RA and
+  Y/Dec pixel counts everywhere — only array-axis order changed. ducc's
+  x-major world exists only behind zero-copy `.T` views at the
+  `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided
+  arrays), `fitcleanbeam` is called with `yx_order=True`, and
+  `save_fits(yx_order=True)` writes without axis swaps. The `.mds` stays
+  x-major (degrid/model2comps convention) behind transposed views at the
+  `fit_image_cube`/`eval_coeffs_to_slice` boundary until the pfb-model-spec
+  migration. uv-space grids (COUNTS, weighting) are untouched.
+- **Rationale:** Same as D19 — one canonical order shared with
+  FITS/astropy/reproject, auditable at explicit seams. Extending it to the
+  `.dt` was gated on an on-disk schema change, which the 0.1.0 breaking
+  release sanctions.
+- **Consequences:** **`.dt` stores written by ≤0.0.x are unreadable by this
+  version** (dims renamed) — release-notes line required. Verification method:
+  the ground-truth tests (WCS positions/fluxes, brute-force DFT oracle,
+  per-Stokes fluxes, deconv recovery — all written order-agnostically via WCS
+  and dims names *before* the switch) pass unchanged across it, and non-square
+  shapes are pinned in `tests/test_imager_pass2.py` and
+  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's
+  `nxmax`/`nymax` buffer conventions are crossed between the solvers
+  (`(..., nymax, nxmax)`) and the band workers (`(..., nxmax, nymax)`) — masked
+  by square images, pre-existing, unchanged by this switch.
+- **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py`
+  (ground truth + DFT oracle), `tests/test_imager_pol.py`,
+  `tests/test_deconv.py`; spec/plan of 2026-07-17 (ephemeral).
 
 ## Known debt
 

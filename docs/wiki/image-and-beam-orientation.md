@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-07-16T12:00:00Z
-last_verified_commit: c4ae544
+timestamp: 2026-07-17T20:00:00Z
+last_verified_commit: 4b571e9
 ---
 
 # Image and beam orientation conventions (hci)
@@ -157,6 +157,10 @@ around the pointing and reprojects `radec → radec_new`. `stokes_image` works i
 beam_weight are written without transposition — the only x-major seams are the
 `vis2dirty` calls (zero-copy `dirty=buf.T` views) and the `fitcleanbeam` call
 (`yx_order=True`); see §1 and design-decisions.md D19. Non-square images work.
+The `.dt` imager+deconv path now follows the same discipline (D20): `.dt` dims
+are `("corr", "y", "x")`, the scratch beam is `(m_beam, l_beam)`-ordered, and
+its x-major seams are the same two (ducc `.T` views, `fitcleanbeam
+yx_order=True`) plus `save_fits(yx_order=True)`.
 Pinned by `tests/test_beam_orientation.py` (point-source wgridder orientation,
 elliptical-beam reproject vs analytic with rephasing and non-square output,
 `fitcleanbeam` order-invariance), and the refactor was verified bitwise-

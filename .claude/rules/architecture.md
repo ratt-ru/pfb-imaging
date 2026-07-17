@@ -117,6 +117,9 @@ path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/image
 extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
 products (`DIRTY`, `RESIDUAL`, `PSF`, `PSFPARSN`, `WSUM`); partition children hold the ragged
 vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`) and per-partition `PSF`/`PSFHAT`/`BEAM`.
+**Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")` etc.,
+scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only behind zero-copy
+`.T` views at the wgridder call sites (wiki design-decisions D19/D20).
 `MODEL`/`NOISE` are added later by the (future) `deconv` consumer.
 
 **Access layer — native DataTree only.** Use `xr.open_datatree(store)`,
