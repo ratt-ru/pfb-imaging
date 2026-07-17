@@ -309,7 +309,7 @@ def _open_first_vis_node(ms_name):
     raise RuntimeError("no visibility node in test MS")
 
 
-def _run_stokes_vis(ms_name, scratch, radec_new=None):
+def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5):
     """Drive stokes_vis directly (no Ray) on the test MS's first node."""
     from pfb_imaging.utils.stokes2vis_msv4 import stokes_vis
 
@@ -329,11 +329,14 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None):
         msid=0,
         freq_out=float(freq.mean()),
         product="I",
+        beam_model=beam_model,
         max_blength=float(max_blength),
         max_freq=float(freq.max()),
         nx_pad=64,
         ny_pad=64,
-        cell_rad=1e-5,
+        cell_rad=cell_rad,
+        nx=64,
+        ny=64,
         radec_new=radec_new,
         nthreads=1,
     )
@@ -470,3 +473,31 @@ def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
         val = float(box[by, bx])
         expected = sky_truth.ref_flux[src] / sky_truth.nvals[src]
         assert abs(val - expected) < 0.15 * expected, f"source {src}: {val} vs {expected}"
+
+
+def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
+    """Pass-1 places the BEAM on the image grid; under rephasing its peak
+    stays at the FIELD pointing (where the antennas point), not the tangent.
+
+    cell is enlarged so 10 px is a measurable fraction of the katbeam width
+    (at the default 1e-5 rad cell the beam is flat to ~1e-6 over the fov and
+    the argmax is noise).
+    """
+    cell = 5.0e-4  # rad; 64 px fov ~ 1.8 deg
+    ref = _run_stokes_vis(ms_name, str(tmp_path / "b0.scratch"), beam_model="katbeam", cell_rad=cell)
+    assert ref.BEAM.dims == ("corr", "y", "x")
+    assert ref.BEAM.shape == (1, 64, 64)
+    iy, ix = np.unravel_index(int(np.argmax(ref.BEAM.values[0])), (64, 64))
+    assert (iy, ix) == (32, 32), "unrephased beam must peak at the image centre"
+
+    # tangent 10 px north of the field pointing: the beam peak moves 10 px
+    # south of the image centre (the field is south of the new tangent)
+    radec_new = np.array([ref.attrs["ra0"], ref.attrs["dec0"] + 10 * cell])
+    new = _run_stokes_vis(
+        ms_name, str(tmp_path / "b1.scratch"), radec_new=radec_new, beam_model="katbeam", cell_rad=cell
+    )
+    assert new.BEAM.shape == (1, 64, 64)
+    iy, ix = np.unravel_index(int(np.argmax(new.BEAM.values[0])), (64, 64))
+    assert (iy, ix) == (22, 32), f"rephased beam peak at ({iy},{ix}), expected (22,32)"
+    # reprojection fills 0 outside the small-grid coverage; interior peak ~1
+    assert new.BEAM.values[0, 22, 32] > 0.99

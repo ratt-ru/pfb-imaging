@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument("--data-dir", required=True, help="Directory holding otf_pointing_no_*.ms")
     p.add_argument("--pointings", type=int, nargs="+", default=[600, 601, 602])
     p.add_argument("--data-column", default="CORRECTED_DATA")
+    p.add_argument("--beam-model", default=None, help="katbeam or a MeerKAT band name (U, L, S0, S4)")
     p.add_argument("--field-of-view", type=float, default=2.0, help="deg")
     p.add_argument("--channels-per-image", type=int, default=-1)
     p.add_argument("--robustness", type=float, default=None)
@@ -65,6 +66,7 @@ def run_imager(ms_list, outname, args):
         [Path(m) for m in ms_list],
         outname,
         data_column=args.data_column,
+        beam_model=args.beam_model,
         channels_per_image=args.channels_per_image,
         integrations_per_image=-1,
         product="I",

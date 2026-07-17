@@ -3,7 +3,7 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-18T00:15:00Z
+timestamp: 2026-07-18T01:30:00Z
 last_verified_commit: 502fe90
 ---
 
@@ -53,7 +53,8 @@ no-op later: just another `part{p}` child with its own `BEAM`.
                   ra, dec, l0, m0, wsum
           vis-space:   VIS, WEIGHT (corr, row, chan), MASK (row, chan),
                        UVW (row, three), FREQ (chan,)
-          image-space: PSF, PSFHAT (corr, y_psf, xo2), BEAM, PSFPARSN
+          image-space: PSF, PSFHAT (corr, y_psf, xo2), BEAM (corr, y, x; image grid,
+                       placed in pass 1), PSFPARSN
 ```
 
 All partitions in a band share one output grid: multi-field selections are rephased in

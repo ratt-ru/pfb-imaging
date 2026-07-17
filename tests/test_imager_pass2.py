@@ -7,15 +7,19 @@ from pfb_imaging.operators.gridder import grid_partition, residual_from_partitio
 from pfb_imaging.utils.weighting import _compute_counts
 
 
-def _synth_partition(nrow=200, seed=0):
-    """A synthetic single-correlation partition with spread-out uvw."""
+def _synth_partition(nrow=200, seed=0, nx=16, ny=16):
+    """A synthetic single-correlation partition with spread-out uvw.
+
+    BEAM is on the output image grid (pass-1 placement, #281), so callers
+    must pass the same nx/ny to grid_partition.
+    """
     rng = np.random.default_rng(seed)
     uvw = rng.standard_normal((nrow, 3)) * 100.0
     freq = np.array([1.0e9])
     vis = rng.standard_normal((1, nrow, 1)) + 1j * rng.standard_normal((1, nrow, 1))
     wgt = np.abs(rng.standard_normal((1, nrow, 1))) + 0.1
     mask = np.ones((nrow, 1), dtype=np.uint8)
-    beam = np.ones((1, 3, 3))
+    beam = np.ones((1, ny, nx))
     return xr.Dataset(
         {
             "VIS": (("corr", "row", "chan"), vis),
@@ -23,15 +27,15 @@ def _synth_partition(nrow=200, seed=0):
             "MASK": (("row", "chan"), mask),
             "UVW": (("row", "three"), uvw),
             "FREQ": (("chan",), freq),
-            "BEAM": (("corr", "m_beam", "l_beam"), beam),
+            "BEAM": (("corr", "y", "x"), beam),
         },
-        coords={"corr": ["I"], "l_beam": np.array([-1.0, 0.0, 1.0]), "m_beam": np.array([-1.0, 0.0, 1.0])},
+        coords={"corr": ["I"]},
     )
 
 
 def test_grid_partition_shapes_and_wsum():
     """Non-square on purpose: output arrays are (Y, X)-ordered (wiki D19)."""
-    part = _synth_partition()
+    part = _synth_partition(nx=16, ny=12)
     out = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None)
     assert out["DIRTY"].shape == (1, 12, 16)
     assert out["PSF"].shape == (1, 24, 32)

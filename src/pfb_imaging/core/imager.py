@@ -14,6 +14,7 @@ import xarray as xr
 import zarr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
+from meerkat_beams.utils import BeamWizard
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from xarray_ms.errors import (
@@ -538,6 +539,13 @@ def imager(
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
 
+    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        log.info("Assuming MeerKAT data and initialising BeamWizard")
+        # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
+        beam_model = BeamWizard(band=beam_model)
+
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
@@ -613,6 +621,9 @@ def imager(
                     baseline_group="all",
                     data_group=data_group,
                     radec_new=radec_new,
+                    target=target,
+                    nx=nx,
+                    ny=ny,
                     nthreads=nthreads,
                 )
                 tasks.append(fut)

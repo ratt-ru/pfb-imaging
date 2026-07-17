@@ -9,15 +9,18 @@ import psutil
 import ray
 import xarray as xr
 from africanus.averaging import bda, time_and_channel
-
-# from astropy.time import Time
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from katbeam import JimBeam
+from meerkat_beams.utils import BeamWizard
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.misc import to_mjd_time
+from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
 
 
@@ -98,6 +101,9 @@ def stokes_vis(
     baseline_group="all",
     data_group="base",
     radec_new=None,
+    target=None,
+    nx=None,
+    ny=None,
     nthreads=1,
 ):
     """
@@ -124,6 +130,10 @@ def stokes_vis(
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
         radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
             phase centre / tangent point). None means image about the field centre.
+        target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
+            body); resolved to an in-plane (l0, m0) at this piece's own time.
+        nx, ny: output image size; the piece's BEAM is placed on this grid here
+            in pass 1 (#281) so pass 2 consumes it as is.
         nthreads: threads available to the task (parallelises the COUNTS gridding).
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
@@ -413,49 +423,122 @@ def stokes_vis(
     flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
-    # TODO - better beam interpolation
+    # ---- primary beam on the output image grid (pass-1 beam, #281) ----
+    # The (rotation-averaged) beam is evaluated about the FIELD's own pointing
+    # -- where the antennas point regardless of rephasing -- on a small grid,
+    # then placed onto the output image grid HERE in pass 1 (parallel over
+    # pieces); pass 2 consumes the stored (corr, ny, nx) BEAM as is.
     if max_blength is None or max_freq is None:
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
-    # NB: the beam evaluation grid is sized at the critically-sampled (Nyquist)
-    # cell, which is a *separate* quantity from the imaging cell_rad passed in for
-    # the COUNTS uv-grid below. Keep them in distinct variables so the imaging
-    # cell (used to bin COUNTS) is not clobbered -- counts must be gridded on the
-    # same cell that grid_partition's counts_to_weights later looks them up on,
-    # i.e. the imaging cell (matching the legacy image_data_products path).
-    fov = max_field_of_view
-    beam_cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
-    beam_cell_deg = np.rad2deg(beam_cell_rad)
-    npix = int(fov / beam_cell_deg)
-    l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-    m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-    if beam_model is None:
-        beam = np.ones((ncorr, npix, npix), dtype=real_type)
-    elif beam_model.lower() == "katbeam":
-        if freq_min >= 8.5e8 and freq_max <= 1.8e9:
-            beamo = JimBeam("MKAT-AA-L-JIM-2020")
-        elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
-            beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
-        # elif freq_min >= 8.56e8 and freq_max <= 1.71179102e+09:
-        #     beamo = JimBeam('MKAT-AA-S-JIM-2020')
+    if nx is None or ny is None:
+        raise ValueError("nx and ny must be provided to place the beam on the image grid")
+    cell_deg = np.rad2deg(cell_rad)
+    radec_grid = np.asarray(radec_new) if radec_new is not None else radec  # image tangent point
+
+    # --target: in-plane image-centre offset, resolved at this piece's own time
+    if target is not None:
+        if len(target.split(",")) == 2:
+            tradec = parse_sky_coords(target)
         else:
-            raise ValueError("Freq range not covered by katbeam")
-        # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
-        # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
-        mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
-        # katbeam expects freq in MHz
-        fmhz = freq_out / 1e6
-        beam = np.zeros((ncorr, npix, npix), dtype=np.float64)
-        for i, product in enumerate(corr):
-            beam0 = getattr(beamo, product)(ll, mm, fmhz)
-            step = 25
-            angles = np.linspace(0, 359, step)
-            for angle in angles:
-                beam[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
-            beam[i] /= angles.size
-            # how to normalise the center for other Stokes products?
-            # beam[i] /= beam[i].max()
+            # deferred: get_coordinates pulls pyrap (python-casacore)
+            from pfb_imaging.utils.astrometry import get_coordinates
+
+            # named body: D13 -- get_coordinates expects MJD seconds
+            tradec = np.array(get_coordinates(to_mjd_time(time_out), target=target))
+        l0, m0 = (float(v) for v in radec_to_lm(tradec, radec_grid))
     else:
-        raise ValueError(f"Unknown beam model {beam_model}")
+        l0, m0 = 0.0, 0.0
+
+    if beam_model is None:
+        # unity beam straight on the image grid (compresses to ~nothing in zarr)
+        beam = np.ones((ncorr, ny, nx), dtype=real_type)
+    else:
+        # field-centred evaluation on a small grid first
+        if isinstance(beam_model, BeamWizard):
+            # the wizard ships detached (BDS-only); the parallactic angles
+            # need the FIELD's pointing centre, set per piece here
+            rvec = np.asarray(radec).squeeze()
+            beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
+            bds = beam_model.bds
+            l_beam = bds.X.values  # deg, East positive
+            m_beam = bds.Y.values  # deg, North positive
+            # D13: MSv4 time is unix seconds; astropy Time wants MJD days
+            t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
+            beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
+            for i, p in enumerate(corr):
+                # returns (Y, X)-ordered maps (docs/wiki/image-and-beam-orientation.md);
+                # signature kept stable so meerkat-beams can grow weighted
+                # time/freq averaging underneath (#281)
+                beam_small[i], _ = beam_model.get_rotation_averaged_beam(
+                    l=l_beam,
+                    m=m_beam,
+                    times=t_beam,
+                    freq=np.atleast_1d(freq_out),
+                    time_stepping=1,
+                    pixel_stepping=1,
+                    var="nstokes",
+                    i=p,
+                    j=p,
+                    verbose=0,
+                )
+        elif str(beam_model).lower() == "katbeam":
+            # NB: the evaluation grid is sized at the critically-sampled
+            # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
+            # used for the COUNTS uv-grid below.
+            fov = max_field_of_view
+            beam_cell_deg = np.rad2deg(1.0 / (max_blength * max_freq / lightspeed))
+            npix = int(fov / beam_cell_deg)
+            l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            if freq_min >= 8.5e8 and freq_max <= 1.8e9:
+                beamo = JimBeam("MKAT-AA-L-JIM-2020")
+            elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
+                beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
+            else:
+                raise ValueError("Freq range not covered by katbeam")
+            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
+            # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
+            mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
+            # katbeam expects freq in MHz
+            fmhz = freq_out / 1e6
+            beam_small = np.zeros((ncorr, npix, npix), dtype=np.float64)
+            for i, p in enumerate(corr):
+                beam0 = getattr(beamo, p)(ll, mm, fmhz)
+                step = 25
+                angles = np.linspace(0, 359, step)
+                for angle in angles:
+                    beam_small[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
+                beam_small[i] /= angles.size
+        else:
+            raise ValueError(f"Unknown beam model {beam_model}")
+
+        offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
+        if offset_centre:
+            # mosaic/facet: SIN->SIN reprojection from the field-centred grid
+            # onto the image grid (fills 0 outside the beam's coverage, so an
+            # off-grid partition contributes nothing where its beam is unknown)
+            beam = reproject_and_interp_scat_beam(
+                beam_small,
+                l_beam,
+                m_beam,
+                radec,
+                radec_grid,
+                cell_deg,
+                nx,
+                ny,
+                "".join(corr),
+                l0=l0,
+                m0=m0,
+            ).astype(real_type)
+        else:
+            # single-field path: same bilinear interpolant grid_partition used
+            # to apply (fill 1.0 outside the small grid, as before)
+            x = (-(nx / 2) + np.arange(nx)) * cell_rad
+            y = (-(ny / 2) + np.arange(ny)) * cell_rad
+            yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
+            beam = np.zeros((ncorr, ny, nx), dtype=real_type)
+            for c in range(ncorr):
+                beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
 
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
@@ -485,13 +568,11 @@ def stokes_vis(
     data_vars["MASK"] = (("row", "chan"), mask)
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
-    data_vars["BEAM"] = (("corr", "m_beam", "l_beam"), beam)
+    data_vars["BEAM"] = (("corr", "y", "x"), beam)
     data_vars["COUNTS"] = (("corr", "u", "v"), counts)
 
     coords = {
         "chan": (("chan",), freq),
-        "l_beam": (("l_beam",), l_beam),
-        "m_beam": (("m_beam",), m_beam),
         "corr": (("corr",), corr),
     }
 
@@ -526,7 +607,11 @@ def stokes_vis(
         "utc": utc,
         "max_freq": max_freq,
         "max_blength": max_blength,
-        "beam_model": beam_model,
+        "beam_model": beam_model
+        if beam_model is None or isinstance(beam_model, str)
+        else str(getattr(beam_model, "band", type(beam_model).__name__)),
+        "l0": l0,
+        "m0": m0,
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)

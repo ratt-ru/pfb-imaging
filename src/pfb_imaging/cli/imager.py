@@ -39,11 +39,21 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="numba-cache-dir",
     info="Implicit output ensuring the numba cache location is mounted. "
-    "The cache defaults to a per-user directory under the system temp directory. "
+    "The cache defaults to a per-user directory under /tmp. "
     "Override it by setting the NUMBA_CACHE_DIR environment variable.",
-    implicit="/tmp/numba",
+    implicit="/tmp/numba-cache",
     must_exist=False,
     mkdir=False,
+    path_policies={"write_parent": True},
+)
+@stimela_output(
+    dtype="Directory",
+    name="beam-cache-dir",
+    info="Implicit output ensuring the beam cache location is mounted. "
+    "The cache defaults to a per-user directory under /tmp. "
+    "Override it by setting the MBEAMS_CACHE_DIR environment variable.",
+    implicit="/tmp/mbeams-cache",
+    must_exist=False,
     path_policies={"write_parent": True},
 )
 def imager(
@@ -212,7 +222,9 @@ def imager(
     beam_model: Annotated[
         str | None,
         typer.Option(
-            help="Beam model to use. Only katbeam currently supported.",
+            help="Beam model to use. "
+            "Either katbeam or a MeerKAT band name. "
+            "One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.",
             rich_help_panel="Input",
         ),
     ] = None,

@@ -4,7 +4,6 @@ from ducc0.fft import r2c
 from ducc0.misc import resize_thread_pool
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
-from pfb_imaging.utils.beam import eval_beam
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.weighting import counts_to_weights
 
@@ -276,7 +275,8 @@ def grid_partition(
     Args:
         part: Partition dataset with corr-first ``VIS``/``WEIGHT`` ``(corr,row,chan)``,
             ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
-            ``BEAM`` ``(corr, m_beam, l_beam)`` on the small beam grid.
+            ``BEAM`` ``(corr, ny, nx)`` already on the output image grid
+            (placed there in pass 1; see stokes_vis).
         counts: Reduced counts grid ``(ncorr, nx_pad, ny_pad)`` (already passed
             through ``filter_extreme_counts``/``box_sum_counts`` by the caller).
             Ignored when ``robustness`` is ``None``; copied before in-place use.
@@ -323,17 +323,13 @@ def grid_partition(
 
     wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
 
-    # interpolate the small-grid beam onto the image grid -- (Y, X) order:
-    # axis 0 is m/Dec-like, axis 1 is l/RA-like (wiki D19)
-    x = (-nx / 2 + np.arange(nx)) * cell_rad + x0
-    y = (-ny / 2 + np.arange(ny)) * cell_rad + y0
-    yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")  # (ny, nx)
-    l_beam = part.l_beam.values
-    m_beam = part.m_beam.values
-    beam = np.zeros((ncorr, ny, nx), dtype=float)
-    for c in range(ncorr):
-        # scratch BEAM is (m_beam, l_beam)-ordered; interpolate on (m, l)
-        beam[c] = eval_beam(part.BEAM.values[c], m_beam, l_beam, yy, xx)
+    # the piece BEAM is already on the output image grid, placed there in
+    # pass 1 (stokes_vis, #281): (corr, ny, nx), tangent point + target offset
+    # included. Pieces of a partition share the field (and the rotation-
+    # averaged beam is time-independent), so the first piece's beam stands in
+    # for the partition; replace with a weighted mean when time-dependent
+    # beams arrive.
+    beam = np.require(part.BEAM.values, dtype=float)
 
     # ducc's x-major world exists only at the vis2dirty seams below via
     # zero-copy transposed views (the hci cfc96b9 pattern)

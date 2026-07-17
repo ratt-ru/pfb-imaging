@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-18T00:15:00Z
+timestamp: 2026-07-18T01:30:00Z
 last_verified_commit: 502fe90
 ---
 
@@ -340,7 +340,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Decision:** All image-space arrays on the imager+deconv path are
   `(..., ny, nx)` with `.dt` dims `("corr", "y", "x")` /
   `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and the scratch
-  beam is `("corr", "m_beam", "l_beam")`. `nx`/`ny` keep meaning the X/RA and
+  `BEAM` is `("corr", "y", "x")` on the output image grid (placed there in
+  pass 1; see D21). `nx`/`ny` keep meaning the X/RA and
   Y/Dec pixel counts everywhere — only array-axis order changed. ducc's
   x-major world exists only behind zero-copy `.T` views at the
   `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided
@@ -391,9 +392,19 @@ update it (and this page's `last_verified_commit`) in the same session.
   centre within the tangent plane via the existing `center_x/center_y`
   machinery; the off-centre PSF ramp is predicted adjoint-by-construction
   (dirty2vis of a unit delta), and `set_wcs` carries the offset as a CRPIX
-  shift (CRVAL stays the tangent point — facet convention). Beam handling is
-  UNCHANGED pending #281: the stored katbeam/unity BEAM is field-centred and
-  is not reprojected, so beam_model + rephasing is only approximate.
+  shift (CRVAL stays the tangent point — facet convention). **Beams are
+  computed and placed on the output image grid in pass 1** (#281): the
+  rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam`
+  for MeerKAT band names U/L/S0/S4 — signature kept stable so meerkat-beams
+  can grow weighted time/freq averaging underneath) is evaluated about the
+  FIELD's own pointing on a small grid, then SIN→SIN-reprojected onto the
+  mosaic grid (tangent + target CRPIX shift, zero outside coverage) per
+  piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as
+  is (no beam interpolation in `grid_partition` any more); pieces of a
+  partition share the field so the first piece's beam stands in — replace
+  with a weighted mean when time-dependent beams arrive. Verified on 3
+  MeerKLASS pointings: each partition's wizard beam peaks within half a
+  pixel of its field's predicted position in the 5600² mosaic frame.
 - **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13):
   `synthesize_uvw` wants MJD seconds, MSv4 time is unix — `to_mjd_time` at
   the single call site. (2) **Frames about different tangent points are

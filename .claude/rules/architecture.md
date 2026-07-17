@@ -146,8 +146,10 @@ local repro harness: `docs/wiki/memory-and-ray.md`.
 (`--phase-dir`; barycentre default for multi-field selections) before weighting/averaging/COUNTS,
 using differential measures-synthesized UVW (the systematic vs the MS's own UVW cancels);
 `--target` is an in-plane image-centre offset carried as `l0/m0` attrs and a CRPIX shift in the
-FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are not
-yet reprojected (#281).
+FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are
+evaluated (katbeam or `BeamWizard` band names U/L/S0/S4) about the field pointing and reprojected
+onto the image grid **in pass 1** (#281); scratch/partition `BEAM` is `(corr, ny, nx)` and pass 2
+consumes it as is.
 
 **Time epochs.** The MSv4 `time` coordinate and the `.dt`'s `time_out` attrs are **unix
 seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. `utils/fits.set_wcs` takes
