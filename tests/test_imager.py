@@ -230,3 +230,68 @@ def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
     iy_dt, ix_dt = _peak_yx(num)
     assert (iy_dt, ix_dt) == (iy, ix)
     np.testing.assert_allclose((num.values / den).max(), img.max(), rtol=1e-6)
+
+
+def test_imager_matches_dft(sky_truth, ms_name, tmp_path):
+    """Gridded DIRTY matches a brute-force DFT of the stored partition inputs.
+
+    Fully independent of the wgridder: the absolute-maths check that replaces
+    the init+grid equivalence oracle.
+    """
+    from africanus.constants import c as lightspeed
+
+    outname = str(tmp_path / "dft")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=2,
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=None,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    nodes = sorted(n for n in dt.children if n.startswith("band"))
+    band = dt[nodes[0]]
+    nx, ny = sky_truth.nx, sky_truth.ny
+    cell = sky_truth.cell_rad
+
+    # a dozen probe pixels: the three source pixels + fixed scattered ones
+    rng = np.random.default_rng(99)
+    probes = [(nx // 2 - int(lp), ny // 2 + int(mp)) for lp, mp in zip(sky_truth.lpix, sky_truth.mpix)]
+    probes += [tuple(int(v) for v in p) for p in rng.integers(8, min(nx, ny) - 8, size=(9, 2))]
+
+    dirty = band.ds.DIRTY[0]  # un-normalised, dims-aware access below
+    peak = float(np.abs(dirty.values).max())
+
+    for ixm, iym in probes:
+        # x-major pixel -> (l, m) per the pinned wgridder convention
+        # (test_wgridder_image_orientation)
+        l_p = (nx // 2 - ixm) * cell
+        m_p = (iym - ny // 2) * cell
+        nlm = np.sqrt(1.0 - l_p * l_p - m_p * m_p)
+        val_dft = 0.0
+        for cname in band.children:
+            p = band[cname].ds
+            uvw = p.UVW.values
+            freq = p.FREQ.values
+            vis = p.VIS.values[0]
+            wgt = p.WEIGHT.values[0]
+            mask = p.MASK.values.astype(bool)
+            phase = (
+                -2j
+                * np.pi
+                * freq[None, :]
+                / lightspeed
+                * (uvw[:, 0:1] * l_p + uvw[:, 1:2] * m_p + uvw[:, 2:] * (nlm - 1.0))
+            )
+            val_dft += float(np.sum(wgt[mask] * np.real(vis[mask] * np.exp(phase)[mask])))
+        val_grid = float(dirty.isel(x=ixm, y=iym).values)
+        assert abs(val_grid - val_dft) < 1e-5 * peak, f"pixel ({ixm},{iym}): {val_grid} vs {val_dft}"
