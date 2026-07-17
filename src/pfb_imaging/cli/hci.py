@@ -71,7 +71,7 @@ URI = NewType("URI", Path)
 )
 @stimela_output(
     dtype="Directory",
-    name="dir-beam-cache",
+    name="beam-cache-dir",
     info="output directory for primary beam cache",
     implicit="/tmp/mbeams-cache",
     must_exist=False,

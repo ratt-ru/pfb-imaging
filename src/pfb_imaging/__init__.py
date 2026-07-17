@@ -2,7 +2,6 @@ import ctypes
 import importlib
 import logging
 import os
-import tempfile
 import warnings
 from importlib.metadata import version
 
@@ -18,11 +17,11 @@ os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 # always wins. gettempdir() honours per-job TMPDIR on clusters.
 os.environ.setdefault(
     "NUMBA_CACHE_DIR",
-    os.path.join(tempfile.gettempdir(), f"numba-cache-{os.getuid()}"),
+    f"/tmp/numba-cache-{os.getuid()}",
 )
 os.environ.setdefault(
     "MBEAMS_CACHE_DIR",
-    os.path.join(tempfile.gettempdir(), f"mbeams-cache-{os.getuid()}"),
+    f"/tmp/mbeams-cache-{os.getuid()}",
 )
 
 
@@ -72,6 +71,7 @@ def set_envs(nthreads, ncpu, log=None):
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
         "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
+        "MBEAMS_CACHE_DIR": os.environ["MBEAMS_CACHE_DIR"],
         "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars

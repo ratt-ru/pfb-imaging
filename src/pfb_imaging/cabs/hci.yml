@@ -458,7 +458,7 @@ cabs:
         mkdir: false
         path_policies:
           write_parent: true
-      dir-beam-cache:
+      beam-cache-dir:
         dtype: Directory
         info:
           output directory for primary beam cache
