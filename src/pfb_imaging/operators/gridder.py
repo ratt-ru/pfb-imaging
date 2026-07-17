@@ -785,7 +785,7 @@ def grid_partition(
     Args:
         part: Partition dataset with corr-first ``VIS``/``WEIGHT`` ``(corr,row,chan)``,
             ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
-            ``BEAM`` ``(corr, l_beam, m_beam)`` on the small beam grid.
+            ``BEAM`` ``(corr, m_beam, l_beam)`` on the small beam grid.
         counts: Reduced counts grid ``(ncorr, nx_pad, ny_pad)`` (already passed
             through ``filter_extreme_counts``/``box_sum_counts`` by the caller).
             Ignored when ``robustness`` is ``None``; copied before in-place use.
@@ -797,10 +797,11 @@ def grid_partition(
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
 
     Returns:
-        dict with ``DIRTY`` ``(corr,nx,ny)``, ``PSF`` ``(corr,nx_psf,ny_psf)``,
-        ``PSFHAT`` ``(corr,nx_psf,ny_psf//2+1)``, ``BEAM`` ``(corr,nx,ny)``,
+        dict with ``DIRTY`` ``(corr,ny,nx)``, ``PSF`` ``(corr,ny_psf,nx_psf)``,
+        ``PSFHAT`` ``(corr,ny_psf,nx_psf//2+1)``, ``BEAM`` ``(corr,ny,nx)``,
         ``PSFPARSN`` ``(corr,3)``, ``WSUM`` ``(corr,)`` and the imaging
-        ``WEIGHT`` ``(corr,row,chan)``.
+        ``WEIGHT`` ``(corr,row,chan)``. Image-space arrays are (Y, X)-ordered
+        (wiki D19); ducc's x-major layout exists only behind transposed views.
     """
     resize_thread_pool(nthreads)
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
@@ -837,17 +838,21 @@ def grid_partition(
 
     wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
 
-    # interpolate the small-grid beam onto the image grid
+    # interpolate the small-grid beam onto the image grid -- (Y, X) order:
+    # axis 0 is m/Dec-like, axis 1 is l/RA-like (wiki D19)
     x = (-nx / 2 + np.arange(nx)) * cell_rad + x0
     y = (-ny / 2 + np.arange(ny)) * cell_rad + y0
-    xx, yy = np.meshgrid(np.rad2deg(x), np.rad2deg(y), indexing="ij")
+    yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")  # (ny, nx)
     l_beam = part.l_beam.values
     m_beam = part.m_beam.values
-    beam = np.zeros((ncorr, nx, ny), dtype=float)
+    beam = np.zeros((ncorr, ny, nx), dtype=float)
     for c in range(ncorr):
-        beam[c] = eval_beam(part.BEAM.values[c], l_beam, m_beam, xx, yy)
+        # scratch BEAM is (m_beam, l_beam)-ordered; interpolate on (m, l)
+        beam[c] = eval_beam(part.BEAM.values[c], m_beam, l_beam, yy, xx)
 
-    dirty = np.zeros((ncorr, nx, ny), dtype=float)
+    # ducc's x-major world exists only at the vis2dirty seams below via
+    # zero-copy transposed views (the hci cfc96b9 pattern)
+    dirty = np.zeros((ncorr, ny, nx), dtype=float)
     for c in range(ncorr):
         vis2dirty(
             uvw=uvw,
@@ -871,7 +876,7 @@ def grid_partition(
             sigma_min=1.1,
             sigma_max=3.0,
             double_precision_accumulation=double_accum,
-            dirty=dirty[c],
+            dirty=dirty[c].T,
         )
 
     # PSF visibilities carry a phase ramp when the field is off image centre
@@ -883,7 +888,7 @@ def grid_partition(
     else:
         psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))
 
-    psf = np.zeros((ncorr, nx_psf, ny_psf), dtype=float)
+    psf = np.zeros((ncorr, ny_psf, nx_psf), dtype=float)
     for c in range(ncorr):
         vis2dirty(
             uvw=uvw,
@@ -907,10 +912,10 @@ def grid_partition(
             sigma_min=1.1,
             sigma_max=3.0,
             double_precision_accumulation=double_accum,
-            dirty=psf[c],
+            dirty=psf[c].T,
         )
     psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
-    psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0))
+    psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0, yx_order=True))
 
     return {
         "DIRTY": dirty,
@@ -943,22 +948,22 @@ def residual_from_partitions(
     the stored ``DIRTY``.
 
     Args:
-        dirty: Band-node dirty image ``(corr, nx, ny)`` (sum over partitions,
+        dirty: Band-node dirty image ``(corr, ny, nx)`` (sum over partitions,
             un-normalised by wsum, as produced in pass 2).
         parts: Iterable of partition datasets, each with corr-first ``WEIGHT``,
             ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
-            image-grid ``BEAM`` ``(corr,nx,ny)``, plus ``l0``/``m0`` attrs (0 if absent).
-        model: Band model image ``(corr, nx, ny)``.
+            image-grid ``BEAM`` ``(corr,ny,nx)``, plus ``l0``/``m0`` attrs (0 if absent).
+        model: Band model image ``(corr, ny, nx)``.
         cell_rad: Image cell size (rad).
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
 
     Returns:
-        Residual image ``(corr, nx, ny)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``.
+        Residual image ``(corr, ny, nx)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``.
     """
     resize_thread_pool(nthreads)
-    ncorr, nx, ny = dirty.shape
+    ncorr, ny, nx = dirty.shape
     convim = np.zeros_like(dirty)
-    tmp = np.zeros((nx, ny), dtype=dirty.dtype)
+    tmp = np.zeros((ny, nx), dtype=dirty.dtype)
     for part in parts:
         uvw = part.UVW.values
         wgt = part.WEIGHT.values
@@ -972,7 +977,9 @@ def residual_from_partitions(
             model_vis = dirty2vis(
                 uvw=uvw,
                 freq=freq,
-                dirty=beam[c] * model[c],
+                # (Y, X) product adapted to ducc's x-major input by a
+                # zero-copy strided view
+                dirty=(beam[c] * model[c]).T,
                 pixsize_x=cell_rad,
                 pixsize_y=cell_rad,
                 center_x=x0,
@@ -1009,7 +1016,7 @@ def residual_from_partitions(
                 sigma_min=1.1,
                 sigma_max=3.0,
                 double_precision_accumulation=double_accum,
-                dirty=tmp,
+                dirty=tmp.T,
             )
             convim[c] += tmp
 
