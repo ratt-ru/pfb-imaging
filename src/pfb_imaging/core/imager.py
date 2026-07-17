@@ -819,6 +819,7 @@ def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict
         ms_path = ms_path.replace("file://", "")
     backend = infer_backend(ms_path)
     if backend == MSv4Backend.CASA_TABLE:
+        # deferred: registers the xarray-ms engine; only needed for this backend
         import xarray_ms  # noqa: F401
 
         # default schema suits mv4toms.py-style MSs; other instruments may need
@@ -834,6 +835,7 @@ def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict
             "chunks": None,
         }
     elif backend == MSv4Backend.MEERKAT:
+        # deferred: optional dependency; registers the xarray-kat engine
         import xarray_kat  # noqa: F401
 
         return {

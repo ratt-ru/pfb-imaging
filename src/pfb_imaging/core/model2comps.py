@@ -20,7 +20,6 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 log = pfb_logging.get_logger("MODEL2COMPS")
 
 
-@pfb_logging.log_inputs(log)
 def model2comps(
     output_filename: str,
     overwrite: bool = False,
@@ -44,6 +43,7 @@ def model2comps(
     """
     Convert model in dds to components.
     """
+    opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -64,6 +64,7 @@ def model2comps(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/model2comps_{timestamp}.log"
     pfb_logging.log_to_file(logname)
+    log.log_options_dict(opts_dict, title="MODEL2COMPS options")
 
     ti = time.time()
     if from_fits:

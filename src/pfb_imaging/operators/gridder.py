@@ -12,7 +12,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.utils.beam import eval_beam
-from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.misc import fitcleanbeam, parallel_standard_normal
 from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.weighting import _compute_counts, box_sum_counts, counts_to_weights, filter_extreme_counts
 
@@ -700,8 +700,6 @@ def image_data_products(
     if do_noise:
         # sample noise and project into image space
         _, nrow, nchan = vis.shape
-        from pfb_imaging.utils.misc import parallel_standard_normal
-
         noise = np.zeros((ncorr, nx, ny), dtype=float)
         for c in range(ncorr):
             vis = parallel_standard_normal((nrow, nchan)) + 1j * parallel_standard_normal((nrow, nchan))

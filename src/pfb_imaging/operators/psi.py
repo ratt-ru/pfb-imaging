@@ -682,6 +682,7 @@ class PsiNocopytRay:
 
     def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
         # deferred to break the import cycle (band_worker imports psi helpers)
+        # deferred: band_worker imports operators.psi (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
 
         self.nband = nband

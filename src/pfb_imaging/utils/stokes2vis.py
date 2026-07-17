@@ -5,6 +5,7 @@ import numexpr as ne
 import numpy as np
 import ray
 import xarray as xr
+from africanus.averaging import bda, time_and_channel
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
@@ -235,8 +236,6 @@ def stokes_vis(
 
     # simple average over channels
     if chan_average > 1:
-        from africanus.averaging import time_and_channel
-
         res = time_and_channel(
             time,
             interval,
@@ -261,8 +260,6 @@ def stokes_vis(
         nchan = freq.size
 
     if bda_decorr < 1:
-        from africanus.averaging import bda
-
         res = bda(
             time,
             interval,

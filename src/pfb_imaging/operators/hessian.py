@@ -569,6 +569,7 @@ class HessTreeRay:
         workers=None,
     ):
         # deferred to break the import cycle (band_worker imports HessianTree)
+        # deferred: band_worker imports operators.hessian (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
 
         if partitions_per_band is None:

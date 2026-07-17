@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue270
     inputs:
       ms:
         info:
@@ -426,9 +426,9 @@ cabs:
       numba-cache-dir:
         dtype: Directory
         info:
-          Directory to use for numba caching.
-          Currently not configurable.
-          Exists to ensure the directory is mounted.
+          Implicit output ensuring the numba cache location is mounted.
+          The cache defaults to a per-user directory under the system temp directory.
+          Override it by setting the NUMBA_CACHE_DIR environment variable.
         implicit: '/tmp/numba'
         must_exist: false
         mkdir: false

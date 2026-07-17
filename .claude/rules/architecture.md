@@ -18,11 +18,21 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 
 ## 3. Import Style
 
-**Prefer top-level imports.** Lazy (in-function) imports are only acceptable in:
+**Always place imports at the top of the file when possible.** Lazy (in-function) imports are only acceptable for:
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
-2. **Optional heavy runtimes** (e.g. `ray`) in library modules that are also usable without that runtime. Example: `import ray` is deferred to `PsiNocopytRay` methods only.
-3. **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` transitively import python-casacore. As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) this no longer clashes with the `arcae` `xarray-ms` engine in one process, but the imager/gridding/FITS path still keeps these imports *out of module scope* — deferred into the functions that need them — to keep the path lightweight (fast CLI startup, lightweight install). Existing examples: the daskms imports in `construct_mappings` (`utils/misc.py`) and the `africanus.rime` imports in `interp_beam` (`utils/beam.py`). Prefer `from scipy.constants import c as lightspeed` (not `africanus.constants`) and `utils/misc.to_unix_time` (not `casacore.quanta.quantity`). See §8.
+2. **Optional heavy runtimes** (`ray`, `dask`/`distributed`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`distributed` deferred to `set_client`.
+3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
+4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
+5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the sympy-pulling `utils/modelspec` import in `core/grid.py`, needed only when transferring a model).
+
+(A **python-casacore-pulling** exception previously applied to the MSv4 imaging path; it was retired once arcae ≥ 0.5.2 made arcae and python-casacore coexist in one process — see wiki design-decisions D14. `africanus`/`daskms` imports now live at module scope like any other.)
+
+**Every in-function import must carry a short inline comment stating why it cannot live
+at module scope** (e.g. `# deferred: import cycle with operators.hessian` or
+`# deferred: optional heavy runtime (ray)`). An undocumented lazy import looks like an
+accident and will eventually be "fixed" back to top-level, reintroducing the cost it
+was avoiding.
 
 ## 4. Cab Generation & Container Workflow
 
@@ -101,7 +111,7 @@ path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/image
    `operators/gridder.grid_partition`, sums the image-space products over partitions into the
    band node, and writes the `.dt` tree. FITS via `utils/fits.dt2fits`/`rdt2fits`.
 
-**Tree layout** (`<output>_<PRODUCT>.dt`): one node per output image
+**Tree layout** (`<out>_<PRODUCT>.dt`): one node per output image
 `band{b:04d}_time{t:04d}`; one child `part{p:04d}` per data partition identified by
 `(msid, field, spw, baseline_group)` (`baseline_group` is a single `"all"` group for now,
 extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
@@ -157,7 +167,7 @@ distributed by Ray, the sum over a band's partitions is not):
 
 **arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
 python-casacore coexist in one process, so the suite runs as a single `pytest tests/` and the
-imager↔`init`+`grid` equivalence test runs both paths in-process. The whole imaging path
-(`stokes2vis_msv4`, `operators/gridder`, `operators/hessian`, `utils/fits`, and the `misc`/`beam`
-helpers they touch) is nonetheless kept casacore-free *by choice* (lightweight install, fast
-startup) — keep it that way (see §3 for the import discipline).
+imager↔`init`+`grid` equivalence test runs both paths in-process. The historical
+casacore-free discipline on the imaging path was retired (wiki design-decisions D14):
+`africanus`/`daskms`/`casacore` imports follow the ordinary §3 rules — top-level unless a
+documented §3 exception applies.

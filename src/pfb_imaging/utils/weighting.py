@@ -6,6 +6,7 @@ from numba import literally, njit, prange
 from numba.extending import overload, register_jitable
 from rarg_numba_patterns import load_data
 from scipy.constants import c as lightspeed
+from scipy.ndimage import uniform_filter
 
 from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.stokes import stokes_expr_funcs
@@ -242,7 +243,6 @@ def box_sum_counts(counts, npix_super):
     """
     if npix_super is None or npix_super <= 0:
         return counts
-    from scipy.ndimage import uniform_filter
 
     assert np.issubdtype(counts.dtype, np.floating), (
         f"box_sum_counts requires a floating-point counts array; got dtype={counts.dtype}"

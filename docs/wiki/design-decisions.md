@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-15T00:00:00Z
-last_verified_commit: 5f84d67
+timestamp: 2026-07-15T13:45:00Z
+last_verified_commit: 4c6d59b
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -185,15 +185,22 @@ update it (and this page's `last_verified_commit`) in the same session.
   off; ERFA "dubious year" warnings are the symptom.
 - **Source:** architecture.md §8; `memory-and-ray.md` related conventions.
 
-### D14 — The MSv4 imaging path stays casacore-free by choice
+### D14 — (Retired 2026-07-15) The MSv4 imaging path stayed casacore-free by choice
 
-- **Context:** arcae ≥ 0.5.2 coexists with python-casacore in one process, so this is
-  no longer a segfault constraint.
-- **Decision:** `stokes2vis_msv4`, `operators/gridder`, `operators/hessian`,
-  `utils/fits` and the `misc`/`beam` helpers keep `africanus`/`daskms`/`casacore`
-  imports out of module scope (deferred into functions) for a lightweight CLI install
-  and fast startup.
-- **Source:** architecture.md §3/§8.
+- **Context:** Before arcae 0.5.2, arcae and python-casacore could not coexist in one
+  process (hard segfault constraint), so the MSv4 imaging path deferred every
+  `africanus`/`daskms`/`casacore` import into functions. After the coexistence fix
+  (ratt-ru/arcae#211, #212) the deferrals were kept for a while as a
+  lightweight-startup preference.
+- **Decision (retired):** The preference was dropped once coexistence had soaked: the
+  deferred casacore-pulling imports moved to module scope (`construct_mappings`'s
+  daskms imports in `utils/misc.py`, `interp_beam`'s `africanus.rime` imports in
+  `utils/beam.py`, `africanus.averaging` in both `stokes2vis` modules). In-function
+  imports now need one of the documented reasons in architecture.md §3 (cycle,
+  optional runtime, serialisation, rare heavy path), each stated in an inline comment.
+- **Consequences:** No import-placement restriction remains on the imaging path. The
+  lightweight CLI install is unaffected (CLI modules still lazy-import the core).
+- **Source:** ratt-ru/arcae#211/#212; architecture.md §3/§8; branch `issue270`.
 
 ### D15 — Imager driver accumulates counts at `weight_grouping` granularity
 
@@ -234,6 +241,34 @@ update it (and this page's `last_verified_commit`) in the same session.
   it silently poisons the cache key. Measured: fresh-process first call 3.5 s → 0.15 s.
   Guard: `tests/test_weight_data_cache.py` (cross-process load-not-recompile).
 - **Source:** PR #274; ratt-ru/radiomesh#81; issues #273, #183.
+
+### D18 — NUMBA_CACHE_DIR defaults to a per-user temp directory
+
+- **Context:** `NUMBA_CACHE_DIR` was hard-coded to `/tmp/numba` (Dockerfile ENV plus
+  implicit cab outputs as mount hints). On shared hosts the first user to create it
+  owned it; everyone else got cryptic `PermissionError`s (issue #270). Bare `/tmp` is
+  no fix: numba nests `<srcdirname>_<sha1(source dir)>` subdirs under the cache root,
+  and identical install paths (guaranteed inside containers) collide one level down.
+- **Decision:** `pfb_imaging/__init__.py` sets
+  `NUMBA_CACHE_DIR=<tempfile.gettempdir()>/numba-cache-<uid>` via
+  `os.environ.setdefault`, and `set_envs` forwards it to child processes. The
+  Dockerfile ENV is gone. The implicit `numba-cache-dir` cab outputs remain solely as
+  mount hints (`write_parent` mounts `/tmp` read-write).
+- **Rationale:** The package `__init__` runs before any submodule import, so the value
+  is set before numba can be imported from any entry point — CLI, stimela-called core
+  functions, Ray workers, tests — with no numba import deferrals. `gettempdir()`
+  honours per-job `TMPDIR`; `getuid()` survives containers where `$USER` doesn't;
+  `setdefault` lets an explicit env (native export, stimela `backend.*.env`) win.
+  Same-user concurrent runs share one cache safely (atomic temp-file + `os.replace`
+  writes; stable keys since D17), so isolation is per-user only. A user-facing
+  `--numba-cache-dir` option was rejected: stimela invokes the core functions
+  directly, so a parameter arrives after module-level imports pulled numba in, and a
+  cab default cannot be computed by stimela formulas.
+- **Consequences:** Overriding the cache location is env-var-only. A containerised
+  override outside `/tmp` additionally needs its mount expressed on the stimela side
+  (backend `env` today; the cab-level env mechanism when it lands).
+- **Source:** issue #270; `src/pfb_imaging/__init__.py`; `Dockerfile`;
+  `tests/test_numba_cache_dir.py`.
 
 ## Known debt
 

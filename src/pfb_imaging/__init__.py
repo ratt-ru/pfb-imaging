@@ -2,6 +2,8 @@ import ctypes
 import importlib
 import logging
 import os
+import tempfile
+import warnings
 from importlib.metadata import version
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -10,6 +12,14 @@ __version__ = "0.0.10"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+# Also before importing numba: default the cache dir to a per-user directory
+# so users on a shared host don't collide on ownership of /tmp/numba (#270).
+# setdefault so an explicit NUMBA_CACHE_DIR (native env, stimela backend env)
+# always wins. gettempdir() honours per-job TMPDIR on clusters.
+os.environ.setdefault(
+    "NUMBA_CACHE_DIR",
+    os.path.join(tempfile.gettempdir(), f"numba-cache-{os.getuid()}"),
+)
 
 
 def set_envs(nthreads, ncpu, log=None):
@@ -54,6 +64,7 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
+        "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
         "RAY_worker_num_grpc_internal_threads": "1",
     }
     return env_vars
@@ -68,6 +79,7 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
     case cluster properties (num_cpus, object_store_memory) must not be
     passed to ray.init and are therefore dropped.
     """
+    # deferred: optional heavy runtime (ray)
     import ray
 
     logger = log or logging
@@ -108,8 +120,6 @@ def setup_ray_worker():
 
 
 def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=False, client_log_level=None):
-    import warnings
-
     warnings.filterwarnings("ignore", message="Port 8787 is already in use")
     if client_log_level == "error":
         logging.getLogger("distributed").setLevel(logging.ERROR)
@@ -128,11 +138,13 @@ def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=F
         logging.getLogger("bokeh").setLevel(logging.DEBUG)
         logging.getLogger("tornado").setLevel(logging.DEBUG)
 
+    # deferred: optional heavy runtime (dask/distributed)
     import dask
 
     # set up client
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
     if host_address is not None:
+        # deferred: optional heavy runtime (dask/distributed)
         from distributed import Client
 
         log.info("Initialising distributed client.")
@@ -141,6 +153,7 @@ def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=F
         else:
             client = Client(host_address)
     else:
+        # deferred: optional heavy runtime (dask/distributed)
         from dask.distributed import Client, LocalCluster
 
         log.info("Initialising client with LocalCluster.")
