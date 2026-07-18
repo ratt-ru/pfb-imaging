@@ -106,11 +106,14 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         assert (i0, i1) == (half, half), f"source {s}: model peak off-centre ({i0},{i1})"
 
 
-def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng):
+def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
     """Build a minimal synthetic 2-band .dt store matching what core/deconv.py reads.
 
     No MS / imager pipeline involved -- just the native DataTree groups the
     driver's ``deconv()`` opens directly (see architecture.md §8 tree layout).
+    ``parts_per_band`` sets the number of ``part####`` children per band --
+    bands legitimately carry different partition counts when a field's chunk
+    is fully flagged (stokes_vis writes no scratch piece for it).
     """
     nx_psf, ny_psf = 2 * nx, 2 * ny
     xo2 = nx + 1
@@ -139,29 +142,36 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng):
         )
         band_ds.to_zarr(store, group=bandname, mode="a")
 
-        uvw = rng.uniform(-50.0, 50.0, size=(nrow, 3))
-        part_ds = xr.Dataset(
-            data_vars={
-                # delta-function PSF -> Fourier-domain magnitude is all ones,
-                # matching the abs()'d PSFHAT convention core/deconv.py expects.
-                "PSFHAT": (("corr", "y_psf", "xo2"), np.ones((1, ny_psf, xo2))),
-                "BEAM": (("corr", "y", "x"), np.ones((1, ny, nx))),
-                "UVW": (("row", "three"), uvw),
-                "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, nchan))),
-                "MASK": (("row", "chan"), np.ones((nrow, nchan), dtype=np.uint8)),
-                "FREQ": (("chan",), np.array([freq])),
-            },
-            attrs={
-                "wsum": [1.0],
-                "l0": 0.0,
-                "m0": 0.0,
-                "msid": 0,
-                "field_name": "f0",
-                "spw_name": "s0",
-                "baseline_group": "all",
-            },
-        )
-        part_ds.to_zarr(store, group=f"{bandname}/part0000", mode="a")
+        for pid in range(parts_per_band[b]):
+            uvw = rng.uniform(-50.0, 50.0, size=(nrow, 3))
+            part_ds = _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, parts_per_band[b])
+            part_ds.to_zarr(store, group=f"{bandname}/part{pid:04d}", mode="a")
+
+
+def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts):
+    return xr.Dataset(
+        data_vars={
+            # delta-function PSF -> Fourier-domain magnitude is all ones
+            # (scaled by the per-part wsum share so the band's Hessian stays
+            # the identity), matching the abs()'d PSFHAT convention
+            # core/deconv.py expects.
+            "PSFHAT": (("corr", "y_psf", "xo2"), np.full((1, ny_psf, xo2), 1.0 / nparts)),
+            "BEAM": (("corr", "y", "x"), np.ones((1, ny, nx))),
+            "UVW": (("row", "three"), uvw),
+            "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, nchan))),
+            "MASK": (("row", "chan"), np.ones((nrow, nchan), dtype=np.uint8)),
+            "FREQ": (("chan",), np.array([freq])),
+        },
+        attrs={
+            "wsum": [1.0 / nparts],
+            "l0": 0.0,
+            "m0": 0.0,
+            "msid": 0,
+            "field_name": "f0",
+            "spw_name": "s0",
+            "baseline_group": "all",
+        },
+    )
 
 
 @pytest.mark.timeout(120)
@@ -276,3 +286,51 @@ def test_band_workers_load_matches_driver_side(tmp_path):
         assert_allclose(out_pool[b], ref_hess.dot(x[b])[0], rtol=1e-12, atol=1e-12)
         ref_res = residual_from_partitions(band.ds.DIRTY.values, parts, model[b], cell_rad)
         assert_allclose(res_pool[b], ref_res, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.timeout(120)
+def test_deconv_unequal_partition_counts(tmp_path):
+    """Bands legitimately carry different partition counts (a fully flagged
+    field chunk writes no scratch piece, so its band node has fewer part####
+    children -- e.g. a mosaic field flagged out of one band only). The deconv
+    driver and band workers must be partition-count-agnostic per band.
+    """
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(7)
+    nx = ny = 32
+    nrow, nchan = 64, 1
+
+    output_filename = str(tmp_path / "unequal")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, nx, ny, nrow, nchan, rng, parts_per_band=(1, 3))
+
+    deconv_core(
+        output_filename,
+        product="I",
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=1,
+        hess_norm=1.0,
+        pd_maxit=20,
+        cg_maxit=20,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=2,
+        nworkers=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+    )
+
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    nodes = sorted(n for n in dt.children if n.startswith("band"))
+    assert len(nodes) == 2
+    assert len(dt[nodes[0]].children) == 1 and len(dt[nodes[1]].children) == 3
+    for n in nodes:
+        ds = dt[n].ds
+        assert "MODEL" in ds and "UPDATE" in ds
+        assert ds.attrs["niters"] == 1
+        assert np.isfinite(ds.MODEL.values).all()
+        assert np.isfinite(ds.RESIDUAL.values).all()
