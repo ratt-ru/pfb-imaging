@@ -362,6 +362,31 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Output
+      psf:
+        info:
+          Compute the PSF data products.
+          Switch off for a quicklook dirty image that skips the PSF gridding.
+          A tree written without the PSF cannot be deconvolved.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      beam:
+        info:
+          Write FITS images of the effective beam.
+          The beam is always stored in the DataTree regardless of this flag.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      fits-per-partition:
+        info:
+          Write FITS images for each data partition into a partitions subdirectory.
+          Useful to sanity check field and beam orientations.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Output
       fits-output-folder:
         info:
           Directory to write FITS files to.

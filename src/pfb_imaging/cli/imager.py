@@ -413,6 +413,31 @@ def imager(
             rich_help_panel="Output",
         ),
     ] = True,
+    psf: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the PSF data products. "
+            "Switch off for a quicklook dirty image that skips the PSF gridding. "
+            "A tree written without the PSF cannot be deconvolved.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    beam: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS images of the effective beam. "
+            "The beam is always stored in the DataTree regardless of this flag.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_per_partition: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS images for each data partition into a partitions subdirectory. "
+            "Useful to sanity check field and beam orientations.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
@@ -519,6 +544,9 @@ def imager(
                     keep_scratch=keep_scratch,
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
+                    psf=psf,
+                    beam=beam,
+                    fits_per_partition=fits_per_partition,
                     fits_output_folder=fits_output_folder,
                     log_directory=log_directory,
                 ),
@@ -575,6 +603,9 @@ def imager(
                 keep_scratch=keep_scratch,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                psf=psf,
+                beam=beam,
+                fits_per_partition=fits_per_partition,
                 fits_output_folder=fits_output_folder,
                 log_directory=log_directory,
             )
@@ -640,6 +671,9 @@ def imager(
             keep_scratch=keep_scratch,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            psf=psf,
+            beam=beam,
+            fits_per_partition=fits_per_partition,
             fits_output_folder=fits_output_folder,
             log_directory=log_directory,
         ),
