@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-18T16:00:00Z
-last_verified_commit: 502fe90
+timestamp: 2026-07-18T17:00:00Z
+last_verified_commit: 9e0ee75
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -72,9 +72,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   by the weight sum, consistently, across residual, Hessian and eta.
 - **Decision:** Normalise by the TOTAL wsum across all bands at point of use:
   `residual/wsum_tot`; each band's `HessianTree` gets `wsum=wsum_tot` override;
-  `eta_b = eta·wsum_b/wsum_tot`; `HessianTree` consumes `abs(PSFHAT)`.
-- **Rationale:** Matches legacy sara (`wsums /= wsum; abspsf /= wsum; eta*wsums`), so
-  hyperparameters (`eta`, `rmsfactor`) mean the same thing on both paths.
+  `HessianTree` consumes `abs(PSFHAT)`. **`--eta` is a fraction of the total wsum**:
+  a uniform `+eta·x` on every normalised band operator (`eta·wsum_tot` raw), so its
+  meaning is invariant to data volume and band count.
+- **Rationale:** The wsum normalisation matches legacy sara (`wsums /= wsum;
+  abspsf /= wsum`), keeping `rmsfactor` meaningful across paths. The eta scaling
+  originally also matched legacy (`eta·wsum_b/wsum_tot` per band) but that made the
+  damping shrink as bands were added (same data, more bands → ~eta/nband); with
+  legacy sara retired, eta was redefined as a fraction of the total wsum (maintainer
+  request, session pfb010). Single-band runs are numerically unchanged. Guard:
+  `tests/test_pfb_solver.py::test_build_hess_eta_is_fraction_of_total_wsum`.
 - **Consequences:** Feeding raw complex `PSFHAT` (or per-band wsums) into the Hessian
   produces garbage-scale or non-Hermitian operators — both happened during bring-up
   (e2e rdiff 8e7 before `daf94ab`).

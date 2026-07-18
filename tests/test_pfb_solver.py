@@ -373,3 +373,24 @@ def test_forward_requires_first():
     solver = _solver(b)
     with pytest.raises(RuntimeError, match="first"):
         solver.forward(b)
+
+
+def test_build_hess_eta_is_fraction_of_total_wsum(monkeypatch):
+    """--eta means a fraction of the TOTAL wsum: on the total-wsum-normalised
+    band operators the Tikhonov term is a uniform eta*x, independent of how
+    the data is split into bands (band-count / data-volume invariance)."""
+    import pfb_imaging.deconv.presets as presets
+
+    captured = {}
+
+    class FakeHess:
+        def __init__(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas=None, wsums=None, **kw):
+            captured["etas"] = np.broadcast_to(np.asarray(etas, dtype=float), (len(partitions_per_band),))
+            captured["wsums"] = wsums
+
+    monkeypatch.setattr(presets, "HessTreeRay", FakeHess)
+    parts = [[{"wsum": np.array([1.0])}], [{"wsum": np.array([3.0])}]]
+    opts = {"eta": 0.01, "nthreads": 1, "cg_tol": 1e-3, "cg_maxit": 10, "cg_verbose": 0}
+    presets._build_hess(parts, {"nx": 8, "ny": 8, "nx_psf": 16, "ny_psf": 16}, opts)
+    assert_allclose(captured["etas"], 0.01)  # uniform, NOT scaled by wsum_b/wsum_tot
+    assert np.isclose(captured["wsums"], 4.0)

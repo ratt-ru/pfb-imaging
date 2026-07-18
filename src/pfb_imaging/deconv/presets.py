@@ -33,14 +33,17 @@ def _build_hess(partitions_per_band, geometry, opts, workers=None, wsums=None):
     else:
         wsum_b = np.asarray(wsums, dtype=float)
     wsum_tot = wsum_b.sum()
-    etas = opts["eta"] * wsum_b / wsum_tot
+    # --eta is a fraction of the TOTAL wsum: the band operators are normalised
+    # by wsum_tot, so the Tikhonov term is a uniform +eta*x on every band
+    # (eta*wsum_tot in raw units), invariant to how the data is split into
+    # bands. Replaces the legacy-matching eta*wsum_b/wsum_tot (wiki D4).
     return HessTreeRay(
         partitions_per_band,
         geometry["nx"],
         geometry["ny"],
         geometry["nx_psf"],
         geometry["ny_psf"],
-        etas=etas,
+        etas=opts["eta"],
         nthreads=opts["nthreads"],
         wsums=wsum_tot,
         cg_tol=opts["cg_tol"],

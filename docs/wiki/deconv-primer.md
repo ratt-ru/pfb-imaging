@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-17T21:00:00Z
-last_verified_commit: 7eb3f1d
+timestamp: 2026-07-18T17:00:00Z
+last_verified_commit: 9e0ee75
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -69,8 +69,11 @@ by the TOTAL weight sum happens at the point of use. The pieces must agree:
 - `wsum_tot = Σ_bands Σ_partitions wsum_p`; `residual = RESIDUAL_raw / wsum_tot`.
 - Each band's `HessianTree` gets `wsum=wsum_tot` as an explicit override (not its own
   band's sum) — `deconv/presets._build_hess`, mirroring legacy `abspsf /= wsum`.
-- Tikhonov: `eta_b = eta_cli · wsum_b / wsum_tot` per band (legacy `eta * wsums` with
-  normalised `wsums`).
+- Tikhonov: `--eta` is a **fraction of the total wsum** — on the total-wsum-normalised
+  band operators the term is a uniform `+eta·x` (raw units `eta·wsum_tot`), identical
+  for every band and invariant to how the data is split into bands. (The earlier
+  legacy-matching `eta_b = eta·wsum_b/wsum_tot` weakened the damping as band count
+  grew; retired with legacy sara — see D4.)
 - `HessianTree` consumes `abs(PSFHAT)`: the stored `PSFHAT` is the raw complex FFT of
   the PSF; without `abs()` the "Hessian" carries a phase, is not Hermitian-positive,
   and CG breaks. The `abs()` happens worker-side in

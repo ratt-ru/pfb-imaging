@@ -164,10 +164,12 @@ def deconv(
     eta: Annotated[
         float,
         typer.Option(
-            help="Will use eta*wsum to regularise the inversion of the Hessian approximation.",
+            help="Tikhonov regularisation for the inversion of the Hessian approximation. "
+            "Interpreted as a fraction of the total sum of imaging weights. "
+            "The effective damping is eta times the total wsum regardless of band count.",
             rich_help_panel="PFB",
         ),
-    ] = 1.0,
+    ] = 0.001,
     gamma: Annotated[
         float,
         typer.Option(

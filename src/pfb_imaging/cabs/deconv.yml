@@ -112,9 +112,11 @@ cabs:
           rich_help_panel: PFB
       eta:
         info:
-          Will use eta*wsum to regularise the inversion of the Hessian approximation.
+          Tikhonov regularisation for the inversion of the Hessian approximation.
+          Interpreted as a fraction of the total sum of imaging weights.
+          The effective damping is eta times the total wsum regardless of band count.
         dtype: float
-        default: 1.0
+        default: 0.001
         metadata:
           rich_help_panel: PFB
       gamma:

@@ -385,7 +385,10 @@ class HessianTree(object):
             the X/Y pixel counts.
         nx, ny: image dimensions.
         nx_psf, ny_psf: PSF dimensions (``ny_psf`` is the real-FFT last size).
-        eta: Tikhonov parameter.
+        eta: additive Tikhonov coefficient on the wsum-normalised operator.
+            The deconv CLI's ``--eta`` (a fraction of the total wsum) passes
+            through unscaled because the operator is normalised by the total
+            wsum (``eta*wsum_tot`` in raw units; wiki D4).
         nthreads: FFT threads.
         wsum: optional normalisation override (defaults to the sum of
             per-partition ``wsum``). A ``HessTreeRay`` band actor passes the
