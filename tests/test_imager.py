@@ -43,11 +43,16 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     assert image_names, "no output-image nodes written"
 
     band = dt[image_names[0]]
-    for v in ("DIRTY", "RESIDUAL", "PSF", "WSUM", "PSFPARSN"):
+    for v in ("DIRTY", "PSF", "WSUM", "PSFPARSN", "BEAM"):
         assert v in band.ds, f"band node missing {v}"
     assert np.isfinite(band.ds.DIRTY.values).all()
-    # fresh image: residual == dirty (no model yet)
-    np.testing.assert_array_equal(band.ds.RESIDUAL.values, band.ds.DIRTY.values)
+    # residual is only computed when a model is passed in (future feature)
+    assert "RESIDUAL" not in band.ds
+    # band BEAM = wsum-weighted mean of the partition beams (linear-mosaic response)
+    pdss = [band[p].ds for p in band.children]
+    num = sum(np.asarray(p.attrs["wsum"])[:, None, None] * p.BEAM.values for p in pdss)
+    den = sum(np.asarray(p.attrs["wsum"]) for p in pdss)[:, None, None]
+    assert_allclose(band.ds.BEAM.values, num / den, rtol=1e-12, atol=0)
 
     # partition children with vis-space + per-partition image-space products
     part_names = [n for n in band.children]

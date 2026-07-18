@@ -102,6 +102,7 @@ def _grid_image(
     bpar = ["BMAJ", "BMIN", "BPA"]
     dirty_sum = np.zeros((ncorr, ny, nx))
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf))
+    beam_sum = np.zeros((ncorr, ny, nx))
     wsum_sum = np.zeros(ncorr)
 
     for pid, key in enumerate(list(sorted(groups))):
@@ -180,6 +181,7 @@ def _grid_image(
 
         dirty_sum += prod["DIRTY"]
         psf_sum += prod["PSF"]
+        beam_sum += prod["WSUM"][:, None, None] * prod["BEAM"]
         wsum_sum += prod["WSUM"]
 
     band_attrs = {
@@ -196,16 +198,22 @@ def _grid_image(
         "niters": 0,
     }
     band_attrs = {k: v for k, v in band_attrs.items() if v is not None}
+    # band-level BEAM: wsum-weighted mean of the partition beams -- the
+    # linear-mosaic response (still the effective B/n of wiki D22).
+    # RESIDUAL is only computed once a model input exists (deconv falls back
+    # to DIRTY when it is absent).
+    with np.errstate(invalid="ignore", divide="ignore"):
+        beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
     band_ds = xr.Dataset(
         {
             "DIRTY": (("corr", "y", "x"), dirty_sum),
-            "RESIDUAL": (("corr", "y", "x"), dirty_sum.copy()),  # no model yet
             "PSF": (("corr", "y_psf", "x_psf"), psf_sum),
             "PSFPARSN": (
                 ("corr", "bpar"),
                 np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True)),
             ),
             "WSUM": (("corr",), wsum_sum),
+            "BEAM": (("corr", "y", "x"), beam_avg),
         },
         coords={"corr": corr, "bpar": bpar},
         attrs=band_attrs,
