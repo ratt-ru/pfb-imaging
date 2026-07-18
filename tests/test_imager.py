@@ -487,6 +487,14 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
     ref = _run_stokes_vis(ms_name, str(tmp_path / "b0.scratch"), beam_model="katbeam", cell_rad=cell)
     assert ref.BEAM.dims == ("corr", "y", "x")
     assert ref.BEAM.shape == (1, 64, 64)
+    assert ref.attrs["beam_includes_n"] is True
+
+    # beam_model=None stores exactly the folded 1/n (D22), not ones
+    none_ds = _run_stokes_vis(ms_name, str(tmp_path / "bn.scratch"), cell_rad=cell)
+    coords = (-(64 / 2) + np.arange(64)) * cell
+    yy_n, xx_n = np.meshgrid(coords, coords, indexing="ij")
+    nlm = np.sqrt(1.0 - xx_n**2 - yy_n**2)
+    np.testing.assert_allclose(none_ds.BEAM.values[0], 1.0 / nlm, rtol=1e-6)
     iy, ix = np.unravel_index(int(np.argmax(ref.BEAM.values[0])), (64, 64))
     assert (iy, ix) == (32, 32), "unrephased beam must peak at the image centre"
 

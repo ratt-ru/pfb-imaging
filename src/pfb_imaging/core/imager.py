@@ -169,6 +169,8 @@ def _grid_image(
                 "dec0": float(part.attrs.get("dec0", meta["dec"])),
                 "l0": meta.get("l0", 0.0),
                 "m0": meta.get("m0", 0.0),
+                # stored BEAM = effective image-plane response B/n (D22)
+                "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
                 "wsum": prod["WSUM"].tolist(),
             },
         )

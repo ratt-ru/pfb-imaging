@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-18T01:30:00Z
+timestamp: 2026-07-18T16:00:00Z
 last_verified_commit: 502fe90
 ---
 
@@ -426,6 +426,51 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** commit 502fe90 (port; original work 7dcc892/649c0ce/9bc16cc/
   ef9ae6e on the abandoned branch); `tests/test_imager.py`
   (rephase round-trip + stokes_vis rephase unit), `tests/test_coords.py`.
+
+
+### D22 — The wgridder n-term is folded into the stored BEAM; divide_by_n stays False
+
+- **Context:** The measurement equation carries a geometric 1/n(l,m) Jacobian
+  (n = sqrt(1−l²−m²)) relative to the phase centre. It was historically
+  ignored on this path (`divide_by_n=False` everywhere), biasing the
+  deconvolved model by n (~0.2% at a 5° fov edge, ~1.5% at 10°) — relevant
+  for wide UHF mosaics. Post-D21 rephasing all partitions share one phase
+  centre, so n is a single well-defined function on the common grid.
+- **Decision:** Pass 1 stores the **effective image-plane response**
+  `BEAM = B/n` (including `1/n` when no aperture beam model is set), computed
+  on exactly ducc's pixel coordinates (absolute w.r.t. the phase centre,
+  `--target` offset included). Every ducc call on the imager+deconv path
+  keeps `divide_by_n=False`. Pieces/partitions carry `beam_includes_n: True`.
+- **Rationale** (measured; pinned by `tests/test_hessian_nterm.py`):
+  1. **It is exact, not an approximation:** under `do_wgridding=True`, ducc's
+     `divide_by_n=True` is precisely `diag(1/n)` on either side (verified
+     2e-14), so `diag(B/n)·GᵀWG·diag(B/n)` with `divide_by_n=False` is the
+     *identical* physical operator to flipping the flag with beam B.
+  2. **It is the optimal Hessian approximation:** `HessianTree` applies
+     `B̃ᵀ(PSF ⊛ B̃x)` — with `B̃ = B/n` the diagonal n-factors ride in the beam
+     slots and are captured exactly; the folded operator matches the pure
+     PSF-convolution baseline to 4 significant digits. Flipping
+     `divide_by_n=True` instead buries an image-plane 1/n envelope inside the
+     gridded PSF, which a convolution cannot represent: measured 4–25% worse,
+     growing with fov.
+  3. **It is trap-immune:** ducc's `divide_by_n` silently no-ops when
+     `do_wgridding=False`; the fold divides explicitly, so behaviour is
+     independent of the wgridding flag.
+- **Consequences:** the deconvolved MODEL is in **intrinsic** flux (the
+  legacy "reconstructs I/n, multiply by n afterwards" correction is gone —
+  `tests/test_deconv.py::test_deconv_groundtruth` asserts intrinsic
+  recovery). DIRTY/RESIDUAL are unchanged (no beam or n is ever applied on
+  the imaging side). **Consumers must not treat the stored BEAM as the bare
+  primary beam** — a future PB-corrected quicklook must use B = BEAM·n, or
+  check `beam_includes_n`. `degrid`/`comps2vis` predates beams entirely and
+  still predicts unattenuated model vis (pre-existing limitation, unchanged).
+  Known residual approximation errors in the PSF-convolution Hessian, now
+  documented: the w-term and the `abs(PSFHAT)` rectification (Hermitian-
+  positivity for CG) — both far larger than the n-term at any fov, sub-
+  percent for realistic decaying PSFs.
+- **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy
+  study); `utils/stokes2vis_msv4.py` beam block; user-reported
+  `divide_by_n`/`do_wgridding` trap.
 
 ## Known debt
 

@@ -97,7 +97,9 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         ixm = sky_truth.nx // 2 - int(sky_truth.lpix[s])
         iym = sky_truth.ny // 2 + int(sky_truth.mpix[s])
         box = model_mean.isel(x=slice(ixm - half, ixm + half + 1), y=slice(iym - half, iym + half + 1))
-        got = float(box.values.sum()) * sky_truth.nvals[s]
+        # the n-term is folded into the stored BEAM (D22), so the model is in
+        # intrinsic flux units -- no legacy *n correction
+        got = float(box.values.sum())
         want = sky_truth.ref_flux[s]
         assert abs(got - want) < 0.2 * want, f"source {s}: box flux {got} vs {want}"
         # the box is centred on the source in both axes, so the argmax must

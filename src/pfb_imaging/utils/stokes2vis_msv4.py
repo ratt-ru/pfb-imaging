@@ -449,9 +449,28 @@ def stokes_vis(
     else:
         l0, m0 = 0.0, 0.0
 
+    # the wgridder's geometric n-term is folded into the stored beam: the
+    # effective image-plane response is B(l,m)/n(l,m), computed on exactly
+    # the coordinates ducc uses (absolute w.r.t. the phase centre, target
+    # offset included). Rationale (wiki design-decisions D22, pinned by
+    # tests/test_hessian_nterm.py): diag(B/n) GtWG diag(B/n) is IDENTICAL to
+    # gridding with divide_by_n=True, but the diagonal rides in HessianTree's
+    # beam slots where the PSF-convolution approximation captures it exactly,
+    # whereas divide_by_n=True buries an image-plane envelope inside the
+    # gridded PSF that a convolution cannot represent (4-25% worse Hessian
+    # accuracy, growing with fov). It also sidesteps ducc's divide_by_n
+    # silently no-oping when do_wgridding=False. Every ducc call in the
+    # imager+deconv path therefore stays divide_by_n=False, and the
+    # deconvolved MODEL comes out in intrinsic flux.
+    _, _, _, x0_, y0_ = wgridder_conventions(l0, m0)
+    x_abs = (-(nx / 2) + np.arange(nx)) * cell_rad + x0_
+    y_abs = (-(ny / 2) + np.arange(ny)) * cell_rad + y0_
+    yy_abs, xx_abs = np.meshgrid(y_abs, x_abs, indexing="ij")  # (ny, nx)
+    nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
+
     if beam_model is None:
-        # unity beam straight on the image grid (compresses to ~nothing in zarr)
-        beam = np.ones((ncorr, ny, nx), dtype=real_type)
+        # no aperture beam: the stored response is 1/n (compresses well in zarr)
+        beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
     else:
         # field-centred evaluation on a small grid first
         if isinstance(beam_model, BeamWizard):
@@ -539,6 +558,8 @@ def stokes_vis(
             beam = np.zeros((ncorr, ny, nx), dtype=real_type)
             for c in range(ncorr):
                 beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+        # fold the n-term (see the D22 comment above)
+        beam = (beam / nlm[None, :, :]).astype(real_type)
 
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
@@ -612,6 +633,9 @@ def stokes_vis(
         else str(getattr(beam_model, "band", type(beam_model).__name__)),
         "l0": l0,
         "m0": m0,
+        # the stored BEAM is the effective image-plane response B/n, NOT the
+        # bare primary beam (wiki design-decisions D22)
+        "beam_includes_n": True,
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)

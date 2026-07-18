@@ -149,7 +149,10 @@ using differential measures-synthesized UVW (the systematic vs the MS's own UVW 
 FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are
 evaluated (katbeam or `BeamWizard` band names U/L/S0/S4) about the field pointing and reprojected
 onto the image grid **in pass 1** (#281); scratch/partition `BEAM` is `(corr, ny, nx)` and pass 2
-consumes it as is.
+consumes it as is. The stored `BEAM` is the **effective response `B/n`** — the wgridder n-term is
+folded into it and every ducc call stays `divide_by_n=False` (wiki D22; the fold is an exact
+operator identity and keeps the PSF-convolution Hessian at its baseline accuracy, unlike
+`divide_by_n=True` which a convolution cannot represent). The deconvolved MODEL is intrinsic flux.
 
 **Time epochs.** The MSv4 `time` coordinate and the `.dt`'s `time_out` attrs are **unix
 seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. `utils/fits.set_wcs` takes
