@@ -431,6 +431,7 @@ def dt2fits(
     do_cube=True,
     psfpars_mfs=None,
     force_unit=None,
+    extra_hdr=None,
 ):
     """Render a band-node variable from the imager ``.dt`` DataTree to FITS.
 
@@ -448,12 +449,15 @@ def dt2fits(
         do_mfs, do_cube: which products to write.
         psfpars_mfs: optional ``{timeid: (ncorr, 3)}`` MFS beam params.
         force_unit: override the BUNIT header.
+        extra_hdr: optional dict of extra FITS header cards stamped into every
+            written header.
 
     Returns:
         The rendered ``column`` name.
     """
     basename = outname + "_" + column.lower()
-    unit = force_unit or ("Jy/beam" if norm_wsum else "Jy/pixel")
+    # explicit None check: force_unit="" (dimensionless, e.g. BEAM) is a valid override
+    unit = force_unit if force_unit is not None else ("Jy/beam" if norm_wsum else "Jy/pixel")
     bpar = ["BMAJ", "BMIN", "BPA"]
 
     dt = xr.open_datatree(store_url, engine="zarr", chunks=None)
@@ -506,6 +510,9 @@ def dt2fits(
                 l0=l0,
                 m0=m0,
             )
+            if extra_hdr:
+                for k, v in extra_hdr.items():
+                    hdr[k] = v
             hdr["WSUM"] = float(wsum[0])
             if norm_wsum:
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
@@ -548,6 +555,9 @@ def dt2fits(
                 l0=l0,
                 m0=m0,
             )
+            if extra_hdr:
+                for k, v in extra_hdr.items():
+                    hdr[k] = v
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
             cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube

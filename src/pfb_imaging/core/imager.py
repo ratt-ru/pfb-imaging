@@ -291,6 +291,7 @@ def imager(
     double_accum: bool = True,
     keep_scratch: bool = True,
     psf: bool = True,
+    beam: bool = True,
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
@@ -881,21 +882,27 @@ def imager(
     if fits_mfs or fits_cubes:
         fits_oname = f"{fits_output_folder}/{oname}"
         log.info(f"Writing fits files to {fits_oname}")
-        columns = ["DIRTY"]
+        base_kwargs = dict(
+            norm_wsum=True,
+            nthreads=nthreads,
+            do_mfs=fits_mfs,
+            do_cube=fits_cubes,
+            psfpars_mfs=psfparsn if psf else None,
+        )
+        columns = {"DIRTY": {}}
         if psf:
-            columns.append("PSF")
-        fits_tasks = [
-            rdt2fits.remote(
-                dt_store.url,
-                column,
-                fits_oname,
-                norm_wsum=True,
-                nthreads=nthreads,
-                do_mfs=fits_mfs,
-                do_cube=fits_cubes,
-                psfpars_mfs=psfparsn if psf else None,
+            columns["PSF"] = {}
+        if beam:
+            # stored beam is the effective response B/n (wiki D22)
+            columns["BEAM"] = dict(
+                norm_wsum=False,
+                force_unit="",
+                psfpars_mfs=None,
+                extra_hdr={"BEAMINCN": (True, "beam includes the wgridder n-term (D22)")},
             )
-            for column in columns
+        fits_tasks = [
+            rdt2fits.remote(dt_store.url, column, fits_oname, **{**base_kwargs, **overrides})
+            for column, overrides in columns.items()
         ]
         for task in fits_tasks:
             ray.get(task)

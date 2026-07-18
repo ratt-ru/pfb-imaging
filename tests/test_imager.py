@@ -66,6 +66,20 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     # MFS FITS written for DIRTY
     assert glob.glob(str(tmp_path / "*dirty*mfs.fits")), "no MFS dirty FITS written"
 
+    # beam FITS: dimensionless, D22 header card, wsum-weighted mean over bands
+    from astropy.io import fits as afits
+
+    beam_hits = glob.glob(str(tmp_path / "*_beam_time*_mfs.fits"))
+    assert beam_hits, "no beam MFS FITS written"
+    with afits.open(beam_hits[0]) as hdul:
+        assert hdul[0].header["BEAMINCN"], "missing D22 n-term card"
+        assert hdul[0].header["BUNIT"] == ""
+        bimg = np.squeeze(hdul[0].data).astype(np.float64)
+    nodes = [dt[n].ds for n in image_names]
+    num = sum(float(ds.WSUM.values[0]) * ds.BEAM.values[0] for ds in nodes)
+    den = sum(float(ds.WSUM.values[0]) for ds in nodes)
+    assert_allclose(bimg, num / den, rtol=1e-5, atol=1e-7)
+
 
 def test_scratch_retained_by_default(ms_name, tmp_path):
     """The pass-1 .scratch store is kept by default for re-gridding without re-read."""
