@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-18T01:30:00Z
-last_verified_commit: 502fe90
+timestamp: 2026-07-18T16:30:00Z
+last_verified_commit: ac5bc18
 ---
 
 # MSv4 DataTree imager pipeline
@@ -29,9 +29,10 @@ H x = Σ_p  B_pᵀ G_pᵀ W_p G_p B_p x
 
 Partitions have **different row counts** (BDA, different scans/fields), so they cannot
 share a `row` dimension in one `Dataset`. The tree is a 1:1 map of the equation: the
-**band node is the summation domain** (holds the image-space sums `DIRTY`/`RESIDUAL`/
-`PSF`/`PSFPARSN`/`WSUM`), the **partition children are the terms** (ragged vis-space
-arrays plus per-partition `PSF`/`PSFHAT`/`BEAM` and the phase offsets `l0, m0`).
+**band node is the summation domain** (holds the image-space sums `DIRTY`/`WSUM`/`BEAM`,
+plus `PSF`/`PSFPARSN` when `--psf` is on), the **partition children are the terms** (ragged
+vis-space arrays plus per-partition `BEAM` (+ `PSF`/`PSFHAT` with `--psf`) and the phase
+offsets `l0, m0`).
 `baseline_group` sits in the partition identity `(msid, field, spw, baseline_group)` —
 only ever `"all"` today — so per-antenna-pair Mueller beams (MeerKAT+) become a storage
 no-op later: just another `part{p}` child with its own `BEAM`.
@@ -45,17 +46,36 @@ no-op later: just another `part{p}` child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters
-      vars:   DIRTY, RESIDUAL, PSF (corr, y[, _psf], x[, _psf]),   # (Y, X), D20
-              PSFPARSN (corr, bpar), WSUM (corr,)
-              # MODEL / NOISE added later by the deconv consumer
+      vars:   DIRTY, BEAM (corr, y, x),                            # (Y, X), D20
+              PSF (corr, y_psf, x_psf), PSFPARSN (corr, bpar),     # only with --psf
+              WSUM (corr,)
+              # band BEAM = wsum-weighted mean of partition beams (linear-mosaic
+              # response, still B/n per D22)
+              # MODEL / RESIDUAL / NOISE added later by the deconv consumer
       part{p:04d}/                    # ONE DATA PARTITION
           attrs:  msid, field_name, spw_name, baseline_group,
                   ra, dec, l0, m0, wsum
           vis-space:   VIS, WEIGHT (corr, row, chan), MASK (row, chan),
                        UVW (row, three), FREQ (chan,)
-          image-space: PSF, PSFHAT (corr, y_psf, xo2), BEAM (corr, y, x; image grid,
-                       placed in pass 1), PSFPARSN
+          image-space: BEAM (corr, y, x; image grid, placed in pass 1);
+                       PSF, PSFHAT (corr, y_psf, xo2), PSFPARSN only with --psf
 ```
+
+## Product selection
+
+`--psf` (default on) is a **compute** toggle: off skips the padded-grid PSF gridding, the
+`PSFHAT` FFT and the clean-beam fits everywhere — a quicklook dirty-only tree that
+`deconv` refuses with "re-run pfb imager with --psf" (guard fires before Ray init).
+`--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
+and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
+carry a `BEAMINCN` card because the stored beam includes the folded n-term. `RESIDUAL`
+is only computed when a model is passed in (future feature; no flag).
+`--fits-per-partition` (default off) makes the pass-2 workers write per-partition
+sanity FITS while the products are in memory (per-partition DIRTY is never stored in the
+tree): `<var>_band####_time####_part####_<field>.fits` under
+`<fits_output_folder>/<oname>_partitions/`, dirty/psf wsum-normalised per partition,
+beam as stored — the field name in the filename is what makes multi-pointing
+orientation checks usable.
 
 All partitions in a band share one output grid: multi-field selections are rephased in
 pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`

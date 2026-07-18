@@ -114,12 +114,20 @@ path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/image
 `band{b:04d}_time{t:04d}`; one child `part{p:04d}` per data partition identified by
 `(msid, field, spw, baseline_group)` (`baseline_group` is a single `"all"` group for now,
 extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
-products (`DIRTY`, `RESIDUAL`, `PSF`, `PSFPARSN`, `WSUM`); partition children hold the ragged
-vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`) and per-partition `PSF`/`PSFHAT`/`BEAM`.
+products (`DIRTY`, `WSUM`, `BEAM` — the wsum-weighted mean of the partition beams, i.e. the
+linear-mosaic response — plus `PSF`/`PSFPARSN` when `--psf` is on); partition children hold the
+ragged vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`), per-partition `BEAM`, and
+`PSF`/`PSFHAT`/`PSFPARSN` when `--psf` is on. **Product selection:** `--psf` is a compute toggle
+(a `--no-psf` tree is quicklook-only; `deconv` refuses it with a clear error), `--beam` gates
+only the beam FITS (the stored `BEAM` is load-bearing, D22), and `--fits-per-partition` writes
+per-partition dirty/psf/beam FITS (`<var>_band####_time####_part####_<field>.fits` in a
+`<oname>_partitions/` subdirectory) for field/beam orientation sanity checks. `RESIDUAL` is no
+longer imager-written: residual computation arrives with model-input support, and `deconv`
+falls back to `DIRTY` when it is absent.
 **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")` etc.,
 scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only behind zero-copy
 `.T` views at the wgridder call sites (wiki design-decisions D19/D20).
-`MODEL`/`NOISE` are added later by the (future) `deconv` consumer.
+`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer.
 
 **Access layer — native DataTree only.** Use `xr.open_datatree(store)`,
 `ds.to_zarr(store, group="band…/part…", mode="a")`, and `dt.children` directly. Do **not** add
