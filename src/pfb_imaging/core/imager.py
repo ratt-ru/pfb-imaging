@@ -27,7 +27,7 @@ from xarray_ms.errors import (
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import rdt2fits
+from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.misc import (
     fitcleanbeam,
     parse_sky_coords,
@@ -47,6 +47,50 @@ warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
 
 
 log = pfb_logging.get_logger("IMAGER")
+
+
+def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, cell_rad, do_psf, do_beam):
+    """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
+
+    Runs inside the pass-2 worker while the partition products are in memory;
+    per-partition DIRTY/PSF are wsum-normalised, the beam is written as stored
+    (effective response B/n, wiki D22).
+    """
+    field = str(field_name).replace(" ", "_").replace("/", "-")
+    cell_deg = np.rad2deg(cell_rad)
+    ncorr = prod["DIRTY"].shape[0]
+
+    def mk_hdr(nx_, ny_, unit):
+        return set_wcs(
+            cell_deg,
+            cell_deg,
+            nx_,
+            ny_,
+            (meta["ra"], meta["dec"]),
+            np.atleast_1d(freq_out),
+            unit=unit,
+            ms_time=meta["time_out"],
+            time_is_unix=True,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
+            ncorr=ncorr,
+        )
+
+    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}.fits"
+    wsum = prod["WSUM"][:, None, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
+    ny_im, nx_im = prod["DIRTY"].shape[1:]
+    save_fits(dirty, stem.format(var="dirty"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
+    if do_psf:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            psf = np.where(wsum > 0, prod["PSF"] / wsum, 0.0)
+        ny_psf_, nx_psf_ = prod["PSF"].shape[1:]
+        save_fits(psf, stem.format(var="psf"), mk_hdr(nx_psf_, ny_psf_, "Jy/beam"), yx_order=True)
+    if do_beam:
+        hdr = mk_hdr(nx_im, ny_im, "")
+        hdr["BEAMINCN"] = (True, "beam includes the wgridder n-term (D22)")
+        save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
 
 
 @ray.remote
@@ -73,6 +117,8 @@ def _grid_image(
     do_wgridding=True,
     double_accum=True,
     do_psf=True,
+    part_fits_dir=None,
+    part_fits_beam=True,
 ):
     """Pass-2 worker for one output image.
 
@@ -185,6 +231,20 @@ def _grid_image(
         # but they share the store root; the driver consolidates once at the end
         part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
 
+        if part_fits_dir is not None:
+            _partition_fits(
+                part_fits_dir,
+                out_name,
+                pid,
+                key[1],
+                prod,
+                meta,
+                freq_out,
+                cell_rad,
+                do_psf=do_psf,
+                do_beam=part_fits_beam,
+            )
+
         dirty_sum += prod["DIRTY"]
         beam_sum += prod["WSUM"][:, None, None] * prod["BEAM"]
         if do_psf:
@@ -292,6 +352,7 @@ def imager(
     keep_scratch: bool = True,
     psf: bool = True,
     beam: bool = True,
+    fits_per_partition: bool = False,
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
@@ -813,6 +874,14 @@ def imager(
     xr.Dataset(attrs=root_attrs).to_zarr(dt_store.url, mode="w")
     log.info(f"Imaging products will be written to {dt_store.url}")
 
+    # per-partition sanity FITS (field/beam orientation checks); the driver
+    # creates the directory single-threaded so workers never race on mkdir
+    part_fits_dir = None
+    if fits_per_partition:
+        part_fits_dir = f"{fits_output_folder}/{oname}_partitions"
+        os.makedirs(part_fits_dir, exist_ok=True)
+        log.info(f"Per-partition FITS will be written to {part_fits_dir}")
+
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
     tasks = []
     for out_name, src_names, meta in work:
@@ -841,6 +910,8 @@ def imager(
             do_wgridding=do_wgridding,
             double_accum=double_accum,
             do_psf=psf,
+            part_fits_dir=part_fits_dir,
+            part_fits_beam=beam,
         )
         tasks.append(fut)
 

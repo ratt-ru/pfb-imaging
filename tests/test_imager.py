@@ -565,3 +565,53 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
 
     with pytest.raises(ValueError, match="re-run pfb imager with --psf"):
         deconv(outname, log_directory=str(tmp_path), nthreads=1)
+
+
+def test_imager_fits_per_partition(sky_truth, ms_name, tmp_path):
+    """Per-partition sanity FITS: one file per computed variable per partition,
+    with a WCS that puts the injected sources where they belong."""
+    from astropy.io import fits as afits
+    from astropy.wcs import WCS
+
+    outname = str(tmp_path / "perpart")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=2,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=None,
+        fits_mfs=False,
+        fits_cubes=False,
+        fits_per_partition=True,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    pdir = tmp_path / "perpart_I_partitions"
+    assert pdir.is_dir(), "partitions FITS subdirectory not created"
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    bands = [n for n in dt.children if n.startswith("band")]
+    nparts = sum(len(dt[b].children) for b in bands)
+    for var in ("dirty", "psf", "beam"):
+        hits = glob.glob(str(pdir / f"{var}_band*_part*.fits"))
+        assert len(hits) == nparts, f"{var}: {len(hits)} FITS for {nparts} partitions"
+
+    # orientation sanity: brightest truth source sits at its WCS pixel
+    hits = sorted(glob.glob(str(pdir / "dirty_band*_part0000_*.fits")))
+    with afits.open(hits[0]) as hdul:
+        img = np.squeeze(hdul[0].data)
+        w = WCS(hdul[0].header).celestial
+    assert img.shape == (sky_truth.ny, sky_truth.nx)
+    s0 = np.argsort(sky_truth.ref_flux)[::-1][0]
+    px, py = w.world_to_pixel(sky_truth.sky_coords[s0])
+    iy, ix = np.unravel_index(int(np.argmax(img)), img.shape)
+    assert (ix, iy) == (int(round(float(px))), int(round(float(py))))
+
+    # beam FITS carries the D22 card
+    bhit = sorted(glob.glob(str(pdir / "beam_band*_part0000_*.fits")))[0]
+    with afits.open(bhit) as hdul:
+        assert hdul[0].header["BEAMINCN"]
