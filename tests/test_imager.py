@@ -12,6 +12,7 @@ import glob
 from pathlib import Path
 
 import numpy as np
+import pytest
 import xarray as xr
 from numpy.testing import assert_allclose
 
@@ -514,3 +515,39 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
     assert (iy, ix) == (22, 32), f"rephased beam peak at ({iy},{ix}), expected (22,32)"
     # reprojection fills 0 outside the small-grid coverage; interior peak ~1
     assert new.BEAM.values[0, 22, 32] > 0.99
+
+
+def test_imager_no_psf_quicklook(ms_name, tmp_path):
+    """psf=False skips PSF gridding everywhere; deconv refuses the tree cleanly."""
+    from pfb_imaging.core.deconv import deconv
+
+    outname = str(tmp_path / "quicklook")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=2,
+        product="I",
+        field_of_view=1.0,
+        psf=False,
+        fits_mfs=True,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    bands = [n for n in dt.children if n.startswith("band")]
+    assert bands
+    for b in bands:
+        assert "PSF" not in dt[b].ds and "PSFPARSN" not in dt[b].ds
+        for p in dt[b].children:
+            pds = dt[b][p].ds
+            for v in ("PSF", "PSFHAT", "PSFPARSN"):
+                assert v not in pds, f"{b}/{p} has {v} despite psf=False"
+
+    # dirty FITS still written, no psf FITS (glob on _psf_ to avoid the outname)
+    assert glob.glob(str(tmp_path / "*dirty*mfs.fits"))
+    assert not glob.glob(str(tmp_path / "*_psf_*")), "psf FITS written despite psf=False"
+
+    with pytest.raises(ValueError, match="re-run pfb imager with --psf"):
+        deconv(outname, log_directory=str(tmp_path), nthreads=1)

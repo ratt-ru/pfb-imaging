@@ -72,6 +72,7 @@ def _grid_image(
     epsilon=1e-7,
     do_wgridding=True,
     double_accum=True,
+    do_psf=True,
 ):
     """Pass-2 worker for one output image.
 
@@ -101,7 +102,7 @@ def _grid_image(
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
     dirty_sum = np.zeros((ncorr, ny, nx))
-    psf_sum = np.zeros((ncorr, ny_psf, nx_psf))
+    psf_sum = np.zeros((ncorr, ny_psf, nx_psf)) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx))
     wsum_sum = np.zeros(ncorr)
 
@@ -144,21 +145,26 @@ def _grid_image(
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            do_psf=do_psf,
         )
 
+        part_vars = {
+            "VIS": (("corr", "row", "chan"), part.VIS.values),
+            "WEIGHT": (("corr", "row", "chan"), prod["WEIGHT"]),
+            "MASK": (("row", "chan"), part.MASK.values),
+            "UVW": (("row", "three"), part.UVW.values),
+            "FREQ": (("chan",), part.FREQ.values),
+            "BEAM": (("corr", "y", "x"), prod["BEAM"]),
+        }
+        part_coords = {"corr": corr}
+        if do_psf:
+            part_vars["PSF"] = (("corr", "y_psf", "x_psf"), prod["PSF"])
+            part_vars["PSFHAT"] = (("corr", "y_psf", "xo2"), prod["PSFHAT"])
+            part_vars["PSFPARSN"] = (("corr", "bpar"), prod["PSFPARSN"])
+            part_coords["bpar"] = bpar
         part_out = xr.Dataset(
-            {
-                "VIS": (("corr", "row", "chan"), part.VIS.values),
-                "WEIGHT": (("corr", "row", "chan"), prod["WEIGHT"]),
-                "MASK": (("row", "chan"), part.MASK.values),
-                "UVW": (("row", "three"), part.UVW.values),
-                "FREQ": (("chan",), part.FREQ.values),
-                "PSF": (("corr", "y_psf", "x_psf"), prod["PSF"]),
-                "PSFHAT": (("corr", "y_psf", "xo2"), prod["PSFHAT"]),
-                "BEAM": (("corr", "y", "x"), prod["BEAM"]),
-                "PSFPARSN": (("corr", "bpar"), prod["PSFPARSN"]),
-            },
-            coords={"corr": corr, "bpar": bpar},
+            part_vars,
+            coords=part_coords,
             attrs={
                 "msid": int(key[0]),
                 "field_name": key[1],
@@ -180,8 +186,9 @@ def _grid_image(
         part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
 
         dirty_sum += prod["DIRTY"]
-        psf_sum += prod["PSF"]
         beam_sum += prod["WSUM"][:, None, None] * prod["BEAM"]
+        if do_psf:
+            psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
 
     band_attrs = {
@@ -204,18 +211,22 @@ def _grid_image(
     # to DIRTY when it is absent).
     with np.errstate(invalid="ignore", divide="ignore"):
         beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
+    band_vars = {
+        "DIRTY": (("corr", "y", "x"), dirty_sum),
+        "BEAM": (("corr", "y", "x"), beam_avg),
+        "WSUM": (("corr",), wsum_sum),
+    }
+    band_coords = {"corr": corr}
+    if do_psf:
+        band_vars["PSF"] = (("corr", "y_psf", "x_psf"), psf_sum)
+        band_vars["PSFPARSN"] = (
+            ("corr", "bpar"),
+            np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True)),
+        )
+        band_coords["bpar"] = bpar
     band_ds = xr.Dataset(
-        {
-            "DIRTY": (("corr", "y", "x"), dirty_sum),
-            "PSF": (("corr", "y_psf", "x_psf"), psf_sum),
-            "PSFPARSN": (
-                ("corr", "bpar"),
-                np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True)),
-            ),
-            "WSUM": (("corr",), wsum_sum),
-            "BEAM": (("corr", "y", "x"), beam_avg),
-        },
-        coords={"corr": corr, "bpar": bpar},
+        band_vars,
+        coords=band_coords,
         attrs=band_attrs,
     )
     band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
@@ -279,6 +290,7 @@ def imager(
     do_wgridding: bool = True,
     double_accum: bool = True,
     keep_scratch: bool = True,
+    psf: bool = True,
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
@@ -827,6 +839,7 @@ def imager(
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            do_psf=psf,
         )
         tasks.append(fut)
 
@@ -840,10 +853,11 @@ def imager(
         for task in ready:
             res = ray.get(task)
             tid = res["timeid"]
-            psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf)))
-            psf_mfs[tid] += res["psf"]
-            wsum_mfs.setdefault(tid, np.zeros(ncorr))
-            wsum_mfs[tid] += res["wsum"]
+            if res["psf"] is not None:
+                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf)))
+                psf_mfs[tid] += res["psf"]
+                wsum_mfs.setdefault(tid, np.zeros(ncorr))
+                wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
@@ -867,6 +881,9 @@ def imager(
     if fits_mfs or fits_cubes:
         fits_oname = f"{fits_output_folder}/{oname}"
         log.info(f"Writing fits files to {fits_oname}")
+        columns = ["DIRTY"]
+        if psf:
+            columns.append("PSF")
         fits_tasks = [
             rdt2fits.remote(
                 dt_store.url,
@@ -876,9 +893,9 @@ def imager(
                 nthreads=nthreads,
                 do_mfs=fits_mfs,
                 do_cube=fits_cubes,
-                psfpars_mfs=psfparsn,
+                psfpars_mfs=psfparsn if psf else None,
             )
-            for column in ("DIRTY", "PSF", "RESIDUAL")
+            for column in columns
         ]
         for task in fits_tasks:
             ray.get(task)

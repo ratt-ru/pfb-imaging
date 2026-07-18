@@ -264,6 +264,7 @@ def grid_partition(
     epsilon=1e-7,
     do_wgridding=True,
     double_accum=True,
+    do_psf=True,
 ):
     """Grid one data partition's image-space products with ducc0 (casacore-free).
 
@@ -286,13 +287,16 @@ def grid_partition(
         nx_pad, ny_pad: Padded uv-grid size matching ``counts``.
         l0, m0: Partition phase-centre offset (rad).
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+        do_psf: skip the PSF/PSFHAT/PSFPARSN products entirely when False
+            (quicklook mode).
 
     Returns:
-        dict with ``DIRTY`` ``(corr,ny,nx)``, ``PSF`` ``(corr,ny_psf,nx_psf)``,
-        ``PSFHAT`` ``(corr,ny_psf,nx_psf//2+1)``, ``BEAM`` ``(corr,ny,nx)``,
-        ``PSFPARSN`` ``(corr,3)``, ``WSUM`` ``(corr,)`` and the imaging
-        ``WEIGHT`` ``(corr,row,chan)``. Image-space arrays are (Y, X)-ordered
-        (wiki D19); ducc's x-major layout exists only behind transposed views.
+        dict with ``DIRTY`` ``(corr,ny,nx)``, ``BEAM`` ``(corr,ny,nx)``,
+        ``WSUM`` ``(corr,)`` and the imaging ``WEIGHT`` ``(corr,row,chan)``.
+        ``PSF`` ``(corr,ny_psf,nx_psf)``, ``PSFHAT`` ``(corr,ny_psf,nx_psf//2+1)``
+        and ``PSFPARSN`` ``(corr,3)`` are present only when ``do_psf``.
+        Image-space arrays are (Y, X)-ordered (wiki D19); ducc's x-major
+        layout exists only behind transposed views.
     """
     resize_thread_pool(nthreads)
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
@@ -360,76 +364,79 @@ def grid_partition(
             dirty=dirty[c].T,
         )
 
-    # PSF visibilities carry a phase ramp when the field is off image centre:
-    # they must be the response of a delta function sitting at the image
-    # centre (l0, m0), so that re-gridding with the same center_x/center_y
-    # places its peak back at the PSF array's own centre. Predicting from an
-    # actual unit-peak image via dirty2vis (rather than a hand-rolled trig
-    # formula) guarantees the phase is the exact adjoint of the vis2dirty
-    # call below for these same center_x/center_y/flip_* conventions.
-    if x0 or y0:
-        # match the weight dtype so single-precision runs get complex64 psf_vis
-        # (ducc rejects mixed complex128 vis + float32 wgt); (Y, X) raster with
-        # the ducc seam behind a zero-copy .T view, as everywhere else
-        delta_im = np.zeros((ny, nx), dtype=wgt.dtype)
-        delta_im[ny // 2, nx // 2] = 1.0
-        psf_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=delta_im.T,
-            pixsize_x=cell_rad,
-            pixsize_y=cell_rad,
-            center_x=x0,
-            center_y=y0,
-            epsilon=epsilon,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,
-            nthreads=nthreads,
-        )
-    else:
-        psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))
+    if do_psf:
+        # PSF visibilities carry a phase ramp when the field is off image centre:
+        # they must be the response of a delta function sitting at the image
+        # centre (l0, m0), so that re-gridding with the same center_x/center_y
+        # places its peak back at the PSF array's own centre. Predicting from an
+        # actual unit-peak image via dirty2vis (rather than a hand-rolled trig
+        # formula) guarantees the phase is the exact adjoint of the vis2dirty
+        # call below for these same center_x/center_y/flip_* conventions.
+        if x0 or y0:
+            # match the weight dtype so single-precision runs get complex64 psf_vis
+            # (ducc rejects mixed complex128 vis + float32 wgt); (Y, X) raster with
+            # the ducc seam behind a zero-copy .T view, as everywhere else
+            delta_im = np.zeros((ny, nx), dtype=wgt.dtype)
+            delta_im[ny // 2, nx // 2] = 1.0
+            psf_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=delta_im.T,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                epsilon=epsilon,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=nthreads,
+            )
+        else:
+            psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))
 
-    psf = np.zeros((ncorr, ny_psf, nx_psf), dtype=float)
-    for c in range(ncorr):
-        vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=psf_vis,
-            wgt=wgt[c],
-            mask=mask,
-            npix_x=nx_psf,
-            npix_y=ny_psf,
-            pixsize_x=cell_rad,
-            pixsize_y=cell_rad,
-            center_x=x0,
-            center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,
-            nthreads=nthreads,
-            sigma_min=1.1,
-            sigma_max=3.0,
-            double_precision_accumulation=double_accum,
-            dirty=psf[c].T,
-        )
-    psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
-    psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0, yx_order=True))
+        psf = np.zeros((ncorr, ny_psf, nx_psf), dtype=float)
+        for c in range(ncorr):
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=psf_vis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx_psf,
+                npix_y=ny_psf,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=nthreads,
+                sigma_min=1.1,
+                sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=psf[c].T,
+            )
+        psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
+        psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0, yx_order=True))
 
-    return {
+    out = {
         "DIRTY": dirty,
-        "PSF": psf,
-        "PSFHAT": psfhat,
         "BEAM": beam,
-        "PSFPARSN": psfparsn,
         "WSUM": wsum,
         "WEIGHT": wgt,
     }
+    if do_psf:
+        out["PSF"] = psf
+        out["PSFHAT"] = psfhat
+        out["PSFPARSN"] = psfparsn
+    return out
 
 
 def residual_from_partitions(

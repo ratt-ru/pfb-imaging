@@ -117,6 +117,16 @@ def deconv(
     if first.corr.size > 1:
         log.error_and_raise("Joint polarisation deconvolution not yet supported", NotImplementedError)
 
+    # a psf=False imager tree is quicklook-only: the PSF products the minor
+    # cycle needs were never gridded
+    first_part = next(iter(dt[nodes[0]].children.values()), None)
+    if first_part is None or "PSFHAT" not in first_part.ds:
+        log.error_and_raise(
+            f"{dt_name} has no per-partition PSFHAT (imager run with --no-psf?) -- "
+            "re-run pfb imager with --psf to deconvolve",
+            ValueError,
+        )
+
     nband = len(nodes)
     if nworkers is None:
         nworkers = nband

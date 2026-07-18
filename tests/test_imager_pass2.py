@@ -47,6 +47,19 @@ def test_grid_partition_shapes_and_wsum():
     assert np.isfinite(out["DIRTY"]).all()
 
 
+def test_grid_partition_no_psf():
+    """do_psf=False skips the PSF products entirely but keeps DIRTY/BEAM/WSUM."""
+    part = _synth_partition(nx=16, ny=12)
+    out = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None, do_psf=False)
+    for k in ("PSF", "PSFHAT", "PSFPARSN"):
+        assert k not in out
+    for k in ("DIRTY", "BEAM", "WSUM", "WEIGHT"):
+        assert k in out
+    # DIRTY identical to the default path
+    ref = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None)
+    np.testing.assert_array_equal(out["DIRTY"], ref["DIRTY"])
+
+
 def test_grid_partition_row_additivity():
     """Gridding is linear over rows: cat(p0, p1) dirty == dirty(p0) + dirty(p1).
 
