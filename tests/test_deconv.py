@@ -123,9 +123,12 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
 
     for b, freq in enumerate(freqs):
         bandname = f"band{b:04d}_time0000"
+        dirty = rng.standard_normal((1, ny, nx))
         band_ds = xr.Dataset(
             data_vars={
-                "DIRTY": (("corr", "y", "x"), rng.standard_normal((1, ny, nx))),
+                "DIRTY": (("corr", "y", "x"), dirty),
+                # unit partition beams -> BDIRTY == DIRTY (D23)
+                "BDIRTY": (("corr", "y", "x"), dirty.copy()),
                 "RESIDUAL": (("corr", "y", "x"), rng.standard_normal((1, ny, nx))),
                 "PSF": (("corr", "y_psf", "x_psf"), np.ones((1, ny_psf, nx_psf))),
                 "WSUM": (("corr",), np.array([1.0])),
@@ -221,6 +224,7 @@ def test_deconv_two_band_smoke(tmp_path):
     for n in nodes:
         ds = dt[n].ds
         assert "MODEL" in ds and "UPDATE" in ds
+        assert "BRESIDUAL" in ds  # gradient residual written back (D23)
         assert ds.attrs["niters"] == 1
         assert np.isfinite(ds.MODEL.values).all()
 
@@ -251,8 +255,13 @@ def test_band_workers_load_matches_driver_side(tmp_path):
 
     root = zarr.open_group(dt_name, mode="a")
     for _, grp in root.groups():
+        # non-trivial BDIRTY so the gradient-residual check is meaningful
+        grp["BDIRTY"][:] = rng.standard_normal(grp["BDIRTY"].shape)
         for _, child in grp.groups():
             child["PSFHAT"][:] = rng.uniform(0.5, 2.0, size=child["PSFHAT"].shape)
+            # distinct non-unit per-partition beams: the exact gradient is the
+            # per-partition beam-weighted sum, not a band-average (D23)
+            child["BEAM"][:] = rng.uniform(0.3, 1.0, size=child["BEAM"].shape)
     zarr.consolidate_metadata(dt_name)
 
     dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
@@ -267,7 +276,7 @@ def test_band_workers_load_matches_driver_side(tmp_path):
     x = rng.standard_normal((nband, nx, ny))
     out_pool = hess.dot(x)
     model = rng.standard_normal((nband, 1, nx, ny))
-    res_pool = pool.residual(model, cell_rad)
+    res_pool, bres_pool = pool.residual(model, cell_rad)
 
     for b, n in enumerate(nodes):
         band = dt[n]
@@ -286,8 +295,11 @@ def test_band_workers_load_matches_driver_side(tmp_path):
             parts.append(pds)
         ref_hess = HessianTree(hess_parts, nx, ny, 2 * nx, 2 * ny, eta=0.1, wsum=1.0)
         assert_allclose(out_pool[b], ref_hess.dot(x[b])[0], rtol=1e-12, atol=1e-12)
-        ref_res = residual_from_partitions(band.ds.DIRTY.values, parts, model[b], cell_rad)
+        ref_res, ref_bres = residual_from_partitions(
+            band.ds.DIRTY.values, parts, model[b], cell_rad, bdirty=band.ds.BDIRTY.values
+        )
         assert_allclose(res_pool[b], ref_res, rtol=1e-12, atol=1e-12)
+        assert_allclose(bres_pool[b], ref_bres, rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.timeout(120)
@@ -333,6 +345,32 @@ def test_deconv_unequal_partition_counts(tmp_path):
     for n in nodes:
         ds = dt[n].ds
         assert "MODEL" in ds and "UPDATE" in ds
+        assert "BRESIDUAL" in ds  # gradient residual written back (D23)
         assert ds.attrs["niters"] == 1
         assert np.isfinite(ds.MODEL.values).all()
         assert np.isfinite(ds.RESIDUAL.values).all()
+
+
+@pytest.mark.timeout(120)
+def test_deconv_requires_bdirty(tmp_path):
+    """A .dt without BDIRTY (pre-D23 imager) is refused with a clear error."""
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(5)
+    output_filename = str(tmp_path / "nobd")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 16, 16, 32, 1, rng)
+
+    import shutil
+
+    import zarr
+
+    root = zarr.open_group(dt_name, mode="a")
+    for gname, _ in root.groups():
+        shutil.rmtree(f"{dt_name}/{gname}/BDIRTY")
+    zarr.consolidate_metadata(dt_name)
+
+    with pytest.raises(ValueError, match="BDIRTY"):
+        deconv_core(
+            output_filename, product="I", nthreads=1, fits_mfs=False, fits_cubes=False, log_directory=str(tmp_path)
+        )

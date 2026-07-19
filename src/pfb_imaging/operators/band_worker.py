@@ -55,6 +55,7 @@ class _BandWorkerImpl:
         self._psib = None
         self._parts = None
         self._dirty = None
+        self._bdirty = None
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
@@ -78,6 +79,8 @@ class _BandWorkerImpl:
         try:
             band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
             self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
+            # beam-attenuated dirty: the model-free term of the exact gradient (D23)
+            self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
             parts = []
             hess_parts = []
             for cname in sorted(band.children):
@@ -169,6 +172,7 @@ class _BandWorkerImpl:
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.operators.gridder import residual_from_partitions
 
+        # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
             self._dirty,
             self._parts,
@@ -178,6 +182,7 @@ class _BandWorkerImpl:
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            bdirty=self._bdirty,
         )
 
     # --- telemetry ---
@@ -304,9 +309,16 @@ class BandWorkerPool:
     # --- exact residual role ---
 
     def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
-        """Exact per-band residual for a ``(nband, corr, nx, ny)`` model cube."""
+        """Exact per-band ``(residual, bresidual)`` for a ``(nband, corr, nx, ny)`` model cube.
+
+        ``residual`` is the apparent (once-attenuated) image; ``bresidual`` the
+        beam-attenuated gradient the forward solver consumes (D23).
+        """
         args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
-        return np.stack(self._map("residual", args), axis=0)
+        out = self._map("residual", args)
+        res = np.stack([r for r, _ in out], axis=0)
+        bres = np.stack([g for _, g in out], axis=0)
+        return res, bres
 
     # --- telemetry ---
 

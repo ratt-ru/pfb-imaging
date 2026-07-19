@@ -138,7 +138,13 @@ class PFBSolver:
     # --- DeconvSolver interface ---
 
     def first(self, residual: np.ndarray) -> None:
-        """Store the residual (per-partition beams are applied inside hess)."""
+        """Cache the beam-attenuated gradient residual (BRESIDUAL/wsum).
+
+        The Hessian applies the beam on both sides, so the forward solve's rhs
+        must carry the outer per-partition beam too (legacy sara's
+        ``residual *= beam``; wiki D23). The caller passes the attenuated cube;
+        the apparent residual never enters the solver.
+        """
         self._residual = residual
 
     def forward(self, residual: np.ndarray) -> np.ndarray:

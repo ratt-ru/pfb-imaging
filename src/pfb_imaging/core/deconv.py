@@ -126,6 +126,13 @@ def deconv(
             "re-run pfb imager with --psf to deconvolve",
             ValueError,
         )
+    if "BDIRTY" not in first:
+        log.error_and_raise(
+            f"{dt_name} has no BDIRTY (beam-attenuated dirty) -- this version feeds "
+            "the forward solver the exact beam-attenuated gradient (D23); re-run "
+            "pfb imager to regenerate the .dt",
+            ValueError,
+        )
 
     nband = len(nodes)
     if nworkers is None:
@@ -171,6 +178,7 @@ def deconv(
     # They never enter the driver or the Ray object store
     # image rasters are (Y, X)-ordered end to end (wiki D19)
     residual_raw = np.zeros((nband, ny, nx))
+    bresidual_raw = np.zeros((nband, ny, nx))  # beam-attenuated gradient (D23)
     model = np.zeros((nband, ny, nx))
     update = np.zeros((nband, ny, nx))
     wsums = np.zeros(nband)
@@ -184,10 +192,22 @@ def deconv(
             model[b] = bds.MODEL.values[0]
         if "UPDATE" in bds:
             update[b] = bds.UPDATE.values[0]
+        if "BRESIDUAL" in bds:
+            bresidual_raw[b] = bds.BRESIDUAL.values[0]
+        elif not model[b].any():
+            # fresh tree: with a zero model the gradient is its model-free term
+            bresidual_raw[b] = bds.BDIRTY.values[0]
+        else:
+            log.error_and_raise(
+                f"{n} has a MODEL but no BRESIDUAL; resuming needs a .dt written by "
+                "this version -- restart the deconvolution from the imager output",
+                ValueError,
+            )
         wsums[b] = bds.WSUM.values[0]
 
     wsum = wsums.sum()
     residual = residual_raw / wsum
+    bresidual = bresidual_raw / wsum
     residual_mfs = np.sum(residual, axis=0)
     fsel = wsums > 0
     model_mfs = np.mean(model[fsel], axis=0)
@@ -240,8 +260,11 @@ def deconv(
     mrange = range(iter0, iter0 + niter)
     for k in mrange:
         log.info("Solving for update")
-        solver.first(residual)
-        update = solver.forward(residual)
+        # the forward solve consumes the beam-attenuated gradient (D23):
+        # H = B GtWG B, so its rhs is B*r, exactly legacy sara's
+        # `residual *= beam`. Stats/FITS/lambda stay on the apparent residual.
+        solver.first(bresidual)
+        update = solver.forward(bresidual)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
 
@@ -333,14 +356,17 @@ def deconv(
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
 
         log.info("Computing residual")
-        residual_raw = workers.residual(
+        residual_raw, bresidual_raw = workers.residual(
             model[:, None],
             cell_rad,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-        )[:, 0]
+        )
+        residual_raw = residual_raw[:, 0]
+        bresidual_raw = bresidual_raw[:, 0]
         residual = residual_raw / wsum
+        bresidual = bresidual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 
@@ -373,6 +399,7 @@ def deconv(
                 "MODEL": (("corr", "y", "x"), model[b][None]),
                 "UPDATE": (("corr", "y", "x"), update[b][None]),
                 "RESIDUAL": (("corr", "y", "x"), residual_raw[b][None]),
+                "BRESIDUAL": (("corr", "y", "x"), bresidual_raw[b][None]),
             }
             if is_best:
                 data_vars["MODEL_BEST"] = (("corr", "y", "x"), best_model[b][None])
