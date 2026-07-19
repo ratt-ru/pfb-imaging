@@ -448,6 +448,7 @@ def residual_from_partitions(
     epsilon=1e-7,
     do_wgridding=True,
     double_accum=True,
+    bdirty=None,
 ):
     """Recompute a band's residual by summing the exact degrid/grid over partitions.
 
@@ -458,6 +459,14 @@ def residual_from_partitions(
     side, matching the once-attenuated convention of ``compute_residual`` and of
     the stored ``DIRTY``.
 
+    When ``bdirty`` (the stored ``BDIRTY`` = ``Σ_p beam_p * dirty_p``) is given,
+    the beam-attenuated **gradient** residual is accumulated in the same sweep:
+    the data-term gradient of ``½‖V − G(B·x)‖²_W`` carries an outer per-partition
+    beam, ``Σ_p beam_p·(dirty_p − GᵀWG(beam_p·model))``, which is NOT derivable
+    from the apparent (once-attenuated) sum when partitions have distinct beams.
+    This is what the forward solver must consume — the Hessian applies the beam
+    on both sides (legacy sara's ``residual *= beam``; wiki D23).
+
     Args:
         dirty: Band-node dirty image ``(corr, ny, nx)`` (sum over partitions,
             un-normalised by wsum, as produced in pass 2).
@@ -467,13 +476,19 @@ def residual_from_partitions(
         model: Band model image ``(corr, ny, nx)``.
         cell_rad: Image cell size (rad).
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+        bdirty: Optional beam-attenuated dirty ``Σ_p beam_p * dirty_p``
+            ``(corr, ny, nx)`` (the imager's ``BDIRTY`` band product).
 
     Returns:
-        Residual image ``(corr, ny, nx)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``.
+        ``residual`` ``(corr, ny, nx)`` = ``dirty - Σ_p G_pᵀ W_p G_p (beam_p * model)``,
+        or the tuple ``(residual, bresidual)`` with
+        ``bresidual = bdirty - Σ_p beam_p · G_pᵀ W_p G_p (beam_p * model)`` when
+        ``bdirty`` is given.
     """
     resize_thread_pool(nthreads)
     ncorr, ny, nx = dirty.shape
     convim = np.zeros_like(dirty)
+    bconvim = np.zeros_like(dirty) if bdirty is not None else None
     tmp = np.zeros((ny, nx), dtype=dirty.dtype)
     for part in parts:
         uvw = part.UVW.values
@@ -530,5 +545,10 @@ def residual_from_partitions(
                 dirty=tmp.T,
             )
             convim[c] += tmp
+            if bconvim is not None:
+                # outer per-partition beam of the data-term gradient (D23)
+                bconvim[c] += beam[c] * tmp
 
+    if bdirty is not None:
+        return dirty - convim, bdirty - bconvim
     return dirty - convim

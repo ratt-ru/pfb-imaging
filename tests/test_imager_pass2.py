@@ -166,3 +166,33 @@ def test_residual_beam_applied_once():
     c1 = dirty - residual_from_partitions(dirty, [p1], model, 1.0e-6)
     c2 = dirty - residual_from_partitions(dirty, [p2], model, 1.0e-6)
     np.testing.assert_allclose(c2, 2.0 * c1, rtol=1e-5, atol=1e-8)
+
+
+def test_residual_gradient_beam_applied_twice():
+    """The gradient residual applies the partition beam again on the regrid
+    side: with a constant beam b the model term scales as b^2 (vs b for the
+    apparent residual), and with distinct per-partition beams the gradient is
+    the exact per-partition sum, not a band-average approximation."""
+    nx = ny = 16
+    rng = np.random.default_rng(11)
+    model = rng.standard_normal((1, ny, nx))
+    zero = np.zeros((1, ny, nx))
+    p1 = _image_beam_partition(nx, ny, seed=0, beam_val=1.0)
+    p2 = _image_beam_partition(nx, ny, seed=0, beam_val=2.0)
+
+    # constant beam: apparent model term ~ b, gradient model term ~ b^2
+    r1, g1 = residual_from_partitions(zero, [p1], model, 1.0e-6, bdirty=zero)
+    r2, g2 = residual_from_partitions(zero, [p2], model, 1.0e-6, bdirty=zero)
+    np.testing.assert_allclose(r2, 2.0 * r1, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(g2, 4.0 * g1, rtol=1e-5, atol=1e-8)
+
+    # distinct beams: both outputs are per-partition sums over the terms above
+    dirty = rng.standard_normal((1, ny, nx))
+    bdirty = rng.standard_normal((1, ny, nx))
+    r12, g12 = residual_from_partitions(dirty, [p1, p2], model, 1.0e-6, bdirty=bdirty)
+    np.testing.assert_allclose(r12, dirty + r1 + r2, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(g12, bdirty + g1 + g2, rtol=1e-5, atol=1e-8)
+
+    # bdirty=None keeps the legacy single-return signature
+    r_only = residual_from_partitions(dirty, [p1, p2], model, 1.0e-6)
+    np.testing.assert_allclose(r_only, r12, rtol=0, atol=0)
