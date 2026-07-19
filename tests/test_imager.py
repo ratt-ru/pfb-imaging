@@ -54,6 +54,12 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     num = sum(np.asarray(p.attrs["wsum"])[:, None, None] * p.BEAM.values for p in pdss)
     den = sum(np.asarray(p.attrs["wsum"]) for p in pdss)[:, None, None]
     assert_allclose(band.ds.BEAM.values, num / den, rtol=1e-12, atol=0)
+    # BDIRTY = sum_p B_p * dirty_p, the model-free term of the exact deconv
+    # gradient (D23); for this MS each band has a single partition, so it must
+    # equal that partition's beam times the summed DIRTY
+    assert "BDIRTY" in band.ds, "band node missing BDIRTY"
+    assert len(pdss) == 1
+    assert_allclose(band.ds.BDIRTY.values, pdss[0].BEAM.values * band.ds.DIRTY.values, rtol=1e-12, atol=0)
 
     # partition children with vis-space + per-partition image-space products
     part_names = [n for n in band.children]

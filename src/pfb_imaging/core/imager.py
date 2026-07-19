@@ -150,6 +150,7 @@ def _grid_image(
     dirty_sum = np.zeros((ncorr, ny, nx))
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf)) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx))
+    bdirty_sum = np.zeros((ncorr, ny, nx))
     wsum_sum = np.zeros(ncorr)
 
     for pid, key in enumerate(list(sorted(groups))):
@@ -247,6 +248,10 @@ def _grid_image(
 
         dirty_sum += prod["DIRTY"]
         beam_sum += prod["WSUM"][:, None, None] * prod["BEAM"]
+        # exact beam-attenuated dirty sum_p B_p * dirty_p: the model-free term
+        # of the deconv gradient (D23), not derivable from the summed DIRTY
+        # when partitions carry distinct beams
+        bdirty_sum += prod["BEAM"] * prod["DIRTY"]
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
@@ -273,6 +278,7 @@ def _grid_image(
         beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
     band_vars = {
         "DIRTY": (("corr", "y", "x"), dirty_sum),
+        "BDIRTY": (("corr", "y", "x"), bdirty_sum),
         "BEAM": (("corr", "y", "x"), beam_avg),
         "WSUM": (("corr",), wsum_sum),
     }
