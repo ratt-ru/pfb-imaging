@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-18T16:30:00Z
-last_verified_commit: ac5bc18
+timestamp: 2026-07-19T10:30:00Z
+last_verified_commit: c055885
 ---
 
 # MSv4 DataTree imager pipeline
@@ -46,12 +46,14 @@ no-op later: just another `part{p}` child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters
-      vars:   DIRTY, BEAM (corr, y, x),                            # (Y, X), D20
+      vars:   DIRTY, BDIRTY, BEAM (corr, y, x),                    # (Y, X), D20
               PSF (corr, y_psf, x_psf), PSFPARSN (corr, bpar),     # only with --psf
               WSUM (corr,)
               # band BEAM = wsum-weighted mean of partition beams (linear-mosaic
               # response, still B/n per D22)
-              # MODEL / RESIDUAL / NOISE added later by the deconv consumer
+              # BDIRTY = sum_p B_p * dirty_p: model-free term of the exact deconv
+              # gradient (D23) -- not derivable from the summed DIRTY
+              # MODEL / RESIDUAL / BRESIDUAL / NOISE added later by the deconv consumer
       part{p:04d}/                    # ONE DATA PARTITION
           attrs:  msid, field_name, spw_name, baseline_group,
                   ra, dec, l0, m0, wsum

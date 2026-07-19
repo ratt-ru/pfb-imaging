@@ -114,10 +114,11 @@ path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/image
 `band{b:04d}_time{t:04d}`; one child `part{p:04d}` per data partition identified by
 `(msid, field, spw, baseline_group)` (`baseline_group` is a single `"all"` group for now,
 extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
-products (`DIRTY`, `WSUM`, `BEAM` — the wsum-weighted mean of the partition beams, i.e. the
-linear-mosaic response — plus `PSF`/`PSFPARSN` when `--psf` is on); partition children hold the
-ragged vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`), per-partition `BEAM`, and
-`PSF`/`PSFHAT`/`PSFPARSN` when `--psf` is on. **Product selection:** `--psf` is a compute toggle
+products (`DIRTY`, `BDIRTY` — the beam-attenuated `Σ_p B_p·dirty_p`, the model-free term of the
+exact deconv gradient (wiki D23) — `WSUM`, `BEAM` — the wsum-weighted mean of the partition
+beams, i.e. the linear-mosaic response — plus `PSF`/`PSFPARSN` when `--psf` is on); partition
+children hold the ragged vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`),
+per-partition `BEAM`, and `PSF`/`PSFHAT`/`PSFPARSN` when `--psf` is on. **Product selection:** `--psf` is a compute toggle
 (a `--no-psf` tree is quicklook-only; `deconv` refuses it with a clear error), `--beam` gates
 only the beam FITS (the stored `BEAM` is load-bearing, D22), and `--fits-per-partition` writes
 per-partition dirty/psf/beam FITS (`<var>_band####_time####_part####_<field>.fits` in a
@@ -175,7 +176,10 @@ distributed by Ray, the sum over a band's partitions is not):
 * `operators/gridder.residual_from_partitions` — exact degrid/grid residual reusing the stored
   per-partition inputs, **never recomputing the PSF** (per-major-cycle gradient). This mirrors
   the legacy `image_data_products`/`compute_residual` split and owns the exact path, so
-  `HessianTree` is PSF-convolution only.
+  `HessianTree` is PSF-convolution only. One sweep returns both the apparent residual (FITS,
+  λ/rms) and the beam-attenuated gradient `BRESIDUAL = BDIRTY − Σ_p B_p·GᵀWG(B_p·m)` that the
+  forward solver consumes (wiki D23 — the Hessian applies the beam twice, so its rhs must carry
+  the outer per-partition beam).
 * `operators/band_worker.BandWorkerPool` — one Ray worker process per band co-locating all
   per-band deconv state (the band's `HessianTree` with in-worker CG, the wavelet jitclass, and
   the pinned gridding inputs for the exact residual). The `HessTreeRay`/`PsiNocopytRay` facades

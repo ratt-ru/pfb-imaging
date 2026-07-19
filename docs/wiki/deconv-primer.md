@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-18T17:00:00Z
-last_verified_commit: 9e0ee75
+timestamp: 2026-07-19T10:30:00Z
+last_verified_commit: c055885
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -21,17 +21,24 @@ Hessian `H = Rᵀ W R` acts, to good approximation, as convolution by the PSF. `
 minimises `½‖V − Rx‖²_W + λ R(x)` with a preconditioned forward-backward (PFB) major
 cycle (`core/deconv.py`):
 
-1. **first(residual)** — per-iteration preprocessing hook (currently caches the
-   residual; historically applied a cube-level beam). `forward()` consumes this cache,
-   NOT its own argument — calling `forward()` without `first()` raises.
-2. **forward** — `update ≈ H⁻¹ residual` by per-band conjugate gradients
-   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). This is the preconditioned gradient.
+1. **first(bresidual)** — per-iteration preprocessing hook; caches the
+   beam-attenuated gradient residual the driver passes (D23). `forward()` consumes
+   this cache, NOT its own argument — calling `forward()` without `first()` raises.
+2. **forward** — `update ≈ H⁻¹ bresidual` by per-band conjugate gradients
+   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). The rhs is the
+   **beam-attenuated gradient** `BRESIDUAL/wsum = Σ_p B_p·r_p / wsum` — the
+   Hessian applies the beam on both sides, so the data-term gradient carries an
+   outer per-partition beam (legacy sara's `residual *= beam`; D23). The
+   apparent residual never enters the solver.
 3. **backward** — `model = argmin_x ½γ⁻¹‖x − x̃‖²_H + λ R(x)` with
    `x̃ = model + γ·update`, solved by primal-dual or forward-backward against the grad
    closure `∇(x) = −H(x̃ − x)/γ` (`deconv/pfb.PFBSolver.forward` builds it).
 4. **exact residual** — degrid/grid of the model against the stored per-partition
    inputs (`operators/gridder.residual_from_partitions`), never a PSF convolution and
-   never recomputing the PSF.
+   never recomputing the PSF. One sweep returns both the apparent residual
+   (FITS, λ/rms, `RESIDUAL`) and the gradient residual (`BRESIDUAL`, next
+   iteration's forward rhs); the model-free term of the latter is the imager's
+   stored `BDIRTY = Σ_p B_p·dirty_p`.
 5. **last()** — arms/refreshes ℓ1 reweighting once past `l1_reweight_from`.
 
 **λ schedule:** `lam = rmsfactor · rms(residual_mfs)` each major iteration, with
@@ -66,7 +73,8 @@ here), and Ψ is the concatenation of `nbasis` orthonormal bases (`self` + Daube
 All image-space products in the `.dt` are stored **raw** (un-normalised); normalisation
 by the TOTAL weight sum happens at the point of use. The pieces must agree:
 
-- `wsum_tot = Σ_bands Σ_partitions wsum_p`; `residual = RESIDUAL_raw / wsum_tot`.
+- `wsum_tot = Σ_bands Σ_partitions wsum_p`; `residual = RESIDUAL_raw / wsum_tot`;
+  `bresidual = BRESIDUAL_raw / wsum_tot` (the forward rhs; D23).
 - Each band's `HessianTree` gets `wsum=wsum_tot` as an explicit override (not its own
   band's sum) — `deconv/presets._build_hess`, mirroring legacy `abspsf /= wsum`.
 - Tikhonov: `--eta` is a **fraction of the total wsum** — on the total-wsum-normalised

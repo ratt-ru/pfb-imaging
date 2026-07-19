@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-18T17:00:00Z
-last_verified_commit: 9e0ee75
+timestamp: 2026-07-19T10:30:00Z
+last_verified_commit: c055885
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -113,11 +113,12 @@ update it (and this page's `last_verified_commit`) in the same session.
 ### D7 — `first()` is the preprocessing hook; `forward()` consumes its cache
 
 - **Context:** The legacy driver applied the beam to the residual in `first()`.
-- **Decision:** `DeconvSolver.first(residual)` caches (and may preprocess) the
-  residual; `forward(residual)`'s argument is Protocol-shape only and is NOT read —
-  calling `forward` before `first` raises RuntimeError.
-- **Rationale:** Keeps a seam for cube-level beam handling without smuggling it into
-  the forward solver.
+- **Decision:** `DeconvSolver.first(residual)` caches the residual;
+  `forward(residual)`'s argument is Protocol-shape only and is NOT read —
+  calling `forward` before `first` raises RuntimeError. Since D23 the driver
+  passes the **beam-attenuated gradient** (`BRESIDUAL/wsum`) to both.
+- **Rationale:** Keeps a seam for cube-level residual preprocessing without
+  smuggling it into the forward solver.
 - **Source:** `deconv/pfb.py::first/forward`;
   `tests/test_pfb_solver.py::test_forward_requires_first`; Copilot thread on PR #269.
 
@@ -478,6 +479,38 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy
   study); `utils/stokes2vis_msv4.py` beam block; user-reported
   `divide_by_n`/`do_wgridding` trap.
+
+### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
+
+- **Context:** The data-term gradient of `½‖V − G(B·x)‖²_W` is
+  `Σ_p B_p·GᵀW(V_p − G(B_p·x))` — it carries an **outer per-partition beam** the
+  apparent (once-attenuated) residual lacks. The Hessian applies the beam on both
+  sides (`H = B GᵀWG B`), so feeding it the apparent residual makes the update
+  over-correct by ~`1/B` where the beam rolls off. Legacy sara did
+  `residual *= beam` right before the preconditioner solve; the gendeconv rewrite
+  reduced `first()` to cache-only and silently lost it (maintainer-spotted; the
+  ground-truth tests run beam≈1/n and could not see it).
+- **Decision:** Two residual products, per band. The **apparent** residual
+  `Σ_p r_p` remains the user-facing one (FITS, λ/rms schedule, `RESIDUAL`).
+  The **gradient** residual `BRESIDUAL = Σ_p B_p·r_p` is what
+  `first()`/`forward()` consume. Because it is not derivable from the apparent
+  sum when partitions carry distinct beams (mosaics), pass 2 stores
+  `BDIRTY = Σ_p B_p·dirty_p` (the model-free term) and
+  `residual_from_partitions(..., bdirty=…)` accumulates both residuals in one
+  sweep; deconv writes `BRESIDUAL` back for resume.
+- **Rationale:** Exact per-partition attenuation (not a band-average
+  approximation) at negligible cost — pass 2 has each `dirty_p` in memory and the
+  residual loop already visits every partition. λ/rms stay on the apparent
+  residual, matching legacy (rms was computed before `residual *= beam`).
+- **Consequences:** `.dt` trees without `BDIRTY` are refused ("re-run pfb
+  imager"); resuming a deconv started before this change needs a restart
+  (`MODEL` without `BRESIDUAL` is refused). Guards:
+  `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
+  `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
+  per-partition beams), `test_deconv_requires_bdirty`.
+- **Source:** legacy `core/sara.py:280` (`residual *= beam`, 7eb3f1d~1);
+  `operators/gridder.residual_from_partitions`; `core/imager._grid_image`;
+  `core/deconv.py`; `deconv/pfb.py::first`.
 
 ## Known debt
 
