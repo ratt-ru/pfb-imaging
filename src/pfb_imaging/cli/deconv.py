@@ -102,6 +102,15 @@ def deconv(
             rich_help_panel="Fits",
         ),
     ] = True,
+    fits_per_partition: Annotated[
+        bool,
+        typer.Option(
+            help="Write per-partition dirty, residual and apparent model FITS at the end of the run. "
+            "Headers carry the vis-space chi squared per partition. "
+            "Useful to localise mosaic misfits to specific data partitions.",
+            rich_help_panel="Fits",
+        ),
+    ] = False,
     minor_cycle: Annotated[
         Literal["sara", "ista"],
         typer.Option(
@@ -469,6 +478,7 @@ def deconv(
                     product=product,
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
+                    fits_per_partition=fits_per_partition,
                     minor_cycle=minor_cycle,
                     opt_backend=opt_backend,
                     bases=bases,
@@ -525,6 +535,7 @@ def deconv(
                 product=product,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                fits_per_partition=fits_per_partition,
                 minor_cycle=minor_cycle,
                 opt_backend=opt_backend,
                 bases=bases,
@@ -590,6 +601,7 @@ def deconv(
             product=product,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            fits_per_partition=fits_per_partition,
             minor_cycle=minor_cycle,
             opt_backend=opt_backend,
             bases=bases,

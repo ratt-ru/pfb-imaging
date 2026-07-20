@@ -1,3 +1,4 @@
+import os
 import time
 from copy import deepcopy
 
@@ -27,6 +28,7 @@ def deconv(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    fits_per_partition: bool = False,
     minor_cycle: str = "sara",
     opt_backend: str = "primal-dual",
     bases: list[str] = ["self", "db1", "db2", "db3"],
@@ -435,6 +437,56 @@ def deconv(
             if diverge_count_curr > diverge_count:
                 log.info("Algorithm is diverging. Terminating.")
                 break
+
+    if fits_per_partition:
+        # per-partition misfit localisation (D23 debugging aid): re-gridded
+        # dirty, residual against the final model, apparent model B_p*m and
+        # vis-space chi2 for every data partition, computed worker-side
+        pdir = f"{fits_oname}_{suffix}_partitions"
+        os.makedirs(pdir, exist_ok=True)
+        log.info(f"Writing per-partition debug FITS to {pdir}")
+        parts_per_band = workers.partition_debug(
+            model[:, None],
+            cell_rad,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+        )
+        for b, (n, plist) in enumerate(zip(nodes, parts_per_band)):
+            for pid, part in enumerate(plist):
+                field = str(part["field"]).replace(" ", "_").replace("/", "-")
+                rchi2 = part["chi2"][0] / max(part["ndata"], 1.0)
+                hdr = set_wcs(
+                    cell_deg,
+                    cell_deg,
+                    nx,
+                    ny,
+                    radec,
+                    freq_out[b],
+                    ms_time=time_out[0],
+                    time_is_unix=True,
+                    l0=float(band_attrs[b].get("l0", 0.0)),
+                    m0=float(band_attrs[b].get("m0", 0.0)),
+                )
+                hdr["FIELDNAM"] = part["field"]
+                hdr["WSUMP"] = (float(part["wsum"][0]), "partition weight sum")
+                hdr["CHI2"] = (float(part["chi2"][0]), "sum w|V - G(B m)|^2 over unflagged")
+                hdr["NDATA"] = (float(part["ndata"]), "unflagged vis samples")
+                hdr["RCHI2"] = (float(rchi2), "CHI2 / NDATA")
+                wsum_p = part["wsum"][:, None, None]
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    dirty_n = np.where(wsum_p > 0, part["dirty"] / wsum_p, 0.0)
+                    resid_n = np.where(wsum_p > 0, part["residual"] / wsum_p, 0.0)
+                stem = f"{pdir}/{{var}}_{n}_part{pid:04d}_{field}.fits"
+                save_fits(dirty_n, stem.format(var="dirty"), hdr, yx_order=True)
+                save_fits(resid_n, stem.format(var="residual"), hdr, yx_order=True)
+                save_fits(part["amodel"], stem.format(var="model_apparent"), hdr, yx_order=True)
+                log.info(
+                    f"{n}/part{pid:04d} field={part['field']}: "
+                    f"wsum_frac={float(part['wsum'][0]) / wsum:.3f} "
+                    f"resid_rms={float(np.std(resid_n[0])):.3e} Jy/beam "
+                    f"resid_peak={float(np.abs(resid_n[0]).max()):.3e} rchi2={rchi2:.6e}"
+                )
 
     if fits_mfs or fits_cubes:
         log.info(f"Writing fits files to {fits_oname}_{suffix}")

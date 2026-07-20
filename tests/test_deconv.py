@@ -78,6 +78,7 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         epsilon=1e-7,
         fits_mfs=False,
         fits_cubes=False,
+        fits_per_partition=True,
         verbosity=0,
     )
 
@@ -106,6 +107,22 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         # sit at its centre regardless of the ('x','y')/('y','x') dim order
         i0, i1 = np.unravel_index(int(np.argmax(box.values)), box.shape)
         assert (i0, i1) == (half, half), f"source {s}: model peak off-centre ({i0},{i1})"
+
+    # per-partition debug FITS: with a single partition per band, the
+    # re-gridded partition residual must reproduce the stored band RESIDUAL
+    import glob
+
+    from astropy.io import fits as afits
+
+    pdir = str(tmp_path / "gtdeconv_I_main_partitions")
+    hits = sorted(glob.glob(f"{pdir}/residual_band*_part0000_*.fits"))
+    assert len(hits) == len(nodes), f"expected {len(nodes)} partition residual FITS"
+    n0 = nodes[0]
+    wsum_p = float(np.asarray(dt[n0][sorted(dt[n0].children)[0]].ds.attrs["wsum"]).ravel()[0])
+    with afits.open(hits[0]) as hdul:
+        img = np.squeeze(hdul[0].data).astype(np.float64)
+    ref = dt[n0].ds.RESIDUAL.values[0] / wsum_p
+    np.testing.assert_allclose(img, ref, rtol=0, atol=1e-5 * np.abs(ref).max())
 
 
 def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
@@ -162,6 +179,7 @@ def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts):
             # core/deconv.py expects.
             "PSFHAT": (("corr", "y_psf", "xo2"), np.full((1, ny_psf, xo2), 1.0 / nparts)),
             "BEAM": (("corr", "y", "x"), np.ones((1, ny, nx))),
+            "VIS": (("corr", "row", "chan"), np.ones((1, nrow, nchan), dtype=np.complex128)),
             "UVW": (("row", "three"), uvw),
             "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, nchan))),
             "MASK": (("row", "chan"), np.ones((nrow, nchan), dtype=np.uint8)),
@@ -215,8 +233,23 @@ def test_deconv_two_band_smoke(tmp_path):
         nworkers=1,
         fits_mfs=False,
         fits_cubes=False,
+        fits_per_partition=True,
         verbosity=0,
     )
+
+    # per-partition debug FITS written at the end of the run
+    import glob
+
+    from astropy.io import fits as afits
+
+    pdir = str(tmp_path / "synth_I_main_partitions")
+    for var in ("dirty", "residual", "model_apparent"):
+        hits = glob.glob(f"{pdir}/{var}_band*_part*.fits")
+        assert len(hits) == 2, f"{var}: expected 2 partition FITS, got {len(hits)}"
+    with afits.open(sorted(glob.glob(f"{pdir}/residual_band*.fits"))[0]) as hdul:
+        assert np.isfinite(hdul[0].data).all()
+        for card in ("WSUMP", "CHI2", "NDATA", "RCHI2", "FIELDNAM"):
+            assert card in hdul[0].header
 
     dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
     nodes = sorted(n for n in dt.children if n.startswith("band"))

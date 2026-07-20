@@ -77,13 +77,17 @@ class _BandWorkerImpl:
         import xarray as xr
 
         try:
+            # kept for lazy re-reads (partition_debug loads VIS on demand)
+            self._store_url = store_url
+            self._node_name = node_name
             band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
             self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
             # beam-attenuated dirty: the model-free term of the exact gradient (D23)
             self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
             parts = []
             hess_parts = []
-            for cname in sorted(band.children):
+            self._part_names = sorted(band.children)
+            for cname in self._part_names:
                 child = band[cname].ds
                 pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
                 pds.attrs.update(child.attrs)
@@ -184,6 +188,82 @@ class _BandWorkerImpl:
             double_accum=double_accum,
             bdirty=self._bdirty,
         )
+
+    def partition_debug(self, model, cell_rad, epsilon, do_wgridding, double_accum):
+        """Per-partition debug products for mosaic misfit analysis (D23 aid).
+
+        For each of this band's partitions: re-grid the stored ``VIS`` into a
+        per-partition dirty, grid the residual visibilities
+        ``VIS - G(B_p * model)``, and accumulate the vis-space misfit
+        ``chi2 = sum(w |V - Vmodel|^2)`` over unflagged samples. ``VIS`` is not
+        pinned by :meth:`load_band`, so it is read from the store one partition
+        at a time; output size scales with npart * image size.
+        """
+        # deferred: worker-side only; keeps driver-side import light
+        import xarray as xr
+        from ducc0.wgridder.experimental import dirty2vis, vis2dirty
+
+        from pfb_imaging.operators.gridder import wgridder_conventions
+
+        band = xr.open_datatree(self._store_url, engine="zarr", chunks=None)[self._node_name]
+        out = []
+        for cname, pds in zip(self._part_names, self._parts):
+            vis = band[cname].ds.VIS.load().values
+            uvw = pds.UVW.values
+            wgt = pds.WEIGHT.values
+            mask = pds.MASK.values
+            freq = pds.FREQ.values
+            beam = pds.BEAM.values
+            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(pds.attrs.get("l0", 0.0), pds.attrs.get("m0", 0.0))
+            ncorr, ny, nx = model.shape
+            common = dict(
+                uvw=uvw,
+                freq=freq,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=self._nthreads,
+                sigma_min=1.1,
+                sigma_max=3.0,
+            )
+            dirty_p = np.zeros((ncorr, ny, nx))
+            resid_p = np.zeros((ncorr, ny, nx))
+            chi2 = np.zeros(ncorr)
+            for c in range(ncorr):
+                model_vis = dirty2vis(dirty=(beam[c] * model[c]).T, **common)
+                rvis = vis[c] - model_vis
+                chi2[c] = float(np.sum(wgt[c] * np.abs(rvis) ** 2 * mask))
+                for v, im in ((vis[c], dirty_p), (rvis, resid_p)):
+                    vis2dirty(
+                        vis=v,
+                        wgt=wgt[c],
+                        mask=mask,
+                        npix_x=nx,
+                        npix_y=ny,
+                        double_precision_accumulation=double_accum,
+                        dirty=im[c].T,
+                        **common,
+                    )
+            out.append(
+                {
+                    "name": cname,
+                    "field": pds.attrs.get("field_name", ""),
+                    "wsum": np.asarray(pds.attrs["wsum"], dtype=float),
+                    "chi2": chi2,
+                    "ndata": float(mask.sum()),
+                    "dirty": dirty_p,
+                    "residual": resid_p,
+                    "amodel": beam * model,
+                }
+            )
+        return out
 
     # --- telemetry ---
 
@@ -319,6 +399,11 @@ class BandWorkerPool:
         res = np.stack([r for r, _ in out], axis=0)
         bres = np.stack([g for _, g in out], axis=0)
         return res, bres
+
+    def partition_debug(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
+        """Per-band lists of per-partition debug products (see the worker impl)."""
+        args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
+        return self._map("partition_debug", args)
 
     # --- telemetry ---
 

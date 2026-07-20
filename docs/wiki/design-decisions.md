@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-19T10:30:00Z
+timestamp: 2026-07-20T09:00:00Z
 last_verified_commit: c055885
 ---
 
@@ -504,7 +504,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   residual, matching legacy (rms was computed before `residual *= beam`).
 - **Consequences:** `.dt` trees without `BDIRTY` are refused ("re-run pfb
   imager"); resuming a deconv started before this change needs a restart
-  (`MODEL` without `BRESIDUAL` is refused). Guards:
+  (`MODEL` without `BRESIDUAL` is refused). Debug aid: `pfb deconv
+  --fits-per-partition` writes per-partition dirty/residual/apparent-model FITS
+  (re-gridded from the stored `VIS` worker-side, chi2 stats in the headers) to
+  localise mosaic misfits to specific partitions. Guards:
   `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
   `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
   per-partition beams), `test_deconv_requires_bdirty`.

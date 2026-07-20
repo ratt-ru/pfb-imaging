@@ -44,6 +44,15 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Fits
+      fits-per-partition:
+        info:
+          Write per-partition dirty, residual and apparent model FITS at the end of the run.
+          Headers carry the vis-space chi squared per partition.
+          Useful to localise mosaic misfits to specific data partitions.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Fits
       minor-cycle:
         info:
           Which minor cycle algorithm to use.
