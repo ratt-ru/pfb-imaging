@@ -133,8 +133,8 @@ def _grid_image(
     groups = {}
     for sn in src_names:
         for _, child in dt[sn].children.items():
-            # COUNTS is only consumed by the driver's weight reduction and is
-            # by far the largest piece variable; don't read it here
+            # COUNTS is only consumed by the driver's weight reduction; happened already (counts passed in)
+            # it is by far the largest piece variable; don't read it here
             ds = child.ds.drop_vars("COUNTS", errors="ignore").load()
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
@@ -370,7 +370,7 @@ def imager(
     """
     # for logging options
     opts_dict = locals().copy()
-
+    time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -435,8 +435,6 @@ def imager(
         log=log,
     )
 
-    time_start = time.time()
-
     basename = f"{output_filename}"
 
     # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
@@ -494,6 +492,8 @@ def imager(
     # than a hardcoded name; resolved from the first visibility node below.
     # (sjperkins, PR #252 review.)
     vis_col = None
+    # same for the weight column: "WEIGHT_SPECTRUM" is exposed as "WEIGHT" in the datatree
+    wgt_col = None
 
     # figure out where band edges are
     # note mapping currently maps partitions to the band it has most overlap with
@@ -515,6 +515,8 @@ def imager(
                 continue
             if vis_col is None:
                 vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
+            if wgt_col is None:
+                wgt_col = node.ds.attrs["data_groups"][data_group]["weight"]
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             if ds.frequency.size == 0:
                 continue
@@ -599,6 +601,10 @@ def imager(
         if dc2 == "DATA":
             dc2 = vis_col
 
+    # map the "WEIGHT_SPECTRUM" sentinel to the data group's weight variable
+    if weight_column is not None and weight_column == "WEIGHT_SPECTRUM":
+        weight_column = wgt_col
+
     # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
     cw = cw[np.isfinite(cw)]
@@ -622,6 +628,9 @@ def imager(
     nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
         max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
     )
+    # TODO - this is currently hard-coded to 1.7 because we don't know what padding the
+    # wgridder will choose. It could be exposed as a parameter but ideally should be
+    # determined by the gridder (consider adding functionality to radiomesh)
     min_padding = 1.7
     nx_pad = int(np.ceil(min_padding * nx))
     nx_pad += nx_pad % 2

@@ -79,9 +79,8 @@ def deconv(
     The minor_cycle preset assembles (hess, forward_alg, backward_alg, prox) into
     a PFBSolver; any object satisfying the DeconvSolver Protocol can drive the loop.
     """
-    time_start = time.time()
     opts_dict = locals().copy()
-
+    time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,

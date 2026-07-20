@@ -367,8 +367,7 @@ def stokes_image(
         wo = uvw[:, 2:]
         wn = uvw_new[:, 2:]
 
-        # TODO - this copies chgcentre but not sure why it gives
-        # better results than computing the phase with lmn differences
+        # chgcentre style wdiff rephasing
         w_diff = wn - wo
         # data and model_vis could still be read_only at this point
         data = data * np.exp(freqfactor * w_diff)[:, :, None]
