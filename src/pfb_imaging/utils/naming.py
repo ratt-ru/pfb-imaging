@@ -39,9 +39,7 @@ def set_output_names(
     else:
         if protocol != "file":
             raise ValueError(f"You must provide a separate fits-output-folder when output protocol is {protocol}")
-        fits_output_folder = basedir
-
-    fits_output_folder = fits_output_folder
+        fits_output_folder = f"{basedir}/fits"
 
     if log_directory is not None:
         # this should be a file system
@@ -53,9 +51,7 @@ def set_output_names(
     else:
         if protocol != "file":
             raise ValueError(f"You must provide a separate log-directory when output protocol is {protocol}")
-        log_directory = basedir
-
-    log_directory = log_directory
+        log_directory = f"{basedir}/logs"
 
     return output_filename, fits_output_folder, log_directory, oname
 
