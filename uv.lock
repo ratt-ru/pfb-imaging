@@ -3460,6 +3460,7 @@ full = [
     { name = "msv4-utils", marker = "python_full_version >= '3.11'" },
     { name = "numexpr" },
     { name = "omegaconf" },
+    { name = "pfb-model-spec", extra = ["full"] },
     { name = "pillow" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -3512,6 +3513,7 @@ requires-dist = [
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "omegaconf", marker = "extra == 'full'", specifier = ">=2.3" },
+    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", specifier = ">=0.0.1" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
@@ -3542,6 +3544,29 @@ dev = [
 test = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-timeout", specifier = ">=2.3" },
+]
+
+[[package]]
+name = "pfb-model-spec"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "hip-cargo" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/64/83db41be7b9d9058c918c215196ac9aac3dc876faea416ce78a7d46cd40b/pfb_model_spec-0.0.1.tar.gz", hash = "sha256:622e06921e6e308802cf7822067bf3a2e78bd81cecbc0100440d2791f5cc1c8b", size = 8813, upload-time = "2026-06-02T16:11:26.966Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/58/5421939573a4c17279f8d58f47ef60de3efd46fc35d49d1c9ebea4750cab/pfb_model_spec-0.0.1-py3-none-any.whl", hash = "sha256:166f32271fba98c96fc8202a377c16f72b580c891290ba4cda1b2d26a2b8cdb7", size = 11641, upload-time = "2026-06-02T16:11:25.971Z" },
+]
+
+[package.optional-dependencies]
+full = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "sympy" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [[package]]

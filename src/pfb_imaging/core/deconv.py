@@ -7,6 +7,7 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
+from pfb_model_spec.utils.io import model_to_ds
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.deconv import DeconvSolver
@@ -15,7 +16,6 @@ from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
-from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
 from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
@@ -296,80 +296,32 @@ def deconv(
 
         # write component model (carried over from the legacy driver; .dt-native attrs)
         log.info(f"Writing model to {basename}_{suffix}.mds")
-        # TODO - this should be a function call to pfb-model-spec
         try:
-            # the .mds stays x-major (degrid/model2comps convention; see the
-            # pfb-model-spec migration in #277) -- adapt with zero-copy views
-            coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
-                time_out,
-                freq_out[fsel],
-                model[None, fsel, :, :].transpose(0, 1, 3, 2),
-                wgt=(wsums / wsum)[None, fsel],
-                nbasisf=nbasisf,
-                method="Legendre",
-                sigmasq=1e-6,
-            )
             flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
-            coeff_dataset = xr.Dataset(
-                data_vars={"coefficients": (("par", "comps"), coeffs)},
-                coords={
-                    "location_x": (("x",), x_index),
-                    "location_y": (("y",), y_index),
-                    "params": (("par",), params),
-                    "times": (("t",), time_out),
-                    "freqs": (("f",), freq_out),
-                },
-                attrs={
-                    "pfb-imaging-version": pfb_version,
-                    "spec": "genesis",
-                    "cell_rad_x": cell_rad,
-                    "cell_rad_y": cell_rad,
-                    "npix_x": nx,
-                    "npix_y": ny,
-                    "texpr": texpr,
-                    "fexpr": fexpr,
-                    "center_x": x0,
-                    "center_y": y0,
-                    "flip_u": flip_u,
-                    "flip_v": flip_v,
-                    "flip_w": flip_w,
-                    "ra": radec[0],
-                    "dec": radec[1],
-                    "stokes": product,
-                    "parametrisation": expr,
-                },
-            )
-            coeff_dataset.to_zarr(f"{basename}_{suffix}.mds", mode="w")
-
-            # need to re-evaluate the model after the fit to keep it consistent
-            # this can be used to enforce smoothness in the model at the expense of increased residuals
-            # does not respect the positivity constraint
-            for b in range(nband):
-                # eval returns an x-major (nx, ny) raster (mds convention);
-                # transpose back into the (Y, X) model cube
-                model[b] = eval_coeffs_to_slice(
-                    time_out[0],
-                    freq_out[b],
-                    coeffs,
-                    x_index,
-                    y_index,
-                    expr,
-                    params,
-                    texpr,
-                    fexpr,
-                    nx,
-                    ny,
-                    cell_rad,
-                    cell_rad,
-                    x0,
-                    y0,
-                    nx,
-                    ny,
-                    cell_rad,
-                    cell_rad,
-                    x0,
-                    y0,
-                ).T
+            # the .mds stays x-major (degrid/model2comps convention; see the
+            # pfb-model-spec migration in #277) -- model_to_ds re-evaluates the
+            # fit at every band internally, the transpose stays in pfb-imaging
+            # until we formally update the spec version
+            model = model_to_ds(
+                time_out,
+                freq_out,
+                fsel,
+                model.transpose(0, 1, 3, 2),
+                wsums / wsum,
+                f"{basename}_{suffix}.mds",
+                cell_rad,
+                nx,
+                ny,
+                x0,
+                y0,
+                flip_u,
+                flip_v,
+                flip_w,
+                radec,
+                product,
+                pfb_version,
+                nbasisf=nbasisf,
+            ).T
         except Exception as e:
             log.info(f"Exception {e} raised during model fit.")
 
