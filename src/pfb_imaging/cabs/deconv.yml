@@ -53,6 +53,15 @@ cabs:
         default: false
         metadata:
           rich_help_panel: Fits
+      debug:
+        info:
+          Collect extra per-partition diagnostics.
+          Logs the vis-space chi squared per partition at every major iteration.
+          Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Reporting
       minor-cycle:
         info:
           Which minor cycle algorithm to use.

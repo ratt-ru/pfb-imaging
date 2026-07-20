@@ -234,8 +234,26 @@ def test_deconv_two_band_smoke(tmp_path):
         fits_mfs=False,
         fits_cubes=False,
         fits_per_partition=True,
+        debug=True,
         verbosity=0,
     )
+
+    # --debug: chi2 trajectories (baseline snapshot + 1 iteration) and
+    # baseline-binned residual profiles in a machine-readable JSON
+    import json
+
+    with open(tmp_path / "synth_I_main_debug.json") as f:
+        rec = json.load(f)
+    assert len(rec["iterations"]) == 2  # iter0 baseline + niter=1
+    for entry in rec["iterations"]:
+        assert len(entry["bands"]) == 2
+        for bnd in entry["bands"]:
+            for p in bnd["partitions"]:
+                assert np.isfinite(p["chi2"][0]) and p["ndata"] > 0
+    assert set(rec["uv_profiles"]) == {e["band"] for e in rec["iterations"][0]["bands"]}
+    prof = next(iter(rec["uv_profiles"].values()))[0]
+    assert len(prof["uvdist_edges_lambda"]) == len(prof["resid_power"]) + 1
+    assert np.isfinite(prof["resid_power"]).all() and sum(prof["count"]) > 0
 
     # per-partition debug FITS written at the end of the run
     import glob

@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from copy import deepcopy
@@ -29,6 +30,7 @@ def deconv(
     fits_mfs: bool = True,
     fits_cubes: bool = True,
     fits_per_partition: bool = False,
+    debug: bool = False,
     minor_cycle: str = "sara",
     opt_backend: str = "primal-dual",
     bases: list[str] = ["self", "db1", "db2", "db3"],
@@ -259,6 +261,24 @@ def deconv(
         best_model = model.copy()
     diverge_count_curr = 0
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
+
+    # --debug: per-iteration per-partition chi2 trajectories, collected into a
+    # machine-readable record next to the FITS outputs (D23 debugging aid)
+    debug_record = {"iterations": [], "uv_profiles": None} if debug else None
+
+    def _chi2_snapshot(iter_id):
+        stats = workers.partition_chi2(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
+        entry = {"iter": int(iter_id), "bands": []}
+        for n, plist in zip(nodes, stats):
+            entry["bands"].append({"band": n, "partitions": plist})
+            for pid, p in enumerate(plist):
+                rchi2 = p["chi2"][0] / max(p["ndata"], 1.0)
+                log.info(f"debug chi2 iter {iter_id} {n}/part{pid:04d} field={p['field']} rchi2={rchi2:.6e}")
+        debug_record["iterations"].append(entry)
+
+    if debug:
+        _chi2_snapshot(iter0)  # baseline against the starting model
+
     mrange = range(iter0, iter0 + niter)
     for k in mrange:
         log.info("Solving for update")
@@ -371,6 +391,9 @@ def deconv(
         bresidual = bresidual_raw / wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
+
+        if debug:
+            _chi2_snapshot(k + 1)
 
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
@@ -487,6 +510,18 @@ def deconv(
                     f"resid_rms={float(np.std(resid_n[0])):.3e} Jy/beam "
                     f"resid_peak={float(np.abs(resid_n[0]).max()):.3e} rchi2={rchi2:.6e}"
                 )
+
+    if debug:
+        # baseline-length-binned residual power per partition: flat for
+        # noise-like residuals, structured when the misfit lives at specific
+        # baseline lengths (calibration/beam/astrometry signatures differ)
+        log.info("Computing baseline-binned residual profiles")
+        profs = workers.partition_uvprofile(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
+        debug_record["uv_profiles"] = dict(zip(nodes, profs))
+        debug_name = f"{fits_oname}_{suffix}_debug.json"
+        with open(debug_name, "w") as f:
+            json.dump(debug_record, f, indent=2)
+        log.info(f"Debug record written to {debug_name}")
 
     if fits_mfs or fits_cubes:
         log.info(f"Writing fits files to {fits_oname}_{suffix}")

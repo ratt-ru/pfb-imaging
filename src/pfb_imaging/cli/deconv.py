@@ -111,6 +111,15 @@ def deconv(
             rich_help_panel="Fits",
         ),
     ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            help="Collect extra per-partition diagnostics. "
+            "Logs the vis-space chi squared per partition at every major iteration. "
+            "Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.",
+            rich_help_panel="Reporting",
+        ),
+    ] = False,
     minor_cycle: Annotated[
         Literal["sara", "ista"],
         typer.Option(
@@ -479,6 +488,7 @@ def deconv(
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
                     fits_per_partition=fits_per_partition,
+                    debug=debug,
                     minor_cycle=minor_cycle,
                     opt_backend=opt_backend,
                     bases=bases,
@@ -536,6 +546,7 @@ def deconv(
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
                 fits_per_partition=fits_per_partition,
+                debug=debug,
                 minor_cycle=minor_cycle,
                 opt_backend=opt_backend,
                 bases=bases,
@@ -602,6 +613,7 @@ def deconv(
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
             fits_per_partition=fits_per_partition,
+            debug=debug,
             minor_cycle=minor_cycle,
             opt_backend=opt_backend,
             bases=bases,

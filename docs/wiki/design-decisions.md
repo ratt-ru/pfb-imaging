@@ -507,7 +507,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`MODEL` without `BRESIDUAL` is refused). Debug aid: `pfb deconv
   --fits-per-partition` writes per-partition dirty/residual/apparent-model FITS
   (re-gridded from the stored `VIS` worker-side, chi2 stats in the headers) to
-  localise mosaic misfits to specific partitions. Guards:
+  localise mosaic misfits to specific partitions; `--debug` additionally logs
+  per-partition vis-space chi2 every major iteration and writes the chi2
+  trajectories plus baseline-binned residual profiles to
+  `<fits_oname>_<suffix>_debug.json`. Guards:
   `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
   `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
   per-partition beams), `test_deconv_requires_bdirty`.
