@@ -114,7 +114,7 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
 
     from astropy.io import fits as afits
 
-    pdir = str(tmp_path / "gtdeconv_I_main_partitions")
+    pdir = str(tmp_path / "fits" / "gtdeconv_I_main_partitions")
     hits = sorted(glob.glob(f"{pdir}/residual_band*_part0000_*.fits"))
     assert len(hits) == len(nodes), f"expected {len(nodes)} partition residual FITS"
     n0 = nodes[0]
@@ -242,7 +242,7 @@ def test_deconv_two_band_smoke(tmp_path):
     # baseline-binned residual profiles in a machine-readable JSON
     import json
 
-    with open(tmp_path / "synth_I_main_debug.json") as f:
+    with open(tmp_path / "fits" / "synth_I_main_debug.json") as f:
         rec = json.load(f)
     assert len(rec["iterations"]) == 2  # iter0 baseline + niter=1
     for entry in rec["iterations"]:
@@ -260,7 +260,7 @@ def test_deconv_two_band_smoke(tmp_path):
 
     from astropy.io import fits as afits
 
-    pdir = str(tmp_path / "synth_I_main_partitions")
+    pdir = str(tmp_path / "fits" / "synth_I_main_partitions")
     for var in ("dirty", "residual", "model_apparent"):
         hits = glob.glob(f"{pdir}/{var}_band*_part*.fits")
         assert len(hits) == 2, f"{var}: expected 2 partition FITS, got {len(hits)}"
