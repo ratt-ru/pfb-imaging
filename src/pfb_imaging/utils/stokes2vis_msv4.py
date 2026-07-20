@@ -481,6 +481,9 @@ def stokes_vis(
             bds = beam_model.bds
             l_beam = bds.X.values  # deg, East positive
             m_beam = bds.Y.values  # deg, North positive
+            # test over-sampling beam pixels to avoid aliasing in the reprojection step
+            l_beam = np.linspace(l_beam.min(), l_beam.max(), 1024)
+            m_beam = np.linspace(m_beam.min(), m_beam.max(), 1024)
             # D13: MSv4 time is unix seconds; astropy Time wants MJD days
             t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
             beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
