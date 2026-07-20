@@ -77,8 +77,13 @@ One MSv4 front-end produces the intermediary products consumed by deconvolution:
 correctness coverage lives in the ground-truth imager tests (`tests/test_imager*.py`,
 `tests/test_deconv.py`). `pfb restore` remains registered as **untested reference code**
 only — its `.dds` inputs can no longer be produced in-repo; its functionality moves into
-`deconv` eventually. `pfb model2comps` is likewise `.dds`-coupled and awaits the
-pfb-model-spec migration.
+`deconv` eventually. `pfb model2comps` was **removed** (#286): its portable WSClean-FITS →
+`.mds` path migrated to `pfbspec model2comps` in
+[pfb-model-spec](https://github.com/landmanbester/pfb-model-spec), and its `.dds`-input path
+(daskms-coupled, no longer producible in-repo) was dropped. The component-model spec library
+(`fit_image_cube`/`eval_coeffs_to_slice`/`model_from_mds`) and the `.mds` writer
+(`model_to_ds`) now live in `pfb_model_spec.utils` and are imported from there (`deconv.py`);
+pfb-imaging no longer carries its own `utils/modelspec.py`.
 
 **Data flow:** MS → `.dt` (Zarr) → FITS.
 

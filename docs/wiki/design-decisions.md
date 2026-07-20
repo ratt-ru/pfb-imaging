@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-20T09:00:00Z
+timestamp: 2026-07-20T14:30:00Z
 last_verified_commit: c055885
 ---
 
@@ -355,9 +355,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided
   arrays), `fitcleanbeam` is called with `yx_order=True`, and
   `save_fits(yx_order=True)` writes without axis swaps. The `.mds` stays
-  x-major (degrid/model2comps convention) behind transposed views at the
-  `fit_image_cube`/`eval_coeffs_to_slice` boundary until the pfb-model-spec
-  migration. uv-space grids (COUNTS, weighting) are untouched.
+  x-major — that convention is now **owned by pfb-model-spec** (whose
+  `fit_image_cube`/`eval_coeffs_to_slice`/`model_to_ds` pfb-imaging imports since
+  #286); pfb-imaging transposes to/from x-major at the `model_to_ds` (deconv) and
+  `.mds`-read (degrid) call sites. A future `.mds` (Y, X) flip is a pfb-model-spec
+  spec revision (landmanbester/pfb-model-spec#17), not a pfb-imaging change.
+  uv-space grids (COUNTS, weighting) are untouched.
 - **Rationale:** Same as D19 — one canonical order shared with
   FITS/astropy/reproject, auditable at explicit seams. Extending it to the
   `.dt` was gated on an on-disk schema change, which the 0.1.0 breaking

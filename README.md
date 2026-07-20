@@ -85,11 +85,11 @@ The processing pipeline follows a modular pattern where each step is a separate 
 Additional commands:
 
 - `pfb hci` -- High cadence imaging
-- `pfb model2comps` -- Convert model to components
 - `pfb restore` -- Restore clean components (reference code; being folded into `deconv`)
 
 The legacy MSv2 pipeline (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) was removed
-in 0.1.0 in favour of `imager`+`deconv`.
+in 0.1.0 in favour of `imager`+`deconv`. The `model2comps` converter moved to
+[pfb-model-spec](https://github.com/landmanbester/pfb-model-spec) (`pfbspec model2comps`).
 
 ## Execution backends
 

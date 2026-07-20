@@ -11,9 +11,6 @@ cabs:
   pfb.image:
     _include: imager.yml::cabs.imager
 
-  pfb.model2comps:
-    _include: model2comps.yml::cabs.model2comps
-
   pfb.restore:
     _include: restore.yml::cabs.restore
 

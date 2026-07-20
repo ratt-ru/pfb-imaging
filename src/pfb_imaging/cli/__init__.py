@@ -51,10 +51,6 @@ from pfb_imaging.cli.imager import imager  # noqa: E402
 
 app.command(name="imager")(imager)
 
-from pfb_imaging.cli.model2comps import model2comps  # noqa: E402
-
-app.command(name="model2comps")(model2comps)
-
 from pfb_imaging.cli.restore import restore  # noqa: E402
 
 app.command(name="restore")(restore)
