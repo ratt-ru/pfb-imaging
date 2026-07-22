@@ -30,7 +30,7 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 # Full scientific stack
 full = [
     "katbeam>=0.1",
-    "pfb-model-spec[full]>=0.0.1",
+    "pfb-model-spec[full]>=0.0.2",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "distributed>=2026.3.0",  # still need this for degrid command
