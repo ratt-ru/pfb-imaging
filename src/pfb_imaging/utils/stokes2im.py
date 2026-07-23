@@ -364,18 +364,29 @@ def stokes_image(
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
-        wo = uvw[:, 2:]
-        wn = uvw_new[:, 2:]
+        # Recompute the OLD uvw via the same measures call rather than diffing
+        # against the MS's recorded UVW, so any systematic offset between pyrap's
+        # earth-orientation handling and whatever produced the MS UVW (DUT1 /
+        # precession-nutation model, etc.) cancels in the difference instead of
+        # contaminating w_diff and the sampling. The mismatch is small (~1e-5 of
+        # the baseline length) but scales with baseline length, so at the longest
+        # baselines it decorrelates off-axis sources if left in. Mirrors
+        # stokes2vis_msv4 (pfb-imaging#280).
+        uvw_ref = synthesize_uvw(antpos, time, ant1, ant2, radec)
 
-        # chgcentre style wdiff rephasing
-        w_diff = wn - wo
+        # chgcentre style wdiff rephasing (differential w)
+        w_diff = uvw_new[:, 2:] - uvw_ref[:, 2:]
         # data and model_vis could still be read_only at this point
         data = data * np.exp(freqfactor * w_diff)[:, :, None]
         if model_vis is not None:
             model_vis = model_vis * np.exp(freqfactor * w_diff)[:, :, None]
 
-        uvw_old = uvw.copy()
-        uvw = uvw_new
+        # keep the sampling (and the transient injection below) anchored to the
+        # MS's own UVW; apply only the differential rotation to the new centre so
+        # the measures-vs-MS systematic that w_diff cancels does not re-enter
+        # through the coordinates.
+        uvw_old = uvw
+        uvw = uvw + (uvw_new - uvw_ref)
     else:
         uvw_old = uvw
         radec_new = radec
