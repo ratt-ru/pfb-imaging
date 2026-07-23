@@ -511,10 +511,17 @@ def stokes_image(
             # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
             # phase_v = signv * uvw_old[:, 1:2] * y0t * signy
             # phase_w = uvw_old[:, 2:] * (n0t - 1)
-            # phase = phase_u + phase_v - phase_w + phase_wdiff
+            # phase = phase_u + phase_v - phase_w - phase_wdiff
             # this is equivalent to the above
             if phase_dir is not None:
-                phase = w_diff
+                # the source is built in the original frame and carried to the
+                # rephased frame with the SAME chgcentre w-difference the data
+                # got (data *= exp(freqfactor * w_diff) above). The whole fringe
+                # is applied as exp(-freqfactor * phase), so w_diff enters with a
+                # minus sign here to match the data's exp(+freqfactor * w_diff).
+                # Using +w_diff displaces every injected source by a constant
+                # -2 * (field -> tangent) translation (ratt-ru/breifast#263).
+                phase = -w_diff
             else:
                 phase = np.zeros((nrow, 1), dtype=real_type)
             phase += signu * uvw_old[:, 0:1] * x0t * signx
