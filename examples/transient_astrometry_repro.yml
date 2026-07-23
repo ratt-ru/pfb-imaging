@@ -122,9 +122,7 @@ gorepro:
       info: Image the injected transients (no rephasing, no beam)
       params:
         ms: =recipe.ms
-        output-dataset: =recipe.output-dataset
-        fits-output-folder: =recipe.fits-output-folder
-        log-directory: =recipe.log-directory
+        output-dataset: '{recipe.base-dir}/{recipe.image-name}'
         data-column: =recipe.data-column
         inject-transients: =recipe.inject-transients
         nworkers: =recipe.nworkers
