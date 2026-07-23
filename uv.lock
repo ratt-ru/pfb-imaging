@@ -3513,7 +3513,7 @@ requires-dist = [
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "omegaconf", marker = "extra == 'full'", specifier = ">=2.3" },
-    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", specifier = ">=0.0.1" },
+    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", specifier = ">=0.0.2" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
@@ -3548,18 +3548,20 @@ test = [
 
 [[package]]
 name = "pfb-model-spec"
-version = "0.0.1"
+version = "0.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hip-cargo" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/64/83db41be7b9d9058c918c215196ac9aac3dc876faea416ce78a7d46cd40b/pfb_model_spec-0.0.1.tar.gz", hash = "sha256:622e06921e6e308802cf7822067bf3a2e78bd81cecbc0100440d2791f5cc1c8b", size = 8813, upload-time = "2026-06-02T16:11:26.966Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/00/5028bed59e664e60ba1247474aac4dc0a79f761527a848f0d19fa1083c79/pfb_model_spec-0.0.2.tar.gz", hash = "sha256:5670c6ee9cc3a6a14cee72cc092ba4d2541aabbd7250c8c90e1ae7de619abf44", size = 15235, upload-time = "2026-07-22T08:41:17.083Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/58/5421939573a4c17279f8d58f47ef60de3efd46fc35d49d1c9ebea4750cab/pfb_model_spec-0.0.1-py3-none-any.whl", hash = "sha256:166f32271fba98c96fc8202a377c16f72b580c891290ba4cda1b2d26a2b8cdb7", size = 11641, upload-time = "2026-06-02T16:11:25.971Z" },
+    { url = "https://files.pythonhosted.org/packages/19/e8/d635ffe96165bdedfce31d307d852e865976ebbd42f4d73d2689b64577a7/pfb_model_spec-0.0.2-py3-none-any.whl", hash = "sha256:e67b8e603a0ded50fef16b28062ffb1f7e46090edbd0384984779fa93b8fca6b", size = 20385, upload-time = "2026-07-22T08:41:16.001Z" },
 ]
 
 [package.optional-dependencies]
 full = [
+    { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3567,6 +3569,8 @@ full = [
     { name = "sympy" },
     { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [[package]]

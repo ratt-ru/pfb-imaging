@@ -70,12 +70,12 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     assert part.ds.attrs["baseline_group"] == "all"
 
     # MFS FITS written for DIRTY
-    assert glob.glob(str(tmp_path / "*dirty*mfs.fits")), "no MFS dirty FITS written"
+    assert glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits")), "no MFS dirty FITS written"
 
     # beam FITS: dimensionless, D22 header card, wsum-weighted mean over bands
     from astropy.io import fits as afits
 
-    beam_hits = glob.glob(str(tmp_path / "*_beam_time*_mfs.fits"))
+    beam_hits = glob.glob(str(tmp_path / "fits" / "*_beam_time*_mfs.fits"))
     assert beam_hits, "no beam MFS FITS written"
     with afits.open(beam_hits[0]) as hdul:
         assert hdul[0].header["BEAMINCN"], "missing D22 n-term card"
@@ -221,7 +221,7 @@ def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
     )
 
     # --- FITS: WCS positions and fluxes ---
-    fits_files = glob.glob(str(tmp_path / "*dirty*mfs.fits"))
+    fits_files = glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
     assert len(fits_files) == 1
     with afits.open(fits_files[0]) as hdul:
         img = hdul[0].data.squeeze()  # (ny, nx) FITS layout
@@ -485,7 +485,7 @@ def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
 
     # ground truth through the WCS of the round-trip FITS (CRPIX-shifted
     # target convention): sources land at their true positions and fluxes
-    fits_files = glob.glob(str(tmp_path / "*rephased*dirty*mfs.fits"))
+    fits_files = glob.glob(str(tmp_path / "fits" / "*rephased*dirty*mfs.fits"))
     assert len(fits_files) == 1
     with afits.open(fits_files[0]) as hdul:
         img = hdul[0].data.squeeze()
@@ -566,8 +566,8 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
                 assert v not in pds, f"{b}/{p} has {v} despite psf=False"
 
     # dirty FITS still written, no psf FITS (glob on _psf_ to avoid the outname)
-    assert glob.glob(str(tmp_path / "*dirty*mfs.fits"))
-    assert not glob.glob(str(tmp_path / "*_psf_*")), "psf FITS written despite psf=False"
+    assert glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
+    assert not glob.glob(str(tmp_path / "fits" / "*_psf_*")), "psf FITS written despite psf=False"
 
     with pytest.raises(ValueError, match="re-run pfb imager with --psf"):
         deconv(outname, log_directory=str(tmp_path), nthreads=1)
@@ -596,7 +596,7 @@ def test_imager_fits_per_partition(sky_truth, ms_name, tmp_path):
         keep_ray_alive=True,
     )
 
-    pdir = tmp_path / "perpart_I_partitions"
+    pdir = tmp_path / "fits" / "perpart_I_partitions"
     assert pdir.is_dir(), "partitions FITS subdirectory not created"
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
