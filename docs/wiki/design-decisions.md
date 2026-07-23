@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-23T10:30:00Z
-last_verified_commit: 4dc305b
+timestamp: 2026-07-23T14:30:00Z
+last_verified_commit: 1909bfa
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -538,6 +538,55 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** legacy `core/sara.py:280` (`residual *= beam`, 7eb3f1d~1);
   `operators/gridder.residual_from_partitions`; `core/imager._grid_image`;
   `core/deconv.py`; `deconv/pfb.py::first`.
+
+
+### D24 — hci transient injection: fringe sign, differential rephasing, 1/n
+
+- **Context:** `pfb hci --inject-transients` adds analytic point-source
+  transients into the visibilities before imaging
+  (`utils/stokes2im.stokes_image`). The source is built in the ORIGINAL
+  (field-centre) frame at the MS uvw — so a per-field beam can be applied
+  there — then carried to the rephased frame when `--phase-dir` is set. Three
+  separate convention traps live in that ~15-line block; each mis-places or
+  mis-scales injected sources and none is caught by imaging real data. The sign
+  trap drove a "localisation error grows with distance from the phase centre"
+  report (breifast#263).
+- **Decision:** (1) **Fringe sign.** The data is rephased by
+  `exp(+freqfactor·w_diff)` (`freqfactor = -2πi·f/c`); the injected fringe is
+  applied as `exp(-freqfactor·phase)`, so `w_diff` must enter the injection
+  phase with a **minus** (`phase = -w_diff`) to carry the source with the *same*
+  rotation the data got. `+w_diff` leaves the source **coherent** but displaced
+  by a constant `-2·(field→tangent)` translation (a whole-image shift, not
+  decorrelation). In a mosaic each field then shifts by 2× its offset from the
+  common tangent, so the error grows with distance from centre — the #263
+  signature. (2) **Differential rephasing** (mirror D21 / #280): synthesize BOTH
+  the old and new uvw through the same `synthesize_uvw` call and apply only the
+  difference — `w_diff = w_new − w_ref`, `uvw = uvw + (uvw_new − uvw_ref)` — while
+  the injection's `uvw_old` stays the **MS's own** uvw. hci previously diffed the
+  synthesized new-centre w against the MS's *recorded* w and replaced uvw
+  wholesale (`uvw = uvw_new`), leaking the measures-vs-MS earth-orientation
+  systematic (~1e-5 of the baseline length, scaling with it) into both the phase
+  and the sampling. (3) **1/n.** The RIME point-source visibility is
+  `I/n·fringe`; injection now scales `dspec /= n0t` (`n0t = √(1−l²−m²)`, a
+  per-source scalar; imaging is `divide_by_n=True`). Amplitude-only — small
+  on-axis, growing towards the field edge / at low declination.
+- **Rationale:** With no rephasing the injection already lands on the correct
+  pixel *and* the cube's `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the
+  injected `(ra, dec)` to <0.2 px out to 0.5° (guard test) — so the sign and
+  differential errors were rephasing-only, and a *constant* −2× shift is the
+  fingerprint of the rephasing phase applied with the wrong sign. The
+  differential is the same measures-vs-MS reasoning as D21.
+- **Consequences:** Only the `--phase-dir`/mosaic path changed placement;
+  single-field runs are numerically unchanged apart from the ~n amplitude
+  correction. **Corollary for downstream debugging:** if a consumer (e.g.
+  breifast) still reports offset transients on a genuinely *single-field* run,
+  the error is downstream (region/WCS handling) or in the MS's own UVW — not in
+  this injection. Guards:
+  `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` (radial
+  distance sweep, pixel + SIN-WCS→radec) and
+  `::test_hci_inject_transients_rephased` (lands ~90 px off before the sign fix).
+- **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa
+  (differential); `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
 
 ## Known debt
 
