@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-19T10:30:00Z
-last_verified_commit: c055885
+timestamp: 2026-07-23T09:30:00Z
+last_verified_commit: 4dc305b
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -47,6 +47,25 @@ cycle (`core/deconv.py`):
 which silently applied the factor to every iteration of a fresh run; fixed in `52d5fb1`.
 Old sara results predate that fix — expect its residuals to be *lower* at matched
 iteration count (it ran with λ effectively halved).
+
+**Preconditioner consistency (the λ=0 diagnostic).** The forward/backward split is a
+*preconditioned* scheme: the forward CG solves against the PSF-convolution `HessianTree`
+(the preconditioner M), while the gradient `bresidual` it consumes is the **exact**
+degrid/grid gradient (D23). So with `rmsfactor=0` and `positivity=0` the backward step is
+the identity and the major cycle collapses to preconditioned Richardson
+`m ← m + γ·M⁻¹(bdirty − H_exact·m)`, whose fixed point is the exact-Hessian solution
+`H_exact⁻¹·bdirty` — **independent of M** (the preconditioner sets only the convergence
+rate). Since `bdirty ∈ range(H_exact)` and, noiseless, the true sky solves the normal
+equations exactly, the image residual → 0 with **no floor above gridder epsilon** (the
+image space is under-determined, but that only makes the *model* non-unique, not the
+residual). Two consequences: (1) the residual keeps descending toward that floor iff the
+forward model is self-consistent — a *plateau* above it flags a beam/rephasing
+inconsistency; this is a forward-model diagnostic, not a regularisation one, and its rate
+is limited by the weakly-measured large-scale (short-baseline) modes; and (2) a *poor* M
+(the `abs(PSFHAT)` preconditioner underestimates curvature — off-axis, and via the
+w-term/aliasing it cannot represent) needs `γ < 2/λmax(M⁻¹H_exact)`, which can be below the
+default 0.95, so the unregularised diagnostic may diverge at full step where a regularised
+run (prox stabilised) does not. Guarded by `tests/test_preconditioner_consistency.py`.
 
 ## The SARA prior and the constants that matter
 

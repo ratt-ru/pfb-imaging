@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-20T14:30:00Z
-last_verified_commit: f804532
+timestamp: 2026-07-23T09:30:00Z
+last_verified_commit: 4dc305b
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -516,7 +516,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   `<fits_oname>_<suffix>_debug.json`. Guards:
   `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
   `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
-  per-partition beams), `test_deconv_requires_bdirty`.
+  per-partition beams), `test_deconv_requires_bdirty`;
+  `tests/test_preconditioner_consistency.py` (with `rmsfactor=0`/`positivity=0`
+  the preconditioned cycle's fixed point is the exact-Hessian solution — an
+  apparent-vs-beam-attenuated gradient bias would move it, plus an e2e
+  noise-floor smoke).
 - **Source:** legacy `core/sara.py:280` (`residual *= beam`, 7eb3f1d~1);
   `operators/gridder.residual_from_partitions`; `core/imager._grid_image`;
   `core/deconv.py`; `deconv/pfb.py::first`.
