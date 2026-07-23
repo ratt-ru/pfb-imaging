@@ -109,12 +109,6 @@ gorepro:
     overwrite:
       default: true
       aliases: ['*.overwrite']
-    output-dataset:
-      default: '{recipe.base-dir}/{recipe.image-name}'
-    fits-output-folder:
-      default: '{recipe.base-dir}/fits'
-    log-directory:
-      default: '{recipe.base-dir}/logs'
 
   steps:
     image:
