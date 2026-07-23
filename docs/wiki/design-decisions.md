@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-23T09:30:00Z
+timestamp: 2026-07-23T10:30:00Z
 last_verified_commit: 4dc305b
 ---
 
@@ -476,11 +476,25 @@ update it (and this page's `last_verified_commit`) in the same session.
   check `beam_includes_n`. `degrid`/`comps2vis` predates beams entirely and
   still predicts unattenuated model vis (pre-existing limitation, unchanged).
   Known residual approximation errors in the PSF-convolution Hessian, now
-  documented: the w-term and the `abs(PSFHAT)` rectification (Hermitian-
+  documented: the w-term, the `abs(PSFHAT)` rectification (Hermitian-
   positivity for CG) — both far larger than the n-term at any fov, sub-
-  percent for realistic decaying PSFs.
+  percent for realistic decaying PSFs — and **PSF truncation** (see below).
+- **PSF truncation vs preconditioner rate/stability (issue #287).**
+  `nx_psf = good_size(psf_oversize·nx)` (`utils/misc.py`), default
+  `psf_oversize=1.4`, i.e. the shipped PSF is **not** the `2·nx` that makes the
+  periodic convolution aliasing-exact — the default is already truncated.
+  Truncation degrades **only the preconditioner** (the gradient is exact
+  degrid/grid, D23), so it changes convergence rate/stability, never the fixed
+  point. Measured (coplanar, isolating truncation; issue #287 has the table):
+  the exact-Hessian solution is recovered to ~1e-13 for every `psf_oversize ∈
+  [1, 2]`; κ(M⁻¹H) grows ~5.5 (2×) → ~8 (1.4× default) → ~50 (1×); and once
+  `λmax(M⁻¹H) > 2/γ ≈ 2.1` the driver's **fixed** `gamma=0.95` outer step
+  diverges (measured at `psf_oversize ≲ 1.25`). The default 1.4× is stable but
+  ~1.5× slower than an exact 2× PSF. Lowering `psf_oversize` for memory can
+  silently cross into instability — a step-size guard is proposed in #287.
 - **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy
-  study); `utils/stokes2vis_msv4.py` beam block; user-reported
+  study); `tests/test_preconditioner_consistency.py` (fixed-point invariance;
+  issue #287); `utils/stokes2vis_msv4.py` beam block; user-reported
   `divide_by_n`/`do_wgridding` trap.
 
 ### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
@@ -556,6 +570,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
   psi=analysis)`. Read call sites, not names.
 - **`pcg_numba` mutates `x0` in place** (returns the same buffer).
+- **`psf_oversize` truncates the preconditioner PSF** (`nx_psf =
+  good_size(psf_oversize·nx)`, default 1.4, not 2). It only affects the
+  preconditioner rate/stability, never the fixed point (D22, issue #287), but a
+  *low* value inflates `λmax(M⁻¹H)` past `2/γ` and the fixed-`gamma` outer step
+  **diverges** (the `diverge_count` terminator fires only after the fact). A
+  `gamma=1` / low-`psf_oversize` divergence is a preconditioner-conditioning
+  symptom, not a bug in the operator.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests

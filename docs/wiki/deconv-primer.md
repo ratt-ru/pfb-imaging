@@ -3,7 +3,7 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-23T09:30:00Z
+timestamp: 2026-07-23T10:30:00Z
 last_verified_commit: 4dc305b
 ---
 
@@ -62,10 +62,15 @@ residual). Two consequences: (1) the residual keeps descending toward that floor
 forward model is self-consistent — a *plateau* above it flags a beam/rephasing
 inconsistency; this is a forward-model diagnostic, not a regularisation one, and its rate
 is limited by the weakly-measured large-scale (short-baseline) modes; and (2) a *poor* M
-(the `abs(PSFHAT)` preconditioner underestimates curvature — off-axis, and via the
-w-term/aliasing it cannot represent) needs `γ < 2/λmax(M⁻¹H_exact)`, which can be below the
-default 0.95, so the unregularised diagnostic may diverge at full step where a regularised
-run (prox stabilised) does not. Guarded by `tests/test_preconditioner_consistency.py`.
+(the `abs(PSFHAT)` preconditioner underestimates curvature — off-axis, via the w-term, and
+via **PSF truncation**: `nx_psf = good_size(psf_oversize·nx)`, default 1.4 not 2, so the
+convolution is not aliasing-exact) needs `γ < 2/λmax(M⁻¹H_exact)`, which can drop below the
+driver's fixed `gamma=0.95`, so the unregularised diagnostic — or a low-`psf_oversize` run —
+may diverge at full step where a regularised run (prox stabilised) does not. Truncation
+degrades this rate/stability but **never the fixed point** (measured to ~1e-13 across
+`psf_oversize ∈ [1, 2]`; κ(M⁻¹H) ~5.5 at 2× → ~8 at the 1.4× default → ~50 at 1×). Guarded
+by `tests/test_preconditioner_consistency.py`; full table and codification proposals in
+issue #287 (D22).
 
 ## The SARA prior and the constants that matter
 
