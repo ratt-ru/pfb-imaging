@@ -520,7 +520,11 @@ def stokes_image(
             phase += signu * uvw_old[:, 0:1] * x0t * signx
             phase += signv * uvw_old[:, 1:2] * y0t * signy
             phase -= uvw_old[:, 2:] * (n0t - 1)
-            dspec = dspec * np.exp(-freqfactor * phase)
+            # RIME point-source visibility carries a 1/n term (V = I/n * fringe);
+            # n0t is a per-source scalar so this is an exact amplitude correction
+            # (imaging uses divide_by_n=True). Small for on-axis sources, larger
+            # towards the edge of a wide field / at low declination.
+            dspec = dspec / n0t * np.exp(-freqfactor * phase)
 
             # currently Stokes I only
             data[:, :, 0] += dspec
