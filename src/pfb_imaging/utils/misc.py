@@ -699,11 +699,17 @@ def fitcleanbeam(
             emaj = p[0]
             emin = p[1]
             pa = p[2]
-        else:  # major and minor axes have been swapped
+        else:
+            # Optimiser converged with the axes in reversed order: un-swap and
+            # rotate the PA by 90 deg. This is an expected, correctly-handled
+            # outcome (not an error) — for a marginally-resolved beam the level
+            # 0.5 main lobe spans ~1 px, the bounding-box emaj0/emin0 seed
+            # collapses to the 1 px floor (circular, no preferred major axis),
+            # and l_bfgs_b lands on either axis with equal likelihood. The swap
+            # recovers the correct emaj >= emin every time, so we do not warn.
             emaj = p[1]
             emin = p[0]
             pa = p[2] + np.pi / 2
-            print("WARNING - emaj/emin flipped in solver")
 
         gausspars.append([emaj * pixsize, emin * pixsize, pa])
 

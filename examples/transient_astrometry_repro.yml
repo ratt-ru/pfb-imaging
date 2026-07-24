@@ -68,6 +68,10 @@ gorepro:
     field-of-view:
       dtype: float
       default: 2.0
+    nx:
+      dtype: int
+    ny:
+      dtype: int
     cell-size:
       dtype: float
       info:
@@ -130,6 +134,8 @@ gorepro:
         cell-size: =IFSET(recipe.cell-size)
         super-resolution-factor: =recipe.super-resolution-factor
         integrations-per-image: =recipe.integrations-per-image
+        nx: =IFSET(recipe.nx)
+        ny: =IFSET(recipe.ny)
         channels-per-image: =recipe.channels-per-image
         robustness: =IFSET(recipe.robustness)
         epsilon: =recipe.epsilon
