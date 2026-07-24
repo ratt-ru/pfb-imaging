@@ -3,6 +3,20 @@
 import typer
 import typer.core
 
+from pfb_imaging.cli._deprecation import warn_deprecated
+
+# Subcommands retired in pfb-imaging v0.1.0, mapped to their replacement. The
+# callback below prints a loud banner when one of these is invoked; the commands
+# themselves still run for now.
+DEPRECATED_COMMANDS = {
+    "init": "pfb imager",
+    "grid": "pfb imager",
+    "kclean": "pfb deconv",
+    "sara": "pfb deconv",
+    "fluxtractor": "pfb deconv",
+    "model2comps": "pfbspec model2comps  (pfb-model-spec package)",
+}
+
 
 class LogoGroup(typer.core.TyperGroup):
     """Custom Typer group that prints the logo before help."""
@@ -33,9 +47,11 @@ text = """
 
 
 @app.callback()
-def main():
+def main(ctx: typer.Context):
     """Radio interferometric imaging suite based on a preconditioned forward-backward approach."""
     typer.echo(text, err=True)
+    if ctx.invoked_subcommand in DEPRECATED_COMMANDS:
+        warn_deprecated(ctx.invoked_subcommand, replacement=DEPRECATED_COMMANDS[ctx.invoked_subcommand])
 
 
 # Import and register commands
