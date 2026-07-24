@@ -522,7 +522,7 @@ def stokes_image(
             # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
             # phase_v = signv * uvw_old[:, 1:2] * y0t * signy
             # phase_w = uvw_old[:, 2:] * (n0t - 1)
-            # phase = phase_u + phase_v - phase_w - phase_wdiff
+            # phase = phase_u + phase_v + phase_w - phase_wdiff
             # this is equivalent to the above
             if phase_dir is not None:
                 # the source is built in the original frame and carried to the
@@ -537,7 +537,15 @@ def stokes_image(
                 phase = np.zeros((nrow, 1), dtype=real_type)
             phase += signu * uvw_old[:, 0:1] * x0t * signx
             phase += signv * uvw_old[:, 1:2] * y0t * signy
-            phase -= uvw_old[:, 2:] * (n0t - 1)
+            # w-term sign: the whole fringe is applied as exp(-freqfactor * phase),
+            # the conjugate of the psf_vis / explicit_wdegridder convention
+            # (exp(+freqfactor * (... - w*(n-1)))). The l/m terms stay consistent
+            # because x0t/y0t are non-negated here (vs psf_vis's negated x0/y0),
+            # but (n0t - 1) has no coordinate to flip, so it must be added, not
+            # subtracted, to match the wgridder. Getting this wrong drifts sources
+            # off-axis in proportion to w -> invisible with full uv coverage,
+            # multi-pixel in single-integration snapshots (ratt-ru/breifast#263).
+            phase += uvw_old[:, 2:] * (n0t - 1)
             # RIME point-source visibility carries a 1/n term (V = I/n * fringe);
             # n0t is a per-source scalar so this is an exact amplitude correction
             # (imaging uses divide_by_n=True). Small for on-axis sources, larger
