@@ -67,7 +67,7 @@ gorepro:
         cube contains only the injected sources.
     field-of-view:
       dtype: float
-      default: 1.0
+      default: 2.0
     cell-size:
       dtype: float
       info:
@@ -75,10 +75,10 @@ gorepro:
         under investigation (e.g. 2.4 for the 47Tuc raw cube).
     super-resolution-factor:
       dtype: float
-      default: 2.0
+      default: 1.0
     integrations-per-image:
       dtype: int
-      default: -1
+      default: 1
       info:
         Time integrations per image. Set to match the breifast timescale being
         reproduced; -1 makes a single image over all times.
@@ -99,13 +99,16 @@ gorepro:
       aliases: ['*.product']
     nworkers:
       dtype: int
-      default: 1
+      default: 32
     nthreads:
       dtype: int
-      default: 8
+      default: 2
     epsilon:
       dtype: float
       default: 1.0e-08
+    precision:
+      dtype: str
+      default: double
     overwrite:
       default: true
       aliases: ['*.overwrite']
@@ -132,6 +135,7 @@ gorepro:
         epsilon: =recipe.epsilon
         overwrite: =recipe.overwrite
         fits-vars: [cube]
+        precision: =recipe.precision
         # phase-dir and beam-model are intentionally left unset — this recipe
         # reproduces the plain injection path (no rephasing, no beam).
       skip_if_outputs: exist
