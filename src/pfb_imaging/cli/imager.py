@@ -39,11 +39,21 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="numba-cache-dir",
     info="Implicit output ensuring the numba cache location is mounted. "
-    "The cache defaults to a per-user directory under the system temp directory. "
+    "The cache defaults to a per-user directory under /tmp. "
     "Override it by setting the NUMBA_CACHE_DIR environment variable.",
-    implicit="/tmp/numba",
+    implicit="/tmp/numba-cache",
     must_exist=False,
     mkdir=False,
+    path_policies={"write_parent": True},
+)
+@stimela_output(
+    dtype="Directory",
+    name="beam-cache-dir",
+    info="Implicit output ensuring the beam cache location is mounted. "
+    "The cache defaults to a per-user directory under /tmp. "
+    "Override it by setting the MBEAMS_CACHE_DIR environment variable.",
+    implicit="/tmp/mbeams-cache",
+    must_exist=False,
     path_policies={"write_parent": True},
 )
 def imager(
@@ -212,8 +222,27 @@ def imager(
     beam_model: Annotated[
         str | None,
         typer.Option(
-            help="Beam model to use. Only katbeam currently supported.",
+            help="Beam model to use. "
+            "Either katbeam or a MeerKAT band name. "
+            "One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.",
             rich_help_panel="Input",
+        ),
+    ] = None,
+    phase_dir: Annotated[
+        str | None,
+        typer.Option(
+            help="Rephase visibilities to this phase center. "
+            "Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter). "
+            "Defaults to the barycentre of the selected fields when more than one field is selected.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
+    target: Annotated[
+        str | None,
+        typer.Option(
+            help="Predefined celestial objects known to astropy. "
+            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            rich_help_panel="Imaging",
         ),
     ] = None,
     chan_average: Annotated[
@@ -384,6 +413,31 @@ def imager(
             rich_help_panel="Output",
         ),
     ] = True,
+    psf: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the PSF data products. "
+            "Switch off for a quicklook dirty image that skips the PSF gridding. "
+            "A tree written without the PSF cannot be deconvolved.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    beam: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS images of the effective beam. "
+            "The beam is always stored in the DataTree regardless of this flag.",
+            rich_help_panel="Output",
+        ),
+    ] = True,
+    fits_per_partition: Annotated[
+        bool,
+        typer.Option(
+            help="Write FITS images for each data partition into a partitions subdirectory. "
+            "Useful to sanity check field and beam orientations.",
+            rich_help_panel="Output",
+        ),
+    ] = False,
     fits_output_folder: Annotated[
         Directory | None,
         typer.Option(
@@ -465,6 +519,8 @@ def imager(
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
                     beam_model=beam_model,
+                    phase_dir=phase_dir,
+                    target=target,
                     chan_average=chan_average,
                     progressbar=progressbar,
                     product=product,
@@ -488,6 +544,9 @@ def imager(
                     keep_scratch=keep_scratch,
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
+                    psf=psf,
+                    beam=beam,
+                    fits_per_partition=fits_per_partition,
                     fits_output_folder=fits_output_folder,
                     log_directory=log_directory,
                 ),
@@ -519,6 +578,8 @@ def imager(
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
                 beam_model=beam_model,
+                phase_dir=phase_dir,
+                target=target,
                 chan_average=chan_average,
                 progressbar=progressbar,
                 product=product,
@@ -542,6 +603,9 @@ def imager(
                 keep_scratch=keep_scratch,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                psf=psf,
+                beam=beam,
+                fits_per_partition=fits_per_partition,
                 fits_output_folder=fits_output_folder,
                 log_directory=log_directory,
             )
@@ -582,6 +646,8 @@ def imager(
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,
             beam_model=beam_model,
+            phase_dir=phase_dir,
+            target=target,
             chan_average=chan_average,
             progressbar=progressbar,
             product=product,
@@ -605,6 +671,9 @@ def imager(
             keep_scratch=keep_scratch,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            psf=psf,
+            beam=beam,
+            fits_per_partition=fits_per_partition,
             fits_output_folder=fits_output_folder,
             log_directory=log_directory,
         ),

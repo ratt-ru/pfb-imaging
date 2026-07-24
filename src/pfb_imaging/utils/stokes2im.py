@@ -364,19 +364,29 @@ def stokes_image(
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
-        wo = uvw[:, 2:]
-        wn = uvw_new[:, 2:]
+        # Recompute the OLD uvw via the same measures call rather than diffing
+        # against the MS's recorded UVW, so any systematic offset between pyrap's
+        # earth-orientation handling and whatever produced the MS UVW (DUT1 /
+        # precession-nutation model, etc.) cancels in the difference instead of
+        # contaminating w_diff and the sampling. The mismatch is small (~1e-5 of
+        # the baseline length) but scales with baseline length, so at the longest
+        # baselines it decorrelates off-axis sources if left in. Mirrors
+        # stokes2vis_msv4 (pfb-imaging#280).
+        uvw_ref = synthesize_uvw(antpos, time, ant1, ant2, radec)
 
-        # TODO - this copies chgcentre but not sure why it gives
-        # better results than computing the phase with lmn differences
-        w_diff = wn - wo
+        # chgcentre style wdiff rephasing (differential w)
+        w_diff = uvw_new[:, 2:] - uvw_ref[:, 2:]
         # data and model_vis could still be read_only at this point
         data = data * np.exp(freqfactor * w_diff)[:, :, None]
         if model_vis is not None:
             model_vis = model_vis * np.exp(freqfactor * w_diff)[:, :, None]
 
-        uvw_old = uvw.copy()
-        uvw = uvw_new
+        # keep the sampling (and the transient injection below) anchored to the
+        # MS's own UVW; apply only the differential rotation to the new centre so
+        # the measures-vs-MS systematic that w_diff cancels does not re-enter
+        # through the coordinates.
+        uvw_old = uvw
+        uvw = uvw + (uvw_new - uvw_ref)
     else:
         uvw_old = uvw
         radec_new = radec
@@ -512,16 +522,27 @@ def stokes_image(
             # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
             # phase_v = signv * uvw_old[:, 1:2] * y0t * signy
             # phase_w = uvw_old[:, 2:] * (n0t - 1)
-            # phase = phase_u + phase_v - phase_w + phase_wdiff
+            # phase = phase_u + phase_v - phase_w - phase_wdiff
             # this is equivalent to the above
             if phase_dir is not None:
-                phase = w_diff
+                # the source is built in the original frame and carried to the
+                # rephased frame with the SAME chgcentre w-difference the data
+                # got (data *= exp(freqfactor * w_diff) above). The whole fringe
+                # is applied as exp(-freqfactor * phase), so w_diff enters with a
+                # minus sign here to match the data's exp(+freqfactor * w_diff).
+                # Using +w_diff displaces every injected source by a constant
+                # -2 * (field -> tangent) translation (ratt-ru/breifast#263).
+                phase = -w_diff
             else:
                 phase = np.zeros((nrow, 1), dtype=real_type)
             phase += signu * uvw_old[:, 0:1] * x0t * signx
             phase += signv * uvw_old[:, 1:2] * y0t * signy
             phase -= uvw_old[:, 2:] * (n0t - 1)
-            dspec = dspec * np.exp(-freqfactor * phase)
+            # RIME point-source visibility carries a 1/n term (V = I/n * fringe);
+            # n0t is a per-source scalar so this is an exact amplitude correction
+            # (imaging uses divide_by_n=True). Small for on-axis sources, larger
+            # towards the edge of a wide field / at low declination.
+            dspec = dspec / n0t * np.exp(-freqfactor * phase)
 
             # currently Stokes I only
             data[:, :, 0] += dspec

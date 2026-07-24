@@ -9,14 +9,18 @@ import psutil
 import ray
 import xarray as xr
 from africanus.averaging import bda, time_and_channel
-
-# from astropy.time import Time
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from katbeam import JimBeam
+from meerkat_beams.utils import BeamWizard
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
 
 
@@ -96,6 +100,10 @@ def stokes_vis(
     cell_rad=None,
     baseline_group="all",
     data_group="base",
+    radec_new=None,
+    target=None,
+    nx=None,
+    ny=None,
     nthreads=1,
 ):
     """
@@ -120,6 +128,12 @@ def stokes_vis(
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
         beam_model: model to use for beam correction. Can be "katbeam" or None.
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
+        radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
+            phase centre / tangent point). None means image about the field centre.
+        target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
+            body); resolved to an in-plane (l0, m0) at this piece's own time.
+        nx, ny: output image size; the piece's BEAM is placed on this grid here
+            in pass 1 (#281) so pass 2 consumes it as is.
         nthreads: threads available to the task (parallelises the COUNTS gridding).
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
@@ -279,6 +293,45 @@ def stokes_vis(
 
     # apply gains and convert to Stokes
     data = data.reshape(nrow, nchan, ncorr)
+
+    # rephase to the common phase centre (mosaic tangent point) BEFORE
+    # weighting, averaging and the COUNTS gridding so weights, decorrelation
+    # and uv counts are all consistent with the new centre automatically.
+    # chgcentre-style w-difference, as in stokes2im.
+    if radec_new is not None and not np.allclose(radec_new, np.asarray(radec).squeeze(), rtol=0, atol=1e-9):
+        # deferred: synthesize_uvw pulls pyrap (python-casacore); only
+        # mosaic / phase_dir runs pay the import
+        from pfb_imaging.utils.astrometry import synthesize_uvw
+
+        try:
+            # MSv4 time is unix seconds; casacore measures wants MJD seconds
+            mjd_time = to_mjd_time(time)
+            uvw_new = synthesize_uvw(antpos, mjd_time, ant1, ant2, np.asarray(radec_new))
+            # Recompute the *old* UVW via the same measures call (rather than
+            # diffing against the MS's own recorded UVW) so any systematic
+            # offset between pyrap's earth-orientation handling and whatever
+            # produced the MS's UVW (DUT1/precession-nutation model, etc.)
+            # cancels in the difference instead of contaminating w_diff.
+            # That mismatch is small in absolute terms (~1e-5 relative to the
+            # baseline length) but scales with baseline length, so at the
+            # longest baselines it is comparable to the true w-difference for
+            # small rephasing offsets and visibly decorrelates off-axis
+            # sources if left in.
+            uvw_old = synthesize_uvw(antpos, mjd_time, ant1, ant2, np.asarray(radec).squeeze())
+        except ImportError as e:
+            raise ImportError(
+                "Rephasing (multi-field mosaics or phase_dir) requires python-casacore. Install pfb-imaging[full]."
+            ) from e
+        w_diff = uvw_new[:, 2:] - uvw_old[:, 2:]
+        freqfactor = -2j * np.pi * freq[None, :] / lightspeed
+        # data may be a read-only view out of Ray's object store; don't use *=
+        data = data * np.exp(freqfactor * w_diff)[:, :, None]
+        # store the differentially rotated MS coordinates rather than the
+        # wholesale synthesized ones: the sampling stays anchored to the MS's
+        # own UVW (the same measures-vs-MS systematic that w_diff cancels
+        # would otherwise re-enter through the coordinates)
+        uvw = uvw + (uvw_new - uvw_old)
+
     data, weight = weight_data(
         as_contiguous_readonly_view(data),
         as_contiguous_readonly_view(weight),
@@ -370,47 +423,146 @@ def stokes_vis(
     flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
-    # TODO - better beam interpolation
+    # ---- primary beam on the output image grid (pass-1 beam, #281) ----
+    # The (rotation-averaged) beam is evaluated about the FIELD's own pointing
+    # -- where the antennas point regardless of rephasing -- on a small grid,
+    # then placed onto the output image grid HERE in pass 1 (parallel over
+    # pieces); pass 2 consumes the stored (corr, ny, nx) BEAM as is.
     if max_blength is None or max_freq is None:
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
-    # NB: the beam evaluation grid is sized at the critically-sampled (Nyquist)
-    # cell, which is a *separate* quantity from the imaging cell_rad passed in for
-    # the COUNTS uv-grid below. Keep them in distinct variables so the imaging
-    # cell (used to bin COUNTS) is not clobbered -- counts must be gridded on the
-    # same cell that grid_partition's counts_to_weights later looks them up on,
-    # i.e. the imaging cell (matching the legacy image_data_products path).
-    fov = max_field_of_view
-    beam_cell_rad = 1.0 / (max_blength * max_freq / lightspeed)
-    beam_cell_deg = np.rad2deg(beam_cell_rad)
-    npix = int(fov / beam_cell_deg)
-    l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-    m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-    if beam_model is None:
-        beam = np.ones((ncorr, npix, npix), dtype=real_type)
-    elif beam_model.lower() == "katbeam":
-        if freq_min >= 8.5e8 and freq_max <= 1.8e9:
-            beamo = JimBeam("MKAT-AA-L-JIM-2020")
-        elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
-            beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
-        # elif freq_min >= 8.56e8 and freq_max <= 1.71179102e+09:
-        #     beamo = JimBeam('MKAT-AA-S-JIM-2020')
+    if nx is None or ny is None:
+        raise ValueError("nx and ny must be provided to place the beam on the image grid")
+    cell_deg = np.rad2deg(cell_rad)
+    radec_grid = np.asarray(radec_new) if radec_new is not None else radec  # image tangent point
+
+    # --target: in-plane image-centre offset, resolved at this piece's own time
+    if target is not None:
+        if len(target.split(",")) == 2:
+            tradec = parse_sky_coords(target)
         else:
-            raise ValueError("Freq range not covered by katbeam")
-        xx, yy = np.meshgrid(l_beam, m_beam, indexing="ij")
-        # katbeam expects freq in MHz
-        fmhz = freq_out / 1e6
-        beam = np.zeros((ncorr, npix, npix), dtype=np.float64)
-        for i, product in enumerate(corr):
-            beam0 = getattr(beamo, product)(xx, yy, fmhz)
-            step = 25
-            angles = np.linspace(0, 359, step)
-            for angle in angles:
-                beam[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
-            beam[i] /= angles.size
-            # how to normalise the center for other Stokes products?
-            # beam[i] /= beam[i].max()
+            # deferred: get_coordinates pulls pyrap (python-casacore)
+            from pfb_imaging.utils.astrometry import get_coordinates
+
+            # named body: D13 -- get_coordinates expects MJD seconds
+            tradec = np.array(get_coordinates(to_mjd_time(time_out), target=target))
+        l0, m0 = (float(v) for v in radec_to_lm(tradec, radec_grid))
     else:
-        raise ValueError(f"Unknown beam model {beam_model}")
+        l0, m0 = 0.0, 0.0
+
+    # the wgridder's geometric n-term is folded into the stored beam: the
+    # effective image-plane response is B(l,m)/n(l,m), computed on exactly
+    # the coordinates ducc uses (absolute w.r.t. the phase centre, target
+    # offset included). Rationale (wiki design-decisions D22, pinned by
+    # tests/test_hessian_nterm.py): diag(B/n) GtWG diag(B/n) is IDENTICAL to
+    # gridding with divide_by_n=True, but the diagonal rides in HessianTree's
+    # beam slots where the PSF-convolution approximation captures it exactly,
+    # whereas divide_by_n=True buries an image-plane envelope inside the
+    # gridded PSF that a convolution cannot represent (4-25% worse Hessian
+    # accuracy, growing with fov). It also sidesteps ducc's divide_by_n
+    # silently no-oping when do_wgridding=False. Every ducc call in the
+    # imager+deconv path therefore stays divide_by_n=False, and the
+    # deconvolved MODEL comes out in intrinsic flux.
+    _, _, _, x0_, y0_ = wgridder_conventions(l0, m0)
+    x_abs = (-(nx / 2) + np.arange(nx)) * cell_rad + x0_
+    y_abs = (-(ny / 2) + np.arange(ny)) * cell_rad + y0_
+    yy_abs, xx_abs = np.meshgrid(y_abs, x_abs, indexing="ij")  # (ny, nx)
+    nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
+
+    if beam_model is None:
+        # no aperture beam: the stored response is 1/n (compresses well in zarr)
+        beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
+    else:
+        # field-centred evaluation on a small grid first
+        if isinstance(beam_model, BeamWizard):
+            # the wizard ships detached (BDS-only); the parallactic angles
+            # need the FIELD's pointing centre, set per piece here
+            rvec = np.asarray(radec).squeeze()
+            beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
+            bds = beam_model.bds
+            l_beam = bds.X.values  # deg, East positive
+            m_beam = bds.Y.values  # deg, North positive
+            # test over-sampling beam pixels to avoid aliasing in the reprojection step
+            l_beam = np.linspace(l_beam.min(), l_beam.max(), 1024)
+            m_beam = np.linspace(m_beam.min(), m_beam.max(), 1024)
+            # D13: MSv4 time is unix seconds; astropy Time wants MJD days
+            t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
+            beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
+            for i, p in enumerate(corr):
+                # returns (Y, X)-ordered maps (docs/wiki/image-and-beam-orientation.md);
+                # signature kept stable so meerkat-beams can grow weighted
+                # time/freq averaging underneath (#281)
+                beam_small[i], _ = beam_model.get_rotation_averaged_beam(
+                    l=l_beam,
+                    m=m_beam,
+                    times=t_beam,
+                    freq=np.atleast_1d(freq_out),
+                    time_stepping=1,
+                    pixel_stepping=1,
+                    var="nstokes",
+                    i=p,
+                    j=p,
+                    verbose=0,
+                )
+        elif str(beam_model).lower() == "katbeam":
+            # NB: the evaluation grid is sized at the critically-sampled
+            # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
+            # used for the COUNTS uv-grid below.
+            fov = max_field_of_view
+            beam_cell_deg = np.rad2deg(1.0 / (max_blength * max_freq / lightspeed))
+            npix = int(fov / beam_cell_deg)
+            l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            if freq_min >= 8.5e8 and freq_max <= 1.8e9:
+                beamo = JimBeam("MKAT-AA-L-JIM-2020")
+            elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
+                beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
+            else:
+                raise ValueError("Freq range not covered by katbeam")
+            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
+            # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
+            mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
+            # katbeam expects freq in MHz
+            fmhz = freq_out / 1e6
+            beam_small = np.zeros((ncorr, npix, npix), dtype=np.float64)
+            for i, p in enumerate(corr):
+                beam0 = getattr(beamo, p)(ll, mm, fmhz)
+                step = 25
+                angles = np.linspace(0, 359, step)
+                for angle in angles:
+                    beam_small[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
+                beam_small[i] /= angles.size
+        else:
+            raise ValueError(f"Unknown beam model {beam_model}")
+
+        offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
+        if offset_centre:
+            # mosaic/facet: SIN->SIN reprojection from the field-centred grid
+            # onto the image grid (fills 0 outside the beam's coverage, so an
+            # off-grid partition contributes nothing where its beam is unknown)
+            beam = reproject_and_interp_scat_beam(
+                beam_small,
+                l_beam,
+                m_beam,
+                radec,
+                radec_grid,
+                cell_deg,
+                nx,
+                ny,
+                "".join(corr),
+                l0=l0,
+                m0=m0,
+            ).astype(real_type)
+        else:
+            # single-field path: same bilinear interpolant grid_partition used
+            # to apply (fill 1.0 outside the small grid, as before)
+            x = (-(nx / 2) + np.arange(nx)) * cell_rad
+            y = (-(ny / 2) + np.arange(ny)) * cell_rad
+            yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
+            beam = np.zeros((ncorr, ny, nx), dtype=real_type)
+            for c in range(ncorr):
+                beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+        # fold the n-term (see the D22 comment above)
+        beam = (beam / nlm[None, :, :]).astype(real_type)
 
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
@@ -440,13 +592,11 @@ def stokes_vis(
     data_vars["MASK"] = (("row", "chan"), mask)
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
-    data_vars["BEAM"] = (("corr", "l_beam", "m_beam"), beam)
+    data_vars["BEAM"] = (("corr", "y", "x"), beam)
     data_vars["COUNTS"] = (("corr", "u", "v"), counts)
 
     coords = {
         "chan": (("chan",), freq),
-        "l_beam": (("l_beam",), l_beam),
-        "m_beam": (("m_beam",), m_beam),
         "corr": (("corr",), corr),
     }
 
@@ -454,10 +604,16 @@ def stokes_vis(
     # MSv2 MJD seconds); no epoch shift needed here
     utc = datetime.fromtimestamp(time_out, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    # ra/dec: the tangent point downstream consumers grid about (the new
+    # phase centre when rephasing); ra0/dec0: the field's original pointing
+    # (beam centre), needed for the (future) pass-2 beam reprojection (#281)
+    radec = np.asarray(radec).squeeze()
     attrs = {
         "pfb-imaging-version": pfb_version,
-        "ra": radec[0],
-        "dec": radec[1],
+        "ra": radec_new[0] if radec_new is not None else radec[0],
+        "dec": radec_new[1] if radec_new is not None else radec[1],
+        "ra0": radec[0],
+        "dec0": radec[1],
         "msid": msid,
         "field_name": field_name,
         "spw_name": spw_name,
@@ -475,7 +631,14 @@ def stokes_vis(
         "utc": utc,
         "max_freq": max_freq,
         "max_blength": max_blength,
-        "beam_model": beam_model,
+        "beam_model": beam_model
+        if beam_model is None or isinstance(beam_model, str)
+        else str(getattr(beam_model, "band", type(beam_model).__name__)),
+        "l0": l0,
+        "m0": m0,
+        # the stored BEAM is the effective image-plane response B/n, NOT the
+        # bare primary beam (wiki design-decisions D22)
+        "beam_includes_n": True,
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)

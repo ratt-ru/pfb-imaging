@@ -171,3 +171,22 @@ def test_fitcleanbeam_yx_order_invariant():
     emaj, emin, pa = ref[0]
     assert emaj > emin
     assert 0 < pa < np.pi
+
+
+@pmp("emaj_true,ar,pa_deg", [(2.0, 0.8, 45), (2.5, 0.6, 30), (12.0, 0.5, 20), (3.0, 1.0, 0)])
+def test_fitcleanbeam_axis_ordering_and_quiet(emaj_true, ar, pa_deg, capsys):
+    """The optimiser may converge with the axes reversed (routine for a
+    marginally-resolved super-resolution beam, whose level 0.5 main lobe spans
+    ~1 px). fitcleanbeam must un-swap to emaj >= emin every time and must NOT
+    print a warning for this expected, correctly-handled outcome."""
+    from pfb_imaging.utils.misc import gaussian2d
+
+    npix = 129
+    x = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(x, x, indexing="ij")
+    psf = gaussian2d(xx, yy, (emaj_true, emaj_true * ar, np.deg2rad(pa_deg)), normalise=False)[None]
+
+    emaj, emin, pa = fitcleanbeam(psf, level=0.5, pixsize=1.0)[0]
+    assert emaj >= emin
+    assert 0 <= pa
+    assert "flipped" not in capsys.readouterr().out.lower()

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-17T16:00:00Z
-last_verified_commit: 83be23f
+timestamp: 2026-07-23T14:30:00Z
+last_verified_commit: 1909bfa
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -32,15 +32,20 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`dual_update`, reweighting trio) are `hasattr`-sniffed, not Protocol members.
 - **Source:** issue #185; architecture.md §5; `deconv-primer.md`.
 
-### D2 — Legacy code is untouched and serves as the test oracle
+### D2 — (Partially retired 2026-07-17) Legacy code served as the test oracle
 
 - **Context:** Rewrites of numerical code need ground truth.
-- **Decision:** `core/sara.py`, `core/kclean.py`, the `.dds` consumers and the legacy
-  `opt` functions (`primal_dual`, `primal_dual_numba`, `pcg*`, `fista`) are not
-  modified (behaviour-wise); new implementations are validated against them in a
+- **Decision (original):** `core/sara.py`, `core/kclean.py`, the `.dds` consumers and
+  the legacy `opt` functions (`primal_dual`, `primal_dual_numba`, `pcg*`, `fista`) were
+  not modified (behaviour-wise); new implementations were validated against them in a
   three-tier pyramid (unit rdiff < 1e-10, operator equality, e2e on a real MS).
+- **Status:** the e2e oracles (`core/sara.py`, `core/kclean.py`, `init`+`grid`) were
+  deleted in 0.1.0 (#277) once ground-truth tests against an injected sky replaced the
+  equivalence tests (which were vacuous in CI — the downloaded MS had zero DATA). The
+  frozen unit-level `opt` oracles (`primal_dual{,_numba}`, `pcg_numba`, `fista`) remain
+  and are still not to be modified.
 - **Rationale:** Mirrors the `init`+`grid` → `imager` strategy, which caught real bugs
-  at every tier.
+  at every tier; ground truth beats equivalence once the legacy side must go.
 - **Consequences:** Known legacy warts stay (see Debt); e2e comparisons must pin a
   shared `hess_norm` to remove power-method nondeterminism. Docstring-only additions
   to legacy code are fine.
@@ -67,9 +72,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   by the weight sum, consistently, across residual, Hessian and eta.
 - **Decision:** Normalise by the TOTAL wsum across all bands at point of use:
   `residual/wsum_tot`; each band's `HessianTree` gets `wsum=wsum_tot` override;
-  `eta_b = eta·wsum_b/wsum_tot`; `HessianTree` consumes `abs(PSFHAT)`.
-- **Rationale:** Matches legacy sara (`wsums /= wsum; abspsf /= wsum; eta*wsums`), so
-  hyperparameters (`eta`, `rmsfactor`) mean the same thing on both paths.
+  `HessianTree` consumes `abs(PSFHAT)`. **`--eta` is a fraction of the total wsum**:
+  a uniform `+eta·x` on every normalised band operator (`eta·wsum_tot` raw), so its
+  meaning is invariant to data volume and band count.
+- **Rationale:** The wsum normalisation matches legacy sara (`wsums /= wsum;
+  abspsf /= wsum`), keeping `rmsfactor` meaningful across paths. The eta scaling
+  originally also matched legacy (`eta·wsum_b/wsum_tot` per band) but that made the
+  damping shrink as bands were added (same data, more bands → ~eta/nband); with
+  legacy sara retired, eta was redefined as a fraction of the total wsum (maintainer
+  request, session pfb010). Single-band runs are numerically unchanged. Guard:
+  `tests/test_pfb_solver.py::test_build_hess_eta_is_fraction_of_total_wsum`.
 - **Consequences:** Feeding raw complex `PSFHAT` (or per-band wsums) into the Hessian
   produces garbage-scale or non-Hermitian operators — both happened during bring-up
   (e2e rdiff 8e7 before `daf94ab`).
@@ -101,11 +113,12 @@ update it (and this page's `last_verified_commit`) in the same session.
 ### D7 — `first()` is the preprocessing hook; `forward()` consumes its cache
 
 - **Context:** The legacy driver applied the beam to the residual in `first()`.
-- **Decision:** `DeconvSolver.first(residual)` caches (and may preprocess) the
-  residual; `forward(residual)`'s argument is Protocol-shape only and is NOT read —
-  calling `forward` before `first` raises RuntimeError.
-- **Rationale:** Keeps a seam for cube-level beam handling without smuggling it into
-  the forward solver.
+- **Decision:** `DeconvSolver.first(residual)` caches the residual;
+  `forward(residual)`'s argument is Protocol-shape only and is NOT read —
+  calling `forward` before `first` raises RuntimeError. Since D23 the driver
+  passes the **beam-attenuated gradient** (`BRESIDUAL/wsum`) to both.
+- **Rationale:** Keeps a seam for cube-level residual preprocessing without
+  smuggling it into the forward solver.
 - **Source:** `deconv/pfb.py::first/forward`;
   `tests/test_pfb_solver.py::test_forward_requires_first`; Copilot thread on PR #269.
 
@@ -219,7 +232,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** The existing Briggs normalisation inside `counts_to_weights` then
   operates on the smoothed counts, yielding "super-robust" for free when `robustness`
   is set alongside `npix_super`. No changes to the counting or weighting kernels.
-- **Source:** `utils/weighting.box_sum_counts`; `core/grid.py`; `tests/test_weighting.py`.
+- **Source:** `utils/weighting.box_sum_counts`; formerly `core/grid.py`, now
+  `utils/weighting` + `core/imager.py`; `tests/test_weighting.py`.
 
 ### D17 — weight_data closures hold only plain functions (numba cache safety)
 
@@ -311,10 +325,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   image-and-beam-orientation.md.
 - **Consequences:** Non-square images work. The refactor was verified
   output-equivalent against the pre-refactor code on the test MS (cube/psf to
-  single-precision threading noise ~1e-7; `psf_pa` bitwise). The legacy `.dds`
-  path and the `.dt` imager keep wgridder (X, Y) arrays — extending (Y, X)
-  canonicalisation there means an on-disk schema change; only worth it if the
-  schema is revised anyway. The zarr-beam branch
+  single-precision threading noise ~1e-7; `psf_pa` bitwise). The `.dt` imager
+  path has since followed (D20); only the legacy `.dds` reference code keeps
+  wgridder (X, Y) arrays. The zarr-beam branch
   (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
   question) is untouched, documented debt. Changing any transpose/flip on this
   path must keep `tests/test_beam_orientation.py` green.
@@ -324,6 +337,256 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
   `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
   landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
+
+
+### D20 — The imager+deconv (.dt) path is (Y, X)-ordered end to end
+
+- **Context:** #277 makes (Y, X) canonical everywhere when the legacy
+  subcommands are retired; the imager previously stored `.dt` image-space
+  arrays x-major with dims `("corr", "x", "y")` and the FITS layer axis-swapped
+  at write time.
+- **Decision:** All image-space arrays on the imager+deconv path are
+  `(..., ny, nx)` with `.dt` dims `("corr", "y", "x")` /
+  `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and the scratch
+  `BEAM` is `("corr", "y", "x")` on the output image grid (placed there in
+  pass 1; see D21). `nx`/`ny` keep meaning the X/RA and
+  Y/Dec pixel counts everywhere — only array-axis order changed. ducc's
+  x-major world exists only behind zero-copy `.T` views at the
+  `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided
+  arrays), `fitcleanbeam` is called with `yx_order=True`, and
+  `save_fits(yx_order=True)` writes without axis swaps. The `.mds` stays
+  x-major — that convention is now **owned by pfb-model-spec** (whose
+  `fit_image_cube`/`eval_coeffs_to_slice`/`model_to_ds` pfb-imaging imports since
+  #286); pfb-imaging transposes to/from x-major at the `model_to_ds` (deconv) and
+  `.mds`-read (degrid) call sites. A future `.mds` (Y, X) flip is a pfb-model-spec
+  spec revision (landmanbester/pfb-model-spec#17), not a pfb-imaging change.
+  uv-space grids (COUNTS, weighting) are untouched.
+- **Rationale:** Same as D19 — one canonical order shared with
+  FITS/astropy/reproject, auditable at explicit seams. Extending it to the
+  `.dt` was gated on an on-disk schema change, which the 0.1.0 breaking
+  release sanctions.
+- **Consequences:** **`.dt` stores written by ≤0.0.x must be regenerated**
+  (`pfb imager`) — release-notes line required. Old stores are not rejected on
+  open: `x`/`y`/`x_psf`/`y_psf` still exist as dim *names*, and every read is
+  positional, so without a guard a square-image pre-switch store would
+  deconvolve with silently transposed rasters (model/residual/update FITS
+  flipped about the diagonal). `core/deconv.py` therefore asserts
+  `first.DIRTY.dims == ("corr", "y", "x")` on open and raises loudly instead.
+  Verification method:
+  the ground-truth tests (WCS positions/fluxes, brute-force DFT oracle,
+  per-Stokes fluxes, deconv recovery — all written order-agnostically via WCS
+  and dims names *before* the switch) pass unchanged across it, and non-square
+  shapes are pinned in `tests/test_imager_pass2.py` and
+  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's
+  `nxmax`/`nymax` buffer conventions are crossed between the solvers
+  (`(..., nymax, nxmax)`) and the band workers (`(..., nxmax, nymax)`) — masked
+  by square images, pre-existing, unchanged by this switch.
+- **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py`
+  (ground truth + DFT oracle), `tests/test_imager_pol.py`,
+  `tests/test_deconv.py`; spec/plan of 2026-07-17 (ephemeral).
+
+
+### D21 — Mosaics rephase to a common tangent plane; --target is an in-plane offset
+
+- **Context:** On-the-fly mosaicing (#1, #281) needs multiple fields on one
+  grid. Ported from the abandoned `imager_rephase_and_interp_beam` branch
+  onto the (Y, X) imager.
+- **Decision:** Pass 1 rephases data+UVW to a common phase centre
+  (`--phase-dir`, defaulting to the field barycentre for multi-field
+  selections) BEFORE weighting/averaging/COUNTS, chgcentre-style
+  (w-difference phase rotation). Both old and new UVW are synthesized through
+  the same casacore-measures call and only the DIFFERENCE is applied — to the
+  phases and to the stored coordinates (`uvw + (uvw_new - uvw_old)`) — so the
+  measures-vs-MS earth-orientation systematic (~1e-5 relative, scaling with
+  baseline length) cancels instead of decorrelating off-axis sources (#280
+  remains open for a katpoint-based synthesis). `--target` shifts the image
+  centre within the tangent plane via the existing `center_x/center_y`
+  machinery; the off-centre PSF ramp is predicted adjoint-by-construction
+  (dirty2vis of a unit delta), and `set_wcs` carries the offset as a CRPIX
+  shift (CRVAL stays the tangent point — facet convention). **Beams are
+  computed and placed on the output image grid in pass 1** (#281): the
+  rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam`
+  for MeerKAT band names U/L/S0/S4 — signature kept stable so meerkat-beams
+  can grow weighted time/freq averaging underneath) is evaluated about the
+  FIELD's own pointing on a small grid, then SIN→SIN-reprojected onto the
+  mosaic grid (tangent + target CRPIX shift, zero outside coverage) per
+  piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as
+  is (no beam interpolation in `grid_partition` any more); pieces of a
+  partition share the field so the first piece's beam stands in — replace
+  with a weighted mean when time-dependent beams arrive. Verified on 3
+  MeerKLASS pointings: each partition's wizard beam peaks within half a
+  pixel of its field's predicted position in the 5600² mosaic frame.
+- **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13):
+  `synthesize_uvw` wants MJD seconds, MSv4 time is unix — `to_mjd_time` at
+  the single call site. (2) **Frames about different tangent points are
+  mutually rotated** by ~dra*sin(dec) to first order: a full-field pixel-wise
+  round-trip comparison CANNOT converge (0.14 px displacement at a 0.5 deg
+  radius for a 4 arcmin RA offset at dec 30). The old branch died
+  misdiagnosing this as an "RA-axis geometry bug"; measured central-box floor
+  is ~2e-4 of the dirty peak, i.e. the rephasing itself is numerically sound.
+  Round-trip tests must compare the central box and WCS-mapped source
+  positions, never full-field pixels.
+- **Consequences:** `.dt` attrs: band/partition `ra/dec` = tangent point,
+  `ra0/dec0` = the field's own pointing (kept for the #281 beam
+  reprojection), `l0/m0` = target offset. Deconv consumers are unchanged
+  (HessianTree/residual_from_partitions read the stored beams and l0/m0
+  attrs). Acceptance on real data: `scripts/meerklass_mosaic.py
+  --expect-aligned` (3 MeerKLASS OTF pointings; ghosts at the pre-rephasing
+  positions collapse to ~1% of source; true positions carry the PB-weighted
+  average flux — full mosaic gain needs the #281 beam weighting).
+- **Source:** commit 502fe90 (port; original work 7dcc892/649c0ce/9bc16cc/
+  ef9ae6e on the abandoned branch); `tests/test_imager.py`
+  (rephase round-trip + stokes_vis rephase unit), `tests/test_coords.py`.
+
+
+### D22 — The wgridder n-term is folded into the stored BEAM; divide_by_n stays False
+
+- **Context:** The measurement equation carries a geometric 1/n(l,m) Jacobian
+  (n = sqrt(1−l²−m²)) relative to the phase centre. It was historically
+  ignored on this path (`divide_by_n=False` everywhere), biasing the
+  deconvolved model by n (~0.2% at a 5° fov edge, ~1.5% at 10°) — relevant
+  for wide UHF mosaics. Post-D21 rephasing all partitions share one phase
+  centre, so n is a single well-defined function on the common grid.
+- **Decision:** Pass 1 stores the **effective image-plane response**
+  `BEAM = B/n` (including `1/n` when no aperture beam model is set), computed
+  on exactly ducc's pixel coordinates (absolute w.r.t. the phase centre,
+  `--target` offset included). Every ducc call on the imager+deconv path
+  keeps `divide_by_n=False`. Pieces/partitions carry `beam_includes_n: True`.
+- **Rationale** (measured; pinned by `tests/test_hessian_nterm.py`):
+  1. **It is exact, not an approximation:** under `do_wgridding=True`, ducc's
+     `divide_by_n=True` is precisely `diag(1/n)` on either side (verified
+     2e-14), so `diag(B/n)·GᵀWG·diag(B/n)` with `divide_by_n=False` is the
+     *identical* physical operator to flipping the flag with beam B.
+  2. **It is the optimal Hessian approximation:** `HessianTree` applies
+     `B̃ᵀ(PSF ⊛ B̃x)` — with `B̃ = B/n` the diagonal n-factors ride in the beam
+     slots and are captured exactly; the folded operator matches the pure
+     PSF-convolution baseline to 4 significant digits. Flipping
+     `divide_by_n=True` instead buries an image-plane 1/n envelope inside the
+     gridded PSF, which a convolution cannot represent: measured 4–25% worse,
+     growing with fov.
+  3. **It is trap-immune:** ducc's `divide_by_n` silently no-ops when
+     `do_wgridding=False`; the fold divides explicitly, so behaviour is
+     independent of the wgridding flag.
+- **Consequences:** the deconvolved MODEL is in **intrinsic** flux (the
+  legacy "reconstructs I/n, multiply by n afterwards" correction is gone —
+  `tests/test_deconv.py::test_deconv_groundtruth` asserts intrinsic
+  recovery). DIRTY/RESIDUAL are unchanged (no beam or n is ever applied on
+  the imaging side). **Consumers must not treat the stored BEAM as the bare
+  primary beam** — a future PB-corrected quicklook must use B = BEAM·n, or
+  check `beam_includes_n`. `degrid`/`comps2vis` predates beams entirely and
+  still predicts unattenuated model vis (pre-existing limitation, unchanged).
+  Known residual approximation errors in the PSF-convolution Hessian, now
+  documented: the w-term, the `abs(PSFHAT)` rectification (Hermitian-
+  positivity for CG) — both far larger than the n-term at any fov, sub-
+  percent for realistic decaying PSFs — and **PSF truncation** (see below).
+- **PSF truncation vs preconditioner rate/stability (issue #287).**
+  `nx_psf = good_size(psf_oversize·nx)` (`utils/misc.py`), default
+  `psf_oversize=1.4`, i.e. the shipped PSF is **not** the `2·nx` that makes the
+  periodic convolution aliasing-exact — the default is already truncated.
+  Truncation degrades **only the preconditioner** (the gradient is exact
+  degrid/grid, D23), so it changes convergence rate/stability, never the fixed
+  point. Measured (coplanar, isolating truncation; issue #287 has the table):
+  the exact-Hessian solution is recovered to ~1e-13 for every `psf_oversize ∈
+  [1, 2]`; κ(M⁻¹H) grows ~5.5 (2×) → ~8 (1.4× default) → ~50 (1×); and once
+  `λmax(M⁻¹H) > 2/γ ≈ 2.1` the driver's **fixed** `gamma=0.95` outer step
+  diverges (measured at `psf_oversize ≲ 1.25`). The default 1.4× is stable but
+  ~1.5× slower than an exact 2× PSF. Lowering `psf_oversize` for memory can
+  silently cross into instability — a step-size guard is proposed in #287.
+- **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy
+  study); `tests/test_preconditioner_consistency.py` (fixed-point invariance;
+  issue #287); `utils/stokes2vis_msv4.py` beam block; user-reported
+  `divide_by_n`/`do_wgridding` trap.
+
+### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
+
+- **Context:** The data-term gradient of `½‖V − G(B·x)‖²_W` is
+  `Σ_p B_p·GᵀW(V_p − G(B_p·x))` — it carries an **outer per-partition beam** the
+  apparent (once-attenuated) residual lacks. The Hessian applies the beam on both
+  sides (`H = B GᵀWG B`), so feeding it the apparent residual makes the update
+  over-correct by ~`1/B` where the beam rolls off. Legacy sara did
+  `residual *= beam` right before the preconditioner solve; the gendeconv rewrite
+  reduced `first()` to cache-only and silently lost it (maintainer-spotted; the
+  ground-truth tests run beam≈1/n and could not see it).
+- **Decision:** Two residual products, per band. The **apparent** residual
+  `Σ_p r_p` remains the user-facing one (FITS, λ/rms schedule, `RESIDUAL`).
+  The **gradient** residual `BRESIDUAL = Σ_p B_p·r_p` is what
+  `first()`/`forward()` consume. Because it is not derivable from the apparent
+  sum when partitions carry distinct beams (mosaics), pass 2 stores
+  `BDIRTY = Σ_p B_p·dirty_p` (the model-free term) and
+  `residual_from_partitions(..., bdirty=…)` accumulates both residuals in one
+  sweep; deconv writes `BRESIDUAL` back for resume.
+- **Rationale:** Exact per-partition attenuation (not a band-average
+  approximation) at negligible cost — pass 2 has each `dirty_p` in memory and the
+  residual loop already visits every partition. λ/rms stay on the apparent
+  residual, matching legacy (rms was computed before `residual *= beam`).
+- **Consequences:** `.dt` trees without `BDIRTY` are refused ("re-run pfb
+  imager"); resuming a deconv started before this change needs a restart
+  (`MODEL` without `BRESIDUAL` is refused). Debug aid: `pfb deconv
+  --fits-per-partition` writes per-partition dirty/residual/apparent-model FITS
+  (re-gridded from the stored `VIS` worker-side, chi2 stats in the headers) to
+  localise mosaic misfits to specific partitions; `--debug` additionally logs
+  per-partition vis-space chi2 every major iteration and writes the chi2
+  trajectories plus baseline-binned residual profiles to
+  `<fits_oname>_<suffix>_debug.json`. Guards:
+  `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
+  `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
+  per-partition beams), `test_deconv_requires_bdirty`;
+  `tests/test_preconditioner_consistency.py` (with `rmsfactor=0`/`positivity=0`
+  the preconditioned cycle's fixed point is the exact-Hessian solution — an
+  apparent-vs-beam-attenuated gradient bias would move it, plus an e2e
+  noise-floor smoke).
+- **Source:** legacy `core/sara.py:280` (`residual *= beam`, 7eb3f1d~1);
+  `operators/gridder.residual_from_partitions`; `core/imager._grid_image`;
+  `core/deconv.py`; `deconv/pfb.py::first`.
+
+
+### D24 — hci transient injection: fringe sign, differential rephasing, 1/n
+
+- **Context:** `pfb hci --inject-transients` adds analytic point-source
+  transients into the visibilities before imaging
+  (`utils/stokes2im.stokes_image`). The source is built in the ORIGINAL
+  (field-centre) frame at the MS uvw — so a per-field beam can be applied
+  there — then carried to the rephased frame when `--phase-dir` is set. Three
+  separate convention traps live in that ~15-line block; each mis-places or
+  mis-scales injected sources and none is caught by imaging real data. The sign
+  trap drove a "localisation error grows with distance from the phase centre"
+  report (breifast#263).
+- **Decision:** (1) **Fringe sign.** The data is rephased by
+  `exp(+freqfactor·w_diff)` (`freqfactor = -2πi·f/c`); the injected fringe is
+  applied as `exp(-freqfactor·phase)`, so `w_diff` must enter the injection
+  phase with a **minus** (`phase = -w_diff`) to carry the source with the *same*
+  rotation the data got. `+w_diff` leaves the source **coherent** but displaced
+  by a constant `-2·(field→tangent)` translation (a whole-image shift, not
+  decorrelation). In a mosaic each field then shifts by 2× its offset from the
+  common tangent, so the error grows with distance from centre — the #263
+  signature. (2) **Differential rephasing** (mirror D21 / #280): synthesize BOTH
+  the old and new uvw through the same `synthesize_uvw` call and apply only the
+  difference — `w_diff = w_new − w_ref`, `uvw = uvw + (uvw_new − uvw_ref)` — while
+  the injection's `uvw_old` stays the **MS's own** uvw. hci previously diffed the
+  synthesized new-centre w against the MS's *recorded* w and replaced uvw
+  wholesale (`uvw = uvw_new`), leaking the measures-vs-MS earth-orientation
+  systematic (~1e-5 of the baseline length, scaling with it) into both the phase
+  and the sampling. (3) **1/n.** The RIME point-source visibility is
+  `I/n·fringe`; injection now scales `dspec /= n0t` (`n0t = √(1−l²−m²)`, a
+  per-source scalar; imaging is `divide_by_n=True`). Amplitude-only — small
+  on-axis, growing towards the field edge / at low declination.
+- **Rationale:** With no rephasing the injection already lands on the correct
+  pixel *and* the cube's `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the
+  injected `(ra, dec)` to <0.2 px out to 0.5° (guard test) — so the sign and
+  differential errors were rephasing-only, and a *constant* −2× shift is the
+  fingerprint of the rephasing phase applied with the wrong sign. The
+  differential is the same measures-vs-MS reasoning as D21.
+- **Consequences:** Only the `--phase-dir`/mosaic path changed placement;
+  single-field runs are numerically unchanged apart from the ~n amplitude
+  correction. **Corollary for downstream debugging:** if a consumer (e.g.
+  breifast) still reports offset transients on a genuinely *single-field* run,
+  the error is downstream (region/WCS handling) or in the MS's own UVW — not in
+  this injection. Guards:
+  `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` (radial
+  distance sweep, pixel + SIN-WCS→radec) and
+  `::test_hci_inject_transients_rephased` (lands ~90 px off before the sign fix).
+- **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa
+  (differential); `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
 
 ## Known debt
 
@@ -356,6 +619,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
   psi=analysis)`. Read call sites, not names.
 - **`pcg_numba` mutates `x0` in place** (returns the same buffer).
+- **`psf_oversize` truncates the preconditioner PSF** (`nx_psf =
+  good_size(psf_oversize·nx)`, default 1.4, not 2). It only affects the
+  preconditioner rate/stability, never the fixed point (D22, issue #287), but a
+  *low* value inflates `λmax(M⁻¹H)` past `2/γ` and the fixed-`gamma` outer step
+  **diverges** (the `diverge_count` terminator fires only after the fact). A
+  `gamma=1` / low-`psf_oversize` divergence is a preconditioner-conditioning
+  symptom, not a bug in the operator.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests

@@ -5,7 +5,7 @@ cabs:
     name: imager
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
+    image: ghcr.io/ratt-ru/pfb-imaging:imager-rephase-and-reproject
     inputs:
       ms:
         info:
@@ -166,10 +166,26 @@ cabs:
       beam-model:
         info:
           Beam model to use.
-          Only katbeam currently supported.
+          Either katbeam or a MeerKAT band name.
+          One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
+      phase-dir:
+        info:
+          Rephase visibilities to this phase center.
+          Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter).
+          Defaults to the barycentre of the selected fields when more than one field is selected.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
+      target:
+        info:
+          Predefined celestial objects known to astropy.
+          Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
       chan-average:
         info:
           Average this number if channels together
@@ -346,6 +362,31 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Output
+      psf:
+        info:
+          Compute the PSF data products.
+          Switch off for a quicklook dirty image that skips the PSF gridding.
+          A tree written without the PSF cannot be deconvolved.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      beam:
+        info:
+          Write FITS images of the effective beam.
+          The beam is always stored in the DataTree regardless of this flag.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Output
+      fits-per-partition:
+        info:
+          Write FITS images for each data partition into a partitions subdirectory.
+          Useful to sanity check field and beam orientations.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Output
       fits-output-folder:
         info:
           Directory to write FITS files to.
@@ -378,10 +419,20 @@ cabs:
         dtype: Directory
         info:
           Implicit output ensuring the numba cache location is mounted.
-          The cache defaults to a per-user directory under the system temp directory.
+          The cache defaults to a per-user directory under /tmp.
           Override it by setting the NUMBA_CACHE_DIR environment variable.
-        implicit: '/tmp/numba'
+        implicit: '/tmp/numba-cache'
         must_exist: false
         mkdir: false
+        path_policies:
+          write_parent: true
+      beam-cache-dir:
+        dtype: Directory
+        info:
+          Implicit output ensuring the beam cache location is mounted.
+          The cache defaults to a per-user directory under /tmp.
+          Override it by setting the MBEAMS_CACHE_DIR environment variable.
+        implicit: '/tmp/mbeams-cache'
+        must_exist: false
         path_policies:
           write_parent: true

@@ -1,3 +1,11 @@
+"""Restore clean components onto residuals (legacy .dds consumer).
+
+NOTE: kept as reference code only -- its .dds inputs can no longer be
+produced in-repo since init+grid were retired (#277); the functionality
+moves into `deconv` eventually. No test coverage: do not extend without
+tests.
+"""
+
 import time
 
 import numpy as np

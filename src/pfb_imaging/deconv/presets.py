@@ -33,14 +33,17 @@ def _build_hess(partitions_per_band, geometry, opts, workers=None, wsums=None):
     else:
         wsum_b = np.asarray(wsums, dtype=float)
     wsum_tot = wsum_b.sum()
-    etas = opts["eta"] * wsum_b / wsum_tot
+    # --eta is a fraction of the TOTAL wsum: the band operators are normalised
+    # by wsum_tot, so the Tikhonov term is a uniform +eta*x on every band
+    # (eta*wsum_tot in raw units), invariant to how the data is split into
+    # bands. Replaces the legacy-matching eta*wsum_b/wsum_tot (wiki D4).
     return HessTreeRay(
         partitions_per_band,
         geometry["nx"],
         geometry["ny"],
         geometry["nx_psf"],
         geometry["ny_psf"],
-        etas=etas,
+        etas=opts["eta"],
         nthreads=opts["nthreads"],
         wsums=wsum_tot,
         cg_tol=opts["cg_tol"],
@@ -127,7 +130,8 @@ def make_ista(partitions_per_band, geometry, model, update, opts, workers=None, 
     if partitions_per_band is None and workers is None:
         raise ValueError("partitions_per_band=None requires a workers pool with loaded bands")
     nband = workers.nband if partitions_per_band is None else len(partitions_per_band)
-    reg = L1(IdentityPsi(nband, geometry["nx"], geometry["ny"]))
+    # (Y, X) raster order: IdentityPsi buffer axes follow the image axes
+    reg = L1(IdentityPsi(nband, geometry["ny"], geometry["nx"]))
     hess = _build_hess(partitions_per_band, geometry, opts, workers=workers, wsums=wsums)
     fwd = PCG(
         tol=opts["cg_tol"], maxit=opts["cg_maxit"], verbosity=opts["cg_verbose"], report_freq=opts["cg_report_freq"]

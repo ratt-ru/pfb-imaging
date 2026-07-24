@@ -7,7 +7,6 @@ from ducc0.fft import c2r, r2c
 from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
-from pfb_imaging.operators.psf import psf_convolve_cube
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -41,8 +40,8 @@ def hessian_slice(
     conventions defined in pfb.operators.gridder.wgridder_conventions
 
     These are inputs here to allow for testing but should generally be taken
-    from the attrs of the datasets produced by
-    pfb.operators.gridder.image_data_products
+    from the attrs produced by pfb.operators.gridder.wgridder_conventions /
+    pfb.operators.gridder.grid_partition
     """
     if not x.any():
         return np.zeros_like(x)
@@ -140,73 +139,6 @@ def hessian_psf_slice(
     if eta:
         xout += x * eta
 
-    return xout
-
-
-def hessian_psf_cube(
-    xpad,  # preallocated array to store padded image
-    xhat,  # preallocated array to store FTd image
-    xout,  # preallocated array to store output image
-    beam,
-    abspsf,
-    lastsize,
-    x,  # input image, not overwritten
-    nthreads=1,
-    eta=1,
-    mode="forward",
-):
-    """
-    Tikhonov regularised Hessian approx
-    """
-    if mode == "forward":
-        if beam is not None:
-            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x * beam, nthreads=nthreads)
-        else:
-            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x, nthreads=nthreads)
-
-        if beam is not None:
-            xout *= beam
-
-        if eta:
-            xout += x * eta
-
-        return xout
-    else:
-        raise NotImplementedError
-
-
-def hess_direct(
-    x,  # input image, not overwritten
-    xpad=None,  # preallocated array to store padded image
-    xhat=None,  # preallocated array to store FTd image
-    xout=None,  # preallocated array to store output image
-    abspsf=None,
-    taperxy=None,
-    lastsize=None,
-    nthreads=1,
-    eta=1,
-    mode="forward",
-):
-    nband, nx, ny = x.shape
-    xpad.fill(0.0)
-    xpad[:, 0:nx, 0:ny] = x * taperxy[None]
-    r2c(xpad, out=xhat, axes=(1, 2), forward=True, inorm=0, nthreads=nthreads)
-    if mode == "forward":
-        xhat *= abspsf + eta
-    else:
-        xhat /= abspsf + eta
-    c2r(
-        xhat,
-        axes=(1, 2),
-        forward=False,
-        out=xpad,
-        lastsize=lastsize,
-        inorm=2,
-        nthreads=nthreads,
-        allow_overwriting_input=True,
-    )
-    np.copyto(xout, xpad[:, 0:nx, 0:ny])
-    xout *= taperxy[None]
     return xout
 
 
@@ -447,11 +379,16 @@ class HessianTree(object):
     per-major-cycle gradient), not here.
 
     Args:
-        partitions: list of per-partition dicts with ``psfhat`` ``(corr, nx_psf, nyo2)``,
-            ``beam`` ``(corr, nx, ny)`` and ``wsum`` ``(corr,)``.
+        partitions: list of per-partition dicts with ``psfhat`` ``(corr, ny_psf, nxo2)``,
+            ``beam`` ``(corr, ny, nx)`` and ``wsum`` ``(corr,)``. Image-space
+            arrays are (Y, X)-ordered (wiki D19); ``nx``/``ny`` keep meaning
+            the X/Y pixel counts.
         nx, ny: image dimensions.
         nx_psf, ny_psf: PSF dimensions (``ny_psf`` is the real-FFT last size).
-        eta: Tikhonov parameter.
+        eta: additive Tikhonov coefficient on the wsum-normalised operator.
+            The deconv CLI's ``--eta`` (a fraction of the total wsum) passes
+            through unscaled because the operator is normalised by the total
+            wsum (``eta*wsum_tot`` in raw units; wiki D4).
         nthreads: FFT threads.
         wsum: optional normalisation override (defaults to the sum of
             per-partition ``wsum``). A ``HessTreeRay`` band actor passes the
@@ -481,16 +418,16 @@ class HessianTree(object):
         # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
         # iterations does not reallocate each dot(); safe because actor calls are
         # single-threaded (matches HessPSF)
-        self.xpad = empty_noncritical((self.nx_psf, self.ny_psf), dtype="f8")
-        self.xhat = empty_noncritical((self.nx_psf, self.ny_psf // 2 + 1), dtype="c16")
+        self.xpad = empty_noncritical((self.ny_psf, self.nx_psf), dtype="f8")
+        self.xhat = empty_noncritical((self.ny_psf, self.nx_psf // 2 + 1), dtype="c16")
 
     def dot(self, x):
         # leading axis is the correlation axis (HessianTree acts per output image;
         # the band/time axis is distributed by Ray, not carried here)
         xtmp = x if x.ndim == 3 else x[None, :, :]
-        ncorr, nx, ny = xtmp.shape
+        ncorr, ny, nx = xtmp.shape
         assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
-        assert nx == self.nx and ny == self.ny
+        assert ny == self.ny and nx == self.nx
         out = np.zeros_like(xtmp)
         xpad = self.xpad
         xhat = self.xhat
@@ -499,7 +436,7 @@ class HessianTree(object):
             psfhat = p["psfhat"]
             for c in range(self.ncorr):
                 xpad.fill(0.0)
-                xpad[0:nx, 0:ny] = xtmp[c] * beam[c]
+                xpad[0:ny, 0:nx] = xtmp[c] * beam[c]
                 r2c(xpad, axes=(0, 1), nthreads=self.nthreads, forward=True, inorm=0, out=xhat)
                 xhat *= psfhat[c]
                 c2r(
@@ -507,12 +444,13 @@ class HessianTree(object):
                     axes=(0, 1),
                     forward=False,
                     out=xpad,
-                    lastsize=self.ny_psf,
+                    # last (real-FFT) axis is x in (Y, X) order
+                    lastsize=self.nx_psf,
                     inorm=2,
                     nthreads=self.nthreads,
                     allow_overwriting_input=True,
                 )
-                out[c] += beam[c] * xpad[0:nx, 0:ny]
+                out[c] += beam[c] * xpad[0:ny, 0:nx]
         out /= self.wsum[:, None, None]
         out += self.eta * xtmp
         return out
@@ -621,31 +559,3 @@ def hessian_slice_jax(nx, ny, nx_psf, ny_psf, eta, psfhat, x):
     xhat = jnp.fft.rfft2(x, s=(nx_psf, ny_psf), norm="backward")
     xout = jnp.fft.irfft2(xhat * psfh, s=(nx_psf, ny_psf), norm="backward")[0:nx, 0:ny]
     return xout + eta * x
-
-
-@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def hessian_jax(nx, ny, nx_psf, ny_psf, eta, psfhat, x):
-    psfh = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x, s=(nx_psf, ny_psf), norm="backward")
-    xout = jnp.fft.irfft2(xhat * psfh, s=(nx_psf, ny_psf), norm="backward")[:, 0:nx, 0:ny]
-    return xout + eta * x
-
-
-@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def fshessian_jax(nx, ny, nx_psf, ny_psf, eta, mask, psfhat, x):
-    """
-    Assumes both x and psfhat is a 4D cube with the last two dimensions
-    corresponding to spatial dimensions along which FFT us taken.
-
-    nx, ny          - int: npix in two spatial coordinates
-    nx_psf, ny_psf  - int: npix in two spatial coordinates of psf
-    eta             - float: regularisation parameter
-    mask            - ndarray(nx, ny): spatial mask
-    psfhat          - ndarray(nband, ncorr, nx, ny): psf in uv space
-    x               - ndarray(nband, ncorr, nx, ny): image
-    """
-    mask = jax.lax.stop_gradient(mask)[None, None, :, :]
-    psfhat = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x * mask, s=(nx_psf, ny_psf), norm="backward")
-    xout = jnp.fft.irfft2(xhat * psfhat, s=(nx_psf, ny_psf), norm="backward")[:, :, 0:nx, 0:ny]
-    return xout * mask + eta * x

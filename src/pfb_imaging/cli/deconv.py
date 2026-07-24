@@ -102,6 +102,24 @@ def deconv(
             rich_help_panel="Fits",
         ),
     ] = True,
+    fits_per_partition: Annotated[
+        bool,
+        typer.Option(
+            help="Write per-partition dirty, residual and apparent model FITS at the end of the run. "
+            "Headers carry the vis-space chi squared per partition. "
+            "Useful to localise mosaic misfits to specific data partitions.",
+            rich_help_panel="Fits",
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            help="Collect extra per-partition diagnostics. "
+            "Logs the vis-space chi squared per partition at every major iteration. "
+            "Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.",
+            rich_help_panel="Reporting",
+        ),
+    ] = False,
     minor_cycle: Annotated[
         Literal["sara", "ista"],
         typer.Option(
@@ -164,10 +182,12 @@ def deconv(
     eta: Annotated[
         float,
         typer.Option(
-            help="Will use eta*wsum to regularise the inversion of the Hessian approximation.",
+            help="Tikhonov regularisation for the inversion of the Hessian approximation. "
+            "Interpreted as a fraction of the total sum of imaging weights. "
+            "The effective damping is eta times the total wsum regardless of band count.",
             rich_help_panel="PFB",
         ),
-    ] = 1.0,
+    ] = 0.001,
     gamma: Annotated[
         float,
         typer.Option(
@@ -467,6 +487,8 @@ def deconv(
                     product=product,
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
+                    fits_per_partition=fits_per_partition,
+                    debug=debug,
                     minor_cycle=minor_cycle,
                     opt_backend=opt_backend,
                     bases=bases,
@@ -523,6 +545,8 @@ def deconv(
                 product=product,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                fits_per_partition=fits_per_partition,
+                debug=debug,
                 minor_cycle=minor_cycle,
                 opt_backend=opt_backend,
                 bases=bases,
@@ -588,6 +612,8 @@ def deconv(
             product=product,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            fits_per_partition=fits_per_partition,
+            debug=debug,
             minor_cycle=minor_cycle,
             opt_backend=opt_backend,
             bases=bases,

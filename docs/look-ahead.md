@@ -10,27 +10,14 @@ landed on the `imager` branch. See `.claude/rules/architecture.md §8` and
 
 ---
 
-## 1. Test data carries no signal (highest priority)
+## 1. Test data carries no signal — DONE (0.1.0, #277)
 
-The shared test MS downloaded from Google Drive has an **all-zero `DATA`
-column**. Locally-cached older copies still have visibilities, which is why the
-suite passes locally but the imager↔init+grid equivalence test was vacuous on
-CI (both images zero). It is currently divide-by-zero-safe but only checks that
-the two paths *agree* and run end to end — see the `FIXME` in
-`tests/test_imager.py::test_imager_matches_init_grid_single_field`.
-
-**To make it meaningful everywhere:**
-- Populate `DATA` with a deterministic model (predict point sources with ducc0
-  `dirty2vis`, as `test_kclean`/`test_sara` already do), ideally once per session
-  in `conftest.py`.
-- As of arcae 0.5.2 (ratt-ru/arcae#211, #212) casacore (daskms) and arcae coexist in one
-  process, so the populate step can write the MS via daskms/casacore directly in the
-  `test_imager.py` process — no subprocess isolation needed.
-- While doing this, **fully flag one band** as a realistic baseline (RFI). This
-  is already handled gracefully end to end (the band is dropped — no node, no
-  Ray task, no NaN; verified for edge and interior bands), so it mainly buys
-  coverage. Note it drops the suite-wide band count (e.g. 4 → 3); audit the
-  MSv2 tests that may assume a fixed band count before flipping it on globally.
+The shared test MS used to have an all-zero `DATA` column, which made the old
+imager↔init+grid equivalence test vacuous. Fixed by `tests/conftest.py::sky_truth`
+(seeded predicted-sky injection, ~10% flags, one fully flagged channel,
+consistent `FLAG_ROW`, module-scoped) feeding ground-truth recovery tests
+(`test_imager.py`, `test_imager_pol.py`, `test_deconv.py::test_deconv_groundtruth`)
+in place of the deleted equivalence test. See `docs/wiki/design-decisions.md` D2/D20.
 
 ## 2. Multi-correlation `wsum == 0` guards (before polarized imaging)
 
@@ -45,8 +32,9 @@ out=zeros)`; empty correlation → zero, **not** a hard `raise`):
 - `operators/hessian.py` — `HessianTree.dot` divides by `self.wsum`
 - `utils/fits.py` — `dt2fits` MFS and cube normalisation by `wsum`/`wsums`
 
-This needs a **fully-flagged-correlation test** to be meaningful, which ties
-into the data-population work in §1. (Copilot review #5/#6/#7/#9/#10.)
+This needs a **fully-flagged-correlation test** to be meaningful — still open;
+`sky_truth` (§1) covers a fully flagged channel but not a fully flagged
+correlation within a present band. (Copilot review #5/#6/#7/#9/#10.)
 
 ## 3. `robustness > 2` → natural short-circuit (consistency cleanup)
 
@@ -82,8 +70,6 @@ factor is reported, not absorbed into a tolerance.
 
 ## 6. Larger follow-ups (from the design review)
 
-- Wire the (not-yet-operational) `deconv`/`sara`/`kclean` consumers to read the
-  `.dt` tree instead of the legacy `.dds`.
 - Make `HessianTree` a Ray actor so per-`(band,time)` partitions can be loaded
   once on a node and reused across minor-cycle iterations.
 - Baseline-group partitioning / per-antenna-pair Mueller beams for MeerKAT+

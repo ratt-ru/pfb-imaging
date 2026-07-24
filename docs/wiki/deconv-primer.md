@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-13T06:30:00Z
-last_verified_commit: 0964bd9
+timestamp: 2026-07-23T10:30:00Z
+last_verified_commit: 4dc305b
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -21,17 +21,24 @@ Hessian `H = Rᵀ W R` acts, to good approximation, as convolution by the PSF. `
 minimises `½‖V − Rx‖²_W + λ R(x)` with a preconditioned forward-backward (PFB) major
 cycle (`core/deconv.py`):
 
-1. **first(residual)** — per-iteration preprocessing hook (currently caches the
-   residual; historically applied a cube-level beam). `forward()` consumes this cache,
-   NOT its own argument — calling `forward()` without `first()` raises.
-2. **forward** — `update ≈ H⁻¹ residual` by per-band conjugate gradients
-   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). This is the preconditioned gradient.
+1. **first(bresidual)** — per-iteration preprocessing hook; caches the
+   beam-attenuated gradient residual the driver passes (D23). `forward()` consumes
+   this cache, NOT its own argument — calling `forward()` without `first()` raises.
+2. **forward** — `update ≈ H⁻¹ bresidual` by per-band conjugate gradients
+   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). The rhs is the
+   **beam-attenuated gradient** `BRESIDUAL/wsum = Σ_p B_p·r_p / wsum` — the
+   Hessian applies the beam on both sides, so the data-term gradient carries an
+   outer per-partition beam (legacy sara's `residual *= beam`; D23). The
+   apparent residual never enters the solver.
 3. **backward** — `model = argmin_x ½γ⁻¹‖x − x̃‖²_H + λ R(x)` with
    `x̃ = model + γ·update`, solved by primal-dual or forward-backward against the grad
    closure `∇(x) = −H(x̃ − x)/γ` (`deconv/pfb.PFBSolver.forward` builds it).
 4. **exact residual** — degrid/grid of the model against the stored per-partition
    inputs (`operators/gridder.residual_from_partitions`), never a PSF convolution and
-   never recomputing the PSF.
+   never recomputing the PSF. One sweep returns both the apparent residual
+   (FITS, λ/rms, `RESIDUAL`) and the gradient residual (`BRESIDUAL`, next
+   iteration's forward rhs); the model-free term of the latter is the imager's
+   stored `BDIRTY = Σ_p B_p·dirty_p`.
 5. **last()** — arms/refreshes ℓ1 reweighting once past `l1_reweight_from`.
 
 **λ schedule:** `lam = rmsfactor · rms(residual_mfs)` each major iteration, with
@@ -40,6 +47,30 @@ cycle (`core/deconv.py`):
 which silently applied the factor to every iteration of a fresh run; fixed in `52d5fb1`.
 Old sara results predate that fix — expect its residuals to be *lower* at matched
 iteration count (it ran with λ effectively halved).
+
+**Preconditioner consistency (the λ=0 diagnostic).** The forward/backward split is a
+*preconditioned* scheme: the forward CG solves against the PSF-convolution `HessianTree`
+(the preconditioner M), while the gradient `bresidual` it consumes is the **exact**
+degrid/grid gradient (D23). So with `rmsfactor=0` and `positivity=0` the backward step is
+the identity and the major cycle collapses to preconditioned Richardson
+`m ← m + γ·M⁻¹(bdirty − H_exact·m)`, whose fixed point is the exact-Hessian solution
+`H_exact⁻¹·bdirty` — **independent of M** (the preconditioner sets only the convergence
+rate). Since `bdirty ∈ range(H_exact)` and, noiseless, the true sky solves the normal
+equations exactly, the image residual → 0 with **no floor above gridder epsilon** (the
+image space is under-determined, but that only makes the *model* non-unique, not the
+residual). Two consequences: (1) the residual keeps descending toward that floor iff the
+forward model is self-consistent — a *plateau* above it flags a beam/rephasing
+inconsistency; this is a forward-model diagnostic, not a regularisation one, and its rate
+is limited by the weakly-measured large-scale (short-baseline) modes; and (2) a *poor* M
+(the `abs(PSFHAT)` preconditioner underestimates curvature — off-axis, via the w-term, and
+via **PSF truncation**: `nx_psf = good_size(psf_oversize·nx)`, default 1.4 not 2, so the
+convolution is not aliasing-exact) needs `γ < 2/λmax(M⁻¹H_exact)`, which can drop below the
+driver's fixed `gamma=0.95`, so the unregularised diagnostic — or a low-`psf_oversize` run —
+may diverge at full step where a regularised run (prox stabilised) does not. Truncation
+degrades this rate/stability but **never the fixed point** (measured to ~1e-13 across
+`psf_oversize ∈ [1, 2]`; κ(M⁻¹H) ~5.5 at 2× → ~8 at the 1.4× default → ~50 at 1×). Guarded
+by `tests/test_preconditioner_consistency.py`; full table and codification proposals in
+issue #287 (D22).
 
 ## The SARA prior and the constants that matter
 
@@ -66,11 +97,15 @@ here), and Ψ is the concatenation of `nbasis` orthonormal bases (`self` + Daube
 All image-space products in the `.dt` are stored **raw** (un-normalised); normalisation
 by the TOTAL weight sum happens at the point of use. The pieces must agree:
 
-- `wsum_tot = Σ_bands Σ_partitions wsum_p`; `residual = RESIDUAL_raw / wsum_tot`.
+- `wsum_tot = Σ_bands Σ_partitions wsum_p`; `residual = RESIDUAL_raw / wsum_tot`;
+  `bresidual = BRESIDUAL_raw / wsum_tot` (the forward rhs; D23).
 - Each band's `HessianTree` gets `wsum=wsum_tot` as an explicit override (not its own
   band's sum) — `deconv/presets._build_hess`, mirroring legacy `abspsf /= wsum`.
-- Tikhonov: `eta_b = eta_cli · wsum_b / wsum_tot` per band (legacy `eta * wsums` with
-  normalised `wsums`).
+- Tikhonov: `--eta` is a **fraction of the total wsum** — on the total-wsum-normalised
+  band operators the term is a uniform `+eta·x` (raw units `eta·wsum_tot`), identical
+  for every band and invariant to how the data is split into bands. (The earlier
+  legacy-matching `eta_b = eta·wsum_b/wsum_tot` weakened the damping as band count
+  grew; retired with legacy sara — see D4.)
 - `HessianTree` consumes `abs(PSFHAT)`: the stored `PSFHAT` is the raw complex FFT of
   the PSF; without `abs()` the "Hessian" carries a phase, is not Hermitian-positive,
   and CG breaks. The `abs()` happens worker-side in
@@ -141,10 +176,12 @@ memory discipline: see `memory-and-ray.md`.
 
 ## Legacy code: oracles, not dead code
 
-`core/sara.py`, `core/kclean.py`, `opt.primal_dual.primal_dual{,_numba}`, `opt.pcg.pcg*`
-and `opt.fista.fista` are the validation oracles for the new framework (mirroring the
-`init`+`grid` → `imager` strategy) — **do not modify their behaviour**. Traps when
-reading them:
+`opt.primal_dual.primal_dual{,_numba}`, `opt.pcg.pcg_numba` and `opt.fista.fista` are
+the unit-level validation oracles for the new framework — **do not modify their
+behaviour**. (The e2e oracles `core/sara.py`/`core/kclean.py` were retired with the
+legacy pipeline in 0.1.0 (#277, D2); e2e correctness is now pinned by the ground-truth
+tests against an injected sky in `tests/test_imager*.py`/`tests/test_deconv.py`.)
+Traps when reading them:
 
 - Argument naming is inverted between the two PD implementations: in `primal_dual`,
   `psi` is SYNTHESIS (coeffs→image, allocating) and `psih` is ANALYSIS; in

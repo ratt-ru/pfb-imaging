@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
+    image: ghcr.io/ratt-ru/pfb-imaging:imager-rephase-and-reproject
     inputs:
       output-filename:
         info:
@@ -44,6 +44,24 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Fits
+      fits-per-partition:
+        info:
+          Write per-partition dirty, residual and apparent model FITS at the end of the run.
+          Headers carry the vis-space chi squared per partition.
+          Useful to localise mosaic misfits to specific data partitions.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Fits
+      debug:
+        info:
+          Collect extra per-partition diagnostics.
+          Logs the vis-space chi squared per partition at every major iteration.
+          Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Reporting
       minor-cycle:
         info:
           Which minor cycle algorithm to use.
@@ -112,9 +130,11 @@ cabs:
           rich_help_panel: PFB
       eta:
         info:
-          Will use eta*wsum to regularise the inversion of the Hessian approximation.
+          Tikhonov regularisation for the inversion of the Hessian approximation.
+          Interpreted as a fraction of the total sum of imaging weights.
+          The effective damping is eta times the total wsum regardless of band count.
         dtype: float
-        default: 1.0
+        default: 0.001
         metadata:
           rich_help_panel: PFB
       gamma:

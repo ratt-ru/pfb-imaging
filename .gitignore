@@ -124,3 +124,9 @@ src/pfb_imaging/deconv/fskclean.py
 src/pfb_imaging/cabs/pfb.yml
 tmp
 docs/superpowers/
+
+# stimela recipe-run artifacts (created in the working directory on `stimela run`)
+log-stimela.txt
+stimela.config.deps
+stimela.recipe.deps
+logs/

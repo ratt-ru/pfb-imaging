@@ -323,7 +323,24 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     contains only the injected transient. The transient is placed on an exact
     pixel centre by choosing integer (l, m) offsets and inverting the SIN
     projection, with natural weighting so the per-bin flux is analytic.
+
+    The analytic expectation assumes every sample participates, so clear any
+    persistent flags another test's fixture left in the shared MS (sky_truth
+    writes ~10% flags plus a dead channel, which shifts the per-bin
+    normalisation by ~0.1% and breaks the tight tolerances here).
     """
+    import dask
+    import dask.array as da
+    from daskms import xds_from_ms, xds_to_table
+
+    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    nrow_, nchan_, ncorr_ = xds0.FLAG.shape
+    xds0 = xds0.assign(
+        FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+
     out = str(tmp_path / "hci_transients.zarr")
 
     # --- geometry: must match what hci computes internally ---
@@ -421,6 +438,233 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     peak = float(expected_ft.max())
 
     assert_allclose(src, expected_ft, rtol=1e-2, atol=1e-2 * peak)
+
+
+def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
+    """Injected sources stay at their true sky coordinate out to the field edge.
+
+    Reproduces the controlled experiment in ratt-ru/breifast#263 (sources placed
+    radially at increasing angular distance from the phase centre, all other
+    parameters fixed) on the small test MS, single field / no rephasing.
+
+    For each source we check two things through the *cube's own SIN WCS* (the
+    same header breifast reads), so the test catches both a pixel-placement
+    error and a coordinate-labelling error, and would expose either one growing
+    with distance:
+
+    1. the recovered peak lands on the predicted pixel, and
+    2. that pixel maps back (via the RA---SIN/DEC--SIN WCS) to the injected
+       ``(ra, dec)`` on the sphere, to well under a pixel.
+
+    The base visibilities are zeroed (``DATA-DATA``) so only the injected
+    sources are imaged, and any stale flags in the shared MS are cleared so the
+    per-sample analytic expectation holds.
+    """
+    import dask
+    import dask.array as da
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    from daskms import xds_from_ms, xds_to_table
+
+    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    nrow_, nchan_, ncorr_ = xds0.FLAG.shape
+    xds0 = xds0.assign(
+        FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+
+    out = str(tmp_path / "hci_location.zarr")
+
+    # wide field so the sources span a real range of angular distances
+    fov = 1.0
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, fov, 2.0)
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    # sources on a diagonal ray at increasing distance from the phase centre,
+    # each on an exact pixel centre (integer (l, m) offsets -> exact SIN radec).
+    offsets = [(20, 15), (60, 45), (100, 75), (140, 105), (170, 128)]
+    injected = []  # (di, dj, ra_rad, dec_rad)
+    transients = []
+    for k, (di, dj) in enumerate(offsets):
+        ra, dec = _lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)
+        injected.append((di, dj, ra, dec))
+        transients.append(
+            {
+                "name": f"src{k}",
+                "time": {"peak_time": 1800.0, "duration": 3000.0, "shape": "gaussian"},
+                "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": 0.0},
+                "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+            }
+        )
+    config_path = tmp_path / "transients_location.yaml"
+    with open(config_path, "w") as f:
+        yaml.safe_dump({"transients": transients}, f)
+
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        data_column="DATA-DATA",
+        inject_transients=str(config_path),
+        channels_per_image=-1,
+        channels_per_bin=-1,
+        integrations_per_image=ms_meta.ntime,  # single time bin
+        images_per_chunk=1,
+        max_simul_chunks=1,
+        field_of_view=fov,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=None,
+        epsilon=1e-8,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    ds = xr.open_zarr(out)
+    img = ds.cube.values[0, 0, 0]  # (Y, X)
+
+    # rebuild the celestial WCS from the header hci stored in the cube attrs
+    hdr = fits.Header()
+    for key, val in ds.attrs["fits_header"]:
+        hdr[key] = val
+    wcs = WCS(hdr).celestial
+
+    cell_deg = np.rad2deg(cell_rad)
+    for di, dj, ra_inj, dec_inj in injected:
+        ix_pred = nx // 2 - di
+        iy_pred = ny // 2 + dj
+        lo_y, lo_x = max(0, iy_pred - 6), max(0, ix_pred - 6)
+        win = img[lo_y : iy_pred + 7, lo_x : ix_pred + 7]
+        ly, lx = np.unravel_index(np.argmax(win), win.shape)
+        iy_f, ix_f = lo_y + ly, lo_x + lx
+
+        # 1. pixel placement
+        pix_err = np.hypot(ix_f - ix_pred, iy_f - iy_pred)
+        assert pix_err <= 1.0, f"source ({di},{dj}) landed {pix_err:.1f} px from prediction"
+
+        # 2. cube WCS at the recovered pixel must match the injected sky position
+        world = wcs.pixel_to_world(ix_f, iy_f)
+        injected_coord = SkyCoord(ra_inj * u.rad, dec_inj * u.rad, frame="fk5")
+        sep_arcsec = world.separation(injected_coord).to_value("arcsec")
+        # exact-pixel sources: the WCS should reproduce the injected radec to a
+        # small fraction of a pixel (cell ~ 8.8 arcsec here); 0.2 px is generous.
+        assert sep_arcsec <= 0.2 * cell_deg * 3600.0, (
+            f"source ({di},{dj}) at distance "
+            f"{np.hypot(di, dj) * cell_deg:.3f} deg: cube WCS position is "
+            f"{sep_arcsec:.2f} arcsec from the injected coordinate"
+        )
+
+
+def test_hci_inject_transients_rephased(ms_name, ms_meta, tmp_path):
+    """Injected sources land at their true position when the image is rephased.
+
+    Exercises the mosaic path (``--phase-dir`` set to a tangent point that
+    differs from the MS field centre). The transient is built in the original
+    frame and carried to the rephased frame with the chgcentre w-difference; a
+    sign error there displaced every injected source by a constant
+    ``-2 * (field -> tangent)`` translation, which in a real mosaic grows with
+    each field's distance from the common tangent (ratt-ru/breifast#263).
+
+    Sources are injected at increasing offsets *about the rephasing centre*, and
+    each must reappear at its predicted pixel there (the image is centred on the
+    rephasing centre). Before the fix the central source alone landed ~90 px
+    away; here we require sub-pixel accuracy at every offset.
+    """
+    import dask
+    import dask.array as da
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+    from daskms import xds_from_ms, xds_to_table
+
+    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    nrow_, nchan_, ncorr_ = xds0.FLAG.shape
+    xds0 = xds0.assign(
+        FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+
+    out = str(tmp_path / "hci_rephased.zarr")
+
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    # rephasing centre ~0.1 deg from the field centre so w_diff != 0; round-trip
+    # the phase-dir string through SkyCoord exactly as hci parses it so our
+    # predicted pixels use the same centre the workers do.
+    ra_c = ra0 + np.deg2rad(0.1) / np.cos(dec0)
+    dec_c = dec0 + np.deg2rad(0.05)
+    cc = SkyCoord(ra_c * u.rad, dec_c * u.rad, frame="fk5")
+    phase_dir = f"{cc.ra.to_string(unit=u.hourangle, sep=':')},{cc.dec.to_string(unit=u.deg, sep=':')}"
+    c2 = SkyCoord(*phase_dir.split(","), frame="fk5", unit=(u.hourangle, u.deg))
+    ra_c = np.deg2rad(c2.ra.value)
+    dec_c = np.deg2rad(c2.dec.value)
+
+    offsets = [(0, 0), (-25, -18), (25, 18), (-30, 25)]
+    transients = []
+    for k, (di, dj) in enumerate(offsets):
+        ra, dec = _lm_to_radec(di * cell_rad, dj * cell_rad, ra_c, dec_c)
+        transients.append(
+            {
+                "name": f"src{k}",
+                "time": {"peak_time": 1800.0, "duration": 3000.0, "shape": "gaussian"},
+                "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": 0.0},
+                "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+            }
+        )
+    config_path = tmp_path / "transients_rephased.yaml"
+    with open(config_path, "w") as f:
+        yaml.safe_dump({"transients": transients}, f)
+
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        data_column="DATA-DATA",
+        inject_transients=str(config_path),
+        phase_dir=phase_dir,
+        channels_per_image=-1,
+        channels_per_bin=-1,
+        integrations_per_image=ms_meta.ntime,  # single time bin
+        images_per_chunk=1,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=None,
+        epsilon=1e-8,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    ds = xr.open_zarr(out)
+    assert ds.sizes["FREQ"] == 1
+    assert ds.sizes["TIME"] == 1
+    img = ds.cube.values[0, 0, 0]  # (Y, X)
+
+    for di, dj in offsets:
+        ix_pred = nx // 2 - di
+        iy_pred = ny // 2 + dj
+        lo_y, lo_x = max(0, iy_pred - 5), max(0, ix_pred - 5)
+        win = img[lo_y : iy_pred + 6, lo_x : ix_pred + 6]
+        ly, lx = np.unravel_index(np.argmax(win), win.shape)
+        iy_f, ix_f = lo_y + ly, lo_x + lx
+        err = np.hypot(ix_f - ix_pred, iy_f - iy_pred)
+        assert err <= 1.0, f"rephased source at offset ({di},{dj}) landed {err:.1f} px from prediction"
+        assert win.max() > 0.0, f"no flux recovered for rephased source at offset ({di},{dj})"
 
 
 @pmp("wgt_mode", ("l2", "minvar"))

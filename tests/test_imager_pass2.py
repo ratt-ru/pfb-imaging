@@ -7,15 +7,19 @@ from pfb_imaging.operators.gridder import grid_partition, residual_from_partitio
 from pfb_imaging.utils.weighting import _compute_counts
 
 
-def _synth_partition(nrow=200, seed=0):
-    """A synthetic single-correlation partition with spread-out uvw."""
+def _synth_partition(nrow=200, seed=0, nx=16, ny=16):
+    """A synthetic single-correlation partition with spread-out uvw.
+
+    BEAM is on the output image grid (pass-1 placement, #281), so callers
+    must pass the same nx/ny to grid_partition.
+    """
     rng = np.random.default_rng(seed)
     uvw = rng.standard_normal((nrow, 3)) * 100.0
     freq = np.array([1.0e9])
     vis = rng.standard_normal((1, nrow, 1)) + 1j * rng.standard_normal((1, nrow, 1))
     wgt = np.abs(rng.standard_normal((1, nrow, 1))) + 0.1
     mask = np.ones((nrow, 1), dtype=np.uint8)
-    beam = np.ones((1, 3, 3))
+    beam = np.ones((1, ny, nx))
     return xr.Dataset(
         {
             "VIS": (("corr", "row", "chan"), vis),
@@ -23,23 +27,37 @@ def _synth_partition(nrow=200, seed=0):
             "MASK": (("row", "chan"), mask),
             "UVW": (("row", "three"), uvw),
             "FREQ": (("chan",), freq),
-            "BEAM": (("corr", "l_beam", "m_beam"), beam),
+            "BEAM": (("corr", "y", "x"), beam),
         },
-        coords={"corr": ["I"], "l_beam": np.array([-1.0, 0.0, 1.0]), "m_beam": np.array([-1.0, 0.0, 1.0])},
+        coords={"corr": ["I"]},
     )
 
 
 def test_grid_partition_shapes_and_wsum():
-    part = _synth_partition()
-    out = grid_partition(part, None, nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=None)
-    assert out["DIRTY"].shape == (1, 16, 16)
-    assert out["PSF"].shape == (1, 32, 32)
-    assert out["PSFHAT"].shape == (1, 32, 32 // 2 + 1)
-    assert out["BEAM"].shape == (1, 16, 16)
+    """Non-square on purpose: output arrays are (Y, X)-ordered (wiki D19)."""
+    part = _synth_partition(nx=16, ny=12)
+    out = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None)
+    assert out["DIRTY"].shape == (1, 12, 16)
+    assert out["PSF"].shape == (1, 24, 32)
+    assert out["PSFHAT"].shape == (1, 24, 32 // 2 + 1)
+    assert out["BEAM"].shape == (1, 12, 16)
     assert out["WSUM"].shape == (1,)
     expected = (part.WEIGHT.values[0] * part.MASK.values).sum()
     np.testing.assert_allclose(out["WSUM"][0], expected, rtol=1e-6)
     assert np.isfinite(out["DIRTY"]).all()
+
+
+def test_grid_partition_no_psf():
+    """do_psf=False skips the PSF products entirely but keeps DIRTY/BEAM/WSUM."""
+    part = _synth_partition(nx=16, ny=12)
+    out = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None, do_psf=False)
+    for k in ("PSF", "PSFHAT", "PSFPARSN"):
+        assert k not in out
+    for k in ("DIRTY", "BEAM", "WSUM", "WEIGHT"):
+        assert k in out
+    # DIRTY identical to the default path
+    ref = grid_partition(part, None, nx=16, ny=12, nx_psf=32, ny_psf=24, cell_rad=1.0e-6, robustness=None)
+    np.testing.assert_array_equal(out["DIRTY"], ref["DIRTY"])
 
 
 def test_grid_partition_row_additivity():
@@ -100,14 +118,14 @@ def _image_beam_partition(nx, ny, nrow=200, seed=0, beam_val=1.0, l0=0.0, m0=0.0
     freq = np.array([1.0e9])
     wgt = np.abs(rng.standard_normal((1, nrow, 1))) + 0.1
     mask = np.ones((nrow, 1), dtype=np.uint8)
-    beam = np.full((1, nx, ny), float(beam_val))
+    beam = np.full((1, ny, nx), float(beam_val))
     return xr.Dataset(
         {
             "WEIGHT": (("corr", "row", "chan"), wgt),
             "MASK": (("row", "chan"), mask),
             "UVW": (("row", "three"), uvw),
             "FREQ": (("chan",), freq),
-            "BEAM": (("corr", "x", "y"), beam),
+            "BEAM": (("corr", "y", "x"), beam),
         },
         coords={"corr": ["I"]},
         attrs={"l0": l0, "m0": m0},
@@ -115,10 +133,10 @@ def _image_beam_partition(nx, ny, nrow=200, seed=0, beam_val=1.0, l0=0.0, m0=0.0
 
 
 def test_residual_zero_model_returns_dirty():
-    nx = ny = 16
+    nx, ny = 16, 12  # non-square: residual path is (Y, X)-ordered
     part = _image_beam_partition(nx, ny, seed=0)
-    dirty = np.random.default_rng(5).standard_normal((1, nx, ny))
-    model = np.zeros((1, nx, ny))
+    dirty = np.random.default_rng(5).standard_normal((1, ny, nx))
+    model = np.zeros((1, ny, nx))
     res = residual_from_partitions(dirty, [part], model, cell_rad=1.0e-6)
     np.testing.assert_allclose(res, dirty, atol=1e-12)
 
@@ -129,8 +147,8 @@ def test_residual_partition_additivity():
     p0 = _image_beam_partition(nx, ny, nrow=120, seed=0)
     p1 = _image_beam_partition(nx, ny, nrow=80, seed=1)
     rng = np.random.default_rng(7)
-    dirty = rng.standard_normal((1, nx, ny))
-    model = rng.standard_normal((1, nx, ny))
+    dirty = rng.standard_normal((1, ny, nx))
+    model = rng.standard_normal((1, ny, nx))
     c01 = dirty - residual_from_partitions(dirty, [p0, p1], model, 1.0e-6)
     c0 = dirty - residual_from_partitions(dirty, [p0], model, 1.0e-6)
     c1 = dirty - residual_from_partitions(dirty, [p1], model, 1.0e-6)
@@ -143,8 +161,38 @@ def test_residual_beam_applied_once():
     p1 = _image_beam_partition(nx, ny, seed=0, beam_val=1.0)
     p2 = _image_beam_partition(nx, ny, seed=0, beam_val=2.0)
     rng = np.random.default_rng(9)
-    dirty = np.zeros((1, nx, ny))
-    model = rng.standard_normal((1, nx, ny))
+    dirty = np.zeros((1, ny, nx))
+    model = rng.standard_normal((1, ny, nx))
     c1 = dirty - residual_from_partitions(dirty, [p1], model, 1.0e-6)
     c2 = dirty - residual_from_partitions(dirty, [p2], model, 1.0e-6)
     np.testing.assert_allclose(c2, 2.0 * c1, rtol=1e-5, atol=1e-8)
+
+
+def test_residual_gradient_beam_applied_twice():
+    """The gradient residual applies the partition beam again on the regrid
+    side: with a constant beam b the model term scales as b^2 (vs b for the
+    apparent residual), and with distinct per-partition beams the gradient is
+    the exact per-partition sum, not a band-average approximation."""
+    nx = ny = 16
+    rng = np.random.default_rng(11)
+    model = rng.standard_normal((1, ny, nx))
+    zero = np.zeros((1, ny, nx))
+    p1 = _image_beam_partition(nx, ny, seed=0, beam_val=1.0)
+    p2 = _image_beam_partition(nx, ny, seed=0, beam_val=2.0)
+
+    # constant beam: apparent model term ~ b, gradient model term ~ b^2
+    r1, g1 = residual_from_partitions(zero, [p1], model, 1.0e-6, bdirty=zero)
+    r2, g2 = residual_from_partitions(zero, [p2], model, 1.0e-6, bdirty=zero)
+    np.testing.assert_allclose(r2, 2.0 * r1, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(g2, 4.0 * g1, rtol=1e-5, atol=1e-8)
+
+    # distinct beams: both outputs are per-partition sums over the terms above
+    dirty = rng.standard_normal((1, ny, nx))
+    bdirty = rng.standard_normal((1, ny, nx))
+    r12, g12 = residual_from_partitions(dirty, [p1, p2], model, 1.0e-6, bdirty=bdirty)
+    np.testing.assert_allclose(r12, dirty + r1 + r2, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(g12, bdirty + g1 + g2, rtol=1e-5, atol=1e-8)
+
+    # bdirty=None keeps the legacy single-return signature
+    r_only = residual_from_partitions(dirty, [p1, p2], model, 1.0e-6)
+    np.testing.assert_allclose(r_only, r12, rtol=0, atol=0)

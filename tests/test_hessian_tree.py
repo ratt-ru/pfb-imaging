@@ -64,3 +64,18 @@ def test_accepts_2d_input():
     out = hess.dot(x)
     assert out.shape == (1, nx, ny)
     np.testing.assert_allclose(out[0], x, atol=1e-6)
+
+
+def test_hessian_tree_nonsquare_yx():
+    """(Y, X) semantics: a (ny, nx) = (12, 16) delta-PSF Hessian is identity."""
+    nx, ny = 16, 12
+    nx_psf, ny_psf = 32, 24
+    psf = np.zeros((1, ny_psf, nx_psf))
+    psf[0, ny_psf // 2, nx_psf // 2] = 2.0
+    psfhat = np.abs(r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), forward=True, inorm=0))
+    parts = [{"psfhat": psfhat, "beam": np.ones((1, ny, nx)), "wsum": np.array([2.0])}]
+    hess = HessianTree(parts, nx, ny, nx_psf, ny_psf, eta=0.0)
+    x = np.random.default_rng(0).standard_normal((1, ny, nx))
+    out = hess.dot(x)
+    assert out.shape == (1, ny, nx)
+    np.testing.assert_allclose(out, x, rtol=1e-10, atol=1e-12)

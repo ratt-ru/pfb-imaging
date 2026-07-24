@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:scatbeams
+    image: ghcr.io/ratt-ru/pfb-imaging:imager-rephase-and-reproject
     inputs:
       ms:
         info:
