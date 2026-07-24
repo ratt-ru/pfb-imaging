@@ -185,6 +185,83 @@ def test_wgridder_conventions(center_offset):
     np.testing.assert_allclose(vis.imag, vis_explicit.imag, atol=1e-4)
 
 
+def test_inject_transient_fringe_wterm():
+    """The transient-injection fringe in utils/stokes2im.stokes_image must be the
+    wgridder forward model, so injected sources land at their true position.
+
+    This pins the regime that exposed the w-term sign bug (ratt-ru/breifast#263):
+    a single-integration snapshot at low declination -> a nearly coplanar array
+    with large, correlated w, where an off-axis source drifts several pixels if
+    the (n0t - 1) term has the wrong sign. Full uv coverage averages the error
+    down to sub-pixel, which is why the existing injection tests (all run with
+    integrations_per_image = ntime, i.e. full synthesis) never caught it.
+
+    The fringe is replicated inline exactly as stokes_image builds it (mirroring
+    the test_psfvis pattern); keep the two in sync.
+    """
+    np.random.seed(42)
+    npix = 2048
+    cell = 2.4 * np.pi / 180 / 3600.0  # 2.4 arcsec
+    freq = np.array([1.4e9])
+
+    # single-integration snapshot at dec -72: rotate a ~coplanar ground array to
+    # (u, v, w), giving w comparable to the baseline projection (the bug's regime)
+    dec0 = np.deg2rad(-72.0)
+    nant = 64
+    enu = 4e3 * np.random.normal(size=(nant, 3))
+    enu[:, 2] *= 0.01  # antennas ~coplanar on the ground
+    a1, a2 = np.triu_indices(nant, 1)
+    bl = enu[a1] - enu[a2]
+    rot = np.array([[0.0, 1.0, 0.0], [-np.sin(dec0), 0.0, np.cos(dec0)], [np.cos(dec0), 0.0, np.sin(dec0)]])
+    uvw = np.ascontiguousarray((rot @ bl.T).T)
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    freqfactor = -2j * np.pi * freq[None, :] / lightspeed
+
+    # off-axis source on a grid pixel (~0.4 deg from centre)
+    ex, ey = npix // 2 + 120, npix // 2 + 620
+    x0t = -(ex - npix // 2) * cell  # pfb l convention (matches utils/fits.set_wcs)
+    y0t = (ey - npix // 2) * cell
+    n0t = np.sqrt(1 - x0t**2 - y0t**2)
+
+    def peak(vis):
+        dirty = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=np.ascontiguousarray(vis.astype(np.complex128)),
+            wgt=None,
+            npix_x=npix,
+            npix_y=npix,
+            pixsize_x=cell,
+            pixsize_y=cell,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=1e-8,
+            do_wgridding=True,
+            divide_by_n=True,
+            nthreads=2,
+        )
+        return np.unravel_index(np.argmax(np.abs(dirty)), dirty.shape)
+
+    base = signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy
+    # exactly utils/stokes2im.stokes_image: phase += uvw[:, 2:] * (n0t - 1) (fixed)
+    fringe = np.exp(-freqfactor * (base + uvw[:, 2:] * (n0t - 1))) / n0t
+    ix, iy = peak(fringe)
+    assert abs(ix - ex) <= 1 and abs(iy - ey) <= 1
+
+    # regression witness: the old '- (n0t - 1)' sign drifts the source off-axis
+    fringe_bug = np.exp(-freqfactor * (base - uvw[:, 2:] * (n0t - 1))) / n0t
+    jx, jy = peak(fringe_bug)
+    assert abs(jx - ex) + abs(jy - ey) >= 2
+
+
 @pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
 def test_psfvis(center_offset, ms_meta):
     uvw = ms_meta.uvw

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-23T14:30:00Z
-last_verified_commit: 1909bfa
+timestamp: 2026-07-24T00:00:00Z
+last_verified_commit: ef79472
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -540,17 +540,18 @@ update it (and this page's `last_verified_commit`) in the same session.
   `core/deconv.py`; `deconv/pfb.py::first`.
 
 
-### D24 — hci transient injection: fringe sign, differential rephasing, 1/n
+### D24 — hci transient injection: fringe sign, differential rephasing, 1/n, w-term sign
 
 - **Context:** `pfb hci --inject-transients` adds analytic point-source
   transients into the visibilities before imaging
   (`utils/stokes2im.stokes_image`). The source is built in the ORIGINAL
   (field-centre) frame at the MS uvw — so a per-field beam can be applied
-  there — then carried to the rephased frame when `--phase-dir` is set. Three
+  there — then carried to the rephased frame when `--phase-dir` is set. Four
   separate convention traps live in that ~15-line block; each mis-places or
-  mis-scales injected sources and none is caught by imaging real data. The sign
-  trap drove a "localisation error grows with distance from the phase centre"
-  report (breifast#263).
+  mis-scales injected sources and none is caught by imaging real data. Two of
+  them (the rephasing sign, and the source w-term sign) independently drove
+  "localisation error grows with distance from the phase centre" reports
+  (breifast#263).
 - **Decision:** (1) **Fringe sign.** The data is rephased by
   `exp(+freqfactor·w_diff)` (`freqfactor = -2πi·f/c`); the injected fringe is
   applied as `exp(-freqfactor·phase)`, so `w_diff` must enter the injection
@@ -569,24 +570,42 @@ update it (and this page's `last_verified_commit`) in the same session.
   and the sampling. (3) **1/n.** The RIME point-source visibility is
   `I/n·fringe`; injection now scales `dspec /= n0t` (`n0t = √(1−l²−m²)`, a
   per-source scalar; imaging is `divide_by_n=True`). Amplitude-only — small
-  on-axis, growing towards the field edge / at low declination.
-- **Rationale:** With no rephasing the injection already lands on the correct
-  pixel *and* the cube's `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the
-  injected `(ra, dec)` to <0.2 px out to 0.5° (guard test) — so the sign and
-  differential errors were rephasing-only, and a *constant* −2× shift is the
-  fingerprint of the rephasing phase applied with the wrong sign. The
-  differential is the same measures-vs-MS reasoning as D21.
-- **Consequences:** Only the `--phase-dir`/mosaic path changed placement;
-  single-field runs are numerically unchanged apart from the ~n amplitude
-  correction. **Corollary for downstream debugging:** if a consumer (e.g.
-  breifast) still reports offset transients on a genuinely *single-field* run,
-  the error is downstream (region/WCS handling) or in the MS's own UVW — not in
-  this injection. Guards:
-  `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` (radial
-  distance sweep, pixel + SIN-WCS→radec) and
-  `::test_hci_inject_transients_rephased` (lands ~90 px off before the sign fix).
+  on-axis, growing towards the field edge / at low declination. (4) **Source
+  w-term sign.** The source's own w-term is `phase += uvw_old·(n0t−1)` (a
+  **plus**). The whole fringe is written in the conjugate convention
+  `exp(-freqfactor·phase)`, opposite to `psf_vis`/`explicit_wdegridder`'s
+  `exp(+freqfactor·(…−w(n−1)))`. The l/m terms stay consistent because `x0t/y0t`
+  are **non-negated** here (vs `psf_vis`'s negated `x0/y0`), but `(n0t−1)` has no
+  coordinate to flip, so it must be **added** to match the wgridder forward
+  model. Subtracting it (the original code) leaves the source coherent on-axis
+  but drifts it off-axis in proportion to `w·(n−1)`.
+- **Rationale:** With full uv coverage the injection lands on the correct pixel
+  *and* the cube's `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the injected
+  `(ra, dec)` to <0.2 px out to 0.5° (guard test), for *both* the sign convention
+  and the differential — so traps (1)/(2) were rephasing-only, and a *constant*
+  −2× shift is the fingerprint of the rephasing phase applied with the wrong
+  sign. The differential is the same measures-vs-MS reasoning as D21. Trap (4) is
+  different: it is coverage-dependent. Full synthesis averages `w·(n−1)` down to
+  sub-pixel (so the full-synthesis guards below never saw it), but a
+  **single-integration snapshot** (`integrations_per_image=1`) at low declination
+  is a nearly coplanar array with large correlated w, where the wrong w-sign
+  drifts an off-axis source several pixels growing with distance from centre.
+- **Consequences:** Traps (1)/(2) changed only the `--phase-dir`/mosaic path.
+  Trap (4) changes any run with significant w — negligible for full-synthesis
+  imaging, multi-pixel for `hci` snapshot cubes. **Corollary for downstream
+  debugging (superseded):** an earlier version of this entry said that offset
+  transients on a *single-field* run must be downstream (breifast/WCS) rather
+  than in this injection. Trap (4) disproves that — a growing single-field
+  offset in a snapshot cube *is* this injection. The reliable discriminator is
+  coverage, not field count: reproduce with full uv coverage (error vanishes ⇒
+  injection/gridder; error persists ⇒ downstream). Guards:
+  `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` and
+  `::test_hci_inject_transients_rephased` (full synthesis; catch traps 1–3), plus
+  `tests/test_hessian_approx.py::test_inject_transient_fringe_wterm` (snapshot;
+  catches trap 4, drifts ≥2 px before the w-sign fix).
 - **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa
-  (differential); `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
+  (differential); the w-term sign fix + snapshot guard this session;
+  `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
 
 ## Known debt
 
