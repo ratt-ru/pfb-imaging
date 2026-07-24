@@ -41,16 +41,23 @@ from astropy.wcs import WCS
 
 
 def load_injected(path):
-    """Return (names, SkyCoord) from the injection YAML (positions in degrees)."""
+    """Return (names, SkyCoord, peak_times) from the injection YAML.
+
+    Positions are in degrees; ``peak_times`` are seconds from the start of the
+    observation (utils/transients subtracts times[0] before evaluating the
+    light curve), one per source (None when a source has no time block).
+    """
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    names, ras, decs = [], [], []
+    names, ras, decs, peak_times = [], [], [], []
     for t in cfg["transients"]:
         names.append(t.get("name", f"src{len(names)}"))
         ras.append(float(t["position"]["ra"]))
         decs.append(float(t["position"]["dec"]))
+        tblock = t.get("time") or {}
+        peak_times.append(float(tblock["peak_time"]) if "peak_time" in tblock else None)
     # pfb builds injection coords as FK5 (utils/stokes2im uses SkyCoord(..., frame="fk5"))
-    return names, SkyCoord(ras * u.deg, decs * u.deg, frame="fk5")
+    return names, SkyCoord(ras * u.deg, decs * u.deg, frame="fk5"), peak_times
 
 
 def load_detections(path):
@@ -96,6 +103,26 @@ def _collapse_to_yx(arr):
     return arr
 
 
+def _yx_at_time(data, t):
+    """2D (Y, X) image of a single time slice from a (STOKES, FREQ, TIME, Y, X)
+    array (or any leading singleton axes + TIME + Y + X). Indexes lazily so a
+    memmapped/dask cube is not fully materialised."""
+    arr = data
+    while arr.ndim > 3:  # drop leading STOKES/FREQ (singletons)
+        arr = arr[0]
+    if arr.ndim == 3:  # (TIME, Y, X)
+        arr = arr[t]
+    return np.asarray(arr)
+
+
+def _cube_times(zds):
+    """Return the cube's TIME coordinate (seconds) or None if it has no time axis."""
+    for key in ("TIME", "time"):
+        if key in zds.coords or key in zds.variables:
+            return np.asarray(zds[key].values, dtype=float)
+    return None
+
+
 def _peak_pixel(img, wcs, coord, window):
     """0-indexed (ix, iy) of the peak in a `window`-half-width box about `coord`."""
     x0, y0 = wcs.world_to_pixel(coord)
@@ -120,55 +147,82 @@ def main():
     ap.add_argument("--window", type=int, default=8, help="peak-search half-width, pixels (default 8)")
     args = ap.parse_args()
 
-    names_inj, inj = load_injected(args.injection_yaml)
+    names_inj, inj, peak_times = load_injected(args.injection_yaml)
     print(f"injected: {len(inj)} sources from {args.injection_yaml}")
 
-    with fits.open(args.fits_cube) as hdul:
-        fhdr = hdul[0].header
-        fimg = _collapse_to_yx(hdul[0].data)
+    hdul = fits.open(args.fits_cube, memmap=True)
+    fhdr = hdul[0].header
+    fdata = hdul[0].data  # (STOKES, FREQ, TIME, Y, X); indexed lazily per slice
     wcs = WCS(fhdr).celestial
-    centre = wcs.pixel_to_world((fimg.shape[1] - 1) / 2, (fimg.shape[0] - 1) / 2)
+    nx, ny = int(fhdr["NAXIS1"]), int(fhdr["NAXIS2"])
+    centre = wcs.pixel_to_world((nx - 1) / 2, (ny - 1) / 2)
     cell = abs(float(fhdr["CDELT1"])) * 3600.0
     print(
-        f"FITS: {fhdr.get('CTYPE1')}/{fhdr.get('CTYPE2')} {fimg.shape}, "
-        f'centre {centre.to_string("hmsdms")}, cell {cell:.2f}"'
+        f"FITS: {fhdr.get('CTYPE1')}/{fhdr.get('CTYPE2')} ({ny}, {nx}), "
+        f'centre {centre.to_string("hmsdms", sep=":", precision=2)}, cell {cell:.2f}"'
     )
 
     zds = xr.open_zarr(args.zarr_cube)
     zvar = "cube" if "cube" in zds else ("cube_mean" if "cube_mean" in zds else None)
     if zvar is None:
         raise ValueError(f"no 'cube'/'cube_mean' in {args.zarr_cube}; vars: {list(zds.data_vars)}")
-    zimg = _collapse_to_yx(zds[zvar].values)
-    if zimg.shape != fimg.shape:
-        print(f"  WARNING: zarr image {zimg.shape} != FITS image {fimg.shape}")
+    ctimes = _cube_times(zds)  # absolute seconds, or None (no time axis)
+    rel_times = None if ctimes is None else ctimes - ctimes[0]  # peak_time is from obs start
+    ntime = None if rel_times is None else rel_times.size
+    if rel_times is not None:
+        print(f"  cube TIME axis: {ntime} slices spanning {rel_times[-1]:.0f} s from start")
+    else:
+        print("  cube has no TIME axis — peaks searched in the time-collapsed image")
 
     det, det_xy = load_detections(args.detections)
     print()
 
-    head = "{:>8} {:>8} {:>8} {:>8} {:>8} {:>7} {:>6}".format(
-        "name", "dist_deg", 'net"', 'place"', "detdpix", 'conv"', "zvf_px"
+    head = "{:>8} {:>8} {:>8} {:>8} {:>8} {:>7} {:>6} {:>7}".format(
+        "name", "dist_deg", 'net"', 'place"', "detdpix", 'conv"', "zvf_px", "t_slice"
     )
     print(head)
     print("-" * len(head))
     dists, nets, places, detdpixs, convs = [], [], [], [], []
-    for name, c in zip(names_inj, inj):
+    posrows = []  # (name, injected SkyCoord, recovered SkyCoord|None, place, t_slice)
+    fimg_collapsed = None
+    for name, c, pk in zip(names_inj, inj, peak_times):
         dist_deg = float(centre.separation(c).to_value(u.deg))
 
-        # where the source actually peaks in the cube (FITS and, as cross-check, zarr)
+        # expected time slice from the source's peak_time (nearest cube integration)
+        if rel_times is not None and pk is not None:
+            t_exp = int(np.argmin(np.abs(rel_times - pk)))
+        else:
+            t_exp = None
+
+        # the (Y, X) image the source should peak in: its own time slice if we
+        # know it, else the time-collapsed cube (computed once)
+        if t_exp is not None:
+            fimg = _yx_at_time(fdata, t_exp)
+            zsl = _yx_at_time(zds[zvar].data, t_exp)
+        else:
+            if fimg_collapsed is None:
+                fimg_collapsed = _collapse_to_yx(fdata)
+            fimg = fimg_collapsed
+            zsl = None
+        tslice = "-" if t_exp is None else str(t_exp)
+
+        # where the source actually peaks (FITS, and zarr as a cross-check)
         fp = _peak_pixel(fimg, wcs, c, args.window)
-        zp = _peak_pixel(zimg, wcs, c, args.window)
+        zp = _peak_pixel(zsl, wcs, c, args.window) if zsl is not None else (None, None)
         if fp[0] is None:
-            print(f"{name:>8} {dist_deg:>8.3f}   <off-grid>")
+            print(f"{name:>8} {dist_deg:>8.3f}   <off-grid>{'':>40}{tslice:>7}")
+            posrows.append((name, c, None, np.nan, tslice))
             continue
         truth_pos = wcs.pixel_to_world(*fp)
         place = float(truth_pos.separation(c).to_value(u.arcsec))  # pfb placement error
         zvf = "-" if zp[0] is None else str(int(abs(zp[0] - fp[0]) + abs(zp[1] - fp[1])))
+        posrows.append((name, c, truth_pos, place, tslice))
 
         # nearest detection to this injected source
         sep = c.separation(det)
         j = int(np.argmin(sep.to_value(u.arcsec)))
         if float(sep[j].to_value(u.arcsec)) > args.match_radius:
-            print(f"{name:>8} {dist_deg:>8.3f} {'-':>8} {place:>8.3f} {'(no match)':>17} {zvf:>6}")
+            print(f"{name:>8} {dist_deg:>8.3f} {'-':>8} {place:>8.3f} {'(no match)':>17} {zvf:>6} {tslice:>7}")
             dists.append(dist_deg)
             places.append(place)
             nets.append(np.nan)
@@ -185,7 +239,7 @@ def main():
 
         dd = f"{detdpix:>8.2f}" if np.isfinite(detdpix) else f"{'-':>8}"
         cv = f"{conv:>7.3f}" if np.isfinite(conv) else f"{'-':>7}"
-        print(f"{name:>8} {dist_deg:>8.3f} {net:>8.3f} {place:>8.3f} {dd} {cv} {zvf:>6}")
+        print(f"{name:>8} {dist_deg:>8.3f} {net:>8.3f} {place:>8.3f} {dd} {cv} {zvf:>6} {tslice:>7}")
         dists.append(dist_deg)
         nets.append(net)
         places.append(place)
@@ -193,13 +247,26 @@ def main():
         convs.append(conv)
 
     print("-" * len(head))
+
+    # injected vs recovered positions in hms/dms, to paste into a FITS viewer
+    print("\ninjected vs recovered peak (paste into your FITS viewer):")
+    phead = "{:>8} {:>28} {:>28} {:>8} {:>7}".format("name", "injected", "recovered", 'place"', "t_slice")
+    print(phead)
+    print("-" * len(phead))
+    for name, c, rec, place, tslice in posrows:
+        inj_str = c.to_string("hmsdms", sep=":", precision=2)
+        rec_str = "-" if rec is None else rec.to_string("hmsdms", sep=":", precision=2)
+        pl = "-" if not np.isfinite(place) else f"{place:.3f}"
+        print(f"{name:>8} {inj_str:>28} {rec_str:>28} {pl:>8} {tslice:>7}")
+
+    hdul.close()
     if not dists:
-        print("no injected sources landed on the grid")
+        print("\nno injected sources landed on the grid")
         return
     dists, nets, places = np.array(dists), np.array(nets), np.array(places)
     detdpixs, convs = np.array(detdpixs), np.array(convs)
     print(
-        f'pfb placement (place"): max {np.nanmax(places):.3f}", median {np.nanmedian(places):.3f}" (cell {cell:.2f}")'
+        f'\npfb placement (place"): max {np.nanmax(places):.3f}", median {np.nanmedian(places):.3f}" (cell {cell:.2f}")'
     )
     m = np.isfinite(nets)
     if m.sum() >= 2:
