@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-07-16T12:00:00Z
-last_verified_commit: c4ae544
+timestamp: 2026-07-27T15:40:00Z
+last_verified_commit: 4ab429b
 ---
 
 # Image and beam orientation conventions (hci)
@@ -55,7 +55,8 @@ barycentre target, **not** the per-scan pointing).
 
 ## 3. BeamWizard semantics that matter here
 
-* `BeamWizard(beam_model, output_dataset)` attaches the hci scaffold, so
+* `BeamWizard(image_name=output_dataset, band=primary_beam_band)` attaches the hci
+  scaffold, so
   `wizard.centre` = the **image** centre (`radec_new`), and the default l/m grid
   is `l_grid = (arange(nx) - (crpix1-1)) * cdelt1` — descending, because
   `cdelt1 < 0`. Parallactic angles are therefore computed at the image centre,
@@ -81,7 +82,9 @@ beam map whose columns run l-ascending is correctly described by a *positive*
 runs East-to-West.
 
 `reproject_and_interp_beam` / `reproject_and_interp_scat_beam` (pre-fix state at
-`9a46876`) violate this three ways:
+`9a46876`) violated this three ways — `reproject_and_interp_scat_beam` has since
+been fixed (§6), and `reproject_and_interp_beam` is dead code, uncalled since the
+zarr-beam branch was deleted (§5):
 
 1. **Transposed feed** — they pass (X, Y)-ordered `(l, m)` maps, so reproject
    reads the l axis as Dec and the m axis as RA. Measured consequence: with
@@ -99,9 +102,10 @@ runs East-to-West.
 ## 5. Post-mortem of the transpose+flip hack
 
 The hack (`pbeam = pbeam.transpose(0, 2, 1); pbeam = pbeam[:, ::-1, :]`,
-introduced in `547458f`, removed from the wizard branch in `330bc5d`, still
-present in the zarr-beam branch at `stokes2im.beam_for_band`) composed with the
-buggy reprojection to give, at wgridder pixel offset `(p, q)` from centre, the
+introduced in `547458f`, removed from the wizard branch in `330bc5d`, and gone
+from the codebase entirely with the zarr-beam branch of `stokes2im.beam_for_band`)
+composed with the buggy reprojection to give, at wgridder pixel offset `(p, q)`
+from centre, the
 beam value at `(l, m) = (q, -p)·cell` where the correct value is at
 `(-p, -q)·cell`. Those differ by a 90° rotation ∘ reflection — **identical for a
 circularly symmetric beam**, which is why the images "aligned": the MeerKAT
@@ -116,10 +120,11 @@ reference (identical grids, no rephasing):
 
 It also silently required `nx == ny` (the transpose swaps the axes' lengths).
 
-The `[:, ::-1, :]` flip is *not* the physical feed-plane→sky flip mentioned in
-the zarr branch's "flip the beam upside down" comment — that question (MdV beams
-transmissive vs receptive, feed vs sky parity) is still open for the zarr path
-and is owned by meerkat-beams for the wizard path (its PR #8 M1 validation).
+The `[:, ::-1, :]` flip was *not* the physical feed-plane→sky flip mentioned in
+the (now deleted) zarr branch's "flip the beam upside down" comment. Only the
+wizard path survives, so that parity question is owned entirely by meerkat-beams
+(its PR #8 M1 validation); it would have to be re-answered from scratch if raw
+MdV zarr beams ever come back.
 
 ## 6. The corrected construction (validated)
 
@@ -151,8 +156,12 @@ cross-check).
 The §6 construction is implemented: `reproject_and_interp_scat_beam` takes the
 1D `l_beam`/`m_beam` coordinates (signed cdelt, coord-derived crpix, target WCS
 = the hci header) and returns cube-ordered `(nstokes, ny, nx)` maps;
-`beam_for_band`'s wizard branch evaluates the beam on the coarse `bds` grid
-around the pointing and reprojects `radec → radec_new`. `stokes_image` works in
+`beam_for_band` — wizard-only since the zarr branch was deleted — evaluates the
+beam on the coarse `bds` grid around the pointing and reprojects
+`radec → radec_new`, filling the Stokes axis in **I, Q, U, V** order
+(`sorted(set(product))`) to match the data's Stokes axis (`stokes_expr_funcs`
+always emits I, Q, U, V) and the sorted `corr` coordinate of the output dataset.
+`stokes_image` works in
 (Y, X) order throughout, so the beam is used as returned and the cube/psf/
 beam_weight are written without transposition — the only x-major seams are the
 `vis2dirty` calls (zero-copy `dirty=buf.T` views) and the `fitcleanbeam` call
@@ -163,9 +172,16 @@ elliptical-beam reproject vs analytic with rephasing and non-square output,
 equivalent in output against the pre-refactor code on the test MS (cube/psf to
 single-precision threading noise ~1e-7; `psf_pa` exactly). The interim
 no-reprojection state (`a516530`, the jagged-gain sampling experiment for
-breifast#208 — which ruled out coarse sampling as the cause) is gone. The
-zarr-beam branch and its hack remain untouched, documented debt (§5,
-design-decisions.md Known debt).
+breifast#208 — which ruled out coarse sampling as the cause) is gone. So is the
+zarr-beam branch, along with its hack and the pre-D19 reproject bugs: `hci` now
+accepts only `--beam-model meerkat-beams` (design-decisions.md D20), leaving
+`utils/beam.reproject_and_interp_beam` uncalled.
+
+The transient-injection beam is a separate, point-evaluated path with no
+orientation content: `beam_gain_for_source` asks the wizard for the power beam of
+one Stokes plane at a fixed sky position on the chunk's own `(row, chan)` grid
+(`get_time_variable_beamgain` returns `(nchan, ntime)`, expanded onto rows) —
+no maps, no reprojection, no transposes.
 
 Sources: `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, coordinate
 assignment), `src/pfb_imaging/utils/beam.py`, `core/hci.py` (scaffold header),

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-17T16:00:00Z
-last_verified_commit: 83be23f
+timestamp: 2026-07-27T15:40:00Z
+last_verified_commit: 4ab429b
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -314,16 +314,49 @@ update it (and this page's `last_verified_commit`) in the same session.
   single-precision threading noise ~1e-7; `psf_pa` bitwise). The legacy `.dds`
   path and the `.dt` imager keep wgridder (X, Y) arrays — extending (Y, X)
   canonicalisation there means an on-disk schema change; only worth it if the
-  schema is revised anyway. The zarr-beam branch
-  (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
-  question) is untouched, documented debt. Changing any transpose/flip on this
-  path must keep `tests/test_beam_orientation.py` green.
+  schema is revised anyway. The zarr-beam branch (`reproject_and_interp_beam` +
+  its surviving hack + the feed→sky parity question) was the one exception; D20
+  deleted it, so no transpose or flip remains anywhere on the hci beam path.
+  Changing any transpose/flip on this path must keep
+  `tests/test_beam_orientation.py` green.
 - **Source:** `src/pfb_imaging/utils/beam.py`;
   `src/pfb_imaging/utils/stokes2im.py` (`stokes_image`, `beam_for_band`);
   `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
   `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
   `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
   landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
+
+### D20 — `hci` beams are meerkat-beams only, with the band named separately
+
+- **Context:** `hci --beam-model` accepted either a MeerKAT band name
+  (`U`/`L`/`S0`/`S4`, which built a `BeamWizard`) or a path to an MdV zarr beam cube.
+  The zarr branch of `beam_for_band` carried the pre-D19 reproject bugs and the
+  transpose+flip hack, its feed→sky parity was unresolved, and the wizard branch of
+  the transient-injection beam was an outright `NotImplementedError` — so one option
+  selected between one maintained path and one half-correct one.
+- **Decision:** `--beam-model` names a *model*, and `meerkat-beams` is the only
+  accepted value (anything else raises `NotImplementedError`); the band moves to its
+  own `--primary-beam-band` (`U`/`L`/`S0`/`S4`), required when a beam model is given.
+  `--beam-model` unset still means no beam correction at all. The zarr branch is
+  deleted from both `beam_for_band` and the transient injection, and the transient
+  beam is implemented on the wizard path by `beam_gain_for_source`.
+- **Rationale:** a deliberate stop-gap. Additional beam models are planned to land
+  *inside* meerkat-beams rather than as more branches here, so pfb keeps one beam path
+  — one place where orientation, Stokes ordering and parity have to be right (D19) —
+  and inherits new models through the wizard. Splitting the band out is what the
+  stop-gap needs anyway: overloading a single option for both model and band is what
+  made "no beam" and "MeerKAT L-band" indistinguishable to the validation code.
+- **Consequences:** callers pass two options instead of one; a beam model with a
+  missing or invalid band raises `ValueError` up front rather than deep in a Ray task.
+  `utils/beam.reproject_and_interp_beam` is now uncalled (see Known debt). MdV
+  feed→sky parity becomes entirely meerkat-beams' question. If a second model ever
+  needs a different band vocabulary, `--primary-beam-band` is the option to revisit.
+  **Gotcha:** the deprecation branch was first written as
+  `if beam_model is not None and beam_model.lower() != "meerkat-beams": raise … else: assert band …`,
+  whose `else` also catches `beam_model is None` — it needs three branches, not two.
+- **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
+  `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, `beam_gain_for_source`);
+  `tests/test_hci.py`; image-and-beam-orientation.md §5, §7.
 
 ## Known debt
 
@@ -344,10 +377,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   visible overhead on small images (~3 s/major-cycle at 308²). Acceptable at production
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
-- The zarr-beam branch of `beam_for_band` (`reproject_and_interp_beam`) still carries
-  the transpose+flip hack and the pre-D19 reproject bugs, and the MdV feed-plane→sky
-  parity question ("transmissive or receptive?") is unresolved. Only correct-ish for
-  square images and near-circular beams; fix along D19 lines once parity is settled
+- `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D20 deleted the
+  zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
+  against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
+  are, rewrite it along D19 lines and settle the feed-plane→sky parity question first
   (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas
@@ -356,6 +389,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
   psi=analysis)`. Read call sites, not names.
 - **`pcg_numba` mutates `x0` in place** (returns the same buffer).
+- **Generated CLI annotations lie about optionality.** An optional cab input with
+  `choices` round-trips through hip-cargo to `Literal["…"] = None` — a type that
+  excludes the value it defaults to (landmanbester/hip-cargo#90; writing the honest
+  `Literal[…] | None` currently crashes `generate-cabs`). Branch on `is None` first;
+  do not trust the annotation to tell you a value cannot be `None`.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests
