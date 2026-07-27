@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-27T15:40:00Z
-last_verified_commit: 4ab429b
+timestamp: 2026-07-27T17:05:00Z
+last_verified_commit: 8ea9a6e
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -377,6 +377,20 @@ update it (and this page's `last_verified_commit`) in the same session.
   visible overhead on small images (~3 s/major-cycle at 308²). Acceptable at production
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
+- **Phase-centre comparison, to re-land with mosaicing (issue #1).** `core/init.py`'s
+  single-field guard (`_phase_dirs_agree` + `tests/test_phase_dir_agreement.py`, commit
+  `6be3ea7`) disappears when the imager branch's legacy retirement merges. Do **not**
+  port it as a rejection: it refused multiple phase centres, which is precisely what
+  mosaicing does (the imager rephases them to a common tangent plane, D21). What must
+  survive is the *comparison technique* (see the gotcha below). Its future home is the
+  field-identity test in `core/imager.py`, currently
+  `np.unique(np.round(field_centres, 12))` — exact equality in disguise. That is
+  survivable today (`radec_barycentre` averages unit vectors, so a seam-split or
+  noise-split pair still resolves to the right tangent point; the cost is a spurious
+  "multiple fields" rephase of what is one field), but it becomes load-bearing the
+  moment mosaicing has to decide which fields group together. Give it a real tolerance
+  then, and make that tolerance a wrapped magnitude. Lift the helper and its tests from
+  `6be3ea7`.
 - `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D20 deleted the
   zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
   against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
@@ -394,6 +408,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   excludes the value it defaults to (landmanbester/hip-cargo#90; writing the honest
   `Literal[…] | None` currently crashes `generate-cabs`). Branch on `is None` first;
   do not trust the annotation to tell you a value cannot be `None`.
+- **Compare phase centres as wrapped magnitudes, never signed differences.**
+  `np.any((a - b) > tol)` only fires when `a` is larger on *every* axis, so it silently
+  accepts half of all mismatches — two fields 1.1 rad apart passed the `init` guard
+  this way for as long as it existed (`6be3ea7`). A naive `np.abs` is not the fix
+  either: `construct_mappings` normalises ra into [0, 2pi), so a pair straddling
+  RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
+  `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
+  elementwise to the (ra, dec) pair is safe.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests
