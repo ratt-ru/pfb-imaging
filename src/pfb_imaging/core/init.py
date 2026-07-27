@@ -18,6 +18,25 @@ from pfb_imaging.utils.stokes2vis import safe_stokes_vis
 log = pfb_logging.get_logger("INIT")
 
 
+def _phase_dirs_agree(radec, other, tolerance):
+    """Whether two phase centres agree to within tolerance.
+
+    Compares magnitudes, so an offset in either direction counts, and wraps the
+    difference into (-pi, pi] so that a pair straddling RA = 0 (`construct_mappings`
+    normalises ra into [0, 2pi)) does not read as a ~2pi mismatch.
+
+    Args:
+        radec: (ra, dec) of the reference phase centre in radians.
+        other: (ra, dec) of the phase centre to compare in radians.
+        tolerance: largest offset in radians still considered agreement.
+
+    Returns:
+        True if both coordinates agree to within tolerance.
+    """
+    delta = (np.asarray(radec) - np.asarray(other) + np.pi) % (2 * np.pi) - np.pi
+    return bool(np.all(np.abs(delta) <= tolerance))
+
+
 def init(
     ms: list[Path],
     output_filename: str,
@@ -289,7 +308,7 @@ def init(
             if radec is None:
                 radec = radecs[ms_name][idt]
             # Note this does not protect against rephased measurement sets that had different phase centres
-            elif np.any((radec - radecs[ms_name][idt]) > phase_dir_tolerance):
+            elif not _phase_dirs_agree(radec, radecs[ms_name][idt], phase_dir_tolerance):
                 log.error_and_raise(
                     f"RADECs differ between groups. Found {radecs[ms_name][idt]} but expected {radec}. "
                     "pfb-imaging currently only supports imaging a single field at a time.",
