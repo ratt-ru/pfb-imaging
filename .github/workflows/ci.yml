@@ -166,12 +166,4 @@ jobs:
 
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
-        run: |
-          export RAY_NUM_CPUS=2
-          export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
-          export OMP_NUM_THREADS=1
-          export MKL_NUM_THREADS=1
-          export OPENBLAS_NUM_THREADS=1
-          export NUMEXPR_NUM_THREADS=1
-
-          uv run --frozen pytest -v tests/
+        run: uv run --frozen pytest -v tests/

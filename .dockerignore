@@ -1,0 +1,19 @@
+# Keep the build context minimal: the image only needs pyproject.toml,
+# README.md and src/ (see Dockerfile COPY lines).
+.git
+.venv
+.claude
+.claude-work
+.github
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+docs
+examples
+scripts
+tests
+tmp
+uv.lock
+Dockerfile
+.dockerignore

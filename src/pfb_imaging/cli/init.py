@@ -251,6 +251,22 @@ def init(
             rich_help_panel="Weighting",
         ),
     ] = "l2",
+    phase_dir_tolerance: Annotated[
+        float,
+        typer.Option(
+            help="Tolerance in radians for comparing phase centres. "
+            "pfb-imaging currently only supports imaging a single field at a time. "
+            "All phase centres must be within this tolerance of each other.",
+            rich_help_panel="Imaging",
+        ),
+    ] = 1e-08,
+    enforce_time_ordering: Annotated[
+        bool,
+        typer.Option(
+            help="Enforce that time columns are monotonically non-decreasing.",
+            rich_help_panel="Control",
+        ),
+    ] = False,
     log_directory: Annotated[
         Directory | None,
         typer.Option(
@@ -322,6 +338,8 @@ def init(
                     nworkers=nworkers,
                     nthreads=nthreads,
                     wgt_mode=wgt_mode,
+                    phase_dir_tolerance=phase_dir_tolerance,
+                    enforce_time_ordering=enforce_time_ordering,
                     log_directory=log_directory,
                 ),
             )
@@ -357,6 +375,8 @@ def init(
                 nworkers=nworkers,
                 nthreads=nthreads,
                 wgt_mode=wgt_mode,
+                phase_dir_tolerance=phase_dir_tolerance,
+                enforce_time_ordering=enforce_time_ordering,
                 log_directory=log_directory,
             )
             return
@@ -401,6 +421,8 @@ def init(
             nworkers=nworkers,
             nthreads=nthreads,
             wgt_mode=wgt_mode,
+            phase_dir_tolerance=phase_dir_tolerance,
+            enforce_time_ordering=enforce_time_ordering,
             log_directory=log_directory,
         ),
         image=image,

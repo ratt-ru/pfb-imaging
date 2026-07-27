@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import dask
 import dask.array as da
 import numpy as np
@@ -19,7 +17,7 @@ from pfb_imaging.utils.naming import xds_from_url
 pmp = pytest.mark.parametrize
 
 
-def test_sara(ms_name, ms_meta, image_geometry):
+def test_sara(ms_name, ms_meta, image_geometry, tmp_path):
     """
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
@@ -29,7 +27,6 @@ def test_sara(ms_name, ms_meta, image_geometry):
 
     np.random.seed(420)
 
-    test_dir = Path(ms_name).resolve().parent
     xds = ms_meta.xds
     freq = ms_meta.freq
     freq0 = ms_meta.freq0
@@ -98,12 +95,12 @@ def test_sara(ms_name, ms_meta, image_geometry):
     writes = [xds_to_table(xds, ms_name, columns="DATA")]
     dask.compute(writes)
 
-    outname = str(test_dir / "test")
+    outname = str(tmp_path / "test")
     dds_name = f"{outname}_I_main.dds"
 
     # Initialise Stokes visibilities
     init_core(
-        [str(test_dir / "test_ascii_1h60.0s.MS")],
+        [ms_name],
         outname,
         data_column="DATA",
         flag_column="FLAG",
@@ -178,7 +175,7 @@ def test_sara(ms_name, ms_meta, image_geometry):
 
     # residuals also need to be the same if we do the subtraction in visibility space
     degrid_core(
-        [str(test_dir / "test_ascii_1h60.0s.MS")],
+        [ms_name],
         outname,
         mds=f"{outname}_I_main_model.mds",
         channels_per_image=1,
@@ -188,7 +185,7 @@ def test_sara(ms_name, ms_meta, image_geometry):
 
     # Initialise Stokes visibilities with DATA-MODEL_DATA
     init_core(
-        [str(test_dir / "test_ascii_1h60.0s.MS")],
+        [ms_name],
         outname,
         data_column="DATA-MODEL_DATA",
         flag_column="FLAG",

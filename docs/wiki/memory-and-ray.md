@@ -1,10 +1,10 @@
 ---
 type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
-description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, and the scheduling/memory rules the imager and deconv band workers must not regress.
-tags: [ray, memory, xarray, arcae, imager, deconv, telemetry]
-timestamp: 2026-07-07T20:10:49Z
-last_verified_commit: f6c8a80
+description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
+tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
+timestamp: 2026-07-16T13:40:00Z
+last_verified_commit: 6bf4a32
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -132,6 +132,42 @@ and exact-residual inputs. Its memory/scheduling rules:
   test images this dwarfs the data and dominates stimela's memory stats.
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
+
+## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
+
+Verified on a real interrupt 2026-07-16. A single Ctrl+C on the driver
+normally takes the whole local Ray cluster down with it (the raylet reaps its
+workers when the driver's GCS goes away) — leftovers are the exception, not
+the rule, and usually mean the driver died uncleanly (SIGKILL, OOM-killer).
+Check before killing anything.
+
+1. **Find survivors.** `pgrep -af 'raylet|ray::|gcs_server|plasma'` plus a
+   broader `ps aux | grep -iE 'ray|pfb'`. Ray daemon names don't contain
+   "pfb": the ones to know are `raylet`, `gcs_server`, `ray::IDLE` /
+   `ray::<task-name>` workers, and the plasma store.
+2. **Kill them in order of politeness.** `ray stop` (from the project venv:
+   `uv run ray stop`) terminates every Ray process on the machine; add
+   `--force` (SIGKILL) if any survive. Last resort:
+   `pkill -9 -f raylet && pkill -9 -f 'ray::' && pkill -9 -f gcs_server`.
+3. **Reclaim shared memory.** The plasma object store lives in `/dev/shm` and
+   counts against RAM while the file exists. After all Ray processes are
+   dead, `ls /dev/shm` should show no `plasma*`/`ray*` files; delete any that
+   remain.
+4. **Clear stale session dirs.** Ray leaves `/tmp/ray/session_*` (logs +
+   sockets, a few MB each) behind forever — hundreds of them accumulate to
+   ~1 GB. With nothing Ray-related running, `rm -rf /tmp/ray` is safe.
+5. **Understand the lingering swap — it is not a leak.** During the thrash
+   the kernel swapped out *idle pages of unrelated processes* (browsers, IDEs,
+   JVMs), and Linux never proactively swaps pages back in: `free -h` keeps
+   showing used swap long after the culprit is dead. Attribute it with
+   `awk '/VmSwap/ {print $2, FILENAME}' /proc/[0-9]*/status | sort -rn | head`
+   (or `smem -s swap`) — if the holders are desktop apps, the run's memory is
+   already gone.
+6. **Optionally force swap back to RAM.** Only worth it if the swapped-out
+   apps feel sluggish. Check `free -h` first: `available` must comfortably
+   exceed swap `used`, then `sudo swapoff -a && sudo swapon -a` (blocks for
+   a minute or two while every swapped page is read back). If available RAM
+   is tighter than that, leave it — pages fault back in on use.
 
 ## Related conventions uncovered along the way
 

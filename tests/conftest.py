@@ -1,5 +1,16 @@
 import os
 
+# Threading and memory caps for the test session. These MUST be set before
+# any scientific stack import: numpy/scipy resolve OpenBLAS/MKL/OMP thread
+# counts at load time, numexpr at init, jax at first use. setdefault lets
+# CI or a developer override individual values without editing this file.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.50")
+os.environ.setdefault("RAY_NUM_CPUS", "2")
+
 # Disable ray's uv_runtime_env_hook BEFORE importing ray. When the driver runs
 # under `uv run`, the hook overrides py_executable so workers are launched via
 # `uv run --frozen python …`, which rebuilds a fresh venv per worker from the
