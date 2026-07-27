@@ -131,7 +131,9 @@ def hci(
     else:
         fits_output_folder = Path(fits_output_folder)
     opts_dict["fits_output_folder"] = fits_output_folder
-    fits_output_folder.mkdir(parents=True, exist_ok=True)
+    # only materialise it if something will be written there
+    if fits_vars is not None:
+        fits_output_folder.mkdir(parents=True, exist_ok=True)
 
     if log_directory is None:
         log_directory = Path(basedir) / "pfb_logs"
