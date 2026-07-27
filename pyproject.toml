@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.2.1",
+    "hip-cargo>=0.3.0",
 ]
 
 [project.urls]
@@ -99,12 +99,6 @@ markers = [
     "integration: Integration tests",
     "slow: Tests that take more time to run",
 ]
-
-[tool.uv.sources]
-# rev (not branch): meerkat-beams pins `hip-cargo @ git+...@main` (PEP 508), and
-# uv pip treats a branch-kind and a bare-rev-kind URL for the same ref as
-# conflicting URLs even though they print identically (broke the container build).
-hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", rev = "main" }
 
 [dependency-groups]
 dev = [

@@ -1537,8 +1537,8 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.2.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#1719a5e612da25c9a554b8ad5024dfbb9af5cd22" }
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
     { name = "libcst" },
@@ -1548,6 +1548,10 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "universal-pathlib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/22/dab3c8dfa5cc3f8e8145d658433e1d0b4ef126b18e8d8276d8448b491aaf/hip_cargo-0.3.0.tar.gz", hash = "sha256:1fbfc848c1a38dcd584d5cf91652e45d1c95f866ec4b10c79b21f186cdd2dfc1", size = 124229, upload-time = "2026-07-24T21:53:26.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/cb/808927ce51fe94d0661f2128162bfe7ae371a9d07eb4be2f1f21431d69a1/hip_cargo-0.3.0-py3-none-any.whl", hash = "sha256:f9601675ec78f4e3a4a2ff79e69ad4a863437d4eb39feb36825eae50706fcd3b", size = 145807, upload-time = "2026-07-24T21:53:24.492Z" },
 ]
 
 [[package]]
@@ -3503,7 +3507,7 @@ requires-dist = [
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2024.11.0" },
     { name = "distributed", marker = "extra == 'full'", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
+    { name = "hip-cargo", specifier = ">=0.3.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
