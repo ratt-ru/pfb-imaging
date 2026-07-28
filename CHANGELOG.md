@@ -5,6 +5,26 @@ All notable changes to pfb-imaging are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2026-07-28
+
+### Documentation
+
+- Fold specs/plans into the LLM wiki, make them ephemeral (#275) ([#275](https://github.com/ratt-ru/pfb-imaging/pull/275))
+
+### Fixed
+
+- Default numba cache dir to a per-user temp directory (#276) ([#276](https://github.com/ratt-ru/pfb-imaging/pull/276))
+
+### Other
+
+- Use `suricat-beams` to construct the beam cubes in `hci` (#237) ([#237](https://github.com/ratt-ru/pfb-imaging/pull/237))
+- Radiomesh-backed weight_data: stable numba cache across processes (#274) ([#274](https://github.com/ratt-ru/pfb-imaging/pull/274))
+- Add minimal LLM wiki (#271) ([#271](https://github.com/ratt-ru/pfb-imaging/pull/271))
+- Generalise deconvolution interface and define operator/algorithm protocols (#269) ([#269](https://github.com/ratt-ru/pfb-imaging/pull/269))
+- Combine functionality of `init+grid` into separate `imager` sub-command that produces a unified `xarray.DataTree` intermediary data product (#252) ([#252](https://github.com/ratt-ru/pfb-imaging/pull/252))
+- Pass --ray-address "local" by default (#255) ([#255](https://github.com/ratt-ru/pfb-imaging/pull/255))
+
+
 ## [0.0.10] - 2026-06-02
 
 ### Build
@@ -217,6 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial commit
 
 
+[0.0.11]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.9rc1...v0.0.9
 [0.0.9rc1]: https://github.com/ratt-ru/pfb-imaging/compare/v0.0.8...v0.0.9rc1
