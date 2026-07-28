@@ -61,7 +61,8 @@ def hci(
     channels_per_image: int = -1,
     channels_per_bin: int = -1,
     precision: str = "double",
-    beam_model: str = None,
+    beam_model: str | None = None,
+    primary_beam_band: str | None = None,
     field_of_view: float | None = 1.0,
     super_resolution_factor: float = 1.0,
     cell_size: float | None = None,
@@ -130,7 +131,9 @@ def hci(
     else:
         fits_output_folder = Path(fits_output_folder)
     opts_dict["fits_output_folder"] = fits_output_folder
-    fits_output_folder.mkdir(parents=True, exist_ok=True)
+    # only materialise it if something will be written there
+    if fits_vars is not None:
+        fits_output_folder.mkdir(parents=True, exist_ok=True)
 
     if log_directory is None:
         log_directory = Path(basedir) / "pfb_logs"
@@ -405,9 +408,15 @@ def hci(
     log.info("Scaffolding complete")
 
     # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
-    if beam_model in ("U", "L", "S0", "S4"):
-        log.info("Assuming MeerKAT data and initialising BeamWizard")
-        beam_model = BeamWizard(image_name=output_dataset, band=beam_model)
+    if beam_model is None:
+        log.info("No beam model specified, not applying primary beam correction")
+    elif beam_model.lower() != "meerkat-beams":
+        raise NotImplementedError("Only meerkat-beams is currently supported for beam_model")
+    else:
+        if primary_beam_band not in ("U", "L", "S0", "S4"):
+            raise ValueError("primary_beam_band must be one of U, L, S0 or S4")
+        log.info("Using meerkat-beams to initialise BeamWizard")
+        beam_model = BeamWizard(image_name=output_dataset, band=primary_beam_band)
 
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))

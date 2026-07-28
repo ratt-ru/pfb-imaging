@@ -258,10 +258,16 @@ def hci(
         ),
     ] = "double",
     beam_model: Annotated[
-        str | None,
+        Literal["meerkat-beams"],
         typer.Option(
-            help="Path to a beam model or a MeerKAT band name. "
-            "One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.",
+            help="Which beam model to use.",
+            rich_help_panel="Input",
+        ),
+    ] = None,
+    primary_beam_band: Annotated[
+        Literal["U", "L", "S0", "S4"],
+        typer.Option(
+            help="Which band to use.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -601,6 +607,7 @@ def hci(
                     channels_per_bin=channels_per_bin,
                     precision=precision,
                     beam_model=beam_model,
+                    primary_beam_band=primary_beam_band,
                     field_of_view=field_of_view,
                     super_resolution_factor=super_resolution_factor,
                     cell_size=cell_size,
@@ -667,6 +674,7 @@ def hci(
                 channels_per_bin=channels_per_bin,
                 precision=precision,
                 beam_model=beam_model,
+                primary_beam_band=primary_beam_band,
                 field_of_view=field_of_view,
                 super_resolution_factor=super_resolution_factor,
                 cell_size=cell_size,
@@ -740,6 +748,7 @@ def hci(
             channels_per_bin=channels_per_bin,
             precision=precision,
             beam_model=beam_model,
+            primary_beam_band=primary_beam_band,
             field_of_view=field_of_view,
             super_resolution_factor=super_resolution_factor,
             cell_size=cell_size,

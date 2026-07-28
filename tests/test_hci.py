@@ -8,6 +8,8 @@ in production, issue #273).
 """
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -15,7 +17,9 @@ import xarray as xr
 import yaml
 from africanus.coordinates import radec_to_lm
 from astropy.io import fits
+from astropy.time import Time
 from daskms import xds_from_table
+from meerkat_beams.utils import BeamWizard
 from numpy.testing import assert_allclose
 
 from pfb_imaging.core.hci import (
@@ -27,6 +31,7 @@ from pfb_imaging.core.hci import (
     hci as hci_core,
 )
 from pfb_imaging.utils.misc import set_image_size
+from pfb_imaging.utils.stokes2im import beam_for_band, beam_gain_for_source
 from pfb_imaging.utils.transients import generate_transient_spectra
 
 pmp = pytest.mark.parametrize
@@ -695,3 +700,95 @@ def test_hci_writes_cube(wgt_mode, ms_name, tmp_path):
     imaged = cube[wsum > 0]
     assert np.isfinite(imaged).all()
     assert np.abs(imaged).max() > 0
+
+
+def _mock_beam_wizard(**attrs):
+    """A BeamWizard stand-in that passes the isinstance checks in stokes2im."""
+    mock = MagicMock(spec=BeamWizard)
+    for name, value in attrs.items():
+        setattr(mock, name, value)
+    return mock
+
+
+def test_transient_beam_gain_grid():
+    """The beam applied to an injected transient must be evaluated at the source's
+    true sky position, on the chunk's own (row, chan) grid.
+
+    get_time_variable_beamgain takes an astropy Time and returns (nchan, ntime),
+    while the dynamic spectrum it multiplies is (nrow, nchan) on the MS grid.
+    """
+    utime = np.array([5.0e9, 5.0e9 + 8.0, 5.0e9 + 16.0])  # MJD seconds
+    nbl = 3
+    time = np.repeat(utime, nbl)
+    freq = np.array([1.0e9, 1.1e9])
+    ra_deg, dec_deg = 45.0, -30.0
+
+    gain = 1.0 + np.arange(freq.size * utime.size, dtype=float).reshape(freq.size, utime.size)
+    bw = _mock_beam_wizard()
+    bw.get_time_variable_beamgain.return_value = gain
+
+    out = beam_gain_for_source(bw, ra_deg, dec_deg, "I", utime, time, freq)
+
+    # (nrow, nchan), each row carrying the gain of its own integration
+    assert out.shape == (time.size, freq.size)
+    assert_allclose(out, np.repeat(gain.T, nbl, axis=0))
+
+    (coord,), kwargs = bw.get_time_variable_beamgain.call_args
+    assert_allclose(coord.ra.deg, ra_deg)
+    assert_allclose(coord.dec.deg, dec_deg)
+    assert isinstance(kwargs["times"], Time)
+    assert_allclose(kwargs["times"].mjd, utime / (24 * 3600))
+    assert_allclose(kwargs["freq"], freq)
+
+
+@pmp("product", ("I", "QI", "IQUV"))
+def test_transient_beam_gain_stokes(product):
+    """Transients are injected into the first (IQUV-ordered) Stokes plane only,
+    so the gain must be the beam of that product, whatever order product is given in."""
+    utime = np.array([5.0e9])
+    freq = np.array([1.0e9])
+    bw = _mock_beam_wizard()
+    bw.get_time_variable_beamgain.return_value = np.ones((1, 1))
+
+    beam_gain_for_source(bw, 45.0, -30.0, product, utime, utime.copy(), freq)
+
+    kwargs = bw.get_time_variable_beamgain.call_args.kwargs
+    assert kwargs["i"] == "I"
+    assert kwargs["j"] == "I"
+
+
+def test_beam_for_band_stokes_order():
+    """beam_for_band must fill the Stokes axis in I, Q, U, V order to match the
+    Stokes axis of the data (stokes_expr_funcs always emits I, Q, U, V) and the
+    sorted corr coordinate written to the output dataset."""
+    product = "IQUV"
+    nx = ny = 32
+    cell_deg = 1e-2
+    l_beam = (np.arange(64) - 32) * cell_deg
+    m_beam = (np.arange(64) - 32) * cell_deg
+    # a distinct constant per Stokes plane so a permutation is detectable
+    levels = {"I": 1.0, "Q": 2.0, "U": 3.0, "V": 4.0}
+
+    bw = _mock_beam_wizard(bds=SimpleNamespace(X=SimpleNamespace(values=l_beam), Y=SimpleNamespace(values=m_beam)))
+    bw.get_rotation_averaged_beam.side_effect = lambda **kw: (
+        np.full((m_beam.size, l_beam.size), levels[kw["i"]]),
+        None,
+    )
+
+    radec = np.array([0.5, -0.5])
+    pbeam = beam_for_band(
+        bw,
+        np.array([5.0e9]),
+        product,
+        np.float64,
+        np.array([1.0e9]),
+        radec,
+        radec,
+        cell_deg,
+        nx,
+        ny,
+    )
+
+    assert [kw["i"] for _, kw in bw.get_rotation_averaged_beam.call_args_list] == ["I", "Q", "U", "V"]
+    for index, prod in enumerate("IQUV"):
+        assert_allclose(pbeam[index], levels[prod], rtol=1e-6)

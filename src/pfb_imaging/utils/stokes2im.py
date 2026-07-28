@@ -19,9 +19,8 @@ from scipy.constants import c as lightspeed
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
-from pfb_imaging.utils.beam import reproject_and_interp_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
-from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import (
     _compute_counts,
     as_contiguous_readonly_view,
@@ -472,8 +471,6 @@ def stokes_image(
         names = transient_ds.names
         ras = transient_ds.ras
         decs = transient_ds.decs
-        if beam_model is not None and not isinstance(beam_model, BeamWizard):
-            bds = xr.open_zarr(beam_model, chunks=None)
         for name, ra, dec in zip(names, ras, decs):
             ra_rad = np.deg2rad(ra)
             dec_rad = np.deg2rad(dec)
@@ -499,24 +496,8 @@ def stokes_image(
             dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # apply beam in original frame
-            # TODO - add time axis (parallactic angle rotation)
-            if isinstance(beam_model, BeamWizard):
-                raise NotImplementedError("BeamWizard not ready for dspec!")
-                # beam_source = beam_model.get_time_variable_beamgain(radec,)
-
-            elif beam_model is not None:
-                beam_source = bds.interp(
-                    chan=freq,
-                    l_beam=np.array([x0t]),
-                    m_beam=np.array([y0t]),
-                ).BEAM.values
-                beam_source = beam_source.reshape(2, 2, *beam_source.shape[1:])
-                beam_source = jones_to_mueller(beam_source, beam_source)
-                # select Stokes I power beam as a function of frequency only
-                beam_source = mueller_to_stokes(beam_source, poltype=poltype)[0, :, 0, 0]
-
-                # apply beam to the transient spectrum
-                dspec *= beam_source[None, :]
+            if beam_model is not None:
+                dspec *= beam_gain_for_source(beam_model, ra, dec, product, utime, time, freq)
 
             # inject transient at x0t, y0t and convert to complex values
             # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
@@ -650,14 +631,8 @@ def stokes_image(
             cell_deg,
             nx,
             ny,
-            time,
-            antpos,
-            poltype,
-            weightb,
-            nthreads,
         )
 
-        # TODO - determine if wgridding is actually required (possibly using pfb.utils.misc.wplanar)
         for c in range(nstokes):
             if weightb[c, ~flagb].sum() == 0:
                 continue
@@ -830,6 +805,40 @@ def stokes_image(
     return out_ds
 
 
+def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq):
+    """Return the Stokes power beam at a fixed sky position on the (row, chan) grid.
+
+    Used to attenuate injected transients by the primary beam in the original
+    (un-rephased) frame, so the gain must be evaluated on the same grid as the
+    dynamic spectrum it multiplies.
+
+    Args:
+        beam_model: BeamWizard instance.
+        ra_deg, dec_deg: source position in degrees, as given in the transient config.
+        product: Stokes product string. Transients are injected into the first
+            (I, Q, U, V ordered) Stokes plane only, so that product's beam is used.
+        utime: unique times of this chunk (MJD seconds).
+        time: per-row times of this chunk (MJD seconds).
+        freq: channel frequencies (Hz).
+
+    Returns:
+        (time.size, freq.size) power beam gain.
+    """
+    assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."
+    prod = sorted(set(product))[0]
+    # returns (nchan, ntime) on this chunk's own grid, so no interpolation is needed
+    gain = beam_model.get_time_variable_beamgain(
+        SkyCoord(ra_deg * units.deg, dec_deg * units.deg, frame="fk5"),
+        times=Time(utime / (24 * 3600), format="mjd"),
+        freq=freq,
+        var="nstokes",
+        i=prod,
+        j=prod,
+    )
+    # rows are grouped by time so expand the unique time axis onto rows
+    return gain.T[np.searchsorted(utime, time)]
+
+
 def beam_for_band(
     beam_model,
     utime,
@@ -841,18 +850,14 @@ def beam_for_band(
     cell_deg,
     nx,
     ny,
-    time,
-    antpos,
-    poltype,
-    weight,
-    nthreads,
 ):
     """Return the Stokes power beam on the output image grid.
 
     Contract: (len(product), ny, nx) in cube/FITS (Y, X) order, matching the
     image-space arrays in stokes_image (docs/wiki/image-and-beam-orientation.md).
     """
-    if isinstance(beam_model, BeamWizard):
+    if beam_model is not None:
+        assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."
         # should we compute a weighted mean over freq instead of interpolating here?
         bds = beam_model.bds
         l_beam = bds.X.values
@@ -863,7 +868,8 @@ def beam_for_band(
         beam = np.zeros((len(product), m_beam.size, l_beam.size), dtype=real_type)
         if isinstance(freq_out, np.ndarray):
             freq_out = freq_out.item()
-        for i, p in enumerate(set(product)):  # set to sort IQUV
+        # sorted to match the I, Q, U, V Stokes axis of the data (stokes_expr_funcs)
+        for i, p in enumerate(sorted(set(product))):
             beam[i], _ = beam_model.get_rotation_averaged_beam(
                 l=l_beam,
                 m=m_beam,
@@ -887,42 +893,6 @@ def beam_for_band(
             ny,
             product,
         ).astype(real_type)
-
-    elif beam_model is not None:
-        # should we compute a weighted mean over freq instead of interpolating here?
-        bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
-        l_beam = bds.l_beam.values
-        m_beam = bds.m_beam.values
-        # the beam is in feed plane direction cosine coordinates
-        # we need to flip the beam upside down because of the beam orientation
-        # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
-        # shape is (corr, chan, X, Y) -> squeeze out freq
-        beam = bds.BEAM.values[:, 0, :, :]
-        # are the MdV beams transmissive or receptive?
-        # reshape for feed and spatial rotations
-        beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
-        cell_deg_in = l_beam[1] - l_beam[0]
-        pbeam = reproject_and_interp_beam(
-            beam,
-            time,
-            antpos,
-            radec,
-            radec_new,
-            cell_deg_in,
-            cell_deg,
-            nx,
-            ny,
-            poltype,
-            product,
-            weight=weight,
-            nthreads=nthreads,
-        )
-
-        # this is a hack to get the images to align: only correct-ish for
-        # square images and near-circular beams (documented debt, see
-        # design-decisions.md D19 and image-and-beam-orientation.md §5)
-        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
-        pbeam = pbeam[:, ::-1, :]
 
     else:
         pbeam = np.ones((len(product), ny, nx), dtype=real_type)

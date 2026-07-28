@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-24T00:00:00Z
-last_verified_commit: 2a50725
+timestamp: 2026-07-28T00:00:00Z
+last_verified_commit: MERGE_SHA
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -327,10 +327,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   output-equivalent against the pre-refactor code on the test MS (cube/psf to
   single-precision threading noise ~1e-7; `psf_pa` bitwise). The `.dt` imager
   path has since followed (D20); only the legacy `.dds` reference code keeps
-  wgridder (X, Y) arrays. The zarr-beam branch
-  (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity
-  question) is untouched, documented debt. Changing any transpose/flip on this
-  path must keep `tests/test_beam_orientation.py` green.
+  wgridder (X, Y) arrays. The zarr-beam branch (`reproject_and_interp_beam` +
+  its surviving hack + the feed→sky parity question) was the one exception on
+  the hci path; D25 deleted it, so no transpose or flip remains there either.
+  Changing any transpose/flip on this path must keep
+  `tests/test_beam_orientation.py` green.
 - **Source:** `src/pfb_imaging/utils/beam.py`;
   `src/pfb_imaging/utils/stokes2im.py` (`stokes_image`, `beam_for_band`);
   `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
@@ -607,6 +608,39 @@ update it (and this page's `last_verified_commit`) in the same session.
   (differential); the w-term sign fix + snapshot guard this session;
   `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
 
+
+### D25 — `hci` beams are meerkat-beams only, with the band named separately
+
+- **Context:** `hci --beam-model` accepted either a MeerKAT band name
+  (`U`/`L`/`S0`/`S4`, which built a `BeamWizard`) or a path to an MdV zarr beam cube.
+  The zarr branch of `beam_for_band` carried the pre-D19 reproject bugs and the
+  transpose+flip hack, its feed→sky parity was unresolved, and the wizard branch of
+  the transient-injection beam was an outright `NotImplementedError` — so one option
+  selected between one maintained path and one half-correct one.
+- **Decision:** `--beam-model` names a *model*, and `meerkat-beams` is the only
+  accepted value (anything else raises `NotImplementedError`); the band moves to its
+  own `--primary-beam-band` (`U`/`L`/`S0`/`S4`), required when a beam model is given.
+  `--beam-model` unset still means no beam correction at all. The zarr branch is
+  deleted from both `beam_for_band` and the transient injection, and the transient
+  beam is implemented on the wizard path by `beam_gain_for_source`.
+- **Rationale:** a deliberate stop-gap. Additional beam models are planned to land
+  *inside* meerkat-beams rather than as more branches here, so pfb keeps one beam path
+  — one place where orientation, Stokes ordering and parity have to be right (D19) —
+  and inherits new models through the wizard. Splitting the band out is what the
+  stop-gap needs anyway: overloading a single option for both model and band is what
+  made "no beam" and "MeerKAT L-band" indistinguishable to the validation code.
+- **Consequences:** callers pass two options instead of one; a beam model with a
+  missing or invalid band raises `ValueError` up front rather than deep in a Ray task.
+  `utils/beam.reproject_and_interp_beam` is now uncalled (see Known debt). MdV
+  feed→sky parity becomes entirely meerkat-beams' question. If a second model ever
+  needs a different band vocabulary, `--primary-beam-band` is the option to revisit.
+  **Gotcha:** the deprecation branch was first written as
+  `if beam_model is not None and beam_model.lower() != "meerkat-beams": raise … else: assert band …`,
+  whose `else` also catches `beam_model is None` — it needs three branches, not two.
+- **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
+  `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, `beam_gain_for_source`);
+  `tests/test_hci.py`; image-and-beam-orientation.md §5, §7.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -626,10 +660,24 @@ update it (and this page's `last_verified_commit`) in the same session.
   visible overhead on small images (~3 s/major-cycle at 308²). Acceptable at production
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
-- The zarr-beam branch of `beam_for_band` (`reproject_and_interp_beam`) still carries
-  the transpose+flip hack and the pre-D19 reproject bugs, and the MdV feed-plane→sky
-  parity question ("transmissive or receptive?") is unresolved. Only correct-ish for
-  square images and near-circular beams; fix along D19 lines once parity is settled
+- **Phase-centre comparison, to re-land with mosaicing (issue #1).** `core/init.py`'s
+  single-field guard (`_phase_dirs_agree` + `tests/test_phase_dir_agreement.py`, commit
+  `6be3ea7`) went away with the legacy retirement (#277) — the code no longer exists on
+  this branch; `6be3ea7` is the only copy. Do **not** port it back as a rejection: it refused multiple phase centres, which is precisely what
+  mosaicing does (the imager rephases them to a common tangent plane, D21). What must
+  survive is the *comparison technique* (see the gotcha below). Its future home is the
+  field-identity test in `core/imager.py`, currently
+  `np.unique(np.round(field_centres, 12))` — exact equality in disguise. That is
+  survivable today (`radec_barycentre` averages unit vectors, so a seam-split or
+  noise-split pair still resolves to the right tangent point; the cost is a spurious
+  "multiple fields" rephase of what is one field), but it becomes load-bearing the
+  moment mosaicing has to decide which fields group together. Give it a real tolerance
+  then, and make that tolerance a wrapped magnitude. Lift the helper and its tests from
+  `6be3ea7`.
+- `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D25 deleted the
+  zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
+  against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
+  are, rewrite it along D19 lines and settle the feed-plane→sky parity question first
   (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas
@@ -645,6 +693,19 @@ update it (and this page's `last_verified_commit`) in the same session.
   **diverges** (the `diverge_count` terminator fires only after the fact). A
   `gamma=1` / low-`psf_oversize` divergence is a preconditioner-conditioning
   symptom, not a bug in the operator.
+- **Generated CLI annotations lie about optionality.** An optional cab input with
+  `choices` round-trips through hip-cargo to `Literal["…"] = None` — a type that
+  excludes the value it defaults to (landmanbester/hip-cargo#90; writing the honest
+  `Literal[…] | None` currently crashes `generate-cabs`). Branch on `is None` first;
+  do not trust the annotation to tell you a value cannot be `None`.
+- **Compare phase centres as wrapped magnitudes, never signed differences.**
+  `np.any((a - b) > tol)` only fires when `a` is larger on *every* axis, so it silently
+  accepts half of all mismatches — two fields 1.1 rad apart passed the `init` guard
+  this way for as long as it existed (`6be3ea7`). A naive `np.abs` is not the fix
+  either: `construct_mappings` normalises ra into [0, 2pi), so a pair straddling
+  RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
+  `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
+  elementwise to the (ra, dec) pair is safe.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests
