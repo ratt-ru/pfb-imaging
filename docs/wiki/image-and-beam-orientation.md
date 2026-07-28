@@ -4,7 +4,7 @@ title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
 timestamp: 2026-07-28T00:00:00Z
-last_verified_commit: MERGE_SHA
+last_verified_commit: bc879f0
 ---
 
 # Image and beam orientation conventions (hci)
