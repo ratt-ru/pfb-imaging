@@ -158,7 +158,7 @@ jobs:
 
       - name: Install pfb-imaging
         if: env.SKIP_CHECKS != 'true'
-        run: uv sync --extra full --group dev --group test --frozen
+        run: uv sync --extra full --group dev --frozen
 
       - name: Run pfb-imaging
         if: env.SKIP_CHECKS != 'true'

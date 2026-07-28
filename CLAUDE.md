@@ -51,6 +51,9 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 * Minimize external dependencies.
 * The lightweight install provides CLI and cab definitions only (sole dependency: `hip-cargo`).
 * Full scientific stack is optional via `pip install pfb-imaging[full]`.
+* Development uses a single `dev` dependency group; the scientific stack stays behind the
+  `full` extra (`uv sync --extra full --group dev`). Keeping `pfb-imaging[full]` out of `dev`
+  is deliberate — see `.claude/rules/testing-and-ci.md` §1.
 
 ## Mandatory Development Workflow
 

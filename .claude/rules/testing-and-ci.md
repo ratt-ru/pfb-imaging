@@ -8,6 +8,23 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
 * Test data in `tests/data/` is downloaded automatically from Google Drive on first run.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
 
+### Dependency groups: one `dev` group, `full` is the heavy axis
+
+There is a single `dev` dependency group (ruff, pre-commit, pytest, tbump, stimela — the
+former `test` group was folded into it; nothing ever installed one without the other).
+The distinction that *is* load-bearing is the `full` extra:
+
+```bash
+uv sync --group dev                 # lint/cab tooling only — the Code Quality job
+uv sync --extra full --group dev    # + the scientific stack — tests, and local work
+```
+
+**Never put `pfb-imaging[full]` into the `dev` group.** `dev` is a uv default group, so
+doing so drags ray/ducc0/jax/dask-ms/africanus into `uv sync --group dev` — i.e. into the
+Code Quality job, whose entire body is `ruff format --check .` and `ruff check .`, and into
+`update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra full`
+explicitly.
+
 ### arcae / python-casacore coexistence
 
 As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and python-casacore coexist in one

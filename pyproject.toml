@@ -118,7 +118,6 @@ dev = [
     "pytest>=9.0.3",
     "pytest-timeout>=2.3",
     "stimela>=2",
-    "pfb-imaging[full]",
 ]
 
 [tool.uv]

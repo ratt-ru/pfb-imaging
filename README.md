@@ -225,7 +225,7 @@ git clone https://github.com/ratt-ru/pfb-imaging.git
 cd pfb-imaging
 
 # Install dependencies with development tools
-uv sync --extra full --group dev --group test
+uv sync --extra full --group dev
 
 # Install pre-commit hooks (recommended)
 uv run pre-commit install --hook-type commit-msg
