@@ -358,8 +358,6 @@ def grid_partition(
             do_wgridding=do_wgridding,
             divide_by_n=False,
             nthreads=nthreads,
-            sigma_min=1.1,
-            sigma_max=3.0,
             double_precision_accumulation=double_accum,
             dirty=dirty[c].T,
         )
@@ -418,8 +416,6 @@ def grid_partition(
                 do_wgridding=do_wgridding,
                 divide_by_n=False,
                 nthreads=nthreads,
-                sigma_min=1.1,
-                sigma_max=3.0,
                 double_precision_accumulation=double_accum,
                 dirty=psf[c].T,
             )
@@ -517,8 +513,6 @@ def residual_from_partitions(
                 do_wgridding=do_wgridding,
                 nthreads=nthreads,
                 divide_by_n=False,
-                sigma_min=1.1,
-                sigma_max=3.0,
             )
             vis2dirty(
                 uvw=uvw,
@@ -539,8 +533,6 @@ def residual_from_partitions(
                 do_wgridding=do_wgridding,
                 divide_by_n=False,
                 nthreads=nthreads,
-                sigma_min=1.1,
-                sigma_max=3.0,
                 double_precision_accumulation=double_accum,
                 dirty=tmp.T,
             )

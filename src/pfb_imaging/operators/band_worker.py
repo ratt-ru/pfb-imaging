@@ -249,8 +249,6 @@ class _BandWorkerImpl:
                 do_wgridding=do_wgridding,
                 divide_by_n=False,
                 nthreads=self._nthreads,
-                sigma_min=1.1,
-                sigma_max=3.0,
             )
             rvis = np.empty_like(vis)
             for c in range(model.shape[0]):
