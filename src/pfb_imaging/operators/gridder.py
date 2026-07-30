@@ -379,6 +379,9 @@ def grid_partition(
             psf_vis = dirty2vis(
                 uvw=uvw,
                 freq=freq,
+                # masked for the same reason as residual_from_partitions: NaN
+                # UVW on xarray-ms's absent-row padding poisons the w range
+                mask=mask,
                 dirty=delta_im.T,
                 pixsize_x=cell_rad,
                 pixsize_y=cell_rad,
@@ -499,6 +502,13 @@ def residual_from_partitions(
             model_vis = dirty2vis(
                 uvw=uvw,
                 freq=freq,
+                # MUST be masked: xarray-ms lays the data out on a regular
+                # (time, baseline) grid and fills absent rows with NaN UVW
+                # (see core/imager.py's uvw_mask). Those rows are fully
+                # flagged and zero-weighted, so every vis2dirty ignores them --
+                # but an unmasked dirty2vis still derives its w range from
+                # them, giving a NaN w extent and ducc's "too many w planes".
+                mask=mask,
                 # (Y, X) product adapted to ducc's x-major input by a
                 # zero-copy strided view
                 dirty=(beam[c] * model[c]).T,

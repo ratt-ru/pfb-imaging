@@ -238,6 +238,11 @@ class _BandWorkerImpl:
             common = dict(
                 uvw=pds.UVW.values,
                 freq=pds.FREQ.values,
+                # shared by the degrid and grid directions. Load-bearing for
+                # dirty2vis: xarray-ms pads absent (time, baseline) rows with
+                # NaN UVW, and an unmasked degrid derives its w range from
+                # them -> ducc "too many w planes" (see gridder.py).
+                mask=pds.MASK.values,
                 pixsize_x=cell_rad,
                 pixsize_y=cell_rad,
                 center_x=x0,
@@ -281,7 +286,7 @@ class _BandWorkerImpl:
                     vis2dirty(
                         vis=v,
                         wgt=wgt[c],
-                        mask=mask,
+                        # mask comes from `common`
                         npix_x=nx,
                         npix_y=ny,
                         double_precision_accumulation=double_accum,
