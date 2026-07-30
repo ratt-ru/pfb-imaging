@@ -26,6 +26,21 @@ moves in (the stored ``UPDATE`` and ``DIRTY``).  Those give the practically
 binding bound: a large ``lambda_max`` in a direction the iteration never excites
 does not destabilise it, whereas a large quotient along ``UPDATE`` does.
 
+Interpreting a large ``lambda_max`` needs to know where ``eta`` sits in ``M``'s
+own spectrum, so the header reports ``lambda_max(M)``, the percentiles of ``M``'s
+convolution multiplier ``|PSFHAT|/wsum_tot``, and the fraction of Fourier modes
+below ``eta``.  Wherever the multiplier falls below ``eta`` the preconditioner is
+effectively ``eta*I`` and any ``H`` response there is divided by ``eta``, so
+``lambda ~ h/eta``: a sub-percent operator mismatch landing on those modes is
+enough to put ``lambda_max`` in the tens.  ``psf_oversize`` and the ``BEAM``
+range are reported for the same reason -- truncation and the beam floor are the
+other two ways ``M`` loses curvature that ``H`` still has.
+
+The beam enters ``H`` on BOTH sides (``sum_p B_p GtWG B_p``, wiki D23): the
+gradient sweep's second return value carries the outer per-partition beam, which
+is what this script consumes.  Using the once-attenuated apparent residual
+instead would make ``H`` non-symmetric -- ``--check-adjoint`` asserts it is not.
+
 Run (from the repo root)::
 
     uv run python scripts/max_gamma.py /path/to/out_I.dt --eta 1e-3 --nthreads 8
@@ -47,6 +62,7 @@ from ducc0.misc import resize_thread_pool
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.deconv.presets import _build_hess
 from pfb_imaging.operators.band_worker import BandWorkerPool
+from pfb_imaging.opt.power_method import power_method_numba as power_method
 from pfb_imaging.utils.fits import save_fits, set_wcs
 
 
@@ -67,6 +83,14 @@ def parse_args():
     p.add_argument("--safety", type=float, default=1.8, help="Recommend gamma = safety / lambda_max (< 2)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-fits", action="store_true", help="Skip writing the dominant eigenvector")
+    p.add_argument("--pm-tol", type=float, default=1e-3, help="Tolerance for the lambda_max(M) power method")
+    p.add_argument("--pm-maxit", type=int, default=200)
+    p.add_argument(
+        "--check-adjoint",
+        action="store_true",
+        help="Assert H is symmetric and M^-1 H is self-adjoint in the M inner product, then exit. "
+        "Catches a beam applied only once (which makes H non-symmetric).",
+    )
     return p.parse_args()
 
 
@@ -104,6 +128,105 @@ def load_tree(dt_name):
         if key in first:
             cubes[key] = np.stack([dt[n].ds[key].values[0] for n in nodes])
     return dt, nodes, geometry, wsums, meta, cubes
+
+
+def spectrum_report(dt, nodes, wsum_tot, wsums, eta):
+    """Where ``eta`` sits in ``M``'s spectrum, plus psf_oversize and the beam.
+
+    ``M``'s convolution part has Fourier multiplier ``sum_p |PSFHAT_p| / wsum_tot``
+    (exact only for a unit beam, indicative otherwise -- with a beam ``M`` is not
+    diagonal in Fourier).  Modes below ``eta`` are ones where the preconditioner
+    has no curvature of its own, so any ``H`` response there is amplified by
+    ``1/eta``.  The beam floor is the image-space analogue: pixels where
+    ``B^2 * wsum_b / wsum_tot < eta`` are effectively pure Tikhonov.
+    """
+    out = {}
+    print("\nM's convolution multiplier |PSFHAT|/wsum_tot (indicative when a beam is present):")
+    for name in nodes:
+        band = dt[name]
+        mult = None
+        for cname in sorted(band.children):
+            a = np.abs(band[cname].ds.PSFHAT.values[0])
+            mult = a if mult is None else mult + a
+            del a
+        mult /= wsum_tot
+        pct = float((mult < eta).mean()) * 100.0
+        # eta's percentile in the multiplier distribution
+        med = float(np.median(mult))
+        print(
+            f"  {name}: max {mult.max():.3e}  median {med:.3e}  min {mult.min():.3e}  | {pct:5.1f}% of modes below eta"
+        )
+        out[name] = {"mult_max": float(mult.max()), "mult_median": med, "pct_modes_below_eta": pct}
+        del mult
+
+    for b, name in enumerate(nodes):
+        ds = dt[name].ds
+        if "BEAM" not in ds:
+            continue
+        beam = ds.BEAM.values[0]
+        # image-space curvature of the convolution part is ~ B^2 * psf(0)/wsum_tot
+        floor = float((beam**2 * wsums[b] / wsum_tot < eta).mean()) * 100.0
+        print(
+            f"  {name} BEAM: min {beam.min():.4f} max {beam.max():.4f} median {np.median(beam):.4f}"
+            f"  | {floor:5.1f}% of pixels below the eta beam floor"
+        )
+        out[name]["beam_min"] = float(beam.min())
+        out[name]["beam_max"] = float(beam.max())
+        out[name]["pct_pixels_below_beam_floor"] = floor
+        del beam
+    return out
+
+
+def eigvec_report(v):
+    """Where the dominant eigenvector's power lives -- radially and in frequency."""
+    p = v**2
+    tot = p.sum()
+    if tot == 0:
+        return {}
+    _, ny, nx = v.shape
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    r = np.sqrt(((yy - ny / 2) / (ny / 2)) ** 2 + ((xx - nx / 2) / (nx / 2)) ** 2)
+    outer = float(p.sum(axis=0)[r > 0.5].sum() / tot)
+    f = np.abs(np.fft.fftshift(np.fft.fft2(v.mean(axis=0)))) ** 2
+    hf = float(f[r > 0.5].sum() / f.sum()) if f.sum() > 0 else float("nan")
+    print(f"\ndominant eigenvector: {100 * outer:.1f}% of power outside half the field radius, ")
+    print(f"                      high-frequency fraction {hf:.3f} (power above half-Nyquist)")
+    print("  field-edge + high-frequency implicates the w-term / off-axis PSF mismatch;")
+    print("  large-scale implicates the short-baseline hole.")
+    return {"frac_power_outside_half_radius": outer, "high_freq_fraction": hf}
+
+
+def check_adjoint(h_exact, hess, shape, seed=0):
+    """H must be symmetric; M^-1 H self-adjoint in the M inner product, not the Euclidean one.
+
+    A beam applied only once (the apparent instead of the beam-attenuated
+    gradient) shows up here immediately as a non-symmetric H.
+    """
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal(shape)
+    y = rng.standard_normal(shape)
+    x /= np.linalg.norm(x)
+    y /= np.linalg.norm(y)
+
+    def dot(a, b):
+        return float(np.vdot(a, b).real)
+
+    def rel(a, b):
+        return abs(a - b) / max(abs(a), abs(b), 1e-300)
+
+    hx, hy = h_exact(x), h_exact(y)
+    r_h = rel(dot(hx, y), dot(x, hy))
+    print(f"  <Hx,y> vs <x,Hy>            : rel {r_h:.2e}")
+    mx, my = hess.dot(x), hess.dot(y)
+    r_m = rel(dot(mx, y), dot(x, my))
+    print(f"  <Mx,y> vs <x,My>            : rel {r_m:.2e}")
+    ax, ay = hess.cg(hx), hess.cg(hy)
+    print(f"  <Ax,y> vs <x,Ay>  (Euclid)  : rel {rel(dot(ax, y), dot(x, ay)):.2e}  (expected to FAIL)")
+    r_am = rel(dot(ax, hess.dot(y)), dot(x, hess.dot(ay)))
+    print(f"  <Ax,y>_M vs <x,Ay>_M        : rel {r_am:.2e}")
+    assert r_h < 1e-10, f"H is not symmetric (rel {r_h:.2e}) -- is the beam applied only once?"
+    assert r_m < 1e-10, f"M is not symmetric (rel {r_m:.2e})"
+    print("  H and M symmetric, M^-1 H self-adjoint in the M inner product: OK")
 
 
 def main():
@@ -162,8 +285,22 @@ def main():
         den = float(np.vdot(v, hess.dot(v)).real)
         return num / den if den != 0 else np.nan
 
-    print(f"{nband} band(s), {ny}x{nx}, wsum_tot = {wsum_tot:.4e}")
-    print(f"hess_norm lambda_max(M) is data-dependent; eta = {args.eta:.3e}")
+    nx_psf, ny_psf = geometry["nx_psf"], geometry["ny_psf"]
+    print(
+        f"{nband} band(s), {ny}x{nx}, psf {ny_psf}x{nx_psf} (psf_oversize {nx_psf / nx:.3f}), wsum_tot = {wsum_tot:.4e}"
+    )
+
+    if args.check_adjoint:
+        print("\nadjointness checks:")
+        check_adjoint(h_exact, hess, (nband, ny, nx), seed=args.seed)
+        return
+
+    # lambda_max(M): sets the scale eta has to be judged against. Aliasing-exact
+    # convolution needs psf_oversize >= 2; below that M degrades (issue #287).
+    lam_m, _ = power_method(hess.dot, (nband, ny, nx), tol=args.pm_tol, maxit=args.pm_maxit, verbosity=0)
+    print(f"eta = {args.eta:.3e}   lambda_max(M) = {lam_m:.4e}   eta/lambda_max(M) = {args.eta / lam_m:.2e}")
+    spectrum = spectrum_report(dt, nodes, wsum_tot, wsums, args.eta)
+    print()
 
     # directions the solver actually moves in
     probes = {}
@@ -207,13 +344,21 @@ def main():
     print("Lower bound only: power iteration converges from below, and a truncated")
     print("run underestimates. Treat the recommendation as an upper limit on gamma.")
 
+    eig = eigvec_report(v)
+
     record = {
         "dt": dt_name,
         "nband": nband,
         "nx": nx,
         "ny": ny,
+        "nx_psf": nx_psf,
+        "psf_oversize": nx_psf / nx,
         "wsum_tot": wsum_tot,
         "eta": args.eta,
+        "lambda_max_M": float(lam_m),
+        "eta_over_lambda_max_M": args.eta / float(lam_m),
+        "spectrum": spectrum,
+        "eigvec": eig,
         "probe_rayleigh": probes,
         "power_history": history,
         "lambda_max": lam_max,
