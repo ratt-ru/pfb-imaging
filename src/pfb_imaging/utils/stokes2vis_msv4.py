@@ -351,9 +351,23 @@ def stokes_vis(
     # This happens e.g. if selecting out diagonal correlations
     # with QC and making CORRECTED_WEIGHTS
 
-    # do after weight_data otherwise mappings need to be recomputed
-    # drop fully flagged rows
-    mrow = ~frow
+    # do after weight_data otherwise mappings need to be recomputed (the
+    # tbin_idx/tbin_counts mappings above assume the regular (time, baseline)
+    # grid, so every row selection has to happen below them)
+    #
+    # Drop auto-correlations, fully flagged rows, and rows xarray-ms padded to
+    # square off the (time, baseline) grid. The padding carries NaN UVW (see
+    # the uvw_mask in core/imager.py) and is the reason two things used to blow
+    # up: africanus' BDA mapper derives a bin's central UVW from its first and
+    # last row irrespective of flags, so a padded row poisons it to NaN and
+    # trips `assert fracsizeChanBlockMin >= 1` (max(nan, 1) is nan); and any
+    # UNMASKED ducc degrid derives its w range from every row, giving a NaN w
+    # extent and "too many w planes". Dropping them here fixes both at source
+    # and is pure win otherwise -- they are zero-weight and fully masked, so
+    # they contribute nothing while inflating the stored .dt and the gridding.
+    mrow = ~frow & ~flag.all(axis=(1, 2)) & np.isfinite(uvw).all(axis=1)
+    if not mrow.any():
+        return None
     data = data[mrow]
     time = time[mrow]
     interval = interval[mrow]
