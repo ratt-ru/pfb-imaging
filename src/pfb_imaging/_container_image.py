@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:imager-rephase-and-reproject"
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:dev-0.1.0"
