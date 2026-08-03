@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-28T00:00:00Z
-last_verified_commit: bc879f0
+timestamp: 2026-07-31T00:00:00Z
+last_verified_commit: e348d68
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -640,6 +640,82 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
   `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, `beam_gain_for_source`);
   `tests/test_hci.py`; image-and-beam-orientation.md §5, §7.
+
+### D26 — `--eta-mode` shapes eta over the image, in the preconditioner only
+
+- **Context:** on a real MeerKAT mosaic (750², 4.6° field, 3 bands/3 fields,
+  `psf_oversize=2`, beam on) `scripts/max_gamma.py` measured
+  `lambda_max(M^-1 H_exact) >= 14.5` at the default `--eta 1e-3`, i.e. the major cycle
+  diverges for any `gamma > 0.14` — the default `gamma=0.95` blows up after three
+  descending cycles (issue #287). The dominant eigenvector is the near-Nyquist ripple
+  seen in real images: 100% of its power in the outer half of the field, 49% above
+  half-Nyquist. Its cause is a curvature *mismatch*, not a small `eta`: along that mode
+  `v'BCBv/wsum = 3.7e-3` against `v'H_exact v = 6.9e-2`, so **M under-estimates the
+  curvature 18x** and `eta` supplies only 21% of `v'Mv`. Uniform `eta` cannot fix it —
+  reaching `gamma=1` needs 31x more damping *at that mode*, and applying that
+  everywhere flattens M into a scaled identity.
+- **Decision:** `--eta-mode` (default None = uniform, unchanged) selects a spatially
+  varying `e(x)` with dynamic range `--eta-cap` (default 100): `invbeam`/`invbeam2`
+  (`1/B_eff`, `1/B_eff²` on the wsum-weighted mosaic of `B_p²`), `radial`
+  (`1 + (cap-1)r²`, `r` in field half-widths) and `radial-invbeam`. Every mode is
+  normalised so `e == eta` where the operator is trusted, so `--eta` keeps its meaning
+  and `lambda_min(M)` cannot drop. `e` enters **`M` only** — it is absent from
+  `gridder.residual_from_partitions`, so the fixed point and the flux scale are
+  untouched and a profile only damps each forward update. Built inside each band worker
+  from that band's own beams (`operators/hessian.eta_profile`), so no `(ny, nx)` array
+  crosses Ray.
+- **Rationale:** `lambda_max(M^-1 H)` is monotone decreasing in `M` in the PSD order, so
+  raising `e` where `M` is untrustworthy lowers it. Measured (same `.dt`, `eta=1e-3`):
+
+  | eta-mode | lambda_max | gamma_max | CG per solve |
+  |---|---|---|---|
+  | uniform | 14.48 | 0.138 | 20.9 s |
+  | `invbeam` cap=100 | 11.47 | 0.174 | 12.2 s |
+  | `radial` cap=100 | 3.07 | 0.652 | 9.3 s |
+  | `radial` cap=300 | 2.20 | 0.910 | 9.2 s |
+  | `radial` cap=1000 | 1.41 | 1.421 | 9.5 s |
+
+  **Beam-shaped profiles barely help and radial ones do**, which is not obvious: uniform
+  `eta` already acts like an effective `eta/B²` (that is why enabling the beam helps at
+  all), so the maximiser has already relocated to where the beam is *large* — 90% of its
+  power above `B_eff = 0.39`. `invbeam` gives the same 1.3x at cap 10, 100 *and* 1000:
+  its dynamic range is spent in the skirt where the mode has no power. The w-mismatch
+  instead grows with distance from the **tangent point** and the beam does not oppose it
+  there, so a radial profile is the one aimed at the actual mode.
+- **Consequences:** end-to-end at the default `gamma=0.95` on that mosaic, uniform `eta`
+  reaches rms 2.6e-2 at cycle 3 then diverges (rms x5.2, x5.7, peak 46), while
+  `--eta-mode radial --eta-cap 1000` descends monotonically to rms 1.7e-2 with `eps`
+  still falling. The diverged model swings ±106 with 7.2% of its power beyond `b_max`;
+  the profiled model is +6.2/−0.17 with 0.0%. **CG gets cheaper, not dearer** (2.2x),
+  because the profile compresses M's spectrum where it is smallest — the earlier
+  "no CG cost" expectation was pessimistic. `lambda_max(M)` rises only 1.68 → 1.98, so
+  the backward step's `hess_norm` barely moves. Costs: `||update||` roughly halves, so
+  the outer field cleans more slowly per cycle (bought back many times over by a 7x
+  larger `gamma`), and `r` is measured from the image centre — with `--target` the
+  tangent point is offset by `l0/cell` pixels, which the radial modes ignore. This damps
+  the instability; it does not fix `M`. A w-aware or faceted preconditioner is the
+  actual fix (#287); `--eta-mode` prices how much of the divergence damping alone can
+  reach, so a better `M` has a number to beat.
+- **Band consistency:** `radial` is pure image geometry, so `e` is **bit-identical across
+  bands**; the beam-driven modes are frequency-dependent and are not. This matters even
+  though `e` cannot bias the fixed point: bands couple *only* through the L21 prox (D3),
+  so a band-dependent `e` damps some bands' updates more than others and the joint
+  sparsity decision is taken on a model whose spectral shape is still converging — a bias
+  at any finite iteration count. A band-uniform profile is the safe default;
+  band-uniformity for a beam-driven mode would need a driver-side reduction of `B2_eff`
+  across bands (each worker sees only its own band). Both halves pinned by
+  `tests/test_eta_profile.py::test_radial_is_identical_across_bands_and_beam_modes_are_not`.
+- **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits`
+  once per run — a `(band, corr, ny, nx)` cube (band on the FREQ axis, so band-to-band
+  variation is visible; a 3D array would land it on STOKES because `to4d` prepends) with
+  `ETAMODE`/`ETA`/`ETACAP` in the header, and logs the range plus the band-to-band
+  spread. Note the radial modes saturate at the cap on the *inscribed circle* (`r = 1`),
+  so the corners out to `r = sqrt(2)` are all clipped to `eta*cap` — with cap=300 that is
+  ~15% of `lambda_max(M)`, i.e. the corners are heavily damped by design.
+- **Source:** `src/pfb_imaging/operators/hessian.py` (`eta_profile`, `ETA_MODES`);
+  `src/pfb_imaging/operators/band_worker.py`; `src/pfb_imaging/deconv/presets.py`;
+  `src/pfb_imaging/cli/deconv.py`; `scripts/max_gamma.py` (`denominator_report`);
+  `tests/test_eta_profile.py`; issue #287.
 
 ## Known debt
 

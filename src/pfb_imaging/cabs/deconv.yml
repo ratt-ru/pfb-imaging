@@ -137,6 +137,24 @@ cabs:
         default: 0.001
         metadata:
           rich_help_panel: PFB
+      eta-mode:
+        info:
+          Shape of a spatially varying eta over the image.
+          By default eta is uniform.
+          Choices are invbeam, invbeam2, radial and radial-invbeam.
+          Each rises from eta where the PSF approximation is trusted to eta times eta-cap where it is worst.
+          This damps the forward update without moving the fixed point, so the flux scale is unchanged.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: PFB
+      eta-cap:
+        info:
+          Dynamic range of the eta-mode profile.
+          Ignored when eta-mode is unset.
+        dtype: float
+        default: 100.0
+        metadata:
+          rich_help_panel: PFB
       gamma:
         info:
           Step size of update.

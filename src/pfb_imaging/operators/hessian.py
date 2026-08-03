@@ -368,6 +368,78 @@ class HessPSF(object):
         return self.xout.copy()
 
 
+ETA_MODES = ("invbeam", "invbeam2", "radial", "radial-invbeam")
+
+
+def eta_profile(partitions, eta, mode, ny, nx, cap=1e2):
+    """Spatially varying Tikhonov coefficient for the PSF-convolution preconditioner.
+
+    ``lambda_max(M^-1 H_exact)`` is monotone decreasing in ``M`` in the PSD
+    order, so raising ``eta`` where the PSF approximation to the Hessian is
+    worst lowers it, and with it the smallest diverging ``gamma`` (issue #287).
+    The profile enters the **preconditioner only** -- ``eta`` is absent from
+    ``gridder.residual_from_partitions``, so the fixed point and the flux scale
+    are untouched and a profile only damps each forward update.
+
+    Every mode is normalised to ``eta`` where the operator is trustworthy (beam
+    peak / tangent point) and has dynamic range exactly ``cap``, so ``--eta``
+    keeps its meaning across modes, ``lambda_min(M)`` (hence the CG iteration
+    count) cannot degrade, and the modes are directly comparable:
+
+    * ``invbeam``  -- ``1/B_eff``, ``B_eff`` the effective mosaic beam (below);
+    * ``invbeam2`` -- ``1/B_eff^2``, twice the log-slope of ``invbeam``;
+    * ``radial``   -- ``1 + (cap-1) r^2``, ``r`` in field half-widths, aimed at
+      the w-term mismatch (which grows with distance from the tangent point)
+      rather than at the beam;
+    * ``radial-invbeam`` -- the product, clipped to ``cap``.
+
+    Note: ``r`` is measured from the image centre. With ``--target`` the tangent
+    point is offset from it by ``l0/cell`` pixels, which this ignores.
+
+    Args:
+        partitions: the ``HessianTree`` partition dicts (``beam``, ``wsum``).
+        eta: baseline coefficient -- the value used where the operator is trusted.
+        mode: one of ``ETA_MODES``, or None for a uniform ``eta``.
+        ny, nx: image dimensions ((Y, X) order, wiki D19).
+        cap: dynamic range of the profile; also bounds the beam skirt, where
+            ``1/B_eff`` would otherwise diverge.
+
+    Returns:
+        ``eta`` unchanged (float) when ``mode`` is None, else a
+        ``(ncorr, ny, nx)`` array with minimum ``eta`` and maximum ``eta*cap``.
+
+    Raises:
+        ValueError: unknown mode, or ``cap < 1``.
+    """
+    if mode is None:
+        return eta
+    if mode not in ETA_MODES:
+        raise ValueError(f"unknown eta_mode '{mode}'; choose from {ETA_MODES}")
+    if cap < 1.0:
+        raise ValueError(f"eta_cap must be >= 1 (got {cap}); the profile floor is eta itself")
+    ncorr = partitions[0]["wsum"].size
+    f = np.ones((ncorr, ny, nx))
+    if "invbeam" in mode:
+        # The mosaic response the operator actually carries is the wsum-weighted
+        # mean of B_p^2: both M and H_exact apply the beam on BOTH sides (wiki
+        # D23), so B^2 -- not the band node's first-power BEAM -- is what
+        # multiplies the curvature.
+        b2 = np.zeros((ncorr, ny, nx))
+        wsum = np.zeros(ncorr)
+        for p in partitions:
+            b2 += p["wsum"][:, None, None] * p["beam"].astype(np.float64) ** 2
+            wsum += p["wsum"]
+        b2 /= wsum[:, None, None]
+        b2 /= b2.max(axis=(1, 2), keepdims=True)  # peak 1 per correlation
+        b = b2 if mode.endswith("2") else np.sqrt(b2)
+        f *= np.clip(1.0 / np.maximum(b, 1.0 / cap), 1.0, cap)
+    if mode.startswith("radial"):
+        yy, xx = np.mgrid[0:ny, 0:nx]
+        r2 = ((xx - nx / 2) / (nx / 2)) ** 2 + ((yy - ny / 2) / (ny / 2)) ** 2
+        f *= 1.0 + (cap - 1.0) * r2[None]
+    return eta * np.minimum(f, cap)
+
+
 class HessianTree(object):
     """Sum-over-partitions PSF-convolution Hessian for the DataTree imager.
 
@@ -394,9 +466,12 @@ class HessianTree(object):
             per-partition ``wsum``). A ``HessTreeRay`` band actor passes the
             TOTAL wsum across all bands so the per-band operator matches the
             legacy total-normalised convention.
+        eta_mode, eta_cap: optional spatially varying ``eta`` built from this
+            band's own beams; see ``eta_profile``. ``eta`` is then the value at
+            the beam peak / tangent point rather than everywhere.
     """
 
-    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta=0.0, nthreads=1, wsum=None):
+    def __init__(self, partitions, nx, ny, nx_psf, ny_psf, eta=0.0, nthreads=1, wsum=None, eta_mode=None, eta_cap=1e2):
         if not partitions:
             raise ValueError("HessianTree requires at least one partition")
         self.parts = partitions
@@ -404,9 +479,13 @@ class HessianTree(object):
         self.ny = ny
         self.nx_psf = nx_psf
         self.ny_psf = ny_psf
-        self.eta = eta
         self.nthreads = nthreads
         self.ncorr = partitions[0]["wsum"].size
+        # built here (not driver-side) so the profile follows this band's own
+        # beams and never crosses Ray: the (ncorr, ny, nx) array stays in the
+        # worker that owns the band
+        self.eta = eta_profile(partitions, eta, eta_mode, ny, nx, cap=eta_cap)
+        self.eta_mode = eta_mode
         if wsum is None:
             self.wsum = np.zeros(self.ncorr)
             for p in partitions:
@@ -482,6 +561,8 @@ class HessTreeRay:
             ``BandWorkerPool.load_bands`` (requires ``workers``).
         nx, ny, nx_psf, ny_psf: image/PSF geometry.
         etas: Tikhonov parameter, scalar or per-band sequence.
+        eta_mode, eta_cap: optional spatially varying ``eta``; each worker builds
+            the profile from its own band's beams (see ``eta_profile``).
         nthreads: total FFT threads (ignored when ``workers`` is passed; the
             pool's per-band thread budget applies).
         wsums: optional normalisation override, scalar or per-band sequence
@@ -498,6 +579,8 @@ class HessTreeRay:
         nx_psf,
         ny_psf,
         etas=0.0,
+        eta_mode=None,
+        eta_cap=1e2,
         nthreads=1,
         wsums=None,
         cg_tol=1e-3,
@@ -533,7 +616,7 @@ class HessTreeRay:
         elif workers.nband != self.nband:
             raise ValueError(f"workers pool has {workers.nband} bands, expected {self.nband}")
         self._pool = workers
-        self._pool.init_hess(partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums)
+        self._pool.init_hess(partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums, eta_mode, eta_cap)
 
     def dot(self, x):
         return self._pool.hess_dot(x)
@@ -547,6 +630,10 @@ class HessTreeRay:
         maxit = self.cg_maxit if maxit is None else maxit
         minit = self.cg_minit if minit is None else minit
         return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+
+    def get_eta(self):
+        """Tikhonov coefficient per band as an ``(nband, ny, nx)`` cube."""
+        return self._pool.get_eta(self.ny, self.nx)
 
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""

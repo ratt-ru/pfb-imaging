@@ -14,6 +14,7 @@ from pfb_imaging.deconv import DeconvSolver
 from pfb_imaging.deconv.presets import PRESETS
 from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.operators.hessian import ETA_MODES
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
 from pfb_imaging.utils.naming import set_output_names
@@ -40,6 +41,8 @@ def deconv(
     hess_norm: float | None = None,
     rmsfactor: float = 1.0,
     eta: float = 0.001,
+    eta_mode: str | None = None,
+    eta_cap: float = 100.0,
     gamma: float = 0.95,
     nbasisf: int | None = None,
     positivity: int = 1,
@@ -80,6 +83,9 @@ def deconv(
     a PFBSolver; any object satisfying the DeconvSolver Protocol can drive the loop.
     """
     opts_dict = locals().copy()
+    if eta_mode is not None and eta_mode not in ETA_MODES:
+        # validated before Ray starts; the profile itself is built in the workers
+        log.error_and_raise(f"eta_mode must be one of {ETA_MODES} or None, got '{eta_mode}'", ValueError)
     time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -241,6 +247,27 @@ def deconv(
     solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+
+    # dump the Tikhonov profile once per run: it is the preconditioner's only
+    # tunable spatial structure, so seeing it is the way to sanity-check an
+    # --eta-mode choice (issue #287, D26). A cube, not an MFS collapse, so that
+    # band-to-band variation is visible -- 'radial' is pure geometry and must be
+    # identical across bands, the beam-driven modes are not.
+    if eta_mode is not None and hasattr(getattr(solver, "hess", None), "get_eta"):
+        etas = solver.hess.get_eta()
+        hdr_eta = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out, unit="", casambm=False, l0=l0, m0=m0)
+        hdr_eta["ETAMODE"] = (eta_mode, "eta-mode profile shape")
+        hdr_eta["ETA"] = (eta, "baseline eta (profile floor)")
+        hdr_eta["ETACAP"] = (eta_cap, "profile dynamic range")
+        name = fits_oname + f"_{suffix}_eta.fits"
+        # (band, corr, ny, nx): band belongs on the FREQ axis, so keep it 4D --
+        # a 3D array would put it on STOKES instead (to4d prepends)
+        save_fits(etas[:, None], name, hdr_eta, yx_order=True)
+        spread = float(np.abs(etas - etas[0]).max()) / max(float(etas.max()), 1e-30)
+        log.info(
+            f"eta_mode '{eta_mode}': {etas.min():.3e} to {etas.max():.3e} "
+            f"({etas.max() / etas.min():.1f}x), band-to-band spread {100 * spread:.2f}% -> {name}"
+        )
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])

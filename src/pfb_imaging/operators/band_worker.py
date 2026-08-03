@@ -141,7 +141,7 @@ class _BandWorkerImpl:
 
     # --- Hessian role ---
 
-    def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum):
+    def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum, eta_mode=None, eta_cap=1e2):
         # deferred: import cycle with operators.hessian
         from pfb_imaging.operators.hessian import HessianTree
 
@@ -149,11 +149,30 @@ class _BandWorkerImpl:
             partitions = getattr(self, "_hess_parts", None)
             if partitions is None:
                 raise RuntimeError("no partitions passed and none loaded; call load_band first")
-        self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=self._nthreads, wsum=wsum)
+        self._hess = HessianTree(
+            partitions,
+            nx,
+            ny,
+            nx_psf,
+            ny_psf,
+            eta=eta,
+            nthreads=self._nthreads,
+            wsum=wsum,
+            eta_mode=eta_mode,
+            eta_cap=eta_cap,
+        )
         self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
 
     def hess_dot(self, x):
         return self._hess.dot(x)
+
+    def get_eta(self):
+        """This band's Tikhonov coefficient: a float, or the ``eta_mode`` profile.
+
+        Image-scale, so returning it to the driver costs nothing (unlike this
+        band's vis-scale inputs, which never leave the worker -- D10).
+        """
+        return self._hess.eta
 
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
         # deferred: worker-side only; keeps driver-side import light
@@ -426,7 +445,7 @@ class BandWorkerPool:
 
     # --- Hessian role ---
 
-    def init_hess(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums):
+    def init_hess(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums, eta_mode=None, eta_cap=1e2):
         """Build per-band HessianTrees; ``partitions_per_band=None`` uses load_bands data."""
         self._map(
             "init_hess",
@@ -439,6 +458,8 @@ class BandWorkerPool:
                     ny_psf,
                     etas[b],
                     wsums[b],
+                    eta_mode,
+                    eta_cap,
                 )
                 for b in range(self.nband)
             ],
@@ -448,6 +469,18 @@ class BandWorkerPool:
         out = np.zeros_like(x)
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
             out[b] = res[0]
+        return out
+
+    def get_eta(self, ny, nx):
+        """Per-band Tikhonov coefficient as an ``(nband, ny, nx)`` cube.
+
+        Scalar etas are broadcast so the caller (the FITS dump) does not have to
+        branch on whether a profile is in use.
+        """
+        out = np.zeros((self.nband, ny, nx))
+        for b, e in enumerate(self._map("get_eta", [()] * self.nband)):
+            # a profile carries a leading correlation axis; deconv is single-corr
+            out[b] = np.asarray(e).reshape(-1, ny, nx)[0] if np.ndim(e) else e
         return out
 
     def hess_cg(self, rhs, x0, tol, maxit, minit, verbosity):

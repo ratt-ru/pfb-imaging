@@ -62,6 +62,7 @@ from ducc0.misc import resize_thread_pool
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.deconv.presets import _build_hess
 from pfb_imaging.operators.band_worker import BandWorkerPool
+from pfb_imaging.operators.hessian import ETA_MODES
 from pfb_imaging.opt.power_method import power_method_numba as power_method
 from pfb_imaging.utils.fits import save_fits, set_wcs
 
@@ -70,6 +71,13 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("dt", help="Path to the imager output <output-filename>_<PRODUCT>.dt")
     p.add_argument("--eta", type=float, default=1e-3, help="Tikhonov term of the preconditioner (deconv --eta)")
+    p.add_argument(
+        "--eta-mode",
+        default=None,
+        choices=list(ETA_MODES),
+        help="Shape of a spatially varying eta (deconv --eta-mode); default is uniform",
+    )
+    p.add_argument("--eta-cap", type=float, default=1e2, help="Dynamic range of the --eta-mode profile")
     p.add_argument("--niter", type=int, default=15, help="Maximum power iterations")
     p.add_argument("--tol", type=float, default=5e-3, help="Stop when the relative change in lambda falls below this")
     p.add_argument("--nthreads", type=int, default=4, help="Threads per band worker")
@@ -196,6 +204,53 @@ def eigvec_report(v):
     return {"frac_power_outside_half_radius": outer, "high_freq_fraction": hf}
 
 
+def denominator_report(v, hv, den, hess, workers, geometry, nband, wsum_tot, args):
+    """Split ``v'Mv`` along the dominant eigenvector into its two terms.
+
+    ``lambda = v'Hv / (v'BCBv/wsum + v'e v)``. The share of the denominator that
+    the Tikhonov term supplies bounds what ANY eta profile can buy: scaling
+    ``e`` by ``R`` gives ``lambda >= v'Hv/(a + R*e_term)``, a lower bound
+    because the maximiser then moves to a mode with more curvature. So the
+    required ``R`` printed here is optimistic -- if it is already large, no
+    profile with a sane dynamic range will stabilise the run.
+
+    Costs one extra Hessian application: the pool is re-initialised with
+    ``eta=0`` to isolate the beam-convolution term, then restored.
+    """
+    nx, ny = geometry["nx"], geometry["ny"]
+    nx_psf, ny_psf = geometry["nx_psf"], geometry["ny_psf"]
+    wtot = np.full(nband, wsum_tot)
+    workers.init_hess(None, nx, ny, nx_psf, ny_psf, np.zeros(nband), wtot)
+    a = float(np.vdot(v, workers.hess_dot(v)).real)
+    workers.init_hess(None, nx, ny, nx_psf, ny_psf, np.full(nband, args.eta), wtot, args.eta_mode, args.eta_cap)
+    h = float(np.vdot(v, hv).real)
+    e_term = den - a
+    print("\ndenominator along the dominant eigenvector (v'Mv = a + e_term):")
+    print(f"  v'Hv (exact curvature)      = {h:.4e}")
+    print(f"  a    = v'BCBv/wsum          = {a:.4e}  ({100 * a / den:.1f}% of v'Mv)")
+    print(f"  e_term = v'e v              = {e_term:.4e}  ({100 * e_term / den:.1f}% of v'Mv)")
+    needs = {}
+    if e_term > 0:
+        if a > 0:
+            print(f"  M under-estimates the curvature along this mode by {h / a:.1f}x")
+        print("  eta multiplier needed at this mode (optimistic; the maximiser moves):")
+        for gam, lam in ((1.0, 2.0), (0.5, 4.0)):
+            # lambda = h/(a + R*e_term) <= lam  =>  R >= (h/lam - a)/e_term.
+            # R <= 1 means the current e already suffices along this mode (R <= 0
+            # means a alone does) -- the binding constraint is then another mode.
+            need = (h / lam - a) / e_term
+            needs[gam] = need
+            verdict = f"{need:.1f}x" if need > 1.0 else f"satisfied along this mode ({need:.2f}x of the current e)"
+            print(f"    gamma = {gam:<4} (lambda <= {lam})  ->  {verdict}")
+    return {
+        "vHv": h,
+        "a_conv": a,
+        "e_term": e_term,
+        "eta_share_of_denominator": e_term / den if den else np.nan,
+        "eta_multiplier_needed": needs,
+    }
+
+
 def check_adjoint(h_exact, hess, shape, seed=0):
     """H must be symmetric; M^-1 H self-adjoint in the M inner product, not the Euclidean one.
 
@@ -254,6 +309,8 @@ def main():
     # to the run being diagnosed (total-wsum normalisation, wiki D4)
     opts = {
         "eta": args.eta,
+        "eta_mode": args.eta_mode,
+        "eta_cap": args.eta_cap,
         "nthreads": args.nthreads,
         "cg_tol": args.cg_tol,
         "cg_maxit": args.cg_maxit,
@@ -298,7 +355,8 @@ def main():
     # lambda_max(M): sets the scale eta has to be judged against. Aliasing-exact
     # convolution needs psf_oversize >= 2; below that M degrades (issue #287).
     lam_m, _ = power_method(hess.dot, (nband, ny, nx), tol=args.pm_tol, maxit=args.pm_maxit, verbosity=0)
-    print(f"eta = {args.eta:.3e}   lambda_max(M) = {lam_m:.4e}   eta/lambda_max(M) = {args.eta / lam_m:.2e}")
+    emode = "uniform" if args.eta_mode is None else f"{args.eta_mode} (cap {args.eta_cap:g})"
+    print(f"eta = {args.eta:.3e} [{emode}]   lambda_max(M) = {lam_m:.4e}   eta/lambda_max(M) = {args.eta / lam_m:.2e}")
     spectrum = spectrum_report(dt, nodes, wsum_tot, wsums, args.eta)
     print()
 
@@ -314,9 +372,16 @@ def main():
     v /= np.linalg.norm(v)
 
     lam, lam_prev, history = np.nan, np.inf, []
+    # the (v, Hv, v'Mv) triple lam was computed from: v advances once more below,
+    # so keeping the consistent triple lets denominator_report reuse it instead of
+    # paying for another exact degrid/grid sweep
+    vlam = hvlam = None
+    denlam = np.nan
     for k in range(args.niter):
         hv = h_exact(v)
-        lam = float(np.vdot(v, hv).real) / float(np.vdot(v, hess.dot(v)).real)
+        den = float(np.vdot(v, hess.dot(v)).real)
+        lam = float(np.vdot(v, hv).real) / den
+        vlam, hvlam, denlam = v, hv, den
         history.append(lam)
         rel = abs(lam - lam_prev) / max(abs(lam), 1e-30)
         print(f"  power iter {k + 1:>3}: lambda = {lam:.5f}   (rel change {rel:.2e})")
@@ -345,6 +410,11 @@ def main():
     print("run underestimates. Treat the recommendation as an upper limit on gamma.")
 
     eig = eigvec_report(v)
+    denom = (
+        denominator_report(vlam, hvlam, denlam, hess, workers, geometry, nband, wsum_tot, args)
+        if vlam is not None
+        else {}
+    )
 
     record = {
         "dt": dt_name,
@@ -355,6 +425,9 @@ def main():
         "psf_oversize": nx_psf / nx,
         "wsum_tot": wsum_tot,
         "eta": args.eta,
+        "eta_mode": args.eta_mode,
+        "eta_cap": args.eta_cap,
+        "denominator": denom,
         "lambda_max_M": float(lam_m),
         "eta_over_lambda_max_M": args.eta / float(lam_m),
         "spectrum": spectrum,

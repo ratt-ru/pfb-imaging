@@ -44,6 +44,8 @@ def _build_hess(partitions_per_band, geometry, opts, workers=None, wsums=None):
         geometry["nx_psf"],
         geometry["ny_psf"],
         etas=opts["eta"],
+        eta_mode=opts.get("eta_mode"),
+        eta_cap=opts.get("eta_cap", 1e2),
         nthreads=opts["nthreads"],
         wsums=wsum_tot,
         cg_tol=opts["cg_tol"],

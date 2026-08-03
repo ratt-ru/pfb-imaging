@@ -188,6 +188,24 @@ def deconv(
             rich_help_panel="PFB",
         ),
     ] = 0.001,
+    eta_mode: Annotated[
+        str | None,
+        typer.Option(
+            help="Shape of a spatially varying eta over the image. "
+            "By default eta is uniform. "
+            "Choices are invbeam, invbeam2, radial and radial-invbeam. "
+            "Each rises from eta where the PSF approximation is trusted to eta times eta-cap where it is worst. "
+            "This damps the forward update without moving the fixed point, so the flux scale is unchanged.",
+            rich_help_panel="PFB",
+        ),
+    ] = None,
+    eta_cap: Annotated[
+        float,
+        typer.Option(
+            help="Dynamic range of the eta-mode profile. Ignored when eta-mode is unset.",
+            rich_help_panel="PFB",
+        ),
+    ] = 100.0,
     gamma: Annotated[
         float,
         typer.Option(
@@ -498,6 +516,8 @@ def deconv(
                     hess_norm=hess_norm,
                     rmsfactor=rmsfactor,
                     eta=eta,
+                    eta_mode=eta_mode,
+                    eta_cap=eta_cap,
                     gamma=gamma,
                     nbasisf=nbasisf,
                     positivity=positivity,
@@ -556,6 +576,8 @@ def deconv(
                 hess_norm=hess_norm,
                 rmsfactor=rmsfactor,
                 eta=eta,
+                eta_mode=eta_mode,
+                eta_cap=eta_cap,
                 gamma=gamma,
                 nbasisf=nbasisf,
                 positivity=positivity,
@@ -623,6 +645,8 @@ def deconv(
             hess_norm=hess_norm,
             rmsfactor=rmsfactor,
             eta=eta,
+            eta_mode=eta_mode,
+            eta_cap=eta_cap,
             gamma=gamma,
             nbasisf=nbasisf,
             positivity=positivity,
