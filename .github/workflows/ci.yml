@@ -6,11 +6,15 @@ permissions:
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'dev/**'   # long-lived integration branches, e.g. dev/0.1.0
     tags:
       - 'v*'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'dev/**'
 
 jobs:
   quality:
