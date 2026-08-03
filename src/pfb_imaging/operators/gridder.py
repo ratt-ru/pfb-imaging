@@ -333,11 +333,16 @@ def grid_partition(
     # averaged beam is time-independent), so the first piece's beam stands in
     # for the partition; replace with a weighted mean when time-dependent
     # beams arrive.
-    beam = np.require(part.BEAM.values, dtype=float)
+    # ducc templates every real-valued array on the vis dtype: complex64 vis
+    # require float32 wgt/dirty buffers (mixing trips an "incorrect data type"
+    # assertion), so image buffers follow the precision of the stored data
+    real_type = vis.real.dtype
+
+    beam = np.require(part.BEAM.values, dtype=real_type)
 
     # ducc's x-major world exists only at the vis2dirty seams below via
     # zero-copy transposed views (the hci cfc96b9 pattern)
-    dirty = np.zeros((ncorr, ny, nx), dtype=float)
+    dirty = np.zeros((ncorr, ny, nx), dtype=real_type)
     for c in range(ncorr):
         vis2dirty(
             uvw=uvw,
@@ -374,7 +379,7 @@ def grid_partition(
             # match the weight dtype so single-precision runs get complex64 psf_vis
             # (ducc rejects mixed complex128 vis + float32 wgt); (Y, X) raster with
             # the ducc seam behind a zero-copy .T view, as everywhere else
-            delta_im = np.zeros((ny, nx), dtype=wgt.dtype)
+            delta_im = np.zeros((ny, nx), dtype=real_type)
             delta_im[ny // 2, nx // 2] = 1.0
             psf_vis = dirty2vis(
                 uvw=uvw,
@@ -398,7 +403,7 @@ def grid_partition(
         else:
             psf_vis = np.broadcast_to(np.ones((1,), dtype=vis.dtype), (uvw.shape[0], freq.size))
 
-        psf = np.zeros((ncorr, ny_psf, nx_psf), dtype=float)
+        psf = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type)
         for c in range(ncorr):
             vis2dirty(
                 uvw=uvw,
@@ -423,7 +428,8 @@ def grid_partition(
                 dirty=psf[c].T,
             )
         psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
-        psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0, yx_order=True))
+        # fitcleanbeam returns python floats; keep the products at the data precision
+        psfparsn = np.array(fitcleanbeam(psf, level=0.5, pixsize=1.0, yx_order=True), dtype=real_type)
 
     out = {
         "DIRTY": dirty,

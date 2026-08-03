@@ -144,14 +144,20 @@ def _grid_image(
         counts = filter_extreme_counts(counts.copy(), level=filter_counts_level)
         counts = box_sum_counts(counts, npix_super)
 
-    corr = next(iter(groups.values()))[0].corr.values
+    first = next(iter(groups.values()))[0]
+    corr = first.corr.values
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
-    dirty_sum = np.zeros((ncorr, ny, nx))
-    psf_sum = np.zeros((ncorr, ny_psf, nx_psf)) if do_psf else None
-    beam_sum = np.zeros((ncorr, ny, nx))
-    bdirty_sum = np.zeros((ncorr, ny, nx))
-    wsum_sum = np.zeros(ncorr)
+    # The whole tree carries the requested --precision: pass 1 stamped it on the
+    # scratch pieces, grid_partition's ducc buffers follow the vis dtype (ducc
+    # templates every array on one type), and the accumulation below must not
+    # upcast it back to f8 (--double-accum is a wgridder-internal control only).
+    real_type = first.VIS.values.real.dtype
+    dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
+    beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    wsum_sum = np.zeros(ncorr, dtype=real_type)
 
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
@@ -287,7 +293,8 @@ def _grid_image(
         band_vars["PSF"] = (("corr", "y_psf", "x_psf"), psf_sum)
         band_vars["PSFPARSN"] = (
             ("corr", "bpar"),
-            np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True)),
+            # fitcleanbeam returns python floats; keep the tree at --precision
+            np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
         )
         band_coords["bpar"] = bpar
     band_ds = xr.Dataset(
@@ -941,9 +948,10 @@ def imager(
             res = ray.get(task)
             tid = res["timeid"]
             if res["psf"] is not None:
-                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf)))
+                # accumulate at the precision the workers gridded in (see _grid_image)
+                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf), dtype=res["psf"].dtype))
                 psf_mfs[tid] += res["psf"]
-                wsum_mfs.setdefault(tid, np.zeros(ncorr))
+                wsum_mfs.setdefault(tid, np.zeros(ncorr, dtype=res["wsum"].dtype))
                 wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:

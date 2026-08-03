@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-07-19T10:30:00Z
-last_verified_commit: c055885
+timestamp: 2026-08-03T00:00:00Z
+last_verified_commit: 94aa96f
 ---
 
 # MSv4 DataTree imager pipeline
@@ -62,6 +62,12 @@ no-op later: just another `part{p}` child with its own `BEAM`.
           image-space: BEAM (corr, y, x; image grid, placed in pass 1);
                        PSF, PSFHAT (corr, y_psf, xo2), PSFPARSN only with --psf
 ```
+
+**Every float array above carries the requested `--precision`** — f4/c4 for `single`,
+f8/c8 for `double` — in both the `.dt` and the `.scratch`. The only exceptions are `UVW`
+and `FREQ` (always f8: ducc takes those as double whatever the vis precision) and `MASK`
+(u1). This is an invariant ducc enforces, not a memory optimisation: see design-decisions
+D27. Pinned by `tests/test_imager_precision.py`.
 
 ## Product selection
 

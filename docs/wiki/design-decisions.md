@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-07-31T00:00:00Z
-last_verified_commit: e348d68
+timestamp: 2026-08-03T00:00:00Z
+last_verified_commit: 94aa96f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -717,6 +717,42 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/cli/deconv.py`; `scripts/max_gamma.py` (`denominator_report`);
   `tests/test_eta_profile.py`; issue #287.
 
+### D27 — The imager tree is uniformly at `--precision`; ducc allows no dtype mixing
+
+- **Context:** `--precision single` crashed pass 2 with a bare ducc assertion —
+  `get_OptNpArr(...) [with T = float]: incorrect data type` — even though pass 1 had
+  correctly written `VIS` c4 / `WEIGHT` f4. `grid_partition` allocated its output buffers
+  with the builtin `float` (f8), and `_grid_image`'s band accumulators did the same, so a
+  single-precision run mixed f4 data with f8 buffers and (once the buffers were fixed)
+  still wrote an f8 band node onto f4 partitions.
+- **Decision:** Every float array the imager stores follows the requested precision, in
+  both the `.dt` and the `.scratch`; **`UVW`/`FREQ` stay f8** (ducc takes those as double
+  regardless) and `MASK` stays u1. Buffers are never allocated with a hardcoded dtype:
+  `grid_partition` derives `real_type` from the stored `VIS` and `_grid_image` from the
+  first scratch piece, so the data is the single source of truth. `--double-accum` is a
+  wgridder-**internal** control (its accumulation registers) and must not leak into a
+  stored dtype.
+- **Rationale:** ducc0's wgridder templates *all* of its real/complex arrays on one type
+  `T` — vis, wgt and the dirty/psf buffer must agree, or it raises rather than upcasting.
+  Precision is therefore a whole-tree invariant, not a per-array choice: any f8 array
+  reaching a wgridder seam alongside f4 data is a hard error, whichever side is "wrong".
+  Accumulating the partition sums at the data precision (rather than f8) is what the flag
+  asks for, and costs little: single vs double agree to ~1e-6 of peak on `DIRTY`/`BDIRTY`
+  and ~2e-6 on `PSF` at `--epsilon 1e-5`, with `WSUM` matching to 4e-8 — well inside the
+  gridding accuracy that `epsilon` already concedes.
+- **Consequences:** `--precision single` halves the tree on disk and in every downstream
+  read. Single precision needs `--epsilon >~ 1e-5` (ducc's f4 kernels); the FITS path is
+  unaffected because `save_fits` casts to f4 anyway. **The deconv consumer is not yet
+  single-precision safe** (debt below): `residual_from_partitions` sizes its buffers from
+  the band `DIRTY` while the model cube arrives f8, so the same assertion fires at
+  `gridder.py`'s exact-residual seam. Read the assertion as "some array in this call
+  disagrees with the others" and print the dtypes — the template parameter (`T = float`
+  vs `T = double`) tells you which side ducc believed.
+- **Source:** `src/pfb_imaging/operators/gridder.py` (`grid_partition`);
+  `src/pfb_imaging/core/imager.py` (`_grid_image` accumulators, MFS PSF reduction);
+  `src/pfb_imaging/utils/stokes2im.py` (the hci path's `real_type`, the pattern this
+  restores); `tests/test_imager_precision.py`.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -750,6 +786,15 @@ update it (and this page's `last_verified_commit`) in the same session.
   moment mosaicing has to decide which fields group together. Give it a real tolerance
   then, and make that tolerance a wrapped magnitude. Lift the helper and its tests from
   `6be3ea7`.
+- **`deconv` cannot read a single-precision tree (D27).** The imager honours
+  `--precision` end to end, but `gridder.residual_from_partitions` sizes `convim`/`tmp`
+  from the band `DIRTY` while the driver hands it an f8 model, so ducc rejects the mixed
+  call at the exact-residual seam; `band_worker`'s `--fits-per-partition` path allocates
+  f8 `dirty_p`/`resid_p` the same way. `HessianTree` survives only by accident (its f8
+  `xpad`/`xhat` scratch upcasts a c4 `psfhat` silently through in-place `*=`). Fixing it
+  means casting at the ducc seams while letting the image-space cubes stay f8 — deliberately
+  deferred, since the second-order schemes want double anyway. Until then a
+  single-precision tree is imager/FITS-only.
 - `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D25 deleted the
   zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
   against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
