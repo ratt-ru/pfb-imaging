@@ -1,8 +1,10 @@
 """Pass-2 per-partition gridding (casacore-free, synthetic data)."""
 
 import numpy as np
+import pytest
 import xarray as xr
 
+from pfb_imaging.core.imager import _concat_pieces
 from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions
 from pfb_imaging.utils.weighting import _compute_counts
 
@@ -196,3 +198,48 @@ def test_residual_gradient_beam_applied_twice():
     # bdirty=None keeps the legacy single-return signature
     r_only = residual_from_partitions(dirty, [p1, p2], model, 1.0e-6)
     np.testing.assert_allclose(r_only, r12, rtol=0, atol=0)
+
+
+def _synth_piece(freq_out, wsum_nat, beam_val, nrow=10, nx=4, ny=4, seed=0):
+    """A minimal scratch piece carrying only what _concat_pieces touches."""
+    rng = np.random.default_rng(seed)
+    return xr.Dataset(
+        {
+            "VIS": (("corr", "row", "chan"), rng.standard_normal((1, nrow, 1)) + 0j),
+            "WEIGHT": (("corr", "row", "chan"), np.ones((1, nrow, 1))),
+            "MASK": (("row", "chan"), np.ones((nrow, 1), dtype=np.uint8)),
+            "UVW": (("row", "three"), rng.standard_normal((nrow, 3))),
+            "FREQ": (("chan",), np.array([1.0e9])),
+            "BEAM": (("corr", "y", "x"), np.full((1, ny, nx), float(beam_val))),
+        },
+        coords={"corr": ["I"]},
+        attrs={"freq_out": float(freq_out), "wsum_nat": float(wsum_nat)},
+    )
+
+
+def test_concat_pieces_single_is_identity():
+    p = _synth_piece(1.0e9, 5.0, 0.5)
+    assert _concat_pieces([p]) is p
+
+
+def test_concat_pieces_weighted_beam_and_freq():
+    """Pieces of a partition may differ in beam and effective frequency; both
+    reduce as wsum_nat-weighted means. Taking piece 0's beam (the old
+    behaviour) silently discarded the rest -- issue #296, wiki D28.
+    """
+    a = _synth_piece(1.0e9, 3.0, 1.0, nrow=10, seed=1)
+    b = _synth_piece(1.4e9, 1.0, 5.0, nrow=6, seed=2)
+
+    out = _concat_pieces([a, b])
+
+    assert out.sizes["row"] == 16
+    np.testing.assert_allclose(out.attrs["freq_out"], (3.0 * 1.0e9 + 1.0 * 1.4e9) / 4.0)
+    np.testing.assert_allclose(out.attrs["wsum_nat"], 4.0)
+    np.testing.assert_allclose(out.BEAM.values, (3.0 * 1.0 + 1.0 * 5.0) / 4.0)
+
+
+def test_concat_pieces_rejects_mismatched_freq():
+    a = _synth_piece(1.0e9, 1.0, 1.0)
+    b = _synth_piece(1.0e9, 1.0, 1.0).assign(FREQ=(("chan",), np.array([2.0e9])))
+    with pytest.raises(AssertionError):
+        _concat_pieces([a, b])

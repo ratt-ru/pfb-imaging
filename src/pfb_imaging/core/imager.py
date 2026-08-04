@@ -93,6 +93,67 @@ def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, c
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
 
 
+def _concat_pieces(plist):
+    """Reduce a partition's scratch pieces to a single Dataset.
+
+    Rows are concatenated; BEAM and the effective frequency are combined as
+    ``wsum_nat``-weighted means. Pieces of a partition can differ in both --
+    BeamWizard evaluates the beam at the piece's own timestamps, and post-#296
+    at its own effective frequency -- so taking piece 0's beam, as this used
+    to, silently discarded every other piece (wiki D28).
+
+    The weights are the *natural* wsum because this runs before gridding, where
+    the robust imaging weights do not yet exist. Getting them would mean
+    passing row offsets into grid_partition and holding every piece's BEAM
+    resident through gridding instead of freeing it at the caller's ``del
+    plist`` -- ~67 MB per piece at 4096 squared float32 -- against the memory
+    discipline in docs/wiki/memory-and-ray.md, for a correction to a beam that
+    varies slowly with frequency. The band-level reduction in _grid_image does
+    use the imaging weights; see wiki D28 for why the mixed basis is correct.
+
+    Args:
+        plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
+
+    Returns:
+        The merged partition Dataset, carrying the weighted ``freq_out`` and
+        the summed ``wsum_nat`` in its attrs. A single-piece list is returned
+        unchanged.
+    """
+    if len(plist) == 1:
+        return plist[0]
+
+    # rows are only concatenatable when they share the freq axis (same
+    # spw + band channel-chunk); guard the invariant before concat
+    f0 = plist[0].FREQ.values
+    for p in plist[1:]:
+        assert np.array_equal(p.FREQ.values, f0), "concat group has mismatched FREQ; cannot concatenate rows"
+
+    w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
+    wsum_nat = float(w.sum())
+    if wsum_nat > 0:
+        freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
+        freq_out = float((w * freqs).sum() / wsum_nat)
+        # accumulate rather than stack: one buffer, not npiece of them
+        beam = np.zeros(plist[0].BEAM.shape, dtype=np.float64)
+        for wi, p in zip(w, plist):
+            beam += wi * p.BEAM.values
+        beam /= wsum_nat
+    else:
+        freq_out = float(plist[0].attrs["freq_out"])
+        beam = plist[0].BEAM.values
+
+    rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
+    cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
+    part = plist[0].drop_vars(rowvars)
+    for v in rowvars:
+        part[v] = cat[v]
+    del cat
+    part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
+    part.attrs["freq_out"] = freq_out
+    part.attrs["wsum_nat"] = wsum_nat
+    return part
+
+
 @ray.remote
 def _grid_image(
     scratch_store,
@@ -161,23 +222,7 @@ def _grid_image(
 
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
-        # concat scans of the same partition along row (beam/freq identical across scans)
-        if len(plist) == 1:
-            part = plist[0]
-        else:
-            # rows are only concatenatable when they share the freq axis (same
-            # spw + band channel-chunk); guard the invariant before concat
-            f0 = plist[0].FREQ.values
-            for p in plist[1:]:
-                assert np.array_equal(p.FREQ.values, f0), (
-                    f"concat group {key} has mismatched FREQ; cannot concatenate rows"
-                )
-            rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
-            cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
-            part = plist[0].drop_vars(rowvars)
-            for v in rowvars:
-                part[v] = cat[v]
-            del cat
+        part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
 
