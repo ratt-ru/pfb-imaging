@@ -628,7 +628,10 @@ def imager(
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
-    freq_out = band_edges[0:-1] + half_band_width
+    # Band-edge midpoints. These define which channels belong to which band and
+    # nothing else -- the band's reported frequency is the effective (weighted)
+    # one reduced in pass 2 (issue #296, wiki D28).
+    band_centres = band_edges[0:-1] + half_band_width
 
     # shared imaging geometry (also fixes the padded uv-grid used for COUNTS)
     max_freq = float(all_freqs.max())
@@ -688,7 +691,7 @@ def imager(
                 # flow/fhigh index the freq-range-trimmed axis; isel below acts
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
-                bandid = int(np.argmin(np.abs(freq_out - freqs_node[flow:fhigh].mean())))
+                bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -709,7 +712,7 @@ def imager(
                     bandid=bandid,
                     timeid=timeid,
                     msid=ims,
-                    freq_out=freq_out[bandid],
+                    freq_nominal=band_centres[bandid],
                     precision=precision,
                     sigma_column=sigma_column,
                     weight_column=weight_column,
@@ -920,7 +923,7 @@ def imager(
             nx_psf,
             ny_psf,
             cell_rad,
-            freq_out[meta["bandid"]],
+            band_centres[meta["bandid"]],
             meta,
             robustness=robustness,
             nx_pad=nx_pad,

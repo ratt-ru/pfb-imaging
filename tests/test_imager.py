@@ -335,13 +335,28 @@ def _open_first_vis_node(ms_name):
     raise RuntimeError("no visibility node in test MS")
 
 
-def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5):
-    """Drive stokes_vis directly (no Ray) on the test MS's first node."""
+def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None):
+    """Drive stokes_vis directly (no Ray) on the test MS's first node.
+
+    flag_chans: optional channel slice to flag before conversion, used to shift
+    the piece's effective frequency away from the nominal band centre (#296).
+    """
     from pfb_imaging.utils.stokes2vis_msv4 import stokes_vis
 
     node = _open_first_vis_node(ms_name)
     dc1 = node.ds.attrs["data_groups"]["base"]["correlated_data"]
     freq = node.ds.frequency.values
+    if flag_chans is not None:
+        # FLAG is (time, baseline_id, frequency, polarization). Assign through
+        # the .dataset setter on a copy: rebuilding the node with
+        # xr.DataTree(dataset=...) would drop antenna_xds and the other
+        # children stokes_vis reads.
+        ds_mod = node.to_dataset()
+        flg = ds_mod.FLAG.values.copy()
+        flg[:, :, flag_chans, :] = True
+        ds_mod["FLAG"] = (ds_mod.FLAG.dims, flg)
+        node = node.copy()
+        node.dataset = ds_mod
     uvw = node.ds.UVW.values.reshape(-1, 3)
     uvw = uvw[~np.isnan(uvw).all(axis=-1)]
     max_blength = np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()
@@ -353,7 +368,7 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=
         bandid=0,
         timeid=0,
         msid=0,
-        freq_out=float(freq.mean()),
+        freq_nominal=float(freq.mean()),
         product="I",
         beam_model=beam_model,
         max_blength=float(max_blength),
@@ -621,3 +636,40 @@ def test_imager_fits_per_partition(sky_truth, ms_name, tmp_path):
     bhit = sorted(glob.glob(str(pdir / "beam_band*_part0000_*.fits")))[0]
     with afits.open(bhit) as hdul:
         assert hdul[0].header["BEAMINCN"]
+
+
+def test_stokes_vis_effective_freq_is_weighted(ms_name, tmp_path):
+    """freq_out is the weight-weighted mean over surviving channels, not the
+    nominal band centre handed in by the driver (issue #296)."""
+    ds = _run_stokes_vis(ms_name, str(tmp_path / "f0.scratch"), flag_chans=slice(4, 8))
+
+    # stored WEIGHT is the natural weight (robust weights arrive in pass 2)
+    w_chan = (ds.WEIGHT.values * ds.MASK.values[None]).sum(axis=(0, 1))
+    expected = (w_chan * ds.FREQ.values).sum() / w_chan.sum()
+    assert_allclose(ds.attrs["freq_out"], expected, rtol=1e-10)
+    assert_allclose(ds.attrs["wsum_nat"], w_chan.sum(), rtol=1e-10)
+
+    # nominal is the unweighted mean of all 8 channels (1.35 GHz); flagging the
+    # top half must pull the effective frequency well below it
+    assert_allclose(ds.attrs["freq_nominal"], 1.35e9, rtol=1e-6)
+    assert ds.attrs["freq_out"] < ds.attrs["freq_nominal"] - 5.0e7
+
+
+def test_stokes_vis_beam_follows_effective_freq(ms_name, tmp_path):
+    """The effective frequency must reach the beam evaluation, not just the
+    attrs. cell is enlarged for the same reason as
+    test_stokes_vis_beam_on_image_grid: at the default 1e-5 rad cell katbeam is
+    flat to ~1e-6 across the fov and any comparison is noise.
+    """
+    cell = 5.0e-4
+    lo = _run_stokes_vis(
+        ms_name, str(tmp_path / "lo.scratch"), beam_model="katbeam", cell_rad=cell, flag_chans=slice(4, 8)
+    )
+    hi = _run_stokes_vis(
+        ms_name, str(tmp_path / "hi.scratch"), beam_model="katbeam", cell_rad=cell, flag_chans=slice(0, 4)
+    )
+    assert lo.attrs["freq_out"] < hi.attrs["freq_out"]
+    assert not np.allclose(lo.BEAM.values, hi.BEAM.values, rtol=1e-3)
+    # katbeam narrows with frequency, so the higher-frequency beam encloses
+    # less total response over the same fov
+    assert hi.BEAM.values.sum() < lo.BEAM.values.sum()
