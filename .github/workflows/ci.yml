@@ -8,9 +8,12 @@ on:
   push:
     branches:
       - main
-      - 'dev-*'   # long-lived integration branches, e.g. dev-0.1.0
     tags:
       - 'v*'
+  # dev-* are long-lived integration branches (e.g. dev-0.1.0). They are
+  # deliberately absent from push above: each carries an open PR into main, so
+  # a push trigger would duplicate every run. The PR trigger also tests the
+  # merge with main rather than the branch tip alone.
   pull_request:
     branches:
       - main
