@@ -7,7 +7,7 @@ from importlib.metadata import version
 
 from pfb_imaging.utils import logging as pfb_logging
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
 os.environ["NUMBA_THREADING_LAYER"] = "tbb"
