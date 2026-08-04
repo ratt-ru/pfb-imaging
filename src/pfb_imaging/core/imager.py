@@ -166,7 +166,7 @@ def _grid_image(
     nx_psf,
     ny_psf,
     cell_rad,
-    freq_out,
+    freq_nominal,
     meta,
     robustness=None,
     nx_pad=None,
@@ -219,6 +219,9 @@ def _grid_image(
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # float64 regardless of --precision: the tree may be single-precision
+    # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
+    freq_sum = np.zeros(ncorr, dtype=np.float64)
 
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
@@ -268,6 +271,7 @@ def _grid_image(
                 "field_name": key[1],
                 "spw_name": key[2],
                 "baseline_group": key[3],
+                "freq_out": float(part.attrs["freq_out"]),
                 "ra": meta["ra"],
                 "dec": meta["dec"],
                 "ra0": float(part.attrs.get("ra0", meta["ra"])),
@@ -291,7 +295,7 @@ def _grid_image(
                 key[1],
                 prod,
                 meta,
-                freq_out,
+                float(part.attrs["freq_out"]),
                 cell_rad,
                 do_psf=do_psf,
                 do_beam=part_fits_beam,
@@ -306,11 +310,24 @@ def _grid_image(
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
+        freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
 
+    # Level-2 reduction: the band product is the wsum-weighted sum of its
+    # partitions, so its effective frequency is the wsum-weighted mean of the
+    # partition frequencies -- the identical reduction beam_sum uses below.
+    # That is why these weights must be the imaging prod["WSUM"] and not the
+    # natural wsum_nat used inside _concat_pieces: they are what actually
+    # determines each partition's contribution to the summed image, and BEAM
+    # and freq_out must not be weighted by different quantities at the same
+    # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
+    # dt2fits already does for freq_mfs.
+    wsum_tot = float(wsum_sum.astype(np.float64).sum())
+    freq_eff = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
     band_attrs = {
         "bandid": meta["bandid"],
         "timeid": meta["timeid"],
-        "freq_out": float(freq_out),
+        "freq_out": freq_eff,
+        "freq_nominal": float(freq_nominal),
         "time_out": meta["time_out"],
         "ra": meta["ra"],
         "dec": meta["dec"],

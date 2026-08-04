@@ -673,3 +673,51 @@ def test_stokes_vis_beam_follows_effective_freq(ms_name, tmp_path):
     # katbeam narrows with frequency, so the higher-frequency beam encloses
     # less total response over the same fov
     assert hi.BEAM.values.sum() < lo.BEAM.values.sum()
+
+
+def test_imager_effective_freq_uneven_bands(ms_name, tmp_path):
+    """8 channels binned 3/3/2: the band-edge centres miss the true channel
+    groups by 17-50 MHz. freq_out must track the channels actually gridded
+    (issue #296); freq_nominal preserves the assignment grid.
+    """
+    outname = str(tmp_path / "eff_freq")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        integrations_per_image=15,
+        channels_per_image=3,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    band_names = sorted(n for n in dt.children if n.startswith("band"))
+    bands = sorted((dt[n].ds for n in band_names), key=lambda d: d.attrs["bandid"])
+    assert len({b.attrs["bandid"] for b in bands}) == 3
+
+    nominal = [b.attrs["freq_nominal"] for b in bands]
+    effective = [b.attrs["freq_out"] for b in bands]
+
+    # band_edges = linspace(0.95, 1.75, 4) GHz -> midpoints
+    assert_allclose(sorted(set(nominal)), [1.0833333e9, 1.35e9, 1.6166667e9], rtol=1e-6)
+
+    # the actual channel groups are 1.0-1.2, 1.3-1.5 and 1.6-1.7 GHz
+    for eff, nom in zip(effective, nominal):
+        lo, hi = {0: (1.0e9, 1.2e9), 1: (1.3e9, 1.5e9), 2: (1.6e9, 1.7e9)}[
+            int(np.argmin(np.abs(np.array([1.0833333e9, 1.35e9, 1.6166667e9]) - nom)))
+        ]
+        assert lo <= eff <= hi, f"effective freq {eff} outside its channel group"
+        assert abs(eff - nom) > 1.0e7
+
+    # each partition carries its own effective frequency, and the band value is
+    # the wsum-weighted mean over them
+    for name in band_names:
+        parts = [dt[name][p].ds for p in dt[name].children]
+        w = np.array([np.asarray(p.attrs["wsum"]).sum() for p in parts])
+        f = np.array([p.attrs["freq_out"] for p in parts])
+        assert_allclose(dt[name].ds.attrs["freq_out"], (w * f).sum() / w.sum(), rtol=1e-10)
