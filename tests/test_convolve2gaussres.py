@@ -309,3 +309,25 @@ def test_convolve2gaussres_single_triple_still_shared():
 
     np.testing.assert_allclose(out[0], out[1], rtol=0, atol=1e-12)
     np.testing.assert_allclose(out[0], out[2], rtol=0, atol=1e-12)
+
+
+def test_convolve2gaussres_gausspari_shared_triple_matches_per_plane():
+    """A shared (3,) gausspari must give the same result as passing the
+    equivalent (nplane, 3) per-plane array with identical rows -- this is
+    the `gpi = gausspari if gausspari.ndim == 1 else gausspari[b]` branch.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    n = 48
+    img = np.zeros((3, n, n))
+    img[:, n // 2 + 3, n // 2 - 2] = 1.0
+    coord = -(n // 2) + np.arange(n)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    gaussparf = np.array([6.0, 3.0, 0.3])
+    gausspari_shared = np.array([2.0, 2.0, 0.0])
+    gausspari_per_plane = np.tile(gausspari_shared, (3, 1))
+
+    shared = convolve2gaussres(img, xx, yy, gaussparf, nthreads=1, pfrac=0.2, gausspari=gausspari_shared)
+    per_plane = convolve2gaussres(img, xx, yy, gaussparf, nthreads=1, pfrac=0.2, gausspari=gausspari_per_plane)
+
+    np.testing.assert_allclose(shared, per_plane, rtol=0, atol=1e-12)

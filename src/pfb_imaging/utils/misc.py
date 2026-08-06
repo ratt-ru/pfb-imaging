@@ -179,30 +179,41 @@ def get_padding_info(nx, ny, pfrac):
 def convolve2gaussres(
     image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfrac=0.5, norm_kernel=False, yx_order=False
 ):
-    """
-    Convolves the image to a specified resolution.
+    """Convolves the image to a specified resolution.
 
-    Parameters
-    ----------
-    image       - (nplane, nx, ny) array to convolve, or (nplane, ny, nx)
-                  with yx_order=True.
-    xx/yy       - coordinates on the grid in the same units as gaussparf.
-                  ALWAYS in the wgridder (X, Y) convention -- built from nx
-                  then ny -- regardless of yx_order.
-    gaussparf   - (3,) Gaussian parameters (emaj, emin, pa) shared by every
-                  plane, or (nplane, 3) per plane.
-    gausspari   - initial resolution, same shapes as gaussparf. By default the
-                  image is assumed to be a clean component image with no
-                  associated resolution.
-    nthreads    - number of threads to use for the FFT's.
-    pfrac       - padding used for the FFT based convolution.
-                  Will pad by pfrac/2 on both sides of image
-    norm_kernel - Normalise the Gaussian kernel to have volume 1.
-    yx_order    - set True for cube/FITS (Y, X)-ordered input (see
-                  docs/wiki/image-and-beam-orientation.md). The convolution is
-                  defined in wgridder (X, Y) order; this adapts via a zero-copy
-                  view and transposes the result back, so gaussian2d's position
-                  angle keeps its meaning.
+    Args:
+        image: (nplane, nx, ny) array to convolve, or (nplane, ny, nx) with
+            yx_order=True.
+        xx: Grid coordinates in the same units as gaussparf. ALWAYS in the
+            wgridder (X, Y) convention -- built from nx then ny -- regardless
+            of yx_order.
+        yy: Grid coordinates in the same units as gaussparf. ALWAYS in the
+            wgridder (X, Y) convention -- built from nx then ny -- regardless
+            of yx_order.
+        gaussparf: (3,) Gaussian parameters (emaj, emin, pa) shared by every
+            plane, or (nplane, 3) per plane.
+        nthreads: Number of threads to use for the FFT's.
+        gausspari: Initial resolution, same shapes as gaussparf. By default
+            the image is assumed to be a clean component image with no
+            associated resolution.
+        pfrac: Padding used for the FFT based convolution. Will pad by
+            pfrac/2 on both sides of image.
+        norm_kernel: Normalise the Gaussian kernel to have volume 1.
+        yx_order: Set True for cube/FITS (Y, X)-ordered input (see
+            docs/wiki/image-and-beam-orientation.md). The convolution is
+            defined in wgridder (X, Y) order; this adapts via a zero-copy
+            view and transposes the result back, so gaussian2d's position
+            angle keeps its meaning.
+
+    Returns:
+        The convolved image, same shape and axis order as the input image
+        (nplane, nx, ny), or (nplane, ny, nx) with yx_order=True.
+
+    Raises:
+        ValueError: If gausspari is per-plane (ndim > 1) and its length does
+            not match the number of planes in image.
+        AssertionError: If gaussparf is per-plane (ndim > 1) and its length
+            does not match the number of planes in image.
     """
     if yx_order:
         image = image.transpose(0, 2, 1)
