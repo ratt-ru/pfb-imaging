@@ -78,7 +78,9 @@ weighting in play.  pfb's reduced counts grid is never written to the ``.dt``, s
 it is re-summed from the ``.scratch`` per-piece ``COUNTS`` -- hence
 ``--keep-scratch`` in the generated pfb command.  Note that natural weighting
 makes ``W_k = 1`` on every sampled cell, so a natural-weighted grid comparison
-only tests the cell support, not the density.
+only tests the cell support, not the density -- and the index transform of
+point 6 is then selected on support agreement too, since the values themselves
+carry no information.
 
 Metrics per product (computed on the aligned overlap, in float64):
 
@@ -903,9 +905,21 @@ def match_weight_grids(w_pfb, wf, transform="auto"):
     scored and the winner reported: the fftshift/reflection convention is
     *established* here, not assumed.
 
+    Scoring is normally the rms difference relative to the reference's own rms.
+    That breaks down under **natural** weighting, where every sampled cell is
+    exactly 1.0: the reference rms is 0, every candidate scores ``inf``, and the
+    sort silently leaves candidate 0 (``flipu=0``) on top -- the wrong transform,
+    which made the whole natural-weighted grid comparison meaningless, cell
+    support included.  When the values carry no information the only thing left
+    that can discriminate is which cells are sampled, so the score falls back to
+    the fraction of the union of the two supports on which they disagree
+    (0 = identical support).  On the sgra 700-800 MHz subset that picks
+    ``flipu=1`` at exactly 0, against 0.878 for ``flipu=0``.
+
     Returns:
         ``(pfb_half, wsc_half, best, scores)`` -- both grids cropped to the
-        populated ``v >= 0`` half in ``(v, u)`` display order.
+        populated ``v >= 0`` half in ``(v, u)`` display order.  Each score dict
+        carries the ``metric`` used, since the two are not comparable.
     """
     nv = w_pfb.shape[1]
     half = slice(nv // 2, nv)
@@ -917,12 +931,18 @@ def match_weight_grids(w_pfb, wf, transform="auto"):
     else:
         cands = [(f, r) for f in (False, True) for r in (0, -1, 1, nv // 2)]
 
+    denom = mad_rms(ref)
+    metric = "rms diff / rms" if denom > 0 else "support disagreement"
     scores = []
     for flipu, rollv in cands:
         trial = wsclean_grid_to_uv(wf, flipu, rollv)[:, half]
-        denom = mad_rms(ref)
-        score = float(np.sqrt(np.mean((trial - ref) ** 2)) / denom) if denom > 0 else np.inf
-        scores.append({"flipu": flipu, "rollv": rollv, "score": score})
+        if denom > 0:
+            score = float(np.sqrt(np.mean((trial - ref) ** 2)) / denom)
+        else:
+            sa, sb = ref != 0, trial != 0
+            union = int((sa | sb).sum())
+            score = float((sa ^ sb).sum() / union) if union else np.inf
+        scores.append({"flipu": flipu, "rollv": rollv, "score": score, "metric": metric})
     scores.sort(key=lambda s: s["score"])
     best = scores[0]
     return (
@@ -964,13 +984,14 @@ def weight_grid_pair(a, pfb_prefix, wsc_wpath, bandid, verbose=True):
         counts_to_weight_grid(counts, a.robustness), wf, a.grid_transform
     )
     if verbose:
-        print("  transform scores (rms diff / rms, lower is better):")
+        print(f"  transform scores ({best['metric']}, lower is better):")
         for s in scores:
             mark = " <- used" if s is best else ""
             print(f"    flipu={int(s['flipu'])} rollv={s['rollv']:>4d}  {s['score']:.4e}{mark}")
     extra = {
         "uv grid size": str(counts.shape[0]),
         "grid transform": f"flipu={int(best['flipu'])} rollv={best['rollv']}",
+        "grid transform score": f"{best['score']:.4e} ({best['metric']})",
         "density sum (pfb)": f"{counts.sum():.9g}",
     }
     return pfb_half, wsc_half, extra
