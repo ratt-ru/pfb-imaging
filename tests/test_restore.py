@@ -529,3 +529,104 @@ def test_restore_clean_beam_not_written_when_not_requested(tmp_path):
 
     assert not (tmp_path / "fits" / "rt_I_main_cpsf_time0_mfs.fits").exists()
     assert not (tmp_path / "fits" / "rt_I_main_abs_fft_residual_time0_mfs.fits").exists()
+
+
+# ---------------------------------------------------------------------------
+# end-to-end integration (Task 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(600)
+def test_restore_groundtruth(sky_truth, ms_name, tmp_path):
+    """imager -> deconv -> restore recovers the injected source fluxes.
+
+    Mirrors test_deconv_groundtruth's setup (single band, nthreads=1, so the
+    nband==1 Hessian/Psi pools stay on their in-process path within the session
+    cluster's num_cpus). Restore is asserted at the FITS level because that is
+    the product users consume.
+    """
+    from pathlib import Path
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+    from pfb_imaging.core.imager import imager as imager_core
+    from pfb_imaging.core.restore import restore as restore_core
+
+    outname = str(tmp_path / "gtrestore")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=-1,
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    deconv_core(
+        outname,
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=5,
+        gamma=1.0,
+        eta=0.001,
+        rmsfactor=1.0,
+        init_factor=1.0,
+        l1_reweight_from=100,
+        bases=["self", "db1"],
+        nlevels=2,
+        positivity=1,
+        pd_tol=1e-6,
+        pd_maxit=5000,
+        cg_tol=1e-6,
+        cg_maxit=3000,
+        pm_tol=1e-4,
+        pm_maxit=200,
+        nthreads=1,
+        do_wgridding=True,
+        epsilon=1e-7,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+    )
+    restore_core(
+        outname,
+        outputs="aik",
+        nthreads=1,
+        fits_output_folder=str(tmp_path / "fits"),
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    stem = str(tmp_path / "fits" / "gtrestore_I_main")
+    with afits.open(stem + "_kimage_time0_mfs.fits") as hdul:
+        img = np.squeeze(hdul[0].data).astype(np.float64)
+        hdr = hdul[0].header
+
+    # the header beam is the fit to the MFS PSF, in degrees
+    assert hdr["BMAJ"] > 0.0
+    assert hdr["BMAJ"] >= hdr["BMIN"]
+
+    # a restored point source integrates to its flux times the beam area in
+    # pixels; normalise by that to compare against the injected flux
+    cell_deg = np.rad2deg(sky_truth.cell_rad)
+    beam_area = np.pi * (hdr["BMAJ"] / cell_deg) * (hdr["BMIN"] / cell_deg) / (4.0 * np.log(2.0))
+    half = 6
+    for s in range(sky_truth.lpix.size):
+        ixm = sky_truth.nx // 2 - int(sky_truth.lpix[s])
+        iym = sky_truth.ny // 2 + int(sky_truth.mpix[s])
+        # FITS data is (y, x) so the model raster's (x, y) indices swap
+        box = img[iym - half : iym + half + 1, ixm - half : ixm + half + 1]
+        got = float(box.sum()) / beam_area
+        want = float(sky_truth.ref_flux[s])
+        assert abs(got - want) < 0.3 * want, f"source {s}: restored flux {got} vs {want}"
+
+    # all three products exist and the tree carries the restored variables
+    for var in ("bimage", "image", "kimage"):
+        assert (tmp_path / "fits" / f"gtrestore_I_main_{var}_time0_mfs.fits").exists()
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    node = next(n for n in dt.children if n.startswith("band"))
+    assert {"IMAGE", "BIMAGE", "KIMAGE", "PSFPARSF"} <= set(dt[node].ds.data_vars)
