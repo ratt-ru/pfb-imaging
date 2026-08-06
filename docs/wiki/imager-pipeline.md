@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-08-04T00:00:00Z
-last_verified_commit: 5111b13
+timestamp: 2026-08-06T00:00:00Z
+last_verified_commit: 5a30f2a
 ---
 
 # MSv4 DataTree imager pipeline
@@ -57,6 +57,9 @@ no-op later: just another `part{p}` child with its own `BEAM`.
               # BDIRTY = sum_p B_p * dirty_p: model-free term of the exact deconv
               # gradient (D23) -- not derivable from the summed DIRTY
               # MODEL / RESIDUAL / BRESIDUAL / NOISE added later by the deconv consumer
+              # IMAGE / BIMAGE / KIMAGE (corr, y, x) + PSFPARSF (corr, bpar) and a
+              # psfparsf_mfs attr added by the restore consumer -- the three flux
+              # scales (intrinsic / apparent / mixed) of D29
       part{p:04d}/                    # ONE DATA PARTITION
           attrs:  msid, field_name, spw_name, baseline_group, freq_out,
                   ra, dec, l0, m0, wsum
