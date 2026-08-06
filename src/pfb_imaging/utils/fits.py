@@ -432,6 +432,8 @@ def dt2fits(
     psfpars_mfs=None,
     force_unit=None,
     extra_hdr=None,
+    drop_bands=None,
+    psfpars_var="PSFPARSN",
 ):
     """Render a band-node variable from the imager ``.dt`` DataTree to FITS.
 
@@ -451,6 +453,13 @@ def dt2fits(
         force_unit: override the BUNIT header.
         extra_hdr: optional dict of extra FITS header cards stamped into every
             written header.
+        drop_bands: optional list of ``bandid`` values to exclude from the cube
+            and from every MFS reduction (image sum, wsum, ``freq_mfs``). Bands
+            are omitted, not zeroed, so a non-edge drop leaves a non-uniform
+            FITS frequency axis -- see issue #302.
+        psfpars_var: band variable supplying the cube BEAMS table and
+            ``BMAJ{i}`` cards. ``"PSFPARSF"`` publishes a restored image's final
+            resolution instead of the native ``"PSFPARSN"``.
 
     Returns:
         The rendered ``column`` name.
@@ -474,6 +483,11 @@ def dt2fits(
         # silently reordering cube planes. bandid is monotonic in frequency by
         # construction (the band_edges grid in core.imager).
         dst = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == timeid), key=lambda d: int(d.attrs["bandid"]))
+        if drop_bands:
+            dst = [ds for ds in dst if int(ds.attrs["bandid"]) not in set(drop_bands)]
+            if not dst:
+                continue
+        drop_card = {"DROPBAND": ",".join(str(b) for b in sorted(drop_bands))} if drop_bands else {}
         ref = dst[0]
         nband = len(dst)
         freqs = np.array([ds.attrs["freq_out"] for ds in dst])
@@ -517,6 +531,8 @@ def dt2fits(
             if extra_hdr:
                 for k, v in extra_hdr.items():
                     hdr[k] = v
+            for k, v in drop_card.items():
+                hdr[k] = v
             hdr["WSUM"] = float(wsum[0])
             if norm_wsum:
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
@@ -535,8 +551,8 @@ def dt2fits(
         if do_cube:
             cube_beams = None
             psfparsf_timeid = None
-            if all("PSFPARSN" in ds for ds in dst):
-                pp = np.stack([ds.PSFPARSN.values for ds in dst], axis=0)  # (band, corr, 3)
+            if all(psfpars_var in ds for ds in dst):
+                pp = np.stack([ds[psfpars_var].values for ds in dst], axis=0)  # (band, corr, 3)
                 da = xr.DataArray(
                     pp,
                     dims=("band", "corr", "bpar"),
@@ -562,6 +578,8 @@ def dt2fits(
             if extra_hdr:
                 for k, v in extra_hdr.items():
                     hdr[k] = v
+            for k, v in drop_card.items():
+                hdr[k] = v
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
             cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube
