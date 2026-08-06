@@ -81,6 +81,34 @@ def test_restore_products_preserves_position_angle(pa_deg):
     np.testing.assert_allclose(pa, np.deg2rad(pa_deg), atol=np.deg2rad(3.0))
 
 
+def test_restore_apparent_applies_the_beam_before_convolving():
+    """``a`` is ``(B*m) (x) G``, not ``B*(m (x) G)``.
+
+    Convolution does not commute with multiplication by a spatially varying
+    beam, so the two differ. Every other product test uses a constant beam,
+    under which they coincide -- this is the only guard against a future
+    "simplification" to ``beam * mconv + rconv``.
+    """
+    from pfb_imaging.utils.restoration import restore_products
+
+    nx = ny = 64
+    model = np.zeros((1, ny, nx))
+    model[0, ny // 2, nx // 2] = 1.0
+    residual = np.zeros((1, ny, nx))
+    # a beam that varies strongly across the restoring kernel's footprint
+    ramp = np.linspace(0.2, 1.0, nx)[None, None, :]
+    beam = np.broadcast_to(ramp, (1, ny, nx)).copy()
+    gpar = np.array([[8.0, 8.0, 0.0]])
+
+    out = restore_products(model, residual, beam, gpar, products=("a", "k"), pb_min=0.0)
+
+    shortcut = beam * out["k"]  # the wrong-but-plausible B*(m (x) G)
+    assert not np.allclose(out["a"], shortcut, rtol=1e-3, atol=1e-8)
+    # the correct form attenuates by the beam at the source, then spreads
+    peak = float(beam[0, ny // 2, nx // 2])
+    np.testing.assert_allclose(out["a"].max(), peak * out["k"].max(), rtol=0.05)
+
+
 def test_clean_beam_is_weighted_and_not_the_mean_of_per_band_fits():
     """G_mfs is the fit to the wsum-weighted average PSF, so a band carrying
     almost no weight barely moves it. The mean of the per-band fitted
