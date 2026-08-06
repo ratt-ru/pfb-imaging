@@ -93,6 +93,67 @@ def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, c
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
 
 
+def _concat_pieces(plist):
+    """Reduce a partition's scratch pieces to a single Dataset.
+
+    Rows are concatenated; BEAM and the effective frequency are combined as
+    ``wsum_nat``-weighted means. Pieces of a partition can differ in both --
+    BeamWizard evaluates the beam at the piece's own timestamps, and post-#296
+    at its own effective frequency -- so taking piece 0's beam, as this used
+    to, silently discarded every other piece (wiki D28).
+
+    The weights are the *natural* wsum because this runs before gridding, where
+    the robust imaging weights do not yet exist. Getting them would mean
+    passing row offsets into grid_partition and holding every piece's BEAM
+    resident through gridding instead of freeing it at the caller's ``del
+    plist`` -- ~67 MB per piece at 4096 squared float32 -- against the memory
+    discipline in docs/wiki/memory-and-ray.md, for a correction to a beam that
+    varies slowly with frequency. The band-level reduction in _grid_image does
+    use the imaging weights; see wiki D28 for why the mixed basis is correct.
+
+    Args:
+        plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
+
+    Returns:
+        The merged partition Dataset, carrying the weighted ``freq_out`` and
+        the summed ``wsum_nat`` in its attrs. A single-piece list is returned
+        unchanged.
+    """
+    if len(plist) == 1:
+        return plist[0]
+
+    # rows are only concatenatable when they share the freq axis (same
+    # spw + band channel-chunk); guard the invariant before concat
+    f0 = plist[0].FREQ.values
+    for p in plist[1:]:
+        assert np.array_equal(p.FREQ.values, f0), "concat group has mismatched FREQ; cannot concatenate rows"
+
+    w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
+    wsum_nat = float(w.sum())
+    if wsum_nat > 0:
+        freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
+        freq_out = float((w * freqs).sum() / wsum_nat)
+        # accumulate rather than stack: one buffer, not npiece of them
+        beam = np.zeros(plist[0].BEAM.shape, dtype=np.float64)
+        for wi, p in zip(w, plist):
+            beam += wi * p.BEAM.values
+        beam /= wsum_nat
+    else:
+        freq_out = float(plist[0].attrs["freq_out"])
+        beam = plist[0].BEAM.values
+
+    rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
+    cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
+    part = plist[0].drop_vars(rowvars)
+    for v in rowvars:
+        part[v] = cat[v]
+    del cat
+    part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
+    part.attrs["freq_out"] = freq_out
+    part.attrs["wsum_nat"] = wsum_nat
+    return part
+
+
 @ray.remote
 def _grid_image(
     scratch_store,
@@ -105,7 +166,7 @@ def _grid_image(
     nx_psf,
     ny_psf,
     cell_rad,
-    freq_out,
+    freq_nominal,
     meta,
     robustness=None,
     nx_pad=None,
@@ -158,26 +219,13 @@ def _grid_image(
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # float64 regardless of --precision: the tree may be single-precision
+    # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
+    freq_sum = np.zeros(ncorr, dtype=np.float64)
 
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
-        # concat scans of the same partition along row (beam/freq identical across scans)
-        if len(plist) == 1:
-            part = plist[0]
-        else:
-            # rows are only concatenatable when they share the freq axis (same
-            # spw + band channel-chunk); guard the invariant before concat
-            f0 = plist[0].FREQ.values
-            for p in plist[1:]:
-                assert np.array_equal(p.FREQ.values, f0), (
-                    f"concat group {key} has mismatched FREQ; cannot concatenate rows"
-                )
-            rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
-            cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
-            part = plist[0].drop_vars(rowvars)
-            for v in rowvars:
-                part[v] = cat[v]
-            del cat
+        part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
 
@@ -223,6 +271,7 @@ def _grid_image(
                 "field_name": key[1],
                 "spw_name": key[2],
                 "baseline_group": key[3],
+                "freq_out": float(part.attrs["freq_out"]),
                 "ra": meta["ra"],
                 "dec": meta["dec"],
                 "ra0": float(part.attrs.get("ra0", meta["ra"])),
@@ -246,7 +295,7 @@ def _grid_image(
                 key[1],
                 prod,
                 meta,
-                freq_out,
+                float(part.attrs["freq_out"]),
                 cell_rad,
                 do_psf=do_psf,
                 do_beam=part_fits_beam,
@@ -261,11 +310,24 @@ def _grid_image(
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
+        freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
 
+    # Level-2 reduction: the band product is the wsum-weighted sum of its
+    # partitions, so its effective frequency is the wsum-weighted mean of the
+    # partition frequencies -- the identical reduction beam_sum uses below.
+    # That is why these weights must be the imaging prod["WSUM"] and not the
+    # natural wsum_nat used inside _concat_pieces: they are what actually
+    # determines each partition's contribution to the summed image, and BEAM
+    # and freq_out must not be weighted by different quantities at the same
+    # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
+    # dt2fits already does for freq_mfs.
+    wsum_tot = float(wsum_sum.astype(np.float64).sum())
+    freq_eff = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
     band_attrs = {
         "bandid": meta["bandid"],
         "timeid": meta["timeid"],
-        "freq_out": float(freq_out),
+        "freq_out": freq_eff,
+        "freq_nominal": float(freq_nominal),
         "time_out": meta["time_out"],
         "ra": meta["ra"],
         "dec": meta["dec"],
@@ -628,7 +690,10 @@ def imager(
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
-    freq_out = band_edges[0:-1] + half_band_width
+    # Band-edge midpoints. These define which channels belong to which band and
+    # nothing else -- the band's reported frequency is the effective (weighted)
+    # one reduced in pass 2 (issue #296, wiki D28).
+    band_centres = band_edges[0:-1] + half_band_width
 
     # shared imaging geometry (also fixes the padded uv-grid used for COUNTS)
     max_freq = float(all_freqs.max())
@@ -688,7 +753,7 @@ def imager(
                 # flow/fhigh index the freq-range-trimmed axis; isel below acts
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
-                bandid = int(np.argmin(np.abs(freq_out - freqs_node[flow:fhigh].mean())))
+                bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -709,7 +774,7 @@ def imager(
                     bandid=bandid,
                     timeid=timeid,
                     msid=ims,
-                    freq_out=freq_out[bandid],
+                    freq_nominal=band_centres[bandid],
                     precision=precision,
                     sigma_column=sigma_column,
                     weight_column=weight_column,
@@ -920,7 +985,7 @@ def imager(
             nx_psf,
             ny_psf,
             cell_rad,
-            freq_out[meta["bandid"]],
+            band_centres[meta["bandid"]],
             meta,
             robustness=robustness,
             nx_pad=nx_pad,

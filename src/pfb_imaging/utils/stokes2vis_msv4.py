@@ -83,7 +83,7 @@ def stokes_vis(
     bandid=None,
     timeid=None,
     msid=None,
-    freq_out=None,
+    freq_nominal=None,
     precision="double",
     sigma_column=None,
     weight_column=None,
@@ -118,7 +118,10 @@ def stokes_vis(
         nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
             COUNTS grid used to build imaging weights in pass 2.
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
-        freq_out: output frequency for selected data.
+        freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
+            assign channel slices to bands. The piece reports its own effective
+            frequency as freq_out; freq_nominal is the fallback when no weight
+            survives (issue #296, wiki D28).
         precision: "single" or "double" for output data and weights.
         sigma_column: name of column containing sigma values to convert to weights.
         weight_column: name of column containing weights to use instead of sigma.
@@ -437,6 +440,22 @@ def stokes_vis(
     flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
+    # Effective frequency of this piece: the weight-weighted mean over the
+    # channels that survive flagging (issue #296, wiki D28). freq_nominal is
+    # only the band *assignment* grid and is wrong by up to half a channel
+    # whenever nband does not divide nchan. This value is what the beam is
+    # evaluated at below and what the piece reports as freq_out.
+    # These are natural weights because they are the only ones that exist here:
+    # robust imaging weights are not formed until pass 2. See wiki D28 for why
+    # that basis is deliberate rather than an oversight.
+    w_chan = (weight * mask[:, :, None]).sum(axis=(0, 2), dtype=np.float64)
+    wsum_nat = float(w_chan.sum())
+    if wsum_nat > 0:
+        freq_eff = float((w_chan * freq).sum() / wsum_nat)
+    else:
+        # rows survived the mrow filter above but carry zero weight
+        freq_eff = float(freq_nominal)
+
     # ---- primary beam on the output image grid (pass-1 beam, #281) ----
     # The (rotation-averaged) beam is evaluated about the FIELD's own pointing
     # -- where the antennas point regardless of rephasing -- on a small grid,
@@ -509,7 +528,7 @@ def stokes_vis(
                     l=l_beam,
                     m=m_beam,
                     times=t_beam,
-                    freq=np.atleast_1d(freq_out),
+                    freq=np.atleast_1d(freq_eff),
                     time_stepping=1,
                     pixel_stepping=1,
                     var="nstokes",
@@ -536,7 +555,7 @@ def stokes_vis(
             # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
             mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
             # katbeam expects freq in MHz
-            fmhz = freq_out / 1e6
+            fmhz = freq_eff / 1e6
             beam_small = np.zeros((ncorr, npix, npix), dtype=np.float64)
             for i, p in enumerate(corr):
                 beam0 = getattr(beamo, p)(ll, mm, fmhz)
@@ -633,7 +652,9 @@ def stokes_vis(
         "spw_name": spw_name,
         "baseline_group": baseline_group,
         "scan_name": scan_name,
-        "freq_out": freq_out,
+        "freq_out": freq_eff,
+        "freq_nominal": float(freq_nominal),
+        "wsum_nat": wsum_nat,
         "freq_min": freq_min,
         "freq_max": freq_max,
         "bandid": bandid,

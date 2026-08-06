@@ -329,10 +329,10 @@ def grid_partition(
 
     # the piece BEAM is already on the output image grid, placed there in
     # pass 1 (stokes_vis, #281): (corr, ny, nx), tangent point + target offset
-    # included. Pieces of a partition share the field (and the rotation-
-    # averaged beam is time-independent), so the first piece's beam stands in
-    # for the partition; replace with a weighted mean when time-dependent
-    # beams arrive.
+    # included. A partition's pieces are reduced to one BEAM upstream in
+    # core.imager._concat_pieces (wsum_nat-weighted mean, wiki D28); here it is
+    # pure pass-through -- cast to the vis dtype and returned, never used in
+    # the gridding itself.
     # ducc templates every real-valued array on the vis dtype: complex64 vis
     # require float32 wgt/dirty buffers (mixing trips an "incorrect data type"
     # assertion), so image buffers follow the precision of the stored data

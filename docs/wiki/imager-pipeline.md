@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-08-03T00:00:00Z
-last_verified_commit: 94aa96f
+timestamp: 2026-08-04T00:00:00Z
+last_verified_commit: 5111b13
 ---
 
 # MSv4 DataTree imager pipeline
@@ -44,8 +44,11 @@ no-op later: just another `part{p}` child with its own `BEAM`.
   (root attrs) pfb-imaging-version, product, nband, ntime,
                nx, ny, nx_psf, ny_psf, cell_rad, max_blength, max_freq
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
-      attrs:  bandid, timeid, freq_out, time_out, ra, dec, cell_rad,
+      attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters
+              # freq_out = effective (wsum-weighted) frequency of the channels
+              # actually gridded; freq_nominal = band-edge midpoint, assignment
+              # grid only (D28)
       vars:   DIRTY, BDIRTY, BEAM (corr, y, x),                    # (Y, X), D20
               PSF (corr, y_psf, x_psf), PSFPARSN (corr, bpar),     # only with --psf
               WSUM (corr,)
@@ -55,7 +58,7 @@ no-op later: just another `part{p}` child with its own `BEAM`.
               # gradient (D23) -- not derivable from the summed DIRTY
               # MODEL / RESIDUAL / BRESIDUAL / NOISE added later by the deconv consumer
       part{p:04d}/                    # ONE DATA PARTITION
-          attrs:  msid, field_name, spw_name, baseline_group,
+          attrs:  msid, field_name, spw_name, baseline_group, freq_out,
                   ra, dec, l0, m0, wsum
           vis-space:   VIS, WEIGHT (corr, row, chan), MASK (row, chan),
                        UVW (row, three), FREQ (chan,)
@@ -95,7 +98,9 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 1. **Pass 1** (`utils/stokes2vis_msv4.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
-   channel-average/BDA, beam on the small grid, write the piece keyed
+   channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
+   over surviving channels — this is what the beam is evaluated at, D28), beam on the
+   small grid, write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, and return the
    piece's uv `COUNTS` contribution. Fine granularity (per scan /
    `integrations_per_image`) is needed because pass 1 reads raw unaveraged data.
@@ -108,12 +113,14 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
    Natural weighting is `robustness None` or `> 2`: counts are skipped entirely.
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
-   pieces by partition key, concat scans along `row` (keeping the first piece's
-   `BEAM`/`FREQ` — exact because all of a band's pieces share `freq_out` and the global
-   beam grid), apply `counts_to_weights` per partition, grid each partition with
-   `operators/gridder.grid_partition`, sum image-space products into the band node,
-   write the `.dt`. Each `(band, part)` is an independent zarr group path, so workers
-   write concurrently without contention.
+   pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
+   along `row`; `BEAM` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
+   differ in both, so piece 0's beam is *not* representative, D28), apply
+   `counts_to_weights` per partition, grid each partition with
+   `operators/gridder.grid_partition`, sum image-space products into the band node
+   (including the band's `freq_out` as the imaging-wsum-weighted mean of the partition
+   frequencies), write the `.dt`. Each `(band, part)` is an independent zarr group path,
+   so workers write concurrently without contention.
 
 ## `concat_row` semantics
 
@@ -126,6 +133,10 @@ pays one full DIRTY+PSF gridding per scan even at `integrations_per_image=-1`.
 - Rows are only concatenatable when they share phase centre and `FREQ` axis; this holds
   by construction within a partition key and is guarded by an assert. Different
   fields/spws are separate partitions: **summed, never concatenated**.
+- Pieces within a concat group may still differ in `BEAM` and effective frequency
+  (different times ⇒ different `BeamWizard` beams; different flagging ⇒ different
+  effective frequency), so `_concat_pieces` reduces both as `wsum_nat`-weighted means
+  rather than taking the first piece's (D28).
 - Counts are auto-coerced to band granularity, with a warning for time-resolved
   groupings: `per-band-time → per-band`, `per-time → mfs`.
 - `time_out` of the collapsed node is the mean of the constituents' `time_out`.

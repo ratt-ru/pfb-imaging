@@ -116,7 +116,9 @@ path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/image
    band node, and writes the `.dt` tree. FITS via `utils/fits.dt2fits`/`rdt2fits`.
 
 **Tree layout** (`<out>_<PRODUCT>.dt`): one node per output image
-`band{b:04d}_time{t:04d}`; one child `part{p:04d}` per data partition identified by
+`band{b:04d}_time{t:04d}` (attrs `freq_out` = the effective wsum-weighted frequency of the
+channels actually gridded, `freq_nominal` = the band-edge midpoint used only for band
+assignment — wiki D28); one child `part{p:04d}` per data partition identified by
 `(msid, field, spw, baseline_group)` (`baseline_group` is a single `"all"` group for now,
 extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
 products (`DIRTY`, `BDIRTY` — the beam-attenuated `Σ_p B_p·dirty_p`, the model-free term of the
@@ -161,9 +163,10 @@ local repro harness: `docs/wiki/memory-and-ray.md`.
 using differential measures-synthesized UVW (the systematic vs the MS's own UVW cancels);
 `--target` is an in-plane image-centre offset carried as `l0/m0` attrs and a CRPIX shift in the
 FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are
-evaluated (katbeam or `BeamWizard` band names U/L/S0/S4) about the field pointing and reprojected
-onto the image grid **in pass 1** (#281); scratch/partition `BEAM` is `(corr, ny, nx)` and pass 2
-consumes it as is. The stored `BEAM` is the **effective response `B/n`** — the wgridder n-term is
+evaluated (katbeam or `BeamWizard` band names U/L/S0/S4) about the field pointing, at the piece's
+**effective frequency** (wiki D28 — not the band-edge centre), and reprojected
+onto the image grid **in pass 1** (#281); scratch/partition `BEAM` is `(corr, ny, nx)`, and pass 2
+reduces a partition's pieces to one `BEAM` as a `wsum_nat`-weighted mean (`_concat_pieces`, D28). The stored `BEAM` is the **effective response `B/n`** — the wgridder n-term is
 folded into it and every ducc call stays `divide_by_n=False` (wiki D22; the fold is an exact
 operator identity and keeps the PSF-convolution Hessian at its baseline accuracy, unlike
 `divide_by_n=True` which a convolution cannot represent). The deconvolved MODEL is intrinsic flux.

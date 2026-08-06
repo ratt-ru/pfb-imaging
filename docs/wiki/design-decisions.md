@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-03T00:00:00Z
-last_verified_commit: 94aa96f
+timestamp: 2026-08-04T00:00:00Z
+last_verified_commit: 5111b13
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -752,6 +752,58 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/core/imager.py` (`_grid_image` accumulators, MFS PSF reduction);
   `src/pfb_imaging/utils/stokes2im.py` (the hci path's `real_type`, the pattern this
   restores); `tests/test_imager_precision.py`.
+
+### D28 — `freq_out` is the effective (weighted) frequency, reduced at three levels
+
+- **Context:** `freq_out` was the band-edge midpoint from a `linspace` over the frequency
+  span, but channels are sliced *by count* and assigned to the nearest midpoint, so the
+  label was wrong by up to half a channel whenever `nband` did not divide `nchan` (#296).
+  Worse, `stokes_vis` evaluated the **primary beam** at that same value: the beam was being
+  *computed* at the wrong frequency, not merely reported at one. Flagging makes it worse
+  still — a fully flagged channel moves a band's centre of mass by a whole channel width,
+  which a frequency-uniform grid cannot represent at all.
+- **Decision:** `freq_out` means the **weight-weighted mean frequency of the channels
+  actually gridded**, reduced at three levels:
+  1. **piece** (`stokes_vis`, pass 1) — `Σ w·mask·ν / Σ w·mask` over the post-averaging
+     channel axis, using **natural** weights. This value evaluates the beam *and* is stored.
+  2. **partition** (`_concat_pieces`, pass 2) — `wsum_nat`-weighted mean of the pieces'
+     frequencies, and of their `BEAM`s.
+  3. **band** (`_grid_image`, pass 2) — weighted by the **imaging** `prod["WSUM"]`.
+  The band-edge midpoints keep their sole remaining role, band *assignment*, renamed
+  `band_centres` (driver) / `freq_nominal` (parameters and attrs) so one name no longer
+  means two things. `freq_nominal` is also the fallback when no weight survives.
+- **Rationale:** A band product is the wsum-weighted sum of its partitions, so its effective
+  frequency is the wsum-weighted mean of theirs — the identical reduction `beam_sum` already
+  performs, which is *why* level 3 must use the imaging weights: `BEAM` and `freq_out` must
+  not be weighted by different quantities at the same level. Level 2 uses natural weights
+  because it runs before gridding, where robust weights do not exist; obtaining them would
+  mean holding every piece's `BEAM` resident through gridding instead of freeing it
+  (~67 MB per piece at 4096² f4), against `memory-and-ray.md`, to correct a beam that varies
+  slowly with frequency. **The mixed basis is deliberate — do not "fix" it into a
+  regression.** `freq_out` stays scalar, reduced with corr-summed weights, matching what
+  `dt2fits` already does for `freq_mfs`; per-correlation flagging differences are
+  second-order for continuum and a per-Stokes frequency axis has no home in FITS.
+- **Consequences:** Band frequencies **change value** for uneven splits — measured on
+  `tests/data/test_ascii_1h60.0s.MS` at `--channels-per-image 3`: +16.5, +99.9 and
+  +33.2 MHz on 100 MHz channels (the middle band dominated by one fully flagged channel).
+  Anything comparing against an older `.dt` or FITS will see it. Frequency accumulators are
+  **f8 regardless of `--precision`** (f4 resolves 1e9 Hz only to ~64 Hz — cf. D27, where
+  everything else follows the data dtype). `dt2fits` orders cube planes by `bandid`, not
+  `freq_out`, because data-dependent frequencies could otherwise invert and silently
+  reorder planes. `_concat_pieces` also fixes a latent bug independent of #296: the
+  partition used to inherit piece 0's `BEAM` wholesale, which was already wrong for
+  `BeamWizard` (evaluated with the piece's own timestamps). That path is not exercised by
+  current data — `timeid` is keyed on `(scan_name, block)`, so a `(band, time)` node holds
+  one scan — but is deliberate future-proofing for MeerKAT+ baseline groups.
+  **Still open (#302):** FITS cubes keep a linear `CRVAL3`/`CDELT3` and so cannot represent
+  a non-uniform frequency axis; per-plane `FREQ%04d` cards (or `--fits-split-bands`) are a
+  separate follow-up.
+- **Source:** issue #296; `src/pfb_imaging/utils/stokes2vis_msv4.py` (`stokes_vis`);
+  `src/pfb_imaging/core/imager.py` (`_concat_pieces`, `_grid_image`, `band_centres`);
+  `src/pfb_imaging/utils/fits.py` (`dt2fits` sort key); commits 44bfbab, 090711e, 39cfb6c,
+  5111b13; `tests/test_imager.py::test_stokes_vis_beam_follows_effective_freq`,
+  `::test_imager_effective_freq_uneven_bands`,
+  `tests/test_imager_pass2.py::test_concat_pieces_weighted_beam_and_freq`.
 
 ## Known debt
 
