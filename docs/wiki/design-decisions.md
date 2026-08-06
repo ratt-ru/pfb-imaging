@@ -795,8 +795,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `BeamWizard` (evaluated with the piece's own timestamps). That path is not exercised by
   current data — `timeid` is keyed on `(scan_name, block)`, so a `(band, time)` node holds
   one scan — but is deliberate future-proofing for MeerKAT+ baseline groups.
-  **Still open:** FITS cubes keep a linear `CRVAL3`/`CDELT3` and so cannot represent a
-  non-uniform frequency axis; per-plane `FREQ%04d` cards (or `--fits-split-bands`) are a
+  **Still open (#302):** FITS cubes keep a linear `CRVAL3`/`CDELT3` and so cannot represent
+  a non-uniform frequency axis; per-plane `FREQ%04d` cards (or `--fits-split-bands`) are a
   separate follow-up.
 - **Source:** issue #296; `src/pfb_imaging/utils/stokes2vis_msv4.py` (`stokes_vis`);
   `src/pfb_imaging/core/imager.py` (`_concat_pieces`, `_grid_image`, `band_centres`);
