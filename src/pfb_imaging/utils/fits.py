@@ -468,8 +468,8 @@ def dt2fits(
 
     timeids = np.unique([int(ds.attrs["timeid"]) for ds in nodes])
     for timeid in timeids:
-        # bands for this time chunk, ordered by frequency
-        # order by bandid, not freq_out: effective frequencies are data-dependent
+        # bands for this time chunk, ordered by bandid, not freq_out: effective
+        # frequencies are data-dependent
         # (issue #296) and severe asymmetric flagging could invert two bands,
         # silently reordering cube planes. bandid is monotonic in frequency by
         # construction (the band_edges grid in core.imager).

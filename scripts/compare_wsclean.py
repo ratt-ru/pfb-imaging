@@ -58,7 +58,10 @@ Multi-band imaging (``--nband``) adds the frequency axis:
    opposite ends -- pfb's short piece lands in the **last** band, wsclean's in the
    **first** -- so the bands cover different channels.  ``--nband`` therefore exits
    with the list of even splits unless ``--allow-uneven-bands`` is given, and the
-   band-alignment table quantifies the damage either way.
+   band-alignment table quantifies the damage either way.  That table compares
+   pfb's ``freq_nominal`` (the assignment grid) against wsclean's ``CRVAL3``, which
+   is the same quantity; pfb's ``freq_out`` is the *effective* weighted frequency
+   as of issue #296 and separates from both under flagging, by design.
 8. **Frequency weighting mode.**  pfb's band-resolved groupings (``per-band``, and
    ``per-band-time`` which ``concat_row`` collapses to it) pair with wsclean's
    default ``-no-mf-weighting``: one density grid per output band.  The
@@ -395,10 +398,13 @@ def _band_plan(a):
     the output band with the nearest centre, where the centres come from a
     ``linspace`` over the *frequency* span.  When ``nband`` divides ``nchan`` the
     two coincide exactly; when it does not, the slicing leaves a short final piece
-    and the frequency-uniform centres no longer sit at the channel-group centres,
-    so band *labels* drift even if the channel sets happen to match.  pfb also
-    derives its band count as ``ceil((fmax-fmin)/(width*cpi)) = ceil((nchan-1)/cpi)``,
-    which is checked rather than assumed.
+    that lands in pfb's **last** band while wsclean's remainder goes in its
+    **first**, so the two cover different *channel sets* -- which no amount of
+    relabelling fixes.  (pfb's reported band frequency is the effective weighted
+    one as of issue #296, so it no longer drifts with the split; the channel-set
+    difference is the real remaining hazard.)  pfb also derives its band count as
+    ``ceil((fmax-fmin)/(width*cpi)) = ceil((nchan-1)/cpi)``, which is checked
+    rather than assumed.
     """
     if a.nband == 1:
         return -1, None
@@ -411,9 +417,9 @@ def _band_plan(a):
         ok = [d for d in range(1, nchan + 1) if nchan % d == 0]
         msg = (
             f"{nchan} channels do not divide into {a.nband} bands: pfb slices "
-            f"{cpi}-channel pieces (the last one short) while its band centres stay "
-            f"uniform in frequency, so band labels and possibly channel sets differ "
-            f"from wsclean's equal-count split. Even splits: {ok}."
+            f"{cpi}-channel pieces and puts the short remainder in its LAST band, "
+            f"while wsclean's equal-count split puts it in the FIRST, so the bands "
+            f"cover different channel sets. Even splits: {ok}."
         )
         if not a.allow_uneven_bands:
             sys.exit(f"{msg} Pass --allow-uneven-bands to compare anyway.")
@@ -628,31 +634,50 @@ def product_list(a, pfb_pre, wsc_pre):
 def band_report(a, pfb_pre, wsc_pre):
     """Per-band centre frequency and wsum -- the channel-slicing test.
 
-    Frequencies come from pfb's ``.dt`` band-node ``freq_out`` attrs (its
-    ``band_edges`` centres) against each wsclean per-band image's ``CRVAL3``;
-    wsums from the pfb cube's ``WSUM<n>`` cards against wsclean's ``WSCNORMF``.
-    Both agreeing is what says the two imagers put the same channels in the same
-    band -- a frequency match with a wsum mismatch would mean equal band centres
-    over unequal channel sets.
+    The pass/fail comparison is pfb's ``freq_nominal`` -- the band-edge midpoint
+    that decides which channels belong to the band -- against each wsclean per-band
+    image's ``CRVAL3``, which is the same quantity: on an even split they agree to
+    0 Hz.  pfb's ``freq_out`` is the *effective* frequency, the weighted mean over
+    the channels that survive flagging (issue #296, wiki D28); it is reported
+    alongside but deliberately not compared, because wsclean does not weight its
+    label the same way and any flagging separates the two legitimately.  Comparing
+    it here would report MISMATCH on data that is perfectly fine.
+
+    wsums come from the pfb cube's ``WSUM<n>`` cards against wsclean's
+    ``WSCNORMF``.  Frequency and wsum agreeing *together* is what says the two
+    imagers put the same channels in the same band -- a frequency match with a
+    wsum mismatch would mean equal band centres over unequal channel sets.
+
+    Nodes are ordered by ``bandid``, matching the plane order ``dt2fits`` writes
+    the cube (and hence the ``WSUM<n>`` cards) in.  Sorting by ``freq_out`` would
+    be wrong now that it is data-dependent: asymmetric flagging can invert two
+    bands, pairing the wrong wsum card and wsclean file with a node.
     """
     import xarray as xr  # deferred: heavy import, only needed for the band check
 
     dt = xr.open_datatree(f"{os.path.abspath(pfb_pre)}_{a.product.upper()}.dt", engine="zarr", chunks=None)
     nodes = [dt[n].ds for n in dt.children if n.startswith("band")]
-    nodes = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == a.timeid), key=lambda d: d.attrs["freq_out"])
+    nodes = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == a.timeid), key=lambda d: int(d.attrs["bandid"]))
     cube_hdr = fits.getheader(pfb_fits(pfb_pre, a.product, "DIRTY", a.timeid, mfs=False))
 
     print(f"\n=== band alignment ({a.nband} bands, {band_plan(a)[0]} channels each) ===")
-    print(f"  {'band':>4s} {'pfb freq (Hz)':>18s} {'wsclean freq (Hz)':>18s} {'df (Hz)':>10s} {'wsum ratio':>13s}")
+    print(
+        f"  {'band':>4s} {'pfb nominal (Hz)':>18s} {'wsclean freq (Hz)':>18s} {'df (Hz)':>10s}"
+        f" {'pfb effective (Hz)':>20s} {'wsum ratio':>13s}"
+    )
     for b, ds in enumerate(nodes):
-        fp = float(ds.attrs["freq_out"])
+        # .get: a .dt written before #296 has no freq_nominal, and --run none is
+        # routinely pointed at products already on disk
+        fp = float(ds.attrs.get("freq_nominal", ds.attrs["freq_out"]))
+        feff = float(ds.attrs["freq_out"])
         whdr = fits.getheader(f"{wsc_pre}-{b:04d}-dirty.fits")
         fw = float(whdr["CRVAL3"])
         ratio = float(cube_hdr[f"WSUM{b + 1}"]) / float(whdr["WSCNORMF"])
         # an even split must agree exactly, so the tolerance is tight: a drifting
-        # band centre means the labels disagree, a drifting wsum means the data does
+        # band centre means the channel sets disagree, a drifting wsum means the
+        # data does. freq_out is informational -- flagging moves it by design.
         flag = "   <- MISMATCH" if abs(fp - fw) > 1.0 or abs(ratio - 1) > 1e-3 else ""
-        print(f"  {b:>4d} {fp:>18.3f} {fw:>18.3f} {fp - fw:>+10.3g} {ratio:>13.9f}{flag}")
+        print(f"  {b:>4d} {fp:>18.3f} {fw:>18.3f} {fp - fw:>+10.3g} {feff:>20.3f} {ratio:>13.9f}{flag}")
 
 
 def wcs_offset(ha, hb):
