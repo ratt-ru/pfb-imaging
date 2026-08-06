@@ -9,6 +9,7 @@ integration test runs ``imager -> deconv -> restore`` against the
 
 import numpy as np
 import pytest
+import xarray as xr
 
 
 def test_restore_products_algebra():
@@ -122,3 +123,206 @@ def test_lowest_resolution_takes_max_axes_and_mean_pa():
 
     gp = np.array([[[6.0, 3.0, 0.2]], [[4.0, 5.0, 0.6]]])
     np.testing.assert_allclose(lowest_resolution(gp), np.array([[6.0, 5.0, 0.4]]))
+
+
+# ---------------------------------------------------------------------------
+# driver tests (Task 4): synthetic .dt, no MS or imager needed
+# ---------------------------------------------------------------------------
+
+
+def _write_restore_dt(
+    store,
+    nband=2,
+    nx=64,
+    ny=64,
+    beam_vals=(1.0, 0.5),
+    gpars=((6.0, 4.0, 0.3), (10.0, 6.0, 0.3)),
+    wsums=(10.0, 30.0),
+    model_flux=2.0,
+    with_psf=True,
+    with_model=True,
+):
+    """Synthetic single-time .dt carrying exactly the band variables restore reads.
+
+    PSF is stored un-normalised (shape x wsum) so PSF/WSUM is a peak-1 Gaussian
+    and fitcleanbeam recovers ``gpars[b]``, matching what core/imager.py writes.
+    RESIDUAL is likewise stored un-normalised.
+    """
+    from pfb_imaging.utils.misc import gaussian2d
+
+    nx_psf, ny_psf = 2 * nx, 2 * ny
+    xp = -(nx_psf // 2) + np.arange(nx_psf)
+    yp = -(ny_psf // 2) + np.arange(ny_psf)
+    xxp, yyp = np.meshgrid(xp, yp, indexing="ij")
+
+    for b in range(nband):
+        model = np.zeros((1, ny, nx))
+        model[0, ny // 2, nx // 2] = model_flux
+        data_vars = {
+            "DIRTY": (("corr", "y", "x"), np.zeros((1, ny, nx))),
+            "RESIDUAL": (("corr", "y", "x"), np.full((1, ny, nx), 0.01) * wsums[b]),
+            "BEAM": (("corr", "y", "x"), np.full((1, ny, nx), beam_vals[b])),
+            "WSUM": (("corr",), np.array([wsums[b]])),
+        }
+        if with_model:
+            data_vars["MODEL"] = (("corr", "y", "x"), model)
+        coords = {"corr": ["I"]}
+        if with_psf:
+            psf = gaussian2d(xxp, yyp, gpars[b], normalise=False).T[None]
+            data_vars["PSF"] = (("corr", "y_psf", "x_psf"), psf * wsums[b])
+            data_vars["PSFPARSN"] = (("corr", "bpar"), np.array([list(gpars[b])]))
+            coords["bpar"] = ["BMAJ", "BMIN", "BPA"]
+        xr.Dataset(
+            data_vars,
+            coords=coords,
+            attrs={
+                "bandid": b,
+                "timeid": 0,
+                "freq_out": 1.0e9 + b * 1.0e8,
+                "freq_nominal": 1.0e9 + b * 1.0e8,
+                "time_out": 1.7e9,
+                "ra": 0.0,
+                "dec": 0.0,
+                "l0": 0.0,
+                "m0": 0.0,
+                "cell_rad": 1.0e-6,
+                "niters": 1,
+            },
+        ).to_zarr(store, group=f"band{b:04d}_time0000", mode="a")
+
+
+def _run_restore(tmp_path, name="rt", **kwargs):
+    """Call the driver with the fixed plumbing arguments these tests share."""
+    from pfb_imaging.core.restore import restore as restore_core
+
+    restore_core(
+        str(tmp_path / name),
+        fits_output_folder=str(tmp_path / "fits"),
+        log_directory=str(tmp_path / "logs"),
+        nthreads=1,
+        **kwargs,
+    )
+
+
+def test_restore_writes_products_and_psfparsf(tmp_path):
+    """All three products land in the band nodes at native resolution, and
+    BIMAGE / BEAM == IMAGE -- the mosaic relation.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="aik")
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        ds = dt[f"band{b:04d}_time0000"].ds
+        for v in ("IMAGE", "BIMAGE", "KIMAGE", "PSFPARSF"):
+            assert v in ds, f"{v} missing from band {b}"
+        # no --gausspar: the final resolution is the native one
+        np.testing.assert_allclose(ds.PSFPARSF.values, ds.PSFPARSN.values, rtol=1e-6)
+        np.testing.assert_allclose(ds.BIMAGE.values / ds.BEAM.values, ds.IMAGE.values, rtol=1e-5, atol=1e-10)
+
+
+def test_restore_preserves_band_attrs(tmp_path):
+    """to_zarr(mode='a') replaces a group's attrs wholesale, so the driver must
+    re-stamp them (core/deconv.py:409-424). Losing bandid breaks every later read.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK")
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    ds = dt["band0001_time0000"].ds
+    assert ds.attrs["bandid"] == 1
+    assert ds.attrs["timeid"] == 0
+    np.testing.assert_allclose(ds.attrs["freq_out"], 1.1e9)
+    np.testing.assert_allclose(ds.attrs["cell_rad"], 1.0e-6)
+    assert len(ds.attrs["psfparsf_mfs"]) == 3
+
+
+def test_restore_only_computes_requested_products(tmp_path):
+    """--outputs gates the compute and the storage, not just the FITS."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK")
+
+    ds = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+    assert "KIMAGE" in ds
+    assert "IMAGE" not in ds
+    assert "BIMAGE" not in ds
+
+
+def test_restore_gausspar_homogenises_to_specified_resolution(tmp_path):
+    """--gausspar is in degrees; PSFPARSF must come back in pixel units."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+    cell_deg = np.rad2deg(1.0e-6)
+
+    _run_restore(tmp_path, outputs="kK", gausspar=(12.0 * cell_deg, 8.0 * cell_deg, 45.0))
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        pf = dt[f"band{b:04d}_time0000"].ds.PSFPARSF.values[0]
+        np.testing.assert_allclose(pf[0], 12.0, rtol=1e-4)
+        np.testing.assert_allclose(pf[1], 8.0, rtol=1e-4)
+        np.testing.assert_allclose(pf[2], np.deg2rad(45.0), rtol=1e-6)
+
+
+def test_restore_zero_gausspar_selects_lowest_resolution(tmp_path):
+    """--gausspar 0 0 0 homogenises to the lowest-resolution band."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK", gausspar=(0.0, 0.0, 0.0))
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        pf = dt[f"band{b:04d}_time0000"].ds.PSFPARSF.values[0]
+        np.testing.assert_allclose(pf[0], 10.0, rtol=1e-6)  # max emaj over bands
+        np.testing.assert_allclose(pf[1], 6.0, rtol=1e-6)  # max emin over bands
+        np.testing.assert_allclose(pf[2], 0.3, rtol=1e-6)  # mean pa
+
+
+def test_restore_skips_zero_wsum_bands(tmp_path):
+    """A fully flagged band (WSUM == 0) must be skipped, not divided by.
+
+    Without the guard, `RESIDUAL / WSUM` yields inf/NaN which lands in the
+    stored products AND in the MFS accumulators, poisoning every other band's
+    MFS image. core/imager.py already emits such bands (freq_eff falls back to
+    freq_nominal when wsum_tot == 0).
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, wsums=(10.0, 0.0))
+
+    _run_restore(tmp_path, outputs="kK")
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    # the live band is restored and finite
+    live = dt["band0000_time0000"].ds
+    assert "KIMAGE" in live
+    assert np.isfinite(live.KIMAGE.values).all()
+    # the dead band is skipped entirely rather than written with NaNs
+    assert "KIMAGE" not in dt["band0001_time0000"].ds
+    # the live band's attrs still record the MFS beam, so the dead band did not
+    # poison the reduction (the MFS *image* is asserted finite in Task 5)
+    assert np.isfinite(np.asarray(live.attrs["psfparsf_mfs"], dtype=float)).all()
+
+
+def test_restore_errors_without_psf(tmp_path):
+    """A --no-psf imager tree cannot define a restoring beam."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, with_psf=False)
+
+    with pytest.raises(ValueError, match="--psf"):
+        _run_restore(tmp_path, outputs="kK")
+
+
+def test_restore_errors_without_model(tmp_path):
+    """Nothing to restore before pfb deconv has run."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, with_model=False)
+
+    with pytest.raises(ValueError, match="MODEL"):
+        _run_restore(tmp_path, outputs="kK")
