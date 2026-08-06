@@ -476,3 +476,56 @@ def test_restore_zero_wsum_band_does_not_poison_mfs(tmp_path):
     assert np.isfinite(mfs).all()
     cube = afits.getdata(str(tmp_path / "fits" / "rt_I_main_kimage_time0.fits"))
     assert cube.shape[1] == 1  # only the live band
+
+
+# ---------------------------------------------------------------------------
+# clean-beam and FFT-residual products (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_restore_clean_beam_images(tmp_path):
+    """c/C render the restoring Gaussian itself, peak 1 at the image centre."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kKcC")
+
+    mfs = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_cpsf_time0_mfs.fits")))
+    assert mfs.shape == (64, 64)
+    np.testing.assert_allclose(mfs.max(), 1.0, rtol=1e-5)
+    assert np.unravel_index(int(np.argmax(mfs)), mfs.shape) == (32, 32)
+
+    cube = afits.getdata(str(tmp_path / "fits" / "rt_I_main_cpsf_time0.fits"))
+    assert cube.shape == (1, 2, 64, 64)
+    # band 1 has the wider native beam, so its Gaussian integrates to more
+    assert cube[0, 1].sum() > cube[0, 0].sum()
+
+
+def test_restore_fft_residual_products(tmp_path):
+    """f/F write magnitude and phase of the FFT of the residual."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kKfF")
+
+    for stem in ("abs_fft_residual", "phase_fft_residual"):
+        for tail in ("_time0_mfs.fits", "_time0.fits"):
+            assert (tmp_path / "fits" / f"rt_I_main_{stem}{tail}").exists(), stem + tail
+
+    # a flat residual transforms to a single central spike
+    mag = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_abs_fft_residual_time0_mfs.fits")))
+    assert np.unravel_index(int(np.argmax(mag)), mag.shape) == (32, 32)
+    assert mag.max() > 100.0 * np.median(mag)
+
+    phase = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_phase_fft_residual_time0_mfs.fits")))
+    assert np.all(np.abs(phase) <= np.pi + 1e-5)
+
+
+def test_restore_clean_beam_not_written_when_not_requested(tmp_path):
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK")
+
+    assert not (tmp_path / "fits" / "rt_I_main_cpsf_time0_mfs.fits").exists()
+    assert not (tmp_path / "fits" / "rt_I_main_abs_fft_residual_time0_mfs.fits").exists()

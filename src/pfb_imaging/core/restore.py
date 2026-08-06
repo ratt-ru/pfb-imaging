@@ -14,11 +14,13 @@ import time
 import numpy as np
 import psutil
 import xarray as xr
+from ducc0.fft import c2c
 from ducc0.misc import resize_thread_pool
 
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits
+from pfb_imaging.utils.misc import gaussian2d
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.restoration import (
     PRODUCT_VARS,
@@ -290,6 +292,75 @@ def restore(
                     gausspar=gaussparf_mfs[0],
                     beams_hdu=hdu,
                     extra_hdr=extra,
+                )
+
+        # c/C: the restoring Gaussian itself. Derived from the beam parameters
+        # alone, so it is rendered rather than stored in the tree.
+        if "c" in outputs.lower():
+            xg = -(nx // 2) + np.arange(nx)
+            yg = -(ny // 2) + np.arange(ny)
+            xxg, yyg = np.meshgrid(xg, yg, indexing="ij")
+            if "c" in outputs:
+                # gaussian2d is x-major; transpose onto the (y, x) raster (D19)
+                cpsf = gaussian2d(xxg, yyg, gaussparf_mfs[0], normalise=False).T[None]
+                write_fits(
+                    cpsf,
+                    f"{fits_oname}_cpsf_time{timeid}_mfs.fits",
+                    meta,
+                    unit="",
+                    gausspar=gaussparf_mfs[0],
+                    extra_hdr=drop_card,
+                )
+            if "C" in outputs:
+                cube = np.stack([gaussian2d(xxg, yyg, gaussparf[b, 0], normalise=False).T[None] for b in range(nband)])
+                write_fits(
+                    cube,
+                    f"{fits_oname}_cpsf_time{timeid}.fits",
+                    {**meta, "freq": freqs},
+                    unit="",
+                    gausspar=gaussparf_mfs[0],
+                    gausspars=gaussparf[:, 0],
+                    beams_hdu=beams_table(gaussparf, corr, cell_deg),
+                    extra_hdr=drop_card,
+                )
+
+        # f/F: magnitude and phase of the FFT of the residual. A uv-plane
+        # diagnostic, so the image WCS in the header is nominal.
+        if "f" in outputs.lower():
+            fft_hdr = {**drop_card, "FFTDOM": ("uv", "image-plane WCS is nominal for this product")}
+            if "f" in outputs:
+                rhat = np.fft.fftshift(c2c(r_mfs, axes=(1, 2), forward=True, nthreads=nthreads, inorm=0), axes=(1, 2))
+                write_fits(
+                    np.abs(rhat),
+                    f"{fits_oname}_abs_fft_residual_time{timeid}_mfs.fits",
+                    meta,
+                    unit="",
+                    extra_hdr=fft_hdr,
+                )
+                write_fits(
+                    np.angle(rhat),
+                    f"{fits_oname}_phase_fft_residual_time{timeid}_mfs.fits",
+                    meta,
+                    unit="rad",
+                    extra_hdr=fft_hdr,
+                )
+            if "F" in outputs:
+                rcube = np.stack([dt[n].ds[residual_name].values / wsums[b][:, None, None] for b, n in enumerate(keep)])
+                rhat = np.fft.fftshift(c2c(rcube, axes=(2, 3), forward=True, nthreads=nthreads, inorm=0), axes=(2, 3))
+                cube_meta = {**meta, "freq": freqs}
+                write_fits(
+                    np.abs(rhat),
+                    f"{fits_oname}_abs_fft_residual_time{timeid}.fits",
+                    cube_meta,
+                    unit="",
+                    extra_hdr=fft_hdr,
+                )
+                write_fits(
+                    np.angle(rhat),
+                    f"{fits_oname}_phase_fft_residual_time{timeid}.fits",
+                    cube_meta,
+                    unit="rad",
+                    extra_hdr=fft_hdr,
                 )
 
         log.info(f"time {timeid}: restored {nband} bands")
