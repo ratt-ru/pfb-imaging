@@ -18,12 +18,15 @@ from ducc0.misc import resize_thread_pool
 
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.fits import dt2fits
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.restoration import (
     PRODUCT_VARS,
+    beams_table,
     clean_beam,
     lowest_resolution,
     restore_products,
+    write_fits,
 )
 
 log = pfb_logging.get_logger("RESTORE")
@@ -243,6 +246,84 @@ def restore(
         b_mfs /= wsum_tot[:, None, None]
 
         psfpars_by_time[timeid] = gaussparf_mfs
+
+        freqs = np.array([dt[n].ds.attrs["freq_out"] for n in keep])
+        freq_mfs = float(np.sum(freqs[:, None] * wsums) / wsum_tot.sum())
+        meta = {
+            "cell_deg": cell_deg,
+            "nx": nx,
+            "ny": ny,
+            "radec": (ref.attrs["ra"], ref.attrs["dec"]),
+            "freq": freq_mfs,
+            "time_out": ref.attrs["time_out"],
+            "l0": float(ref.attrs.get("l0", 0.0)),
+            "m0": float(ref.attrs.get("m0", 0.0)),
+        }
+        drop_card = {"DROPBAND": ",".join(str(b) for b in sorted(dropped))} if dropped else {}
+        corr = ref.corr.values
+
+        # MFS restored images. Not obtainable from dt2fits: the per-band restored
+        # images sit at different resolutions, so their weighted sum is not the
+        # MFS restored image. r_mfs is already at G_mfs by construction.
+        mfs_products = tuple(k for k in products if k in outputs)
+        if mfs_products:
+            out_mfs = restore_products(
+                m_mfs,
+                r_mfs,
+                b_mfs,
+                gaussparf_mfs,
+                gausspari=gausspari_mfs,
+                products=mfs_products,
+                pb_min=pb_min,
+                nthreads=nthreads,
+            )
+            hdu = beams_table(gaussparf_mfs[None], corr, cell_deg)
+            for key, arr in out_mfs.items():
+                var = PRODUCT_VARS[key]
+                extra = {**drop_card, "WSUM": float(wsum_tot[0])}
+                if key == "i":
+                    extra["PBMIN"] = (float(pb_min), "beam floor below which the image is zeroed")
+                write_fits(
+                    arr,
+                    f"{fits_oname}_{var.lower()}_time{timeid}_mfs.fits",
+                    meta,
+                    gausspar=gaussparf_mfs[0],
+                    beams_hdu=hdu,
+                    extra_hdr=extra,
+                )
+
         log.info(f"time {timeid}: restored {nband} bands")
+
+    # cubes for every product, plus the MFS images of the stored variables,
+    # which are ordinary wsum reductions dt2fits can do itself. Runs once, after
+    # the per-time loop: dt2fits opens the store and loops over every timeid.
+    columns = []
+    if "d" in outputs.lower():
+        columns.append(("DIRTY", "d", True, None))
+    if "m" in outputs.lower():
+        columns.append((model_name, "m", False, None))
+    if "r" in outputs.lower():
+        columns.append((residual_name, "r", True, None))
+    for key in products:
+        columns.append((PRODUCT_VARS[key], key, False, "PSFPARSF"))
+
+    for column, key, norm_wsum, psfvar in columns:
+        do_mfs = key in outputs and psfvar is None  # restored MFS already written
+        do_cube = key.upper() in outputs
+        if not (do_mfs or do_cube):
+            continue
+        dt2fits(
+            dt_name,
+            column,
+            fits_oname,
+            norm_wsum=norm_wsum,
+            nthreads=nthreads,
+            do_mfs=do_mfs,
+            do_cube=do_cube,
+            psfpars_mfs=psfpars_by_time,
+            drop_bands=sorted(dropped) or None,
+            psfpars_var=psfvar or "PSFPARSN",
+        )
+        log.info(f"Done writing {column}")
 
     log.info(f"All done after {time.time() - time_start:.1f}s")

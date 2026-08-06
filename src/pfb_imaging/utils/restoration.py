@@ -9,7 +9,9 @@ must say which scale it is on. Three are offered, keyed by their CLI letter.
 """
 
 import numpy as np
+import xarray as xr
 
+from pfb_imaging.utils.fits import create_beams_table, save_fits, set_wcs
 from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam
 
 # CLI letter -> DataTree variable name. The B prefix follows the tree's
@@ -105,5 +107,73 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
             rint = np.where(beam > pb_min, rconv / beam, 0.0)
         out["i"] = np.where(beam > pb_min, mconv + rint, 0.0)
     if "a" in products:
+        # (B*m) (x) G, NOT B*(m (x) G) -- convolution does not commute with
+        # multiplication by a spatially varying beam, so mconv cannot be reused
         out["a"] = convolve2gaussres(beam * model, xx, yy, gaussparf, **kw) + rconv
     return out
+
+
+def beams_table(gausspars, corr, cell_deg):
+    """Build a BEAMS BinTableHDU from resolutions in pixel units.
+
+    Args:
+        gausspars: ``(nband, ncorr, 3)`` in pixels, pixels, radians.
+        corr: correlation labels, length ``ncorr``.
+        cell_deg: cell size in degrees, converting the axes to degrees.
+
+    Returns:
+        An astropy ``BinTableHDU`` named BEAMS.
+    """
+    gausspars = np.asarray(gausspars, dtype=float)
+    da = xr.DataArray(
+        gausspars,
+        dims=("band", "corr", "bpar"),
+        coords={
+            "band": np.arange(gausspars.shape[0]),
+            "corr": list(corr),
+            "bpar": ["BMAJ", "BMIN", "BPA"],
+        },
+    )
+    return create_beams_table(da, cell2deg=cell_deg)
+
+
+def write_fits(
+    data, name, meta, unit="Jy/beam", gausspar=None, gausspars=None, beams_hdu=None, extra_hdr=None, otype=np.float32
+):
+    """Render a (Y, X)-ordered array to FITS with the ``.dt``'s WCS conventions.
+
+    Used for the products the driver computes itself, which :func:`dt2fits`
+    cannot source from a stored band variable -- principally the MFS restored
+    images, which are not weighted sums of the per-band restored images.
+
+    Args:
+        data: ``(ncorr, ny, nx)`` or ``(nband, ncorr, ny, nx)``, (Y, X)-ordered.
+        name: output path.
+        meta: dict with ``cell_deg``, ``nx``, ``ny``, ``radec``, ``freq``,
+            ``time_out``, ``l0`` and ``m0``. ``freq`` is scalar for an MFS image
+            and an array for a cube.
+        unit: BUNIT value.
+        gausspar: ``(3,)`` MFS beam in pixel units for the BMAJ/BMIN/BPA cards.
+        gausspars: ``(nband, 3)`` per-plane beams in pixel units.
+        beams_hdu: optional BEAMS table from :func:`beams_table`.
+        extra_hdr: extra header cards.
+        otype: output dtype.
+    """
+    hdr = set_wcs(
+        meta["cell_deg"],
+        meta["cell_deg"],
+        meta["nx"],
+        meta["ny"],
+        meta["radec"],
+        meta["freq"],
+        unit=unit,
+        ms_time=meta["time_out"],
+        time_is_unix=True,  # the .dt carries unix seconds (wiki D13)
+        gausspar=gausspar,
+        gausspars=gausspars,
+        l0=meta["l0"],
+        m0=meta["m0"],
+    )
+    for key, value in (extra_hdr or {}).items():
+        hdr[key] = value
+    save_fits(data, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu, yx_order=True)

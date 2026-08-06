@@ -10,6 +10,7 @@ integration test runs ``imager -> deconv -> restore`` against the
 import numpy as np
 import pytest
 import xarray as xr
+from astropy.io import fits as afits
 
 
 def test_restore_products_algebra():
@@ -326,3 +327,124 @@ def test_restore_errors_without_model(tmp_path):
 
     with pytest.raises(ValueError, match="MODEL"):
         _run_restore(tmp_path, outputs="kK")
+
+
+# ---------------------------------------------------------------------------
+# FITS dispatch (Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_restore_writes_mfs_and_cube_fits(tmp_path):
+    """Every requested letter produces its file, with the case controlling
+    whether it is the MFS image or the cube.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="aAiIkKrR")
+
+    base = tmp_path / "fits" / "rt_I_main"
+    for var in ("bimage", "image", "kimage", "residual"):
+        assert (tmp_path / "fits" / f"rt_I_main_{var}_time0_mfs.fits").exists(), var
+        assert (tmp_path / "fits" / f"rt_I_main_{var}_time0.fits").exists(), var
+    cube = afits.getdata(str(base) + "_kimage_time0.fits")
+    assert cube.shape[1] == 2  # FREQ axis carries both bands
+    mfs = afits.getdata(str(base) + "_kimage_time0_mfs.fits")
+    assert mfs.shape[1] == 1  # MFS collapses the FREQ axis
+
+
+def test_restore_mfs_beam_is_fit_to_the_mfs_psf(tmp_path):
+    """BMAJ on the MFS image comes from the summed PSF, not from averaging the
+    per-band beams -- the correction issue #303 exists for.
+    """
+    from pfb_imaging.utils.restoration import clean_beam
+
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, gpars=((6.0, 6.0, 0.0), (18.0, 18.0, 0.0)))
+
+    _run_restore(tmp_path, outputs="kK")
+
+    hdr = afits.getheader(str(tmp_path / "fits" / "rt_I_main_kimage_time0_mfs.fits"))
+    cell_deg = np.rad2deg(1.0e-6)
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    psf_sum = sum(dt[f"band{b:04d}_time0000"].ds.PSF.values for b in range(2))
+    wsum = sum(dt[f"band{b:04d}_time0000"].ds.WSUM.values for b in range(2))
+    want = clean_beam(psf_sum, wsum)[0]
+
+    np.testing.assert_allclose(hdr["BMAJ"], want[0] * cell_deg, rtol=1e-4)
+
+
+def test_restore_cube_beams_come_from_psfparsf(tmp_path):
+    """Cube BMAJ{i} cards carry the final resolution, not the native one."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+    cell_deg = np.rad2deg(1.0e-6)
+
+    _run_restore(tmp_path, outputs="kK", gausspar=(20.0 * cell_deg, 20.0 * cell_deg, 0.0))
+
+    hdr = afits.getheader(str(tmp_path / "fits" / "rt_I_main_kimage_time0.fits"))
+    np.testing.assert_allclose(hdr["BMAJ1"], 20.0 * cell_deg, rtol=1e-4)
+    np.testing.assert_allclose(hdr["BMAJ2"], 20.0 * cell_deg, rtol=1e-4)
+
+
+def test_restore_mfs_residual_floor_is_the_weighted_mean(tmp_path):
+    """MFS restored = r_mfs + m_mfs (x) G_mfs, both wsum-weighted over kept
+    bands. Away from the source the restored image is just r_mfs, which for a
+    flat 0.01 residual in both bands must be flat 0.01.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, beam_vals=(1.0, 1.0))
+
+    _run_restore(tmp_path, outputs="kK")
+
+    got = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_kimage_time0_mfs.fits")))
+    assert abs(float(got[0, 0]) - 0.01) < 1e-5
+    # the source is still there at the centre
+    assert float(got[32, 32]) > 0.01
+
+
+def test_restore_intrinsic_mfs_is_apparent_over_beam(tmp_path):
+    """The mosaic relation must survive the MFS reduction too: with a uniform
+    beam, IMAGE == BIMAGE / beam pixel for pixel.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, beam_vals=(0.5, 0.5))
+
+    _run_restore(tmp_path, outputs="ai")
+
+    app = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_bimage_time0_mfs.fits")))
+    intr = np.squeeze(afits.getdata(str(tmp_path / "fits" / "rt_I_main_image_time0_mfs.fits")))
+    np.testing.assert_allclose(app / 0.5, intr, rtol=1e-4, atol=1e-8)
+    hdr = afits.getheader(str(tmp_path / "fits" / "rt_I_main_image_time0_mfs.fits"))
+    assert hdr["PBMIN"] == 0.1
+
+
+def test_restore_drop_bands_excludes_from_mfs_beam(tmp_path):
+    """A dropped band must leave the G_mfs PSF fit, not just the image sum."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, gpars=((6.0, 6.0, 0.0), (18.0, 18.0, 0.0)))
+    cell_deg = np.rad2deg(1.0e-6)
+
+    _run_restore(tmp_path, outputs="kK", drop_bands=[1])
+
+    hdr = afits.getheader(str(tmp_path / "fits" / "rt_I_main_kimage_time0_mfs.fits"))
+    # band 1 (the 18 px beam) is gone, so G_mfs is band 0's 6 px beam
+    np.testing.assert_allclose(hdr["BMAJ"], 6.0 * cell_deg, rtol=0.05)
+    cube = afits.getdata(str(tmp_path / "fits" / "rt_I_main_kimage_time0.fits"))
+    assert cube.shape[1] == 1  # dropped, not zeroed
+
+
+def test_restore_zero_wsum_band_does_not_poison_mfs(tmp_path):
+    """The Task 4 guard, asserted at the FITS level: a fully flagged band must
+    leave the MFS image finite.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, wsums=(10.0, 0.0))
+
+    _run_restore(tmp_path, outputs="kK")
+
+    mfs = afits.getdata(str(tmp_path / "fits" / "rt_I_main_kimage_time0_mfs.fits"))
+    assert np.isfinite(mfs).all()
+    cube = afits.getdata(str(tmp_path / "fits" / "rt_I_main_kimage_time0.fits"))
+    assert cube.shape[1] == 1  # only the live band
