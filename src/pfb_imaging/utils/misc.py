@@ -176,28 +176,39 @@ def get_padding_info(nx, ny, pfrac):
     return padding, unpad_x, unpad_y
 
 
-def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfrac=0.5, norm_kernel=False):
+def convolve2gaussres(
+    image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfrac=0.5, norm_kernel=False, yx_order=False
+):
     """
     Convolves the image to a specified resolution.
 
     Parameters
     ----------
-    Image       - (nband, nx, ny) array to convolve
+    image       - (nplane, nx, ny) array to convolve, or (nplane, ny, nx)
+                  with yx_order=True.
     xx/yy       - coordinates on the grid in the same units as gaussparf.
-    gaussparf   - tuple containing Gaussian parameters of desired resolution
-                  (emaj, emin, pa).
-    gausspari   - initial resolution . By default it is assumed that the image
-                  is a clean component image with no associated resolution.
-                  If beampari is specified, it must be a tuple containing
-                  gausspars for each imaging band in the same format.
+                  ALWAYS in the wgridder (X, Y) convention -- built from nx
+                  then ny -- regardless of yx_order.
+    gaussparf   - (3,) Gaussian parameters (emaj, emin, pa) shared by every
+                  plane, or (nplane, 3) per plane.
+    gausspari   - initial resolution, same shapes as gaussparf. By default the
+                  image is assumed to be a clean component image with no
+                  associated resolution.
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
     norm_kernel - Normalise the Gaussian kernel to have volume 1.
+    yx_order    - set True for cube/FITS (Y, X)-ordered input (see
+                  docs/wiki/image-and-beam-orientation.md). The convolution is
+                  defined in wgridder (X, Y) order; this adapts via a zero-copy
+                  view and transposes the result back, so gaussian2d's position
+                  angle keeps its meaning.
     """
+    if yx_order:
+        image = image.transpose(0, 2, 1)
     nband, nx, ny = image.shape
-    if gausspari is not None and len(gausspari) != nband:
-        raise ValueError("gausspari must be on length nband")
+    if gausspari is not None and np.ndim(gausspari) > 1 and np.shape(gausspari)[0] != nband:
+        raise ValueError("gausspari must be of length nband")
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
@@ -206,13 +217,13 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfra
     image = np.pad(image, padding, mode="constant")
     imhat = r2c(ifftshift(image, axes=ax), axes=ax, forward=True, nthreads=nthreads, inorm=0)
 
-    if len(gaussparf) == 3:  # single final resolution
+    if np.ndim(gaussparf) == 1:  # single final resolution shared by all planes
         gausskern = gaussian2d(xx, yy, gaussparf, normalise=norm_kernel)
         gausskern = np.pad(gausskern, padding[1:], mode="constant")
         gausskernhat = r2c(ifftshift(gausskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0)
         gausskernhat = np.broadcast_to(gausskernhat[None], imhat.shape)
     else:
-        assert len(gaussparf) == nband
+        assert np.shape(gaussparf)[0] == nband
         gausskernhat = np.zeros_like(imhat)
         for b in range(nband):
             gausskern = gaussian2d(xx, yy, gaussparf[b], normalise=norm_kernel)
@@ -230,8 +241,10 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfra
     if gausspari is None:
         imhat *= gausskernhat
     else:
+        gausspari = np.asarray(gausspari)
         for b in range(nband):
-            thiskern = gaussian2d(xx, yy, gausspari[b], normalise=norm_kernel)
+            gpi = gausspari if gausspari.ndim == 1 else gausspari[b]
+            thiskern = gaussian2d(xx, yy, gpi, normalise=norm_kernel)
             thiskern = np.pad(thiskern, padding[1:], mode="constant")
             thiskernhat = r2c(ifftshift(thiskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0)
 
@@ -244,6 +257,9 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfra
     image = fftshift(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=nthreads), axes=ax)[
         :, unpad_x, unpad_y
     ]
+
+    if yx_order:
+        image = image.transpose(0, 2, 1)
 
     return image
 
