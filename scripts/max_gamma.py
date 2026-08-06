@@ -451,7 +451,9 @@ def main():
             nx,
             ny,
             meta["radec"],
-            float(np.mean(meta["freq_out"])),
+            # wsum-weighted, matching dt2fits' freq_mfs: bands carry unequal
+            # weight, and freq_out is itself an effective frequency (wiki D28)
+            float(np.sum(meta["freq_out"] * wsums) / wsum_tot),
             casambm=False,
             l0=meta["l0"],
             m0=meta["m0"],
