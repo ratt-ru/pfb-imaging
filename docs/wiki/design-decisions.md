@@ -936,7 +936,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
   `src/pfb_imaging/cli/deconv.py`; `tests/test_freq_precision.py`,
   `tests/test_hess_tree_ray.py`, `tests/test_deconv_hess_norm_cache.py`,
-  `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`.
+  `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`,
+  `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`.
 
 ## Known debt
 
