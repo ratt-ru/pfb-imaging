@@ -23,13 +23,13 @@ File = NewType("File", Path)
     dtype="File",
     name="mfs-image",
     info="",
-    implicit="{current.output-filename}_{current.product}_{current.suffix}_image_mfs.fits",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}_kimage_time0_mfs.fits",
 )
 @stimela_output(
     dtype="File",
     name="image",
     info="",
-    implicit="{current.output-filename}_{current.product}_{current.suffix}_image.fits",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}_kimage_time0.fits",
 )
 @stimela_output(
     dtype="Directory",
@@ -74,14 +74,14 @@ def restore(
     model_name: Annotated[
         str,
         typer.Option(
-            help="Name of model in dds",
+            help="Name of the model variable in the band nodes of the dt",
             rich_help_panel="Input",
         ),
     ] = "MODEL",
     residual_name: Annotated[
         str,
         typer.Option(
-            help="Name of residual in dds",
+            help="Name of the residual variable in the band nodes of the dt",
             rich_help_panel="Input",
         ),
     ] = "RESIDUAL",
@@ -97,11 +97,14 @@ def restore(
     outputs: Annotated[
         str,
         typer.Option(
-            help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals. "
+            help="Output products. "
+            "(d)irty, (m)odel, (r)esidual, (k) restored with intrinsic model and apparent residual. "
+            "(a) restored fully apparent, (i) restored fully intrinsic (primary beam corrected). "
+            "(c)lean beam image, (f)ft of the residual. "
             "Use capitals to produce corresponding cubes.",
             rich_help_panel="Output",
         ),
-    ] = "iI",
+    ] = "kK",
     gausspar: Annotated[
         tuple[float, float, float] | None,
         typer.Option(
@@ -121,20 +124,14 @@ def restore(
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    ray_address: Annotated[
-        str,
+    pb_min: Annotated[
+        float,
         typer.Option(
-            help="Address of the ray cluster to connect to. If not provided, will run locally.",
-            rich_help_panel="Performance",
+            help="Primary beam cutoff for the intrinsic restored image. "
+            "Pixels where the beam falls below this value are set to zero.",
+            rich_help_panel="Restoration",
         ),
-    ] = "local",
-    nworkers: Annotated[
-        int,
-        typer.Option(
-            help="Number of worker processes. Use with distributed scheduler.",
-            rich_help_panel="Performance",
-        ),
-    ] = 1,
+    ] = 0.1,
     nthreads: Annotated[
         int | None,
         typer.Option(
@@ -220,8 +217,7 @@ def restore(
                     outputs=outputs,
                     gausspar=gausspar,
                     drop_bands=drop_bands,
-                    ray_address=ray_address,
-                    nworkers=nworkers,
+                    pb_min=pb_min,
                     nthreads=nthreads,
                     product=product,
                     log_directory=log_directory,
@@ -241,8 +237,7 @@ def restore(
                 outputs=outputs,
                 gausspar=gausspar,
                 drop_bands=drop_bands,
-                ray_address=ray_address,
-                nworkers=nworkers,
+                pb_min=pb_min,
                 nthreads=nthreads,
                 product=product,
                 log_directory=log_directory,
@@ -271,8 +266,7 @@ def restore(
             outputs=outputs,
             gausspar=gausspar,
             drop_bands=drop_bands,
-            ray_address=ray_address,
-            nworkers=nworkers,
+            pb_min=pb_min,
             nthreads=nthreads,
             product=product,
             log_directory=log_directory,

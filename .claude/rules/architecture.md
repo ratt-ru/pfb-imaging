@@ -75,9 +75,11 @@ One MSv4 front-end produces the intermediary products consumed by deconvolution:
 `pfb hci` is the separate high-cadence-imaging front-end. The legacy MSv2 subcommands
 (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) were retired in 0.1.0 (#277); their
 correctness coverage lives in the ground-truth imager tests (`tests/test_imager*.py`,
-`tests/test_deconv.py`). `pfb restore` remains registered as **untested reference code**
-only — its `.dds` inputs can no longer be produced in-repo; its functionality moves into
-`deconv` eventually. `pfb model2comps` was **removed** (#286): its portable WSClean-FITS →
+`tests/test_deconv.py`). `pfb restore` was ported to the `.dt` in #303 and is tested
+(`tests/test_restore.py`, including an end-to-end `imager → deconv → restore` ground
+truth); it emits three explicitly-scaled restored products — apparent, intrinsic and
+mixed (wiki D29) — and no longer uses Ray. Its functionality may still fold into `deconv`
+eventually. `pfb model2comps` was **removed** (#286): its portable WSClean-FITS →
 `.mds` path migrated to `pfbspec model2comps` in
 [pfb-model-spec](https://github.com/landmanbester/pfb-model-spec), and its `.dds`-input path
 (daskms-coupled, no longer producible in-repo) was dropped. The component-model spec library
@@ -135,7 +137,9 @@ falls back to `DIRTY` when it is absent.
 **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")` etc.,
 scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only behind zero-copy
 `.T` views at the wgridder call sites (wiki design-decisions D19/D20).
-`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer.
+`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer, and
+`IMAGE`/`BIMAGE`/`KIMAGE` plus `PSFPARSF` by the `restore` consumer (the intrinsic,
+apparent and mixed flux scales — wiki D29).
 
 **Access layer — native DataTree only.** Use `xr.open_datatree(store)`,
 `ds.to_zarr(store, group="band…/part…", mode="a")`, and `dt.children` directly. Do **not** add

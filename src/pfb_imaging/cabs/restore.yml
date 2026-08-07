@@ -17,13 +17,13 @@ cabs:
           rich_help_panel: Naming
       model-name:
         info:
-          Name of model in dds
+          Name of the model variable in the band nodes of the dt
         default: MODEL
         metadata:
           rich_help_panel: Input
       residual-name:
         info:
-          Name of residual in dds
+          Name of the residual variable in the band nodes of the dt
         default: RESIDUAL
         metadata:
           rich_help_panel: Input
@@ -37,9 +37,12 @@ cabs:
           rich_help_panel: Naming
       outputs:
         info:
-          Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals.
+          Output products.
+          (d)irty, (m)odel, (r)esidual, (k) restored with intrinsic model and apparent residual.
+          (a) restored fully apparent, (i) restored fully intrinsic (primary beam corrected).
+          (c)lean beam image, (f)ft of the residual.
           Use capitals to produce corresponding cubes.
-        default: iI
+        default: kK
         metadata:
           rich_help_panel: Output
       gausspar:
@@ -58,21 +61,14 @@ cabs:
         dtype: Optional[List[int]]
         metadata:
           rich_help_panel: Data Selection
-      ray-address:
+      pb-min:
         info:
-          Address of the ray cluster to connect to.
-          If not provided, will run locally.
-        default: local
+          Primary beam cutoff for the intrinsic restored image.
+          Pixels where the beam falls below this value are set to zero.
+        dtype: float
+        default: 0.1
         metadata:
-          rich_help_panel: Performance
-      nworkers:
-        info:
-          Number of worker processes.
-          Use with distributed scheduler.
-        dtype: int
-        default: 1
-        metadata:
-          rich_help_panel: Performance
+          rich_help_panel: Restoration
       nthreads:
         info:
           Number of threads used to scale vertically (for FFTs and gridding).
@@ -91,10 +87,10 @@ cabs:
     outputs:
       mfs-image:
         dtype: File
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image_mfs.fits'
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_kimage_time0_mfs.fits'
       image:
         dtype: File
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image.fits'
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_kimage_time0.fits'
       log-directory:
         dtype: Directory
         info:

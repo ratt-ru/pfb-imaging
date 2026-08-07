@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-04T00:00:00Z
-last_verified_commit: 5111b13
+timestamp: 2026-08-06T00:00:00Z
+last_verified_commit: 5a30f2a
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -804,6 +804,58 @@ update it (and this page's `last_verified_commit`) in the same session.
   5111b13; `tests/test_imager.py::test_stokes_vis_beam_follows_effective_freq`,
   `::test_imager_effective_freq_uneven_bands`,
   `tests/test_imager_pass2.py::test_concat_pieces_weighted_beam_and_freq`.
+
+### D29 — Restore names its flux scale; the MFS clean beam is fitted to the MFS PSF
+
+- **Context:** `restore` was the last `.dds` consumer (#303). Porting it to the `.dt`
+  exposed two latent errors. First, the band `MODEL` is intrinsic flux (the forward solve
+  fits `V ≈ G(B·m)`, D22/D23) while the band `RESIDUAL` is apparent, once-attenuated flux
+  (`operators/gridder.residual_from_partitions`); legacy `restore_image` added them
+  directly, which is only correct where `B ≈ 1`. Second, with one PSF per data partition
+  the restoring beam was undefined, and the MFS beam was taken as the *mean of the
+  per-band fitted Gaussians* — a value with no referent when bands are not homogenised.
+- **Decision:** Restore emits three separately-named products, selected by CLI letter and
+  stored as distinct band variables: `BIMAGE` (`a`/`A`) `= (B̄·m) ⊗ G + r/wsum`, apparent
+  throughout; `IMAGE` (`i`/`I`) `= m ⊗ G + r/(wsum·B̄)`, intrinsic throughout and zeroed
+  below `--pb-min`; and `KIMAGE` (`k`/`K`) `= m ⊗ G + r/wsum`, the legacy mixed product,
+  kept for visualisation and left as the default. The restoring beam is `PSFPARSN` per
+  band — already the fit to the wsum-weighted average of the band's partition PSFs — and
+  `fitcleanbeam(Σ_b PSF_b / Σ_b WSUM_b)` for the MFS.
+- **Rationale:** `Σ_p dirty_p / Σ_p wsum_p` has effective response exactly `B̄`, the stored
+  band `BEAM`, so `BIMAGE / B̄ = IMAGE` is an identity rather than an approximation and
+  neither product misstates its scale. For the MFS beam, `r_mfs` *is* the wsum-weighted
+  sum of the band residuals, whose effective PSF is the wsum-weighted sum of the band
+  PSFs; fitting that sum makes the FITS `BMAJ`/`BMIN` exact with no cross-band
+  homogenisation. Averaging band beams is wrong because it is a mean of fits to
+  *different* PSFs, a quantity nothing in the image is shaped like — and it is
+  **weight-blind**: a band contributing 1% of the weight moves it as much as a band
+  contributing 99%. Measured on two circular PSFs at 6 and 18 px FWHM with weights 100
+  and 1, `clean_beam` returns ≈6.07 (the heavily-weighted band dominates the summed PSF,
+  correctly) while the mean of the per-band fits returns 12.
+  **Do not "demonstrate" this with equally weighted Gaussians.** For those the two agree
+  closely (6/18 equally weighted gives 12.33 vs 12.0), because `fitcleanbeam` is an L2 fit
+  over an `nsigma=10` window, area-dominated at large radius — *not* a half-power width.
+  The half-power width of that sum is ≈9.4, which is what makes the naive argument look
+  compelling and why it was wrong in the original spec. The divergence that matters comes
+  from weighting and from real PSFs with sidelobes.
+- **Consequences:** The MFS restored image is **not** the weighted sum of the per-band
+  restored images (different resolutions), so `dt2fits` cannot produce it and the driver
+  computes it directly — the one place restore does not reuse `dt2fits`. `--drop-bands`
+  must filter the `G_mfs` PSF sum, not merely the image sum, or a dropped band still sets
+  the restoring beam; the same applies to fully flagged bands, which are skipped
+  altogether because `RESIDUAL / WSUM` on a zero wsum puts inf/NaN into the stored products
+  *and* into the MFS accumulators. `--outputs i`/`I` changes meaning: same letter,
+  intrinsic product; the default moved to `kK` so a default run is unchanged. Restore no
+  longer uses Ray (the work is FFT-bound and the driver holds the cubes for the MFS
+  anyway), so `--nworkers` and `--ray-address` are gone. `convolve2gaussres` gained
+  `yx_order` because `gaussian2d`'s position angle is not transpose-invariant and the `.dt`
+  is `(corr, y, x)` (D19/D20). Dropped bands are omitted from cubes rather than zeroed,
+  which can leave a non-uniform FITS frequency axis — restore warns and defers to #302.
+- **Source:** issue #303; `src/pfb_imaging/core/restore.py`;
+  `src/pfb_imaging/utils/restoration.py`; `src/pfb_imaging/utils/misc.py`
+  (`convolve2gaussres`); `src/pfb_imaging/utils/fits.py` (`dt2fits` `drop_bands`,
+  `psfpars_var`); commits 84dd88b, 8501dee, 4b41d26, a4a6b08, 7b66502, d0bdd6b;
+  `tests/test_restore.py`, `tests/test_convolve2gaussres.py`, `tests/test_fits_tree.py`.
 
 ## Known debt
 

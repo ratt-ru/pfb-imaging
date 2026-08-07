@@ -230,3 +230,104 @@ def test_fitcleanbeam(nx, ny, gpars):
     # if 0 and pi are equivalent
     padiff = np.abs(gpars[2] - gpars_fit[2])
     assert np.sin(padiff) < 1e-4
+
+
+def test_convolve2gaussres_yx_order_matches_manual_transpose():
+    """yx_order=True must equal transposing to x-major, convolving, and
+    transposing back. gaussian2d's PA is not transpose-invariant, so the
+    .dt's (corr, y, x) arrays (wiki D19/D20) cannot be fed in directly.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    nx, ny = 64, 48
+    img_xy = np.zeros((1, nx, ny))
+    img_xy[0, nx // 2 + 5, ny // 2 - 3] = 1.0
+    x = -(nx // 2) + np.arange(nx)
+    y = -(ny // 2) + np.arange(ny)
+    xx, yy = np.meshgrid(x, y, indexing="ij")
+    gpar = np.array([[6.0, 3.0, 0.7]])
+
+    ref = convolve2gaussres(img_xy, xx, yy, gpar, nthreads=1, pfrac=0.2)
+    got = convolve2gaussres(img_xy.transpose(0, 2, 1), xx, yy, gpar, nthreads=1, pfrac=0.2, yx_order=True)
+
+    assert got.shape == (1, ny, nx)
+    np.testing.assert_allclose(got, ref.transpose(0, 2, 1), rtol=0, atol=1e-10)
+
+
+def test_convolve2gaussres_yx_order_is_not_a_noop():
+    """On a square image the missing transpose does not raise, it silently
+    mirrors the position angle. Guard that the flag actually does something.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    n = 64
+    img = np.zeros((1, n, n))
+    img[0, n // 2 + 5, n // 2 - 3] = 1.0
+    coord = -(n // 2) + np.arange(n)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    gpar = np.array([[8.0, 3.0, 0.6]])  # elongated, PA off the axes
+
+    naive = convolve2gaussres(img, xx, yy, gpar, nthreads=1, pfrac=0.2)
+    yx = convolve2gaussres(img, xx, yy, gpar, nthreads=1, pfrac=0.2, yx_order=True)
+
+    assert not np.allclose(naive, yx)
+
+
+def test_convolve2gaussres_per_plane_gausspar_for_three_planes():
+    """A (3, 3) gaussparf is three per-plane triples, not one triple.
+    The old `len(gaussparf) == 3` test took the single-resolution branch for
+    any 3-plane input -- reachable via restore with 3 correlations.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    n = 48
+    img = np.zeros((3, n, n))
+    img[:, n // 2, n // 2] = 1.0
+    coord = -(n // 2) + np.arange(n)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    gpars = np.array([[4.0, 4.0, 0.0], [8.0, 8.0, 0.0], [12.0, 12.0, 0.0]])
+
+    out = convolve2gaussres(img, xx, yy, gpars, nthreads=1, pfrac=0.2)
+
+    # peak-normalised kernels: total flux scales with emaj*emin, so wider
+    # planes must integrate to more. Equal sums would mean one shared kernel.
+    sums = [float(out[i].sum()) for i in range(3)]
+    assert sums[0] < sums[1] < sums[2]
+
+
+def test_convolve2gaussres_single_triple_still_shared():
+    """A 1-D gaussparf stays the single-shared-resolution branch."""
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    n = 48
+    img = np.zeros((3, n, n))
+    img[:, n // 2, n // 2] = 1.0
+    coord = -(n // 2) + np.arange(n)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+
+    out = convolve2gaussres(img, xx, yy, np.array([6.0, 3.0, 0.3]), nthreads=1, pfrac=0.2)
+
+    np.testing.assert_allclose(out[0], out[1], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(out[0], out[2], rtol=0, atol=1e-12)
+
+
+def test_convolve2gaussres_gausspari_shared_triple_matches_per_plane():
+    """A shared (3,) gausspari must give the same result as passing the
+    equivalent (nplane, 3) per-plane array with identical rows -- this is
+    the `gpi = gausspari if gausspari.ndim == 1 else gausspari[b]` branch.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    n = 48
+    img = np.zeros((3, n, n))
+    img[:, n // 2 + 3, n // 2 - 2] = 1.0
+    coord = -(n // 2) + np.arange(n)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    gaussparf = np.array([6.0, 3.0, 0.3])
+    gausspari_shared = np.array([2.0, 2.0, 0.0])
+    gausspari_per_plane = np.tile(gausspari_shared, (3, 1))
+
+    shared = convolve2gaussres(img, xx, yy, gaussparf, nthreads=1, pfrac=0.2, gausspari=gausspari_shared)
+    per_plane = convolve2gaussres(img, xx, yy, gaussparf, nthreads=1, pfrac=0.2, gausspari=gausspari_per_plane)
+
+    np.testing.assert_allclose(shared, per_plane, rtol=0, atol=1e-12)

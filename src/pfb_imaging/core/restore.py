@@ -1,24 +1,35 @@
-"""Restore clean components onto residuals (legacy .dds consumer).
+"""Restore clean components onto residuals in the imager DataTree.
 
-NOTE: kept as reference code only -- its .dds inputs can no longer be
-produced in-repo since init+grid were retired (#277); the functionality
-moves into `deconv` eventually. No test coverage: do not extend without
-tests.
+Consumes the ``.dt`` written by ``pfb imager`` and extended by ``pfb deconv``.
+The band ``MODEL`` is intrinsic flux while the band ``RESIDUAL`` is apparent
+(wiki D22/D23), so three restored products are offered rather than one: see
+``utils/restoration.PRODUCT_VARS``.
+
+No Ray: the work is FFT-bound with threaded ducc, and the driver needs the
+image cubes resident anyway to form the MFS products.
 """
 
 import time
 
 import numpy as np
 import psutil
-import ray
-from daskms.fsspec_store import DaskMSStore
+import xarray as xr
+from ducc0.fft import c2c
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import init_ray, set_envs, setup_ray_worker
+from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import rdds2fits
-from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
-from pfb_imaging.utils.restoration import rrestore_image
+from pfb_imaging.utils.fits import dt2fits
+from pfb_imaging.utils.misc import gaussian2d
+from pfb_imaging.utils.naming import set_output_names
+from pfb_imaging.utils.restoration import (
+    PRODUCT_VARS,
+    beams_table,
+    clean_beam,
+    lowest_resolution,
+    restore_products,
+    write_fits,
+)
 
 log = pfb_logging.get_logger("RESTORE")
 
@@ -28,22 +39,40 @@ def restore(
     model_name: str = "MODEL",
     residual_name: str = "RESIDUAL",
     suffix: str = "main",
-    outputs: str = "mMrRiI",
+    outputs: str = "kK",
     gausspar: tuple[float, float, float] | None = None,
     drop_bands: list[int] | None = None,
-    nworkers: int = 1,
+    pb_min: float = 0.1,
     nthreads: int | None = None,
     log_directory: str | None = None,
     product: str = "I",
     fits_output_folder: str | None = None,
-    ray_address: str = "local",
-    keep_ray_alive: bool = False,
 ):
+    """Restore clean components onto residuals and render FITS.
+
+    Args:
+        output_filename: basename; the tree read is ``<output>_<PRODUCT>.dt``.
+        model_name: band variable holding the model image.
+        residual_name: band variable holding the residual image.
+        suffix: namespaces the FITS outputs only, never the tree path.
+        outputs: product letters, lowercase for MFS and uppercase for cubes.
+        gausspar: restoring resolution ``(emaj, emin, pa)`` in degrees, degrees
+            and degrees. ``(0, 0, 0)`` selects the lowest-resolution band. None
+            restores each band at its native resolution.
+        drop_bands: band ids excluded from cubes and from every MFS reduction.
+        pb_min: beam floor below which the intrinsic image is zeroed.
+        nthreads: FFT threads; half the logical CPUs by default.
+        log_directory: log destination.
+        product: Stokes product, used to build the tree and FITS names.
+        fits_output_folder: FITS destination.
+
+    Raises:
+        ValueError: the tree has no band nodes, was written without ``--psf``,
+            lacks the named model or residual variable, or has no band left
+            once dropped and fully flagged bands are excluded.
     """
-    Create fits image cubes from data products (eg. restored images).
-    """
-    # for logging options
     opts_dict = locals().copy()
+    time_start = time.time()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -55,243 +84,326 @@ def restore(
     opts_dict["fits_output_folder"] = fits_output_folder
     opts_dict["log_directory"] = log_directory
 
-    nthreads_total = psutil.cpu_count(logical=True)
-    ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
-        nthreads = nthreads_total // 2
-        ncpu = ncpu // 2
+        nthreads = psutil.cpu_count(logical=True) // 2
+    ncpu = int(np.minimum(nthreads, psutil.cpu_count(logical=False)))
     opts_dict["nthreads"] = nthreads
-    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
-
     resize_thread_pool(nthreads)
     set_envs(nthreads, ncpu, log=log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{log_directory}/restore_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
+    pfb_logging.log_to_file(f"{log_directory}/restore_{timestamp}.log")
     log.log_options_dict(opts_dict, title="RESTORE options")
 
-    # these are passed through to child Ray processes
-    renv = {"env_vars": {}}
-    if nworkers == 1:
-        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
-
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env={
-            "env_vars": renv["env_vars"],
-            "worker_process_setup_hook": setup_ray_worker,
-        },
-        log=log,
-    )
-
-    ti = time.time()
-
-    # Inlined _restore() function logic
+    # unlike the legacy .dds (where `suffix` came from), imager() never appends
+    # a suffix to the tree name -- it namespaces the FITS outputs only
     basename = output_filename
-    if fits_output_folder is not None:
-        fits_oname = fits_output_folder + "/" + basename.split("/")[-1]
-    else:
-        fits_oname = basename
+    fits_oname = f"{fits_output_folder}/{oname}_{suffix}"
+    dt_name = f"{basename}.dt"
 
-    dds_name = f"{basename}_{suffix}.dds"
-    dds, dds_list = xds_from_url(dds_name)
-    dds_store = DaskMSStore(dds_name)
-    if "://" in dds_store.url:
-        protocol = dds_store.url.split("://")[0]
-    else:
-        protocol = "file"
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    band_nodes = [n for n in dt.children if n.startswith("band")]
+    if not band_nodes:
+        log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
 
-    # get MFS PSF PARS
-    try:
-        psfpars_mfs = get_opts(dds_store.url, protocol, name="psfparsn_mfs.pkl")
-    except Exception:
-        log.error_and_raise("Could not load MFS PSF pamaters. Run grid worker with psf=true to remake.", RuntimeError)
+    dropped = set(drop_bands or ())
+    products = tuple(k for k in ("a", "i", "k") if k in outputs.lower())
+    timeids = sorted({int(dt[n].ds.attrs["timeid"]) for n in band_nodes})
+    log.info(f"Number of output times = {len(timeids)}")
 
-    if drop_bands is not None:
-        ddso = []
-        ddso_list = []
-        for ds, dsl in zip(dds, dds_list):
-            b = int(ds.bandid)
-            if b not in drop_bands:
-                ddso.append(ds)
-                ddso_list.append(dsl)
-        dds = ddso
-        dds_list = ddso_list
+    psfpars_by_time = {}
 
-    timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
-    freqs = [ds.freq_out for ds in dds]
-    freqs = np.unique(freqs)
-    nband = freqs.size
-    ntime = timeids.size
-    ncorr = dds[0].corr.size
-    cell_deg = dds[0].cell_rad * 180 / np.pi
-    log.info(f"Number of output times = {ntime}")
-    log.info(f"Number of output bands = {nband}")
     for timeid in timeids:
-        # collect datasets for this timeid
-        dst = [ds for ds in dds if int(ds.timeid) == timeid]
-        # we don't want a reference to the ds lying around so pass list of ds_list to child processes instead
-        dst_list = [dsl for ds, dsl in zip(dds, dds_list) if int(ds.timeid) == timeid]
-        # need this loop before scatter to extract lowest resolution
-        if not np.array(gausspar).any():  # if gausspar is None or all elements are zero (allow float comparison)
-            emaj = 0.0
-            emin = 0.0
-            pas = []
-            for ds in dst:
-                gausspars = ds.PSFPARSN.values
-                emaj = np.maximum(emaj, gausspars[:, 0].max())
-                emin = np.maximum(emin, gausspars[:, 1].max())
-                pas.append(np.mean(gausspars[:, 2]))
-            pa = np.mean(np.array(pas))
+        nodes = sorted(
+            (n for n in band_nodes if int(dt[n].ds.attrs["timeid"]) == timeid),
+            key=lambda n: int(dt[n].ds.attrs["bandid"]),
+        )
+        keep = [n for n in nodes if int(dt[n].ds.attrs["bandid"]) not in dropped]
+        if dropped:
+            log.info(f"time {timeid}: dropping bands {sorted(dropped)} from cubes and all MFS reductions")
+
+        for n in keep:
+            bds = dt[n].ds
+            if "PSF" not in bds or "PSFPARSN" not in bds:
+                log.error_and_raise(
+                    f"{dt_name}/{n} has no PSF (imager run with --no-psf?) -- re-run pfb imager with --psf to restore",
+                    ValueError,
+                )
+            for name in (model_name, residual_name):
+                if name not in bds:
+                    log.error_and_raise(
+                        f"{dt_name}/{n} has no {name}; run pfb deconv first, or name an "
+                        "existing variable with --model-name/--residual-name",
+                        ValueError,
+                    )
+
+        # A fully flagged band carries WSUM == 0 (core/imager.py emits these --
+        # freq_eff falls back to freq_nominal when wsum_tot == 0). Dividing the
+        # residual by it yields inf/NaN, which would land in the stored products
+        # AND in the MFS accumulators, poisoning every other band's MFS image.
+        # Skip them exactly as --drop-bands does.
+        dead = [n for n in keep if not float(dt[n].ds.WSUM.values.sum()) > 0]
+        if dead:
             log.info(
-                f"Using lowest resolution of ({emaj * cell_deg:.3e} deg, "
-                f"{emin * cell_deg:.3e} deg, {pa * 180 / np.pi:.3e} deg) for restored images"
+                f"time {timeid}: skipping fully flagged bands "
+                f"{[int(dt[n].ds.attrs['bandid']) for n in dead]} (WSUM == 0)"
             )
-            # these are in pixel units
-            # restore needs corr axis
-            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
+            keep = [n for n in keep if n not in set(dead)]
+        if not keep:
+            log.error_and_raise(
+                f"No bands left at timeid {timeid} after --drop-bands and fully flagged bands were excluded",
+                ValueError,
+            )
+
+        ref = dt[keep[0]].ds
+        nband = len(keep)
+        ncorr, ny, nx = ref[model_name].shape
+        cell_deg = np.rad2deg(ref.attrs["cell_rad"])
+        otype = ref[residual_name].dtype
+        wsums = np.stack([dt[n].ds.WSUM.values for n in keep])  # (nband, ncorr)
+        wsum_tot = wsums.sum(axis=0)
+        psfparsn = np.stack([dt[n].ds.PSFPARSN.values for n in keep])  # (nband, ncorr, 3)
+
+        # accumulate the MFS PSF one band at a time: stacking every band's PSF
+        # would hold 4x the image cube (PSFs are 2nx by 2ny)
+        psf_sum = np.zeros(dt[keep[0]].ds.PSF.shape, dtype=np.float64)
+        for n in keep:
+            psf_sum += dt[n].ds.PSF.values
+        gausspar_mfs_native = clean_beam(psf_sum, wsum_tot)
+        del psf_sum
+
+        # resolve the restoring resolutions. gausspari is None wherever the
+        # target already is the residual's own resolution, which skips the
+        # residual reconvolution entirely.
+        if gausspar is not None and np.any(np.asarray(gausspar, dtype=float)):
+            target = np.tile([gausspar[0] / cell_deg, gausspar[1] / cell_deg, np.deg2rad(gausspar[2])], (ncorr, 1))
+            log.info(
+                f"Using specified resolution of ({gausspar[0]:.3e} deg, {gausspar[1]:.3e} deg, {gausspar[2]:.3e} deg)"
+            )
+            gaussparf = np.tile(target, (nband, 1, 1))
+            gaussparf_mfs = target
+            gausspari_band, gausspari_mfs = psfparsn, gausspar_mfs_native
         elif gausspar is not None:
-            # these are passed in in degrees
-            emaj = gausspar[0]
-            emin = gausspar[1]
-            pa = gausspar[2]
-            log.info(f"Using specified resolution of ({emaj:.3e} deg, {emin:.3e} deg, {pa:.3e} deg)")
-            # convert to pixel units
-            emaj /= cell_deg
-            emin /= cell_deg
-            # convert degrees to radians
-            pa *= np.pi / 180
-            # restore needs corr axis
-            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
+            target = lowest_resolution(psfparsn)
+            log.info(
+                f"Using lowest resolution of ({target[0, 0] * cell_deg:.3e} deg, "
+                f"{target[0, 1] * cell_deg:.3e} deg, {np.rad2deg(target[0, 2]):.3e} deg)"
+            )
+            gaussparf = np.tile(target, (nband, 1, 1))
+            gaussparf_mfs = target
+            gausspari_band, gausspari_mfs = psfparsn, gausspar_mfs_native
+        else:
+            gaussparf = psfparsn
+            gaussparf_mfs = gausspar_mfs_native
+            gausspari_band, gausspari_mfs = None, None
+        log.info(
+            f"MFS restoring beam: ({gaussparf_mfs[0, 0] * cell_deg:.3e} deg, "
+            f"{gaussparf_mfs[0, 1] * cell_deg:.3e} deg, {np.rad2deg(gaussparf_mfs[0, 2]):.3e} deg)"
+        )
 
-        # create restored images
-        tasksi = []
-        for ds, ds_name in zip(dst, dst_list):
-            if gausspar is None:
-                gaussparf = ds.PSFPARSN.values
-            task = rrestore_image.remote(ds_name, model_name, residual_name, gaussparf, nthreads=nthreads)
-            tasksi.append(task)
+        # per-band restore, accumulating the wsum-weighted MFS reductions as we
+        # go so only one band's arrays are resident at a time
+        m_mfs = np.zeros((ncorr, ny, nx), dtype=np.float64)
+        r_mfs = np.zeros((ncorr, ny, nx), dtype=np.float64)
+        b_mfs = np.zeros((ncorr, ny, nx), dtype=np.float64)
+        for b, n in enumerate(keep):
+            bds = dt[n].ds
+            model = bds[model_name].values
+            residual = bds[residual_name].values / wsums[b][:, None, None]
+            beam = bds.BEAM.values
+            w = wsums[b][:, None, None]
+            m_mfs += w * model
+            r_mfs += w * residual
+            b_mfs += w * beam
 
-    # the loop over timeid happens inside dds2fits
-    tasks = []
+            data_vars = {"PSFPARSF": (("corr", "bpar"), gaussparf[b].astype(otype))}
+            if products:
+                out = restore_products(
+                    model,
+                    residual,
+                    beam,
+                    gaussparf[b],
+                    gausspari=None if gausspari_band is None else gausspari_band[b],
+                    products=products,
+                    pb_min=pb_min,
+                    nthreads=nthreads,
+                )
+                for key, arr in out.items():
+                    # convolve2gaussres returns a non-contiguous view under
+                    # yx_order=True; zarr wants a contiguous buffer
+                    data_vars[PRODUCT_VARS[key]] = (("corr", "y", "x"), np.ascontiguousarray(arr, dtype=otype))
+            # to_zarr(mode="a") replaces a group's attrs wholesale, so start
+            # from the band's own attrs (core/deconv.py:409-424)
+            xr.Dataset(
+                data_vars,
+                attrs={
+                    **dict(bds.attrs),
+                    "psfparsf_mfs": [float(v) for v in gaussparf_mfs[0]],
+                    "pb_min": float(pb_min),
+                },
+            ).to_zarr(dt_name, group=n, mode="a")
+
+        m_mfs /= wsum_tot[:, None, None]
+        r_mfs /= wsum_tot[:, None, None]
+        b_mfs /= wsum_tot[:, None, None]
+
+        psfpars_by_time[timeid] = gaussparf_mfs
+
+        freqs = np.array([dt[n].ds.attrs["freq_out"] for n in keep])
+        freq_mfs = float(np.sum(freqs[:, None] * wsums) / wsum_tot.sum())
+        meta = {
+            "cell_deg": cell_deg,
+            "nx": nx,
+            "ny": ny,
+            "radec": (ref.attrs["ra"], ref.attrs["dec"]),
+            "freq": freq_mfs,
+            "time_out": ref.attrs["time_out"],
+            "l0": float(ref.attrs.get("l0", 0.0)),
+            "m0": float(ref.attrs.get("m0", 0.0)),
+        }
+        drop_card = {"DROPBAND": ",".join(str(b) for b in sorted(dropped))} if dropped else {}
+        corr = ref.corr.values
+
+        # MFS restored images. Not obtainable from dt2fits: the per-band restored
+        # images sit at different resolutions, so their weighted sum is not the
+        # MFS restored image. r_mfs is already at G_mfs by construction.
+        mfs_products = tuple(k for k in products if k in outputs)
+        if mfs_products:
+            out_mfs = restore_products(
+                m_mfs,
+                r_mfs,
+                b_mfs,
+                gaussparf_mfs,
+                gausspari=gausspari_mfs,
+                products=mfs_products,
+                pb_min=pb_min,
+                nthreads=nthreads,
+            )
+            hdu = beams_table(gaussparf_mfs[None], corr, cell_deg)
+            for key, arr in out_mfs.items():
+                var = PRODUCT_VARS[key]
+                extra = {**drop_card, "WSUM": float(wsum_tot[0])}
+                if key == "i":
+                    extra["PBMIN"] = (float(pb_min), "beam floor below which the image is zeroed")
+                write_fits(
+                    arr,
+                    f"{fits_oname}_{var.lower()}_time{timeid}_mfs.fits",
+                    meta,
+                    gausspar=gaussparf_mfs[0],
+                    beams_hdu=hdu,
+                    extra_hdr=extra,
+                )
+
+        # c/C: the restoring Gaussian itself. Derived from the beam parameters
+        # alone, so it is rendered rather than stored in the tree.
+        if "c" in outputs.lower():
+            xg = -(nx // 2) + np.arange(nx)
+            yg = -(ny // 2) + np.arange(ny)
+            xxg, yyg = np.meshgrid(xg, yg, indexing="ij")
+            # one plane per correlation, matching the (ncorr, ny, nx) / (nband,
+            # ncorr, ny, nx) shapes save_fits maps onto the STOKES/FREQ axes.
+            # The BMAJ/BMIN/BPA *cards* stay corr 0 -- FITS has one beam per
+            # plane and dt2fits already uses Stokes I there.
+            # gaussian2d is x-major; transpose onto the (y, x) raster (D19)
+            if "c" in outputs:
+                cpsf = np.stack([gaussian2d(xxg, yyg, gaussparf_mfs[c], normalise=False).T for c in range(ncorr)])
+                write_fits(
+                    cpsf,
+                    f"{fits_oname}_cpsf_time{timeid}_mfs.fits",
+                    meta,
+                    unit="",
+                    gausspar=gaussparf_mfs[0],
+                    extra_hdr=drop_card,
+                )
+            if "C" in outputs:
+                cube = np.stack(
+                    [
+                        np.stack([gaussian2d(xxg, yyg, gaussparf[b, c], normalise=False).T for c in range(ncorr)])
+                        for b in range(nband)
+                    ]
+                )
+                write_fits(
+                    cube,
+                    f"{fits_oname}_cpsf_time{timeid}.fits",
+                    {**meta, "freq": freqs},
+                    unit="",
+                    gausspar=gaussparf_mfs[0],
+                    gausspars=gaussparf[:, 0],
+                    beams_hdu=beams_table(gaussparf, corr, cell_deg),
+                    extra_hdr=drop_card,
+                )
+
+        # f/F: magnitude and phase of the FFT of the residual. A uv-plane
+        # diagnostic, so the image WCS in the header is nominal.
+        if "f" in outputs.lower():
+            fft_hdr = {**drop_card, "FFTDOM": ("uv", "image-plane WCS is nominal for this product")}
+            if "f" in outputs:
+                rhat = np.fft.fftshift(c2c(r_mfs, axes=(1, 2), forward=True, nthreads=nthreads, inorm=0), axes=(1, 2))
+                write_fits(
+                    np.abs(rhat),
+                    f"{fits_oname}_abs_fft_residual_time{timeid}_mfs.fits",
+                    meta,
+                    unit="",
+                    extra_hdr=fft_hdr,
+                )
+                write_fits(
+                    np.angle(rhat),
+                    f"{fits_oname}_phase_fft_residual_time{timeid}_mfs.fits",
+                    meta,
+                    unit="rad",
+                    extra_hdr=fft_hdr,
+                )
+            if "F" in outputs:
+                rcube = np.stack([dt[n].ds[residual_name].values / wsums[b][:, None, None] for b, n in enumerate(keep)])
+                rhat = np.fft.fftshift(c2c(rcube, axes=(2, 3), forward=True, nthreads=nthreads, inorm=0), axes=(2, 3))
+                cube_meta = {**meta, "freq": freqs}
+                write_fits(
+                    np.abs(rhat),
+                    f"{fits_oname}_abs_fft_residual_time{timeid}.fits",
+                    cube_meta,
+                    unit="",
+                    extra_hdr=fft_hdr,
+                )
+                write_fits(
+                    np.angle(rhat),
+                    f"{fits_oname}_phase_fft_residual_time{timeid}.fits",
+                    cube_meta,
+                    unit="rad",
+                    extra_hdr=fft_hdr,
+                )
+
+        log.info(f"time {timeid}: restored {nband} bands")
+
+    # cubes for every product, plus the MFS images of the stored variables,
+    # which are ordinary wsum reductions dt2fits can do itself. Runs once, after
+    # the per-time loop: dt2fits opens the store and loops over every timeid.
+    columns = []
     if "d" in outputs.lower():
-        task = rdds2fits.remote(
-            dds_list,
-            "DIRTY",
-            f"{fits_oname}_{suffix}",
-            norm_wsum=True,
-            nthreads=nthreads,
-            do_mfs="d" in outputs,
-            do_cube="D" in outputs,
-            psfpars_mfs=psfpars_mfs,
-        )
-        tasks.append(task)
-
+        columns.append(("DIRTY", "d", True, None))
     if "m" in outputs.lower():
-        task = rdds2fits.remote(
-            dds_list,
-            model_name,
-            f"{fits_oname}_{suffix}",
-            norm_wsum=False,
-            nthreads=nthreads,
-            do_mfs="m" in outputs,
-            do_cube="M" in outputs,
-            psfpars_mfs=psfpars_mfs,
-        )
-        tasks.append(task)
-
+        columns.append((model_name, "m", False, None))
     if "r" in outputs.lower():
-        task = rdds2fits.remote(
-            dds_list,
-            residual_name,
-            f"{fits_oname}_{suffix}",
-            norm_wsum=True,
+        columns.append((residual_name, "r", True, None))
+    for key in products:
+        columns.append((PRODUCT_VARS[key], key, False, "PSFPARSF"))
+
+    for column, key, norm_wsum, psfvar in columns:
+        do_mfs = key in outputs and psfvar is None  # restored MFS already written
+        do_cube = key.upper() in outputs
+        if not (do_mfs or do_cube):
+            continue
+        dt2fits(
+            dt_name,
+            column,
+            fits_oname,
+            norm_wsum=norm_wsum,
             nthreads=nthreads,
-            do_mfs="r" in outputs,
-            do_cube="R" in outputs,
-            psfpars_mfs=psfpars_mfs,
+            do_mfs=do_mfs,
+            do_cube=do_cube,
+            psfpars_mfs=psfpars_by_time,
+            drop_bands=sorted(dropped) or None,
+            psfpars_var=psfvar or "PSFPARSN",
         )
-        tasks.append(task)
+        log.info(f"Done writing {column}")
 
-    # we need to wait for tasksi before rendering restored to fits
-    tasksc = ray.get(tasksi)
-
-    if "i" in outputs.lower():
-        # recompute the mean PSF parameters
-        psfparsf = {}
-        for psfpar, bandid, timeid in tasksc:
-            psfparsf.setdefault(timeid, np.zeros((nband, ncorr, 3)))
-            psfparsf[timeid][int(bandid)] = psfpar
-        psfpars_mfs = {timeid: psfparsf[timeid].mean(axis=0) for timeid in psfparsf}
-        task = rdds2fits.remote(
-            dds_list,
-            "IMAGE",
-            f"{fits_oname}_{suffix}",
-            norm_wsum=False,
-            nthreads=nthreads,
-            do_mfs="i" in outputs,
-            do_cube="I" in outputs,
-            psfpars_mfs=psfpars_mfs,
-            psfparsf=psfparsf,
-            force_unit="Jy/beam",
-        )
-        tasks.append(task)
-
-    # TODO(LB) - we may want to add these outputs back in, at least the useful ones
-    # if 'f' in outputs:
-    #     rhat_mfs = c2c(residual_mfs, forward=True,
-    #                    nthreads=nthreads, inorm=0)
-    #     rhat_mfs = np.fft.fftshift(rhat_mfs)
-    #     save_fits(np.abs(rhat_mfs),
-    #               f'{fits_oname}_{suffix}.abs_fft_residual_mfs.fits',
-    #               hdr_mfs,
-    #               overwrite=overwrite)
-    #     save_fits(np.angle(rhat_mfs),
-    #               f'{fits_oname}_{suffix}.phase_fft_residual_mfs.fits',
-    #               hdr_mfs,
-    #               overwrite=overwrite)
-
-    # if 'F' in outputs:
-    #     rhat = c2c(residual, axes=(1,2), forward=True,
-    #                nthreads=nthreads, inorm=0)
-    #     rhat = np.fft.fftshift(rhat, axes=(1,2))
-    #     save_fits(np.abs(rhat),
-    #               f'{fits_oname}_{suffix}.abs_fft_residual.fits',
-    #               hdr,
-    #               overwrite=overwrite)
-    #     save_fits(np.angle(rhat),
-    #               f'{fits_oname}_{suffix}.phase_fft_residual.fits',
-    #               hdr,
-    #               overwrite=overwrite)
-
-    # if 'c' in outputs:
-    #     if gausspar is None:
-    #         raise ValueError("Clean beam in output but no PSF in dds")
-    #     cpsf_mfs = gaussian2d(xx, yy, gausspar[0], normalise=False)
-    #     save_fits(cpsf_mfs,
-    #               f'{fits_oname}_{suffix}.cpsf_mfs.fits',
-    #               hdr_mfs,
-    #               overwrite=overwrite)
-
-    # if 'C' in outputs:
-    #     if gausspars is None:
-    #         raise ValueError("Clean beam in output but no PSF in dds")
-    #     cpsf = np.zeros(residual.shape, dtype=output_type)
-    #     for v in range(nband):
-    #         gpar = gausspars[v]
-    #         if not np.isnan(gpar).any():
-    #             cpsf[v] = gaussian2d(xx, yy, gpar, normalise=False)
-    #     save_fits(cpsf,
-    #               f'{fits_oname}_{suffix}.cpsf.fits',
-    #               hdr,
-    #               overwrite=overwrite)
-
-    # wait for all tasks to finish before returning
-    ray.get(tasks)
-
-    log.info(f"All done after {time.time() - ti}s")
-
-    if not keep_ray_alive:
-        ray.shutdown()
+    log.info(f"All done after {time.time() - time_start:.1f}s")
