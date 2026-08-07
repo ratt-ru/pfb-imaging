@@ -395,3 +395,71 @@ def test_build_hess_eta_is_fraction_of_total_wsum(monkeypatch):
     presets._build_hess(parts, {"nx": 8, "ny": 8, "nx_psf": 16, "ny_psf": 16}, opts)
     assert_allclose(captured["etas"], 0.01)  # uniform, NOT scaled by wsum_b/wsum_tot
     assert np.isclose(captured["wsums"], 4.0)
+
+
+def _gp_opts(**overrides):
+    """Minimal make_sara opts; see test_make_sara_opt_backend_selects_solver."""
+    opts = dict(
+        bases=["self"],
+        nlevels=1,
+        rmsfactor=1.0,
+        alpha=2.0,
+        gamma=1.0,
+        positivity=0,
+        eta=0.5,
+        l1_reweight_from=-1,
+        hess_norm=1.0,
+        opt_backend="primal-dual",
+        acceleration=True,
+        nthreads=1,
+        verbosity=0,
+        pd_tol=1e-6,
+        pd_maxit=10,
+        pd_verbose=0,
+        pd_report_freq=100,
+        fb_tol=1e-6,
+        fb_maxit=10,
+        fb_verbose=0,
+        fb_report_freq=100,
+        cg_tol=1e-6,
+        cg_maxit=10,
+        cg_verbose=0,
+        cg_report_freq=100,
+        pm_tol=1e-3,
+        pm_maxit=10,
+        pm_verbose=0,
+        pm_report_freq=100,
+    )
+    opts.update(overrides)
+    return opts
+
+
+def test_build_hess_omits_the_frequency_prior_by_default():
+    """Callers that never ask for the prior must not have to supply freq_out."""
+    from pfb_imaging.deconv.presets import make_sara
+
+    geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32}  # no freq_out
+    solver = make_sara(_delta_partitions(2, 16, 16), geometry, np.zeros((2, 16, 16)), np.zeros((2, 16, 16)), _gp_opts())
+    assert solver.hess._dC is None
+
+
+def test_build_hess_wires_the_frequency_prior_when_requested():
+    """gp_length_scale must reach HessTreeRay, not be silently dropped."""
+    from pfb_imaging.deconv.presets import make_sara
+
+    nband = 3
+    geometry = {
+        "nx": 16,
+        "ny": 16,
+        "nx_psf": 32,
+        "ny_psf": 32,
+        "freq_out": np.linspace(1.0e9, 1.4e9, nband),
+    }
+    opts = _gp_opts(gp_length_scale=0.5, gp_cap=10.0)
+    solver = make_sara(
+        _delta_partitions(nband, 16, 16), geometry, np.zeros((nband, 16, 16)), np.zeros((nband, 16, 16)), opts
+    )
+    assert solver.hess._dC is not None
+    assert solver.hess._dC.shape == (nband, nband)
+    # the remainder is not trivial: a zero dC would mean the kernel collapsed to I
+    assert np.abs(solver.hess._dC).max() > 1e-6

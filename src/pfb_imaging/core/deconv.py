@@ -43,6 +43,8 @@ def deconv(
     eta: float = 0.001,
     eta_mode: str | None = None,
     eta_cap: float = 100.0,
+    gp_length_scale: float | None = None,
+    gp_cap: float = 10.0,
     gamma: float = 0.95,
     nbasisf: int | None = None,
     positivity: int = 1,
@@ -180,7 +182,7 @@ def deconv(
     freq_out = np.array([dt[n].ds.attrs["freq_out"] for n in nodes])
     time_out = np.array([first.attrs["time_out"]])
     iter0 = int(first.attrs.get("niters", 0))
-    geometry = {"nx": nx, "ny": ny, "nx_psf": nx_psf, "ny_psf": ny_psf}
+    geometry = {"nx": nx, "ny": ny, "nx_psf": nx_psf, "ny_psf": ny_psf, "freq_out": freq_out}
 
     # load band cubes and attrs required on driver (MODEL/RESIDUAL/UPDATE/WSUM)
     # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
