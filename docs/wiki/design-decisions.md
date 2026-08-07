@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-06T00:00:00Z
-last_verified_commit: 5a30f2a
+timestamp: 2026-08-07T13:53:02Z
+last_verified_commit: 78de0cf
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -705,6 +705,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   band-uniformity for a beam-driven mode would need a driver-side reduction of `B2_eff`
   across bands (each worker sees only its own band). Both halves pinned by
   `tests/test_eta_profile.py::test_radial_is_identical_across_bands_and_beam_modes_are_not`.
+  **Since D30** this profile is no longer only a diagonal: `--gp-length-scale` reads `e(x)`
+  as a per-pixel inverse signal variance and couples bands through
+  `D^½C⁻¹ₙD^½`, making `M` the second band-coupling channel after the L21 prox. The
+  workers still apply `e(x)` exactly as described here; the coupling is a driver-side
+  remainder.
 - **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits`
   once per run — a `(band, corr, ny, nx)` cube (band on the FREQ axis, so band-to-band
   variation is visible; a 3D array would land it on STOKES because `to4d` prepends) with
@@ -856,6 +861,82 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`convolve2gaussres`); `src/pfb_imaging/utils/fits.py` (`dt2fits` `drop_bands`,
   `psfpars_var`); commits 84dd88b, 8501dee, 4b41d26, a4a6b08, 7b66502, d0bdd6b;
   `tests/test_restore.py`, `tests/test_convolve2gaussres.py`, `tests/test_fits_tree.py`.
+
+### D30 — The preconditioner's frequency prior generalises `--eta` to an nband×nband precision
+
+- **Context:** on a real wide-field mosaic the primary beam tapers the *forward update* at
+  the edges of the field, worst at the top of the band, and structure visible in the
+  residual never reaches the model (issue #307). The forward step already solves
+  `B†HB + K⁻¹` with `K⁻¹ = η·I` (`HessianTree.dot`), so exploiting smoothness in frequency
+  is a matter of replacing that scalar with a matrix — not a new mechanism.
+- **Decision:** `--gp-length-scale` (default None = off, unchanged behaviour) and
+  `--gp-cap` (default 10). The preconditioner becomes
+  `M x = M_data x + D^½ C⁻¹ₙ D^½ x`, with `D = diag_b(e_b(x))` the existing
+  `eta`/`eta_mode` profile and `C⁻¹ₙ` an `nband×nband` normalised precision. `e(x)` is read
+  as the **per-pixel inverse signal variance**, so `K = diag(σ)(C ⊗ I)diag(σ)` with
+  `σ² = 1/e` and `K⁻¹_{bb'}(x) = sqrt(e_b e_b') C⁻¹_{bb'}`. Applied through the identity
+  `D^½C⁻¹ₙD^½ = D + D^½(C⁻¹ₙ − I)D^½` so the **band workers are untouched** and the driver
+  adds only the remainder. Squared exponential on a **linear** frequency metric, length
+  scale a fraction of the band span. Zero-`wsum` bands take part (at their `freq_nominal`
+  fallback, D28) and are interpolated by the prior.
+- **Rationale — the normalisation is the load-bearing part.** `prec = min(λmax/λ, cap)`
+  then `prec /= prec.max()`, anchoring `η` to the **roughest frequency mode present** and
+  relaxing smoother modes by up to `cap` ("relax"). Three alternatives were rejected:
+  - *A spatially uniform `(K⁻¹ − ηI)` coupling on top of `diag(e)`.* Under
+    `--eta-mode radial --eta-cap 1000` the diagonal is `1000η` against a coupling of
+    `η(cap−1) ≈ 100η`, so the prior becomes **10× more white than correlated exactly at
+    the corners where it is needed** — backwards. It is also not any GP's precision
+    matrix, so the hyperparameter has no interpretation.
+  - *"Tighten" (`[η, η·cap]`, `η` on the smoothest mode).* Makes the field-edge update
+    *smaller*, not larger, so it does not address the reported symptom; and
+    `λmax(P) = η·eta_cap·gp_cap = 100` against the `λmax(M) ≈ 1.98` D26 measured, i.e. a
+    50× `hess_norm` inflation and `√50 ≈ 7×` the CG iterations.
+  - *Dividing by `cap` instead of `prec.max()`.* A white kernel has a flat eigenspectrum,
+    every ratio is 1, and the result is a uniform `I/cap` — silently weakening `eta`
+    everywhere instead of degrading to today's behaviour at `ℓ → 0`.
+  A **log-frequency metric was also rejected**: writing `ν = ν̄(1+a)`,
+  `log ν_i − log ν_j ≈ (ν_i−ν_j)/ν̄`, so linear *is* the first-order expansion of log and
+  over a full 2:1 band the two differ by 4% (`log 2 = 0.6931` vs `2/3 = 0.6667`) — far
+  inside the ambiguity in `ℓ`. The GP is over linear flux, so a log metric would not
+  encode power laws anyway; that needs a GP over `log S` vs `log ν`, which is nonlinear
+  and unavailable (the operator must stay linear and PSD for CG).
+- **Consequences:**
+  - **The forward CG moves from band-parallel in-worker to cube-level on the driver**
+    (`HessTreeRay.cg` branches on the prior). The FFT work is unchanged and still happens
+    in the workers; only `cg_maxit` round trips are added, against the `pd_maxit` the
+    backward step already pays per major cycle.
+  - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so `λmax(M)`, `hess_norm` and the
+    primal-dual step sizes are unchanged. Pinned by
+    `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`.
+  - `λmin(M)` drops by up to `gp_cap`, eroding the stable `γ`. The erosion is bounded by
+    the `η` fraction of `v'Mv` along the maximising direction — D26 measured 21% for the
+    binding mode, giving `14.7 → 18.2` (24%) at `gp_cap=10`, not 10×. **Measure with
+    `scripts/max_gamma.py` before raising the cap.**
+  - The driver-side remainder is **negative** semi-definite (`C⁻¹ₙ`'s eigenvalues are in
+    `(0, 1]`); the total operator is still symmetric positive definite, so CG applies, but
+    nothing may assume that term alone is PSD.
+  - Interpolated flux in zero-`wsum` bands enters L21's 2-norm over bands, so a
+    joint-sparsity decision can be taken partly on a band with no data. Accepted: the loop
+    already extrapolates into those bands via `model_to_ds`'s `nbasisf` refit.
+  - **The fixed-point test cannot guard the prior's sign.** Flipping `dot`'s `+=` to `-=`
+    yields `M_data + D + D^½(I − C⁻¹ₙ)D^½`, still SPD, so D22 says it reaches the same
+    fixed point — and it does (verified). The prior term's value is pinned separately
+    against an explicit dense formula by `test_prior_term_matches_the_dense_congruence`.
+  - `hess_norm` is now cache-keyed on the M-defining options
+    (`eta`, `eta_mode`, `eta_cap`, `gp_length_scale`, `gp_cap`), fixing a **pre-existing
+    bug**: changing `--eta` between runs on the same `.dt` silently reused a stale norm.
+    Trees written before the key existed carry no `hess_norm_opts` and are re-estimated.
+  - Second band-coupling channel in `M` (see D26's band-consistency note — bands
+    previously coupled only through the L21 prox, D3).
+  - **Attribution:** `--nbasisf < nband` already smooths the *model* in frequency every
+    major cycle (`core/deconv.py`, `model_to_ds`). Run GP experiments at the default
+    full-rank `nbasisf` or the two effects cannot be separated.
+- **Source:** issue #307; `src/pfb_imaging/operators/hessian.py` (`freq_correlation`,
+  `freq_precision`, `HessTreeRay`); `src/pfb_imaging/deconv/presets.py`;
+  `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
+  `src/pfb_imaging/cli/deconv.py`; `tests/test_freq_precision.py`,
+  `tests/test_hess_tree_ray.py`, `tests/test_deconv_hess_norm_cache.py`,
+  `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`.
 
 ## Known debt
 
