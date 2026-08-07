@@ -640,6 +640,10 @@ class HessTreeRay:
         etas: Tikhonov parameter, scalar or per-band sequence.
         eta_mode, eta_cap: optional spatially varying ``eta``; each worker builds
             the profile from its own band's beams (see ``eta_profile``).
+        freq_prec: Optional ``(nband, nband)`` frequency precision from
+            ``freq_precision``. When given, bands couple through the
+            preconditioner and the forward CG runs at cube level on the driver
+            instead of band-parallel inside the workers (issue #307).
         nthreads: total FFT threads (ignored when ``workers`` is passed; the
             pool's per-band thread budget applies).
         wsums: optional normalisation override, scalar or per-band sequence
@@ -658,6 +662,7 @@ class HessTreeRay:
         etas=0.0,
         eta_mode=None,
         eta_cap=1e2,
+        freq_prec=None,
         nthreads=1,
         wsums=None,
         cg_tol=1e-3,
@@ -695,8 +700,43 @@ class HessTreeRay:
         self._pool = workers
         self._pool.init_hess(partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums, eta_mode, eta_cap)
 
+        # GP prior over frequency (issue #307). Applied through the identity
+        #   D^.5 Cinv D^.5 = D + D^.5 (Cinv - I) D^.5
+        # so the workers keep applying their own eta/eta_mode term (the D) and
+        # the driver adds only the remainder. That remainder is NEGATIVE
+        # semi-definite (Cinv's eigenvalues are in (0, 1]); the total operator
+        # is still symmetric positive definite, so CG applies -- but nothing may
+        # assume this term alone is PSD.
+        self._dC = None
+        self._s = None
+        if freq_prec is not None:
+            freq_prec = np.asarray(freq_prec, dtype=np.float64)
+            if freq_prec.shape != (self.nband, self.nband):
+                raise ValueError(f"freq_prec has shape {freq_prec.shape}, expected {(self.nband, self.nband)}")
+            self._dC = freq_prec - np.eye(self.nband)
+            if eta_mode is None:
+                # uniform eta: a per-band scalar, so no (nband, ny, nx) cube is
+                # fetched or held (that is ~1 GB of f8 at 4096^2 x 8 bands)
+                self._s = np.sqrt(etas)[:, None, None]
+            else:
+                self._s = np.sqrt(self._pool.get_eta(ny, nx))
+            # reused every dot() on the CG hot path; allocating two
+            # (nband, ny, nx) temporaries per application would dominate at
+            # production image sizes (matches HessianTree's FFT scratch)
+            self._buf = np.empty((self.nband, ny, nx))
+            self._buf2 = np.empty((self.nband, ny, nx))
+
     def dot(self, x):
-        return self._pool.hess_dot(x)
+        out = self._pool.hess_dot(x)
+        if self._dC is not None:
+            # BLAS matmul over the band axis rather than utils.misc.freqmul,
+            # which is njit(parallel=False); reshape of a C-contiguous buffer is
+            # a view, so out= writes through
+            np.multiply(x, self._s, out=self._buf)
+            np.matmul(self._dC, self._buf.reshape(self.nband, -1), out=self._buf2.reshape(self.nband, -1))
+            np.multiply(self._buf2, self._s, out=self._buf2)
+            out += self._buf2
+        return out
 
     def hdot(self, x):
         return self.dot(x)

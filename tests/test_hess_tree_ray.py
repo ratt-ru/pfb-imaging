@@ -78,3 +78,66 @@ def test_cg_matches_local_pcg(nband):
         local = HessianTree(parts[b], nx, ny, 2 * nx, 2 * ny, eta=0.5)
         want_b = pcg_numba(lambda z: local.dot(z)[0], rhs[b], tol=1e-8, maxit=200, minit=1, verbosity=0)
         assert_allclose(got[b], want_b, rtol=1e-6, atol=1e-9)
+
+
+def test_prior_term_matches_the_dense_congruence():
+    """M_gp x == M_data x + eta * (Cinv @ x) when eta is uniform.
+
+    With eta_mode unset the congruence D^.5 Cinv D^.5 collapses to eta*Cinv, so
+    the driver-side term is exactly eta*(Cinv - I) applied over the band axis.
+    """
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(3)
+    nband, nx, ny = 3, 8, 8
+    eta = 1e-2
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+
+    base = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+
+    x = rng.standard_normal((nband, nx, ny))
+    want = base.dot(x) - eta * x + eta * np.einsum("bc,cyx->byx", kinv, x)
+    assert_allclose(gp.dot(x), want, rtol=1e-11, atol=1e-13)
+
+
+def test_prior_is_a_no_op_when_freq_prec_is_none():
+    """The default path must be bit-identical to today (regression guard)."""
+    rng = np.random.default_rng(4)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=None)
+    x = rng.standard_normal((nband, nx, ny))
+    want = np.zeros_like(x)
+    for b in range(nband):
+        want[b] = HessianTree(parts[b], nx, ny, 2 * nx, 2 * ny, eta=1e-2).dot(x[b])[0]
+    assert_allclose(hess.dot(x), want, rtol=0, atol=0)
+
+
+def test_prior_hessian_stays_symmetric_and_positive_definite():
+    """CG requires both; the driver-side correction alone is only NSD."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(5)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 1.0, cap=50.0)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv)
+
+    for _ in range(10):
+        u = rng.standard_normal((nband, nx, ny))
+        v = rng.standard_normal((nband, nx, ny))
+        assert_allclose(np.vdot(u, gp.dot(v)), np.vdot(gp.dot(u), v), rtol=1e-10)
+        assert np.vdot(u, gp.dot(u)) > 0.0
+
+
+def test_wrong_freq_prec_shape_is_rejected():
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(6)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, 4), 0.5)  # 4 bands, not 3
+    with pytest.raises(ValueError, match="freq_prec"):
+        HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv)
