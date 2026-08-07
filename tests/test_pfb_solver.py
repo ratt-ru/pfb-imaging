@@ -434,6 +434,7 @@ def _gp_opts(**overrides):
     return opts
 
 
+@pytest.mark.slow
 def test_build_hess_omits_the_frequency_prior_by_default():
     """Callers that never ask for the prior must not have to supply freq_out."""
     from pfb_imaging.deconv.presets import make_sara
@@ -443,6 +444,7 @@ def test_build_hess_omits_the_frequency_prior_by_default():
     assert solver.hess._dC is None
 
 
+@pytest.mark.slow
 def test_build_hess_wires_the_frequency_prior_when_requested():
     """gp_length_scale must reach HessTreeRay, not be silently dropped."""
     from pfb_imaging.deconv.presets import make_sara

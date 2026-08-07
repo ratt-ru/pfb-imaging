@@ -94,11 +94,16 @@ def test_prior_term_matches_the_dense_congruence():
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
 
-    base = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta)
     gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
 
     x = rng.standard_normal((nband, nx, ny))
-    want = base.dot(x) - eta * x + eta * np.einsum("bc,cyx->byx", kinv, x)
+    # the M_data + eta*I reference is built with local HessianTrees rather than a
+    # second HessTreeRay: it halves the Ray actor count and keeps this test -- the
+    # one that pins the prior term's sign and value -- inside the fast loop
+    base_dot = np.zeros_like(x)
+    for b in range(nband):
+        base_dot[b] = HessianTree(parts[b], nx, ny, 2 * nx, 2 * ny, eta=eta).dot(x[b])[0]
+    want = base_dot - eta * x + eta * np.einsum("bc,cyx->byx", kinv, x)
     assert_allclose(gp.dot(x), want, rtol=1e-11, atol=1e-13)
 
 
