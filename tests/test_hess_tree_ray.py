@@ -141,3 +141,55 @@ def test_wrong_freq_prec_shape_is_rejected():
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, 4), 0.5)  # 4 bands, not 3
     with pytest.raises(ValueError, match="freq_prec"):
         HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv)
+
+
+def test_cg_solves_the_coupled_system_when_the_prior_is_on():
+    """The real contract: whichever branch runs, cg must invert the operator dot applies."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(7)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, cg_tol=1e-10, cg_maxit=500)
+
+    rhs = rng.standard_normal((nband, nx, ny))
+    u = gp.cg(rhs)
+    assert_allclose(gp.dot(u), rhs, rtol=1e-5, atol=1e-7)
+
+
+def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path():
+    """The in-worker fast path is one Ray dispatch per solve; do not lose it."""
+    rng = np.random.default_rng(8)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1)
+
+    calls = []
+    original = hess._pool.hess_cg
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    hess._pool.hess_cg = spy
+    u = hess.cg(rng.standard_normal((nband, nx, ny)))
+    assert calls == [1], "the band-parallel pool path was bypassed"
+    assert u.shape == (nband, nx, ny)
+
+
+def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path():
+    """Band-parallel CG cannot solve a band-coupled operator."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(9)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("hess_cg must not be called when bands are coupled")
+
+    gp._pool.hess_cg = boom
+    gp.cg(rng.standard_normal((nband, nx, ny)))

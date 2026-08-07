@@ -742,11 +742,34 @@ class HessTreeRay:
         return self.dot(x)
 
     def cg(self, rhs, x0=None, tol=None, maxit=None, minit=None):
-        """Distributed per-band CG solve of ``hess @ update = rhs``."""
+        """Solve ``hess @ update = rhs``.
+
+        Without a frequency prior the solve is band-parallel: one Ray dispatch
+        per band per call, each worker iterating its own CG to convergence in
+        process. A frequency prior couples the bands, so the solve moves to a
+        cube-level CG on the driver -- one dispatch per band per CG *iteration*.
+        The FFT work is unchanged and still happens in the workers; only the
+        round trips are added (the backward step already fans ``dot`` out this
+        way, up to ``pd_maxit`` times per major cycle).
+
+        Warning:
+            On the coupled path ``x0`` is bound as the iterate and updated
+            **in place** by ``pcg_numba``; the returned array IS ``x0``.
+        """
         tol = self.cg_tol if tol is None else tol
         maxit = self.cg_maxit if maxit is None else maxit
         minit = self.cg_minit if minit is None else minit
-        return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        if self._dC is None:
+            return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        return pcg(
+            self.dot,
+            rhs,
+            x0=x0,
+            tol=tol,
+            maxit=maxit,
+            minit=minit,
+            verbosity=self.cg_verbose,
+        )
 
     def get_eta(self):
         """Tikhonov coefficient per band as an ``(nband, ny, nx)`` cube."""
