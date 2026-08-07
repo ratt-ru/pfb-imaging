@@ -352,3 +352,101 @@ def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_
     min_flux = sky_truth.ref_flux.min()
     assert resid1 < 0.02 * min_flux, f"segment 1 residual peak {resid1:.3e} too high"
     assert resid2 < 0.7 * resid1, f"residual plateaued: resid2 {resid2:.3e} vs resid1 {resid1:.3e}"
+
+
+@pytest.mark.slow
+def test_frequency_prior_does_not_move_the_fixed_point():
+    """A GP prior over frequency reshapes each update but not the solution.
+
+    Preconditioned Richardson converges to ``A^-1 b`` for ANY nonsingular ``M``
+    (wiki D22), so coupling bands through ``M`` must reach the same fixed point
+    as the band-diagonal preconditioner -- only the path and the rate change.
+    The beams narrow with frequency, reproducing the tapering of issue #307.
+
+    What this does NOT guard, by construction: the *sign* or the exact value of
+    the prior term. Flipping ``dot``'s ``out += self._buf2`` to ``-=`` yields
+    ``M_data + D + D^.5 (I - Cinv) D^.5``, which is still symmetric positive
+    definite, so the theorem says it reaches the same fixed point -- and this
+    test passes (verified). That is the theorem working, not a gap. The prior
+    term's actual value is pinned against an explicit dense formula by
+    ``test_hess_tree_ray.py::test_prior_term_matches_the_dense_congruence``,
+    which does fail under that mutation.
+    """
+    from pfb_imaging.operators.hessian import HessTreeRay, freq_precision
+
+    nband, nx, ny = 3, 8, 8
+    # eta is a large share of M here (measured: the prior moves ||M|| by 23%,
+    # against 3% at eta=1e-2). That is the regime the prior targets -- the field
+    # edge, where the beam kills M_data and eta is what is left -- and it keeps
+    # the vacuity guard below meaningful.
+    eta = 1e-1
+    cell = np.deg2rad(3.0) / nx
+    rng = np.random.default_rng(31)
+
+    beams = [_gaussian_beam(nx, ny, cell, fwhm_deg=3.0 - 0.6 * b, cx=1.0, cy=-0.5) for b in range(nband)]
+    parts = [[_make_partition(rng, cell, nx, ny, beams[b])] for b in range(nband)]
+    wsum = sum(p["wsum"] for plist in parts for p in plist)
+
+    def aop(m):
+        """Exact block-diagonal Hessian: the data term never couples bands."""
+        out = np.zeros_like(m)
+        for b, plist in enumerate(parts):
+            for p in plist:
+                beam = p["beam"]
+                out[b] += beam * _gtwg(beam * m[b], p["uvw"], p["wgt"], cell)
+        return out / wsum + eta * m
+
+    hess_parts = [
+        [{"psfhat": p["psfhat"], "beam": p["beam"][None], "wsum": np.array([p["wsum"]])} for p in plist]
+        for plist in parts
+    ]
+    kinv = freq_precision(np.linspace(0.9e9, 1.7e9, nband), 0.5, cap=10.0)
+    base = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, nthreads=NTHREADS)
+    gp = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, nthreads=NTHREADS, freq_prec=kinv)
+
+    ndof = nband * ny * nx
+
+    def _dense(apply_fn):
+        out = np.zeros((ndof, ndof))
+        e = np.zeros((nband, ny, nx))
+        for i in range(ndof):
+            e.flat[i] = 1.0
+            out[:, i] = apply_fn(e).ravel()
+            e.flat[i] = 0.0
+        return out
+
+    a_dense = _dense(aop)
+    m_base = _dense(base.dot)
+    m_gp = _dense(gp.dot)
+
+    # the test is only meaningful if the two preconditioners really differ
+    gap = np.linalg.norm(m_gp - m_base) / np.linalg.norm(m_base)
+    assert gap > 0.05, f"the prior barely changed M ({gap:.3e}); the test would be vacuous"
+
+    # a smooth source with a spectral gradient, brightest where the beams differ most
+    yyp, xxp = np.mgrid[0:ny, 0:nx]
+    blob = np.exp(-0.5 * ((xxp - nx / 2 - 1) ** 2 + (yyp - ny / 2 + 1) ** 2) / (nx / 6) ** 2)
+    m_true = np.stack([blob * (1.0 + 0.4 * b) for b in range(nband)])
+    b_rhs = aop(m_true)
+
+    x_full = np.linalg.solve(a_dense, b_rhs.ravel()).reshape(nband, ny, nx)
+
+    def _richardson(mop, m_dense):
+        evals = np.linalg.eigvals(np.linalg.solve(m_dense, a_dense)).real
+        gamma = 2.0 / (evals.min() + evals.max())
+        m = np.zeros((nband, ny, nx))
+        rel = np.inf
+        for _ in range(400):
+            grad = b_rhs - aop(m)
+            m = m + gamma * pcg_numba(mop.dot, grad, tol=1e-10, maxit=300, minit=1, verbosity=0)
+            rel = np.linalg.norm(m - x_full) / np.linalg.norm(x_full)
+            if rel < 1e-5:
+                break
+        return m, rel
+
+    m_base_sol, rel_base = _richardson(base, m_base)
+    m_gp_sol, rel_gp = _richardson(gp, m_gp)
+
+    assert rel_base < 1e-5, f"band-diagonal preconditioner did not converge (rel={rel_base:.3e})"
+    assert rel_gp < 1e-5, f"frequency-coupled preconditioner did not converge (rel={rel_gp:.3e})"
+    np.testing.assert_allclose(m_gp_sol, m_base_sol, rtol=0, atol=1e-4 * np.abs(x_full).max())
