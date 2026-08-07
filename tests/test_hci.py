@@ -194,6 +194,7 @@ def test_make_fits_header_does_not_mutate_input():
     assert base == snapshot
 
 
+@pytest.mark.slow
 def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
     """channels_per_bin must not change hci output when no beam model is supplied.
 
@@ -321,6 +322,7 @@ def test_hci_rejects_existing_output_without_overwrite(ms_name, tmp_path):
     assert (Path(out) / "marker").exists()
 
 
+@pytest.mark.slow
 def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     """Injected transient lands at the expected pixel with the expected dynamic spectrum.
 

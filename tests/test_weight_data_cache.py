@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 SNIPPET = """
 import os
 os.environ["NUMBA_CACHE_DIR"] = {cache_dir!r}
@@ -51,6 +53,7 @@ def _nbc_count(cache_dir):
     return sum(1 for _, _, files in os.walk(cache_dir) for f in files if f.endswith(".nbc"))
 
 
+@pytest.mark.slow
 def test_weight_data_cross_process_cache(tmp_path):
     cache_dir = str(tmp_path / "numba_cache")
 

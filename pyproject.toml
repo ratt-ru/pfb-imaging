@@ -97,12 +97,24 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--verbose",
+    # Fast by default: the end-to-end pipeline tests are deselected so the
+    # development loop stays ~80s instead of ~400s. CI overrides with `-m ""`
+    # (a command-line -m wins over this one). Run everything locally the same
+    # way; `-m slow` runs only the deselected set.
+    "-m",
+    "not slow",
+    # Drift guard: surfaces a newly-slow test in the fast loop's own output
+    # instead of letting it quietly rot there.
+    "--durations=10",
 ]
 timeout = 300
 timeout_method = "thread"
 markers = [
-    "unit: Unit tests",
-    "integration: Integration tests",
+    # Applied when a test's *cheapest* parametrisation costs >=2s. The
+    # "cheapest" qualifier matters: several functions carry a one-off warm-up
+    # (JIT, beam-model load, Ray spin-up) on whichever param runs first, which
+    # is sticky to the run rather than the test -- marking those would evict
+    # tests without removing the cost.
     "slow: Tests that take more time to run",
 ]
 

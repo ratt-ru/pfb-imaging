@@ -18,6 +18,7 @@ import pytest
 import xarray as xr
 
 
+@pytest.mark.slow
 def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
     """deconv on the noiseless predicted sky recovers the injected fluxes.
 
@@ -198,6 +199,7 @@ def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts):
 
 
 @pytest.mark.timeout(120)
+@pytest.mark.slow
 def test_deconv_two_band_smoke(tmp_path):
     """Multi-band driver smoke test: regression guard for the nband>1 Ray deadlock.
 
@@ -281,6 +283,7 @@ def test_deconv_two_band_smoke(tmp_path):
 
 
 @pytest.mark.timeout(120)
+@pytest.mark.slow
 def test_band_workers_load_matches_driver_side(tmp_path):
     """Worker-side load_bands reproduces driver-side reads exactly.
 
@@ -354,6 +357,7 @@ def test_band_workers_load_matches_driver_side(tmp_path):
 
 
 @pytest.mark.timeout(120)
+@pytest.mark.slow
 def test_deconv_unequal_partition_counts(tmp_path):
     """Bands legitimately carry different partition counts (a fully flagged
     field chunk writes no scratch piece, so its band node has fewer part####

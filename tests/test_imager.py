@@ -19,6 +19,7 @@ from numpy.testing import assert_allclose
 from pfb_imaging.core.imager import imager as imager_core
 
 
+@pytest.mark.slow
 def test_imager_writes_dt_tree(ms_name, tmp_path):
     """imager() runs both passes and writes a unified .dt DataTree plus FITS."""
     outname = str(tmp_path / "test_imager")
@@ -87,6 +88,7 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     assert_allclose(bimg, num / den, rtol=1e-5, atol=1e-7)
 
 
+@pytest.mark.slow
 def test_scratch_retained_by_default(ms_name, tmp_path):
     """The pass-1 .scratch store is kept by default for re-gridding without re-read."""
     from daskms.fsspec_store import DaskMSStore  # casacore-free fsspec store
@@ -107,6 +109,7 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
     assert DaskMSStore(outname + "_I.dt").exists()
 
 
+@pytest.mark.slow
 def test_imager_concat_row_collapses_time(ms_name, tmp_path):
     """concat_row=True collapses the time axis into one band node and agrees
     with concat_row=False on the MFS dirty.
@@ -192,6 +195,7 @@ def _peak_yx(da_2d):
     raise AssertionError(f"unexpected image dims {da_2d.dims}")
 
 
+@pytest.mark.slow
 def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
     """Injected sources land at their (RA, Dec) through the FITS WCS, at the
     right flux; the .dt arrays agree via their dims names.
@@ -411,6 +415,7 @@ def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
     assert not np.allclose(new.UVW.values, ref.UVW.values)
 
 
+@pytest.mark.slow
 def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
     """Rephasing to an offset phase_dir with target back at the original field
     centre reproduces the unrephased image -- compared projection-aware.
@@ -588,6 +593,7 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
         deconv(outname, log_directory=str(tmp_path), nthreads=1)
 
 
+@pytest.mark.slow
 def test_imager_fits_per_partition(sky_truth, ms_name, tmp_path):
     """Per-partition sanity FITS: one file per computed variable per partition,
     with a WCS that puts the injected sources where they belong."""
@@ -675,6 +681,7 @@ def test_stokes_vis_beam_follows_effective_freq(ms_name, tmp_path):
     assert hi.BEAM.values.sum() < lo.BEAM.values.sum()
 
 
+@pytest.mark.slow
 def test_imager_effective_freq_uneven_bands(ms_name, tmp_path):
     """8 channels binned 3/3/2: the band-edge centres miss the true channel
     groups by 17-50 MHz. freq_out must track the channels actually gridded
