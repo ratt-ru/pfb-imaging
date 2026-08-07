@@ -21,6 +21,44 @@ from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
 
+# The options that define the preconditioner M. hess_norm is lambda_max(M) and is
+# cached in the band attrs across runs, so it is only reusable when every one of
+# these matches -- otherwise the primal-dual step sizes are derived from the norm
+# of a different operator.
+_M_OPTS = ("eta", "eta_mode", "eta_cap", "gp_length_scale", "gp_cap")
+
+
+def _m_signature(opts):
+    """JSON string identifying the preconditioner these options build.
+
+    Args:
+        opts: The deconv options dict.
+
+    Returns:
+        A sorted-key JSON string, safe to store as a zarr attribute.
+    """
+    return json.dumps({k: opts.get(k) for k in _M_OPTS}, sort_keys=True)
+
+
+def _cached_hess_norm(attrs, opts):
+    """Cached ``hess_norm`` when it was written for this preconditioner, else None.
+
+    Args:
+        attrs: A band node's attrs.
+        opts: The deconv options dict.
+
+    Returns:
+        The cached ``lambda_max(M)``, or None when it is absent or was written
+        for different preconditioner options. Trees written before this
+        signature existed carry no ``hess_norm_opts`` and are re-estimated,
+        which is the safe direction.
+    """
+    if "hess_norm" not in attrs:
+        return None
+    if attrs.get("hess_norm_opts") != _m_signature(opts):
+        return None
+    return float(attrs["hess_norm"])
+
 
 def deconv(
     output_filename: str,
@@ -230,10 +268,13 @@ def deconv(
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq_out), casambm=False, l0=l0, m0=m0)
 
     # hess_norm from the tree cache when available; solver estimates it otherwise
-    if hess_norm is None and "hess_norm" in first.attrs:
-        hess_norm = first.attrs["hess_norm"]
-        opts_dict["hess_norm"] = hess_norm
-        log.info(f"Using previously estimated hess_norm of {hess_norm:.3e}")
+    if hess_norm is None:
+        hess_norm = _cached_hess_norm(first.attrs, opts_dict)
+        if hess_norm is not None:
+            opts_dict["hess_norm"] = hess_norm
+            log.info(f"Using previously estimated hess_norm of {hess_norm:.3e}")
+        elif "hess_norm" in first.attrs:
+            log.info("Preconditioner options changed since the cached hess_norm was written; re-estimating.")
 
     if minor_cycle not in PRESETS:
         log.error_and_raise(f"Unknown minor_cycle '{minor_cycle}'", ValueError)
@@ -422,6 +463,7 @@ def deconv(
                     "rmax": best_rmax,
                     "niters": k + 1,
                     "hess_norm": hess_norm,
+                    "hess_norm_opts": _m_signature(opts_dict),
                 },
             )
             ds_out.to_zarr(dt_name, group=n, mode="a")
