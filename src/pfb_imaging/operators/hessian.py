@@ -440,6 +440,83 @@ def eta_profile(partitions, eta, mode, ny, nx, cap=1e2):
     return eta * np.minimum(f, cap)
 
 
+def freq_correlation(freq_out, length_scale):
+    """Squared-exponential correlation matrix over the imaged band.
+
+    Evaluated at the given frequencies, which need not be evenly spaced --
+    ``freq_out`` is the wsum-weighted effective frequency and is data-dependent
+    (wiki D28). The metric is linear in frequency with the length scale given as
+    a fraction of the band span, so the knob reads directly ("correlated over
+    half the band") and transfers between UHF and L-band runs. A log-frequency
+    metric is the same thing to 4% over a full 2:1 band, so the extra
+    parameterisation is not worth carrying.
+
+    Args:
+        freq_out: ``(nband,)`` band frequencies in Hz.
+        length_scale: Correlation length as a fraction of the ``freq_out`` span.
+
+    Returns:
+        ``(nband, nband)`` unit-diagonal correlation matrix.
+    """
+    freq_out = np.asarray(freq_out, dtype=np.float64)
+    span = float(freq_out.max() - freq_out.min())
+    d = (freq_out[:, None] - freq_out[None, :]) / (length_scale * span)
+    return np.exp(-0.5 * d**2)
+
+
+def freq_precision(freq_out, length_scale, cap=10.0):
+    """Normalised frequency precision for the preconditioner's GP prior (issue #307).
+
+    Generalises ``--eta`` from a scalar to an ``nband x nband`` matrix: today's
+    preconditioner carries ``K_nu^-1 = eta * I``, and this returns the ``C^-1_n``
+    that replaces the identity. The prior enters ``M`` **only** -- it is absent
+    from ``gridder.residual_from_partitions`` -- so the fixed point and the flux
+    scale are untouched and it only reshapes each forward update (wiki D22/D26).
+
+    The spectrum is normalised so ``eta`` is the precision on the **roughest
+    frequency mode present** and smoother modes are damped up to ``cap`` times
+    less. This is the "relax" convention: it makes the field-edge update *grow*
+    along the frequency-smooth direction that borrows from bands where the beam
+    is still open, which is the symptom issue #307 reports. Anchoring at the
+    rough end (dividing by ``prec.max()``, not by ``cap``) is load-bearing:
+    dividing by ``cap`` would make a white kernel return ``I/cap``, silently
+    weakening ``eta`` everywhere instead of degrading to today's behaviour.
+
+    Args:
+        freq_out: ``(nband,)`` band frequencies in Hz.
+        length_scale: Correlation length as a fraction of the band span, or None
+            to disable the prior.
+        cap: Ceiling on how far the smoothest mode may be relaxed. Bounds the
+            drop in ``lambda_min(M)`` and hence the erosion of the stable gamma.
+
+    Returns:
+        ``(nband, nband)`` symmetric positive-definite matrix whose largest
+        eigenvalue is exactly 1 and whose smallest is at least ``1/cap``, or
+        None when the prior is disabled (no length scale, fewer than two bands,
+        or every band at one frequency).
+
+    Raises:
+        ValueError: non-positive ``length_scale``, or ``cap < 1``.
+    """
+    if length_scale is None:
+        return None
+    if length_scale <= 0.0:
+        raise ValueError(f"gp_length_scale must be > 0 (got {length_scale}); use None to disable the prior")
+    if cap < 1.0:
+        raise ValueError(f"gp_cap must be >= 1 (got {cap}); cap=1 is the uniform-eta limit")
+    freq_out = np.asarray(freq_out, dtype=np.float64)
+    if freq_out.size < 2 or freq_out.max() == freq_out.min():
+        return None
+    corr = freq_correlation(freq_out, length_scale)
+    lam, evec = np.linalg.eigh(corr)
+    # roundoff can push the smallest eigenvalues slightly negative; they are the
+    # roughest modes and belong at the cap, so floor them rather than divide by them
+    ratio = lam.max() / np.maximum(lam, lam.max() * 1e-12)
+    prec = np.minimum(ratio, cap)
+    prec /= prec.max()  # roughest mode present -> exactly 1 (see the docstring)
+    return (evec * prec) @ evec.T
+
+
 class HessianTree(object):
     """Sum-over-partitions PSF-convolution Hessian for the DataTree imager.
 
