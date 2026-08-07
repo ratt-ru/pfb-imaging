@@ -8,7 +8,7 @@ import numpy as np
 
 from pfb_imaging.deconv.pfb import PFBSolver
 from pfb_imaging.operators.band_worker import BandWorkerPool
-from pfb_imaging.operators.hessian import HessTreeRay, freq_precision
+from pfb_imaging.operators.hessian import HessTreeRay, freq_correlation, freq_precision
 from pfb_imaging.operators.psi import IdentityPsi, PsiNocopytRay
 from pfb_imaging.opt.forward_backward import ForwardBackward
 from pfb_imaging.opt.pcg import PCG
@@ -42,6 +42,12 @@ def _build_hess(partitions_per_band, geometry, opts, workers=None, wsums=None):
         if opts.get("gp_length_scale") is not None
         else None
     )
+    if freq_prec is not None:
+        row = freq_correlation(geometry["freq_out"], opts["gp_length_scale"])[0]
+        log.info(
+            f"GP frequency prior: length_scale={opts['gp_length_scale']} of the band span, "
+            f"cap={opts.get('gp_cap', 10.0)}; band 0 correlation with each band: " + " ".join(f"{v:.2f}" for v in row)
+        )
     # --eta is a fraction of the TOTAL wsum: the band operators are normalised
     # by wsum_tot, so the Tikhonov term is a uniform +eta*x on every band
     # (eta*wsum_tot in raw units), invariant to how the data is split into

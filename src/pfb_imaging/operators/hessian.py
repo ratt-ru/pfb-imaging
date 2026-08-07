@@ -775,6 +775,29 @@ class HessTreeRay:
         """Tikhonov coefficient per band as an ``(nband, ny, nx)`` cube."""
         return self._pool.get_eta(self.ny, self.nx)
 
+    def get_freq_prior_stats(self):
+        """Spectrum of the frequency prior, or None when it is disabled.
+
+        Returns:
+            dict with ``prec_min``/``prec_max`` (the normalised precision
+            spectrum, whose maximum is exactly 1 by construction) and
+            ``eta_max``/``lam_min``/``lam_max`` (the same scaled by the largest
+            eta, i.e. the prior's actual contribution to ``M``'s spectrum).
+            ``lam_max == eta_max`` is the invariant that keeps ``lambda_max(M)``
+            -- hence ``hess_norm`` and the primal-dual step sizes -- unchanged.
+        """
+        if self._dC is None:
+            return None
+        lam = np.linalg.eigvalsh(self._dC + np.eye(self.nband))
+        eta_max = float(np.max(self._s)) ** 2
+        return {
+            "prec_min": float(lam.min()),
+            "prec_max": float(lam.max()),
+            "eta_max": eta_max,
+            "lam_min": float(lam.min()) * eta_max,
+            "lam_max": float(lam.max()) * eta_max,
+        }
+
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""
         return self._pool.get_mem()

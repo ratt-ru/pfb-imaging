@@ -193,3 +193,30 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path():
 
     gp._pool.hess_cg = boom
     gp.cg(rng.standard_normal((nband, nx, ny)))
+
+
+def test_prior_stats_are_none_when_the_prior_is_off():
+    rng = np.random.default_rng(10)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2)
+    assert hess.get_freq_prior_stats() is None
+
+
+def test_prior_stats_report_the_spectrum_and_its_contribution_to_m():
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(11)
+    nband, nx, ny = 3, 8, 8
+    eta, cap = 1e-2, 10.0
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 1.0, cap=cap)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+
+    stats = gp.get_freq_prior_stats()
+    assert_allclose(stats["prec_max"], 1.0, rtol=1e-12)
+    assert stats["prec_min"] >= 1.0 / cap - 1e-12
+    assert_allclose(stats["eta_max"], eta, rtol=1e-12)
+    # the prior's top contribution to M equals eta: lambda_max(M) is unchanged
+    assert_allclose(stats["lam_max"], eta, rtol=1e-12)
+    assert_allclose(stats["lam_min"], stats["prec_min"] * eta, rtol=1e-12)

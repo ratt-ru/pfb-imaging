@@ -312,6 +312,16 @@ def deconv(
             f"({etas.max() / etas.min():.1f}x), band-to-band spread {100 * spread:.2f}% -> {name}"
         )
 
+    # the prior is the only band-coupling channel in M besides the prox, so its
+    # spectrum is what to read when a GP run converges differently (issue #307)
+    stats = getattr(getattr(solver, "hess", None), "get_freq_prior_stats", lambda: None)()
+    if stats is not None:
+        log.info(
+            f"GP prior spectrum: precision {stats['prec_min']:.3e} to {stats['prec_max']:.3e} "
+            f"({stats['prec_max'] / stats['prec_min']:.1f}x relaxation); contribution to M "
+            f"{stats['lam_min']:.3e} to {stats['lam_max']:.3e}"
+        )
+
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
     else:
