@@ -262,6 +262,7 @@ def _resid_peak(store):
 
 
 @pytest.mark.timeout(600)
+@pytest.mark.slow
 def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_path):
     """End-to-end: with rmsfactor=0 and positivity off the major cycle is the
     preconditioned Richardson above. On noiseless predicted vis (a

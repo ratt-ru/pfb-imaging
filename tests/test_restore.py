@@ -547,6 +547,7 @@ def test_restore_clean_beam_not_written_when_not_requested(tmp_path):
 
 
 @pytest.mark.timeout(600)
+@pytest.mark.slow
 def test_restore_groundtruth(sky_truth, ms_name, tmp_path):
     """imager -> deconv -> restore recovers the injected source fluxes.
 

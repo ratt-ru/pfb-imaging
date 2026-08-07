@@ -63,6 +63,13 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 uv run ruff format . && uv run ruff check . --fix
 ```
 
+**Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
+`uv run pytest tests/` runs 557 tests in ~93 s. The 19 end-to-end pipeline tests
+(`*_groundtruth`, the imager/deconv/restore/hci drivers) are deselected and left to CI, which
+overrides with `-m ""`. Use `-m ""` locally before finishing a branch. A test earns the `slow`
+marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
+for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.
+
 ## Working Effectively (notes for agents)
 
 Lessons from real debugging sessions in this repo — follow them; they are cheaper than

@@ -12,6 +12,7 @@ from pathlib import Path
 import dask
 import dask.array as da
 import numpy as np
+import pytest
 import xarray as xr
 from daskms import xds_to_table
 from ducc0.wgridder.experimental import dirty2vis
@@ -21,6 +22,7 @@ from pfb_imaging.core.imager import imager as imager_core
 from pfb_imaging.operators.gridder import wgridder_conventions
 
 
+@pytest.mark.slow
 def test_imager_polproducts(ms_name, ms_meta, image_geometry, tmp_path):
     """A polarised point source is recovered in each Stokes product."""
     np.random.seed(420)

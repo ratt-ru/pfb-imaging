@@ -316,6 +316,7 @@ def test_make_sara_sets_dictionary_nu():
     assert solver.reg.nu == len(bases)
 
 
+@pytest.mark.slow
 def test_make_sara_colocates_band_state():
     """Hess and Psi share one BandWorkerPool: one worker process per band.
 
