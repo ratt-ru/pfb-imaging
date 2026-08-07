@@ -300,9 +300,13 @@ def restore(
             xg = -(nx // 2) + np.arange(nx)
             yg = -(ny // 2) + np.arange(ny)
             xxg, yyg = np.meshgrid(xg, yg, indexing="ij")
+            # one plane per correlation, matching the (ncorr, ny, nx) / (nband,
+            # ncorr, ny, nx) shapes save_fits maps onto the STOKES/FREQ axes.
+            # The BMAJ/BMIN/BPA *cards* stay corr 0 -- FITS has one beam per
+            # plane and dt2fits already uses Stokes I there.
+            # gaussian2d is x-major; transpose onto the (y, x) raster (D19)
             if "c" in outputs:
-                # gaussian2d is x-major; transpose onto the (y, x) raster (D19)
-                cpsf = gaussian2d(xxg, yyg, gaussparf_mfs[0], normalise=False).T[None]
+                cpsf = np.stack([gaussian2d(xxg, yyg, gaussparf_mfs[c], normalise=False).T for c in range(ncorr)])
                 write_fits(
                     cpsf,
                     f"{fits_oname}_cpsf_time{timeid}_mfs.fits",
@@ -312,7 +316,12 @@ def restore(
                     extra_hdr=drop_card,
                 )
             if "C" in outputs:
-                cube = np.stack([gaussian2d(xxg, yyg, gaussparf[b, 0], normalise=False).T[None] for b in range(nband)])
+                cube = np.stack(
+                    [
+                        np.stack([gaussian2d(xxg, yyg, gaussparf[b, c], normalise=False).T for c in range(ncorr)])
+                        for b in range(nband)
+                    ]
+                )
                 write_fits(
                     cube,
                     f"{fits_oname}_cpsf_time{timeid}.fits",

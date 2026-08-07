@@ -170,12 +170,18 @@ def _write_restore_dt(
     model_flux=2.0,
     with_psf=True,
     with_model=True,
+    ncorr=1,
 ):
     """Synthetic single-time .dt carrying exactly the band variables restore reads.
 
     PSF is stored un-normalised (shape x wsum) so PSF/WSUM is a peak-1 Gaussian
     and fitcleanbeam recovers ``gpars[b]``, matching what core/imager.py writes.
     RESIDUAL is likewise stored un-normalised.
+
+    ``ncorr > 1`` gives every correlation a *distinct* beam width (scaled by
+    ``1 + c``) so a product that silently collapses to correlation 0 is
+    detectable. Note deconv currently refuses multi-correlation trees, so this
+    path is reachable only by pointing restore at an existing variable.
     """
     from pfb_imaging.utils.misc import gaussian2d
 
@@ -184,22 +190,26 @@ def _write_restore_dt(
     yp = -(ny_psf // 2) + np.arange(ny_psf)
     xxp, yyp = np.meshgrid(xp, yp, indexing="ij")
 
+    def _gpar(b, c):
+        emaj, emin, pa = gpars[b]
+        return (emaj * (1 + c), emin * (1 + c), pa)
+
     for b in range(nband):
-        model = np.zeros((1, ny, nx))
-        model[0, ny // 2, nx // 2] = model_flux
+        model = np.zeros((ncorr, ny, nx))
+        model[:, ny // 2, nx // 2] = model_flux
         data_vars = {
-            "DIRTY": (("corr", "y", "x"), np.zeros((1, ny, nx))),
-            "RESIDUAL": (("corr", "y", "x"), np.full((1, ny, nx), 0.01) * wsums[b]),
-            "BEAM": (("corr", "y", "x"), np.full((1, ny, nx), beam_vals[b])),
-            "WSUM": (("corr",), np.array([wsums[b]])),
+            "DIRTY": (("corr", "y", "x"), np.zeros((ncorr, ny, nx))),
+            "RESIDUAL": (("corr", "y", "x"), np.full((ncorr, ny, nx), 0.01) * wsums[b]),
+            "BEAM": (("corr", "y", "x"), np.full((ncorr, ny, nx), beam_vals[b])),
+            "WSUM": (("corr",), np.full(ncorr, wsums[b])),
         }
         if with_model:
             data_vars["MODEL"] = (("corr", "y", "x"), model)
-        coords = {"corr": ["I"]}
+        coords = {"corr": ["I", "Q", "U", "V"][:ncorr]}
         if with_psf:
-            psf = gaussian2d(xxp, yyp, gpars[b], normalise=False).T[None]
+            psf = np.stack([gaussian2d(xxp, yyp, _gpar(b, c), normalise=False).T for c in range(ncorr)])
             data_vars["PSF"] = (("corr", "y_psf", "x_psf"), psf * wsums[b])
-            data_vars["PSFPARSN"] = (("corr", "bpar"), np.array([list(gpars[b])]))
+            data_vars["PSFPARSN"] = (("corr", "bpar"), np.array([list(_gpar(b, c)) for c in range(ncorr)]))
             coords["bpar"] = ["BMAJ", "BMIN", "BPA"]
         xr.Dataset(
             data_vars,
@@ -630,3 +640,31 @@ def test_restore_groundtruth(sky_truth, ms_name, tmp_path):
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
     node = next(n for n in dt.children if n.startswith("band"))
     assert {"IMAGE", "BIMAGE", "KIMAGE", "PSFPARSF"} <= set(dt[node].ds.data_vars)
+
+
+def test_restore_multi_corr_products_keep_every_correlation(tmp_path):
+    """Nothing may silently collapse to correlation 0.
+
+    save_fits maps (ncorr, ny, nx) onto STOKES for an MFS image and
+    (nband, ncorr, ny, nx) onto STOKES/FREQ for a cube. The clean-beam images
+    previously hard-coded correlation 0 and a singleton corr axis, so a
+    2-correlation tree lost half its planes.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store, ncorr=2)
+
+    _run_restore(tmp_path, outputs="kKcC")
+
+    d = tmp_path / "fits"
+    # restored MFS image and cube
+    assert afits.getdata(str(d / "rt_I_main_kimage_time0_mfs.fits")).shape == (2, 1, 64, 64)
+    assert afits.getdata(str(d / "rt_I_main_kimage_time0.fits")).shape == (2, 2, 64, 64)
+    # clean-beam MFS image and cube
+    cpsf_mfs = afits.getdata(str(d / "rt_I_main_cpsf_time0_mfs.fits"))
+    assert cpsf_mfs.shape == (2, 1, 64, 64)
+    cpsf_cube = afits.getdata(str(d / "rt_I_main_cpsf_time0.fits"))
+    assert cpsf_cube.shape == (2, 2, 64, 64)
+    # the fixture gives correlation 1 a beam twice as wide, so its Gaussian
+    # integrates to ~4x more -- identical planes would mean a collapse to corr 0
+    assert cpsf_mfs[1, 0].sum() > 2.0 * cpsf_mfs[0, 0].sum()
+    assert cpsf_cube[1, 0].sum() > 2.0 * cpsf_cube[0, 0].sum()

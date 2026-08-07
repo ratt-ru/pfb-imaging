@@ -1,7 +1,15 @@
 """Restoration helpers for the imager DataTree.
 
-Pure array functions: no tree I/O, no Ray, no FITS. ``core/restore.py`` owns
-reading the ``.dt``, writing products back and rendering FITS.
+Two groups, both free of tree I/O and of Ray -- ``core/restore.py`` owns reading
+the ``.dt`` and writing products back into it:
+
+* **Pure array functions** -- :func:`clean_beam`, :func:`lowest_resolution` and
+  :func:`restore_products` -- which take and return numpy arrays.
+* **FITS rendering helpers** -- :func:`beams_table` and :func:`write_fits` --
+  for the products the driver computes itself and so cannot source from a
+  stored band variable via :func:`~pfb_imaging.utils.fits.dt2fits`. Principally
+  the MFS restored images: the per-band restored images sit at different
+  resolutions, so their weighted sum is not the MFS restored image.
 
 Flux-scale conventions (wiki D22/D23): the band ``MODEL`` is intrinsic flux and
 the band ``RESIDUAL`` is apparent (once-attenuated) flux, so a restored image
