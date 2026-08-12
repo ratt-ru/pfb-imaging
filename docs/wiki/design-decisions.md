@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-07T13:53:02Z
-last_verified_commit: 78de0cf
+timestamp: 2026-08-12T14:10:00Z
+last_verified_commit: a07eb8a
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -904,14 +904,36 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **The forward CG moves from band-parallel in-worker to cube-level on the driver**
     (`HessTreeRay.cg` branches on the prior). The FFT work is unchanged and still happens
     in the workers; only `cg_maxit` round trips are added, against the `pd_maxit` the
-    backward step already pays per major cycle.
+    backward step already pays per major cycle. **Measured cost is not negligible:** on
+    `subset_withbeam_I.dt` (3 bands, 750², 3 partitions/band) a `max_gamma` power
+    iteration — one exact sweep plus one CG solve — went **28 s → 115 s (4.1×)**. The
+    exact sweep is common to both, so the whole difference is the CG round trips.
   - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so `λmax(M)`, `hess_norm` and the
     primal-dual step sizes are unchanged. Pinned by
     `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`.
   - `λmin(M)` drops by up to `gp_cap`, eroding the stable `γ`. The erosion is bounded by
     the `η` fraction of `v'Mv` along the maximising direction — D26 measured 21% for the
-    binding mode, giving `14.7 → 18.2` (24%) at `gp_cap=10`, not 10×. **Measure with
+    binding mode, predicting `14.7 → 18.2` (24%) at `gp_cap=10`, not 10×.
+    **Measured** on `subset_withbeam_I.dt` at `--eta 1e-3 --gp-length-scale 0.5
+    --gp-cap 10` (precision spectrum `[0.107, 1.000]`, i.e. the cap fully saturated):
+    `λmax(M⁻¹H_exact)` **14.48 → 17.15 (+18.5%)**, so `γ` must shrink 15.6%
+    (`0.124 → 0.105`). The bound held and was slightly pessimistic. `λmax(M)` was
+    **unchanged (1.654 → 1.667, +0.8%, within the power-method tolerance)** — the
+    empirical confirmation of the `prec.max()` normalisation. **Measure with
     `scripts/max_gamma.py` before raising the cap.**
+  - **The erosion lands in a mode the solver does not travel in, and the step it does
+    take gets longer.** The maximising eigenvector stayed pinned at the field edge but
+    moved to a much rougher spatial mode (high-frequency power fraction 0.49 → 0.83,
+    `η`'s share of `v'Mv` there 21.1% → 12.7%), while the Rayleigh quotients along the
+    stored `UPDATE` and `DIRTY` — the practically binding directions — were unchanged
+    (0.798 → 0.800, 0.819 → 0.820). Solving `u = M⁻¹·BRESIDUAL` both ways on the same rhs:
+    the update rotates **28.8°**, its norm grows **1.62×**, and per band the gain is
+    1.54 / 1.57 / **1.74** ascending in frequency — largest at the top of the band, which
+    is exactly the symptom #307 reported. Net of the 15.6% `γ` cut that is **≈1.37×
+    effective step overall and ≈1.47× in the top band.** The update's power moves into
+    the smoothest frequency eigenmode (41% → 59%) and out of the roughest (25% → 9%), so
+    genuinely rough spectra are approached *more slowly*; by D22 that is a rate effect,
+    never a bias.
   - The driver-side remainder is **negative** semi-definite (`C⁻¹ₙ`'s eigenvalues are in
     `(0, 1]`); the total operator is still symmetric positive definite, so CG applies, but
     nothing may assume that term alone is PSD.
@@ -937,7 +959,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/cli/deconv.py`; `tests/test_freq_precision.py`,
   `tests/test_hess_tree_ray.py`, `tests/test_deconv_hess_norm_cache.py`,
   `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`,
-  `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`.
+  `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
+  `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the measurements above, on
+  `subset_withbeam_I.dt`, `--eta 1e-3`, 11 vs 9 power iterations to `--tol 5e-3`).
 
 ## Known debt
 
