@@ -466,7 +466,10 @@ class BandWorkerPool:
         )
 
     def hess_dot(self, x):
-        out = np.zeros_like(x)
+        # empty, not zeros: every band is overwritten below, and zeroing costs a
+        # full pass over the cube -- 1.07 s at 8 bands x 8000^2, paid once per
+        # CG iteration on the band-coupled forward path
+        out = np.empty_like(x)
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
             out[b] = res[0]
         return out

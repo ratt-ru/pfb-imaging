@@ -7,6 +7,7 @@ from ducc0.fft import c2r, r2c
 from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
+from pfb_imaging.operators.gauss import eta_freq_mul
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -717,25 +718,25 @@ class HessTreeRay:
             if eta_mode is None:
                 # uniform eta: a per-band scalar, so no (nband, ny, nx) cube is
                 # fetched or held (that is ~1 GB of f8 at 4096^2 x 8 bands)
-                self._s = np.sqrt(etas)[:, None, None]
+                self._s = np.sqrt(etas)
             else:
                 self._s = np.sqrt(self._pool.get_eta(ny, nx))
-            # reused every dot() on the CG hot path; allocating two
-            # (nband, ny, nx) temporaries per application would dominate at
-            # production image sizes (matches HessianTree's FFT scratch)
-            self._buf = np.empty((self.nband, ny, nx))
-            self._buf2 = np.empty((self.nband, ny, nx))
+            # pixel chunks for the fused kernel: sets its fan-out without
+            # touching the process-wide numba thread count
+            self._nchunk = max(1, int(nthreads))
 
     def dot(self, x):
         out = self._pool.hess_dot(x)
         if self._dC is not None:
-            # BLAS matmul over the band axis rather than utils.misc.freqmul,
-            # which is njit(parallel=False); reshape of a C-contiguous buffer is
-            # a view, so out= writes through
-            np.multiply(x, self._s, out=self._buf)
-            np.matmul(self._dC, self._buf.reshape(self.nband, -1), out=self._buf2.reshape(self.nband, -1))
-            np.multiply(self._buf2, self._s, out=self._buf2)
-            out += self._buf2
+            # One fused numba pass instead of four numpy ones, and no scratch
+            # cubes: at 8 bands x 8000^2 the numpy form held 7.6 GB of them in
+            # the driver, on top of the ~27 GB the cube-level CG already needs.
+            # numpy's matmul is also the wrong tool here -- k=nband is tiny and
+            # n=npix huge, so it is memory-bound, yet OpenBLAS spreads it over
+            # every core and those threads busy-poll for ~100 ms afterwards,
+            # straight through the next ray.get while the workers need the
+            # cores. See gauss.eta_freq_mul for the measurements.
+            eta_freq_mul(out, self._dC, self._s, x, nchunk=self._nchunk)
         return out
 
     def hdot(self, x):

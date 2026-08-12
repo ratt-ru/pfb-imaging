@@ -35,14 +35,15 @@ A per-``dot`` breakdown says where one round trip goes: pure FFT compute (timed
 in a driver-local single-band ``HessianTree``), Ray dispatch latency (an
 argument-free round trip to every worker), and the coupling term on its own.
 
-**Read the driver's CPU column, not just its wall time.** On
-``subset_withbeam_I.dt`` (3 bands, 750^2, 7 threads/worker) the coupling term
-measures 1.9 ms with the driver otherwise idle but adds 63 ms to a ``dot`` in
-situ, because its matmul is spread over every core by BLAS and those threads
-fight the ``nband x nthreads`` worker FFT threads. Exporting
-``OPENBLAS_NUM_THREADS=1`` (before numpy is imported -- ``set_envs`` runs too
-late to change the pool) took the coupled ``dot`` from 1.89x to 0.97x of the
-uncoupled one. That is a property of the deconv driver too, not of this script.
+**Read the driver's CPU column, not just its wall time.** This is how the
+coupling term's original numpy form was caught: it measured 1.9 ms with the
+driver otherwise idle but added 63 ms to a ``dot`` in situ, because BLAS spread
+its matmul over every core and those threads then busy-polled for ~100 ms --
+straight through the next ``ray.get``, while the workers needed the cores. The
+term is now ``gauss.eta_freq_mul``, a fused numba kernel, and the forward solve
+went 20.0 s -> 12.7 s on this tree. The check below stays as a regression guard:
+a cheap-looking kernel that leaves threads spinning is more expensive than a
+slower one that does not, and only the CPU column shows it.
 
 The image size and the band count both matter and only one of them can be
 varied from a given ``.dt``, so a synthetic sweep of the driver-side coupling
@@ -81,6 +82,7 @@ from ducc0.misc import resize_thread_pool  # noqa: E402
 from pfb_imaging import init_ray, set_envs, setup_ray_worker  # noqa: E402
 from pfb_imaging.deconv.presets import _build_hess  # noqa: E402
 from pfb_imaging.operators.band_worker import BandWorkerPool  # noqa: E402
+from pfb_imaging.operators.gauss import eta_freq_mul  # noqa: E402
 from pfb_imaging.operators.hessian import ETA_MODES, HessianTree, freq_precision  # noqa: E402
 from pfb_imaging.opt.pcg import pcg_numba  # noqa: E402
 
@@ -264,17 +266,17 @@ class Counted:
 def coupling_apply(hess):
     """The driver-side prior remainder on its own, as ``HessTreeRay.dot`` applies it.
 
-    Reaches into the operator's own matrix and buffers rather than rebuilding
-    them, so this times the shipped arithmetic and not a lookalike.
+    Uses the operator's own matrix, profile and chunk count rather than
+    rebuilding them, so this times the shipped kernel and not a lookalike. The
+    accumulator is scratch owned by this script -- the operator no longer holds
+    any (that was the point of the fused kernel).
     """
-    dcinv, s, buf, buf2 = hess._dC, hess._s, hess._buf, hess._buf2
-    nband = hess.nband
+    dcinv, s, nchunk = hess._dC, hess._s, hess._nchunk
+    acc = np.zeros((hess.nband, hess.ny, hess.nx))
 
     def apply(x):
-        np.multiply(x, s, out=buf)
-        np.matmul(dcinv, buf.reshape(nband, -1), out=buf2.reshape(nband, -1))
-        np.multiply(buf2, s, out=buf2)
-        return buf2
+        acc.fill(0.0)
+        return eta_freq_mul(acc, dcinv, s, x, nchunk=nchunk)
 
     return apply
 
@@ -428,16 +430,16 @@ def main():
     print(f"\n  dot with the prior costs {ratio_dot:.2f}x one without it (+{fmt(extra)})")
     print(f"    the coupling arithmetic alone, driver otherwise idle:  {fmt(coupling)}")
     print(f"    the same term measured in situ (prior on minus off):   {fmt(extra)}")
-    if extra > 3 * coupling and dots["coupling_term"]["cores_busy"] > 2:
-        # measured on subset_withbeam_I.dt: 1.9 ms of arithmetic showing up as
-        # 63 ms per dot, gone (0.97x) with OPENBLAS_NUM_THREADS=1 in the env
+    # regression guard: a kernel that is cheap in isolation but expensive in
+    # situ is leaving threads spinning into the next ray.get. Thresholds are set
+    # above the few ms of run-to-run noise on the fan-out measurement.
+    if extra > 5 * coupling and extra > 0.2 * dots["dot_prior_off"]["median"]:
         print(
-            f"\n  ^ the gap is CONTENTION, not arithmetic: the (nband, nband) @ (nband, npix) matmul\n"
-            f"    runs on ~{dots['coupling_term']['cores_busy']:.0f} BLAS threads in the driver, which fight the\n"
-            f"    {nband} x {args.nthreads} worker FFT threads for cores. The matmul is bandwidth-bound and gains\n"
-            f"    almost nothing from those threads. Confirm by re-running with OPENBLAS_NUM_THREADS=1\n"
-            f"    exported in the environment (it must be set before numpy is imported, so the env var,\n"
-            f"    not set_envs, is what does it)."
+            f"\n  ^ the gap is CONTENTION, not arithmetic: the coupling kernel runs on\n"
+            f"    ~{dots['coupling_term']['cores_busy']:.0f} driver threads which are still spinning during the next\n"
+            f"    ray.get, when the {nband} x {args.nthreads} worker FFT threads need the cores. This is what the\n"
+            f"    numpy matmul used to do (~100 ms of OpenBLAS THREAD_TIMEOUT spin per 3 ms call).\n"
+            f"    Check what the coupling term dispatches to; numba's TBB pool does not do this."
         )
     print(f"\n  per dot the driver ships {2e3 * cube_gb:.1f} MB through the object store (out and back)")
 

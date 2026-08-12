@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-12T16:10:00Z
+timestamp: 2026-08-12T17:05:00Z
 last_verified_commit: a07eb8a
 ---
 
@@ -925,14 +925,39 @@ update it (and this page's `last_verified_commit`) in the same session.
        `λmin(M)` cannot degrade — the two knobs pull opposite ways on CG. Pinned by
        `test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature` and
        `test_prior_needs_more_cg_iterations_and_that_is_expected`;
-    3. *costlier dots* — **+8.4 s**, of which only ~0.5 s is the coupling arithmetic.
-       The rest is **BLAS contention**: the `(nband,nband) @ (nband,npix)` matmul takes
-       ~3 ms of wall but ~75 ms of driver CPU, i.e. it lands on ~22 BLAS threads that
-       fight the `nband × nthreads` worker FFT threads for cores. With
-       `OPENBLAS_NUM_THREADS=1` exported (BLAS sizes its pool at import, so `set_envs`
-       is too late) the coupled `dot` drops from **1.83× to 1.01×** of the uncoupled one
-       and the whole solve from **3.44× to 2.07×**. This applies to `pfb deconv` itself,
-       not just the profiler.
+    3. *costlier dots* — originally **+8.4 s**, of which only ~0.5 s was the coupling
+       arithmetic. The rest was **BLAS spin**: `k = nband` is tiny and `n = npix` huge,
+       so `np.matmul` is memory-bound, but OpenBLAS spread it over every core and those
+       threads then busy-polled for ~100 ms (`THREAD_TIMEOUT`) — straight through the
+       *next* `ray.get`, while the workers needed the cores. Proven by inserting a sleep
+       between the matmul and the round trip: driver CPU during the round trip decayed
+       1598 → 1499 → 1242 → 705 → 14 ms as the sleep went 0 → 5 → 20 → 50 → 100 ms.
+       **Fixed** by `gauss.eta_freq_mul` (below): the solve is now **6.3 s → 12.7 s
+       (2.03×)** and this term is +0.7 s.
+  - **The coupling term is `operators/gauss.eta_freq_mul`, a fused numba kernel**, not
+    numpy. Band-major inside a 2048-pixel tile: band-major makes the inner loop
+    unit-stride and vectorisable, the tile keeps a band slice of `out` in L2 across the
+    `(b,c)` loops, and without the tile the kernel re-streams `out` `nband` times and
+    loses to numpy above ~1024². At 8 bands × 4096² numpy takes 287 ms on 11.5 cores
+    against 83 ms on 15.6. It holds **no scratch cubes** — the numpy form's two
+    `(nband, ny, nx)` buffers were 7.6 GB at 8 × 8000². Numba's TBB pool does not spin
+    into the next round trip (measured to 22 threads). `rarg_numba_patterns.load_data`
+    was tried and rejected: gathering a pixel's band column into a tuple blocks
+    vectorisation, and the result neither vectorises nor parallelises.
+  - **At production size the binding cost is the cube-level CG's transfer and driver
+    memory, not the coupling term.** Measured at 8 × 8000² (a 3.81 GB f8 cube), on an
+    echo actor with the FFT removed: one cube-level round trip is **1.63 s** — `ray.put`
+    of the band slices is 0.28 s and dispatch 0.15 s, so the *return* path (worker
+    result → plasma → the driver's `out[b] = res[0]` memcpy) dominates. The worker's
+    read of a task argument *is* zero-copy (`writeable=False`, a plasma view), but the
+    round trip is not zero-copy end to end: there are three copies per band slice and
+    only that one is free. So a 150-iteration forward solve moves **1.12 TB** through
+    the object store and spends **~4 min in transfer alone** before any gridding. The
+    band-parallel path pays that once, not 150 times. Driver memory is the other half:
+    `pcg_numba` holds 7 cubes (`b, x, r, p, xp, rp, aopp`) = **26.7 GB** at that size,
+    against 3.3 GB per worker for the in-worker path. `BandWorkerPool.hess_dot`
+    allocates its output with `np.empty_like`, not `zeros_like` — every band is
+    overwritten, and zeroing cost 1.07 s per call at this size.
   - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so `λmax(M)`, `hess_norm` and the
     primal-dual step sizes are unchanged. Pinned by
     `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`.
@@ -993,7 +1018,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
   `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the γ measurements above, on
   `subset_withbeam_I.dt`, `--eta 1e-3`, 11 vs 9 power iterations to `--tol 5e-3`);
-  `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above).
+  `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above);
+  `src/pfb_imaging/operators/gauss.py` (`eta_freq_mul`), `tests/test_eta_freq_mul.py`.
 
 ## Known debt
 

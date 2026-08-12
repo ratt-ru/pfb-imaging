@@ -1,5 +1,4 @@
 import numpy as np
-from africanus.gps.kernels import exponential_squared as expsq
 from ducc0.fft import c2r, r2c
 from numba import njit, prange
 
@@ -169,6 +168,11 @@ class MockArray(object):
 
 class Gauss(object):
     def __init__(self, sigma0, nband, nx, ny, nthreads=8):
+        # deferred: heavy import (~0.36 s) on a rarely-taken path -- this class
+        # is the only user, while eta_freq_mul in this module is imported by
+        # operators.hessian on every deconv run
+        from africanus.gps.kernels import exponential_squared as expsq
+
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
