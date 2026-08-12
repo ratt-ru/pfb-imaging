@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-12T14:10:00Z
+timestamp: 2026-08-12T15:40:00Z
 last_verified_commit: a07eb8a
 ---
 
@@ -907,7 +907,23 @@ update it (and this page's `last_verified_commit`) in the same session.
     backward step already pays per major cycle. **Measured cost is not negligible:** on
     `subset_withbeam_I.dt` (3 bands, 750², 3 partitions/band) a `max_gamma` power
     iteration — one exact sweep plus one CG solve — went **28 s → 115 s (4.1×)**. The
-    exact sweep is common to both, so the whole difference is the CG round trips.
+    exact sweep is common to both, so the whole difference is in the forward solve.
+  - **That difference is three effects, not one**
+    (`scripts/profile_freq_correlated_hessian.py`, same tree, 7 threads/worker,
+    `--cg-tol 1e-3 --cg-maxit 150`; one forward solve **5.8 s → 20.0 s, 3.44×**):
+    1. *the fast path is lost* — **+1.4 s (1.25×)**, one round trip becomes 95, at ~38 ms
+       of Ray overhead each (a `pool.hess_dot` costs 70 ms against 31 ms of FFT work);
+    2. *conditioning* — **+3.8 s**, CG goes 95 → >150 iterations (it hits `cg_maxit`, so
+       the 3.44× is a **floor**). This is `λmin(M)` dropping by up to `gp_cap`, and it is
+       the one cost a per-`dot` benchmark cannot see;
+    3. *costlier dots* — **+8.4 s**, of which only ~0.5 s is the coupling arithmetic.
+       The rest is **BLAS contention**: the `(nband,nband) @ (nband,npix)` matmul takes
+       ~3 ms of wall but ~75 ms of driver CPU, i.e. it lands on ~22 BLAS threads that
+       fight the `nband × nthreads` worker FFT threads for cores. With
+       `OPENBLAS_NUM_THREADS=1` exported (BLAS sizes its pool at import, so `set_envs`
+       is too late) the coupled `dot` drops from **1.83× to 1.01×** of the uncoupled one
+       and the whole solve from **3.44× to 2.07×**. This applies to `pfb deconv` itself,
+       not just the profiler.
   - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so `λmax(M)`, `hess_norm` and the
     primal-dual step sizes are unchanged. Pinned by
     `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`.
@@ -960,8 +976,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_hess_tree_ray.py`, `tests/test_deconv_hess_norm_cache.py`,
   `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`,
   `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
-  `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the measurements above, on
-  `subset_withbeam_I.dt`, `--eta 1e-3`, 11 vs 9 power iterations to `--tol 5e-3`).
+  `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the γ measurements above, on
+  `subset_withbeam_I.dt`, `--eta 1e-3`, 11 vs 9 power iterations to `--tol 5e-3`);
+  `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above).
 
 ## Known debt
 
