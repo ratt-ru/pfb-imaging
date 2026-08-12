@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-12T15:40:00Z
+timestamp: 2026-08-12T16:10:00Z
 last_verified_commit: a07eb8a
 ---
 
@@ -915,7 +915,16 @@ update it (and this page's `last_verified_commit`) in the same session.
        of Ray overhead each (a `pool.hess_dot` costs 70 ms against 31 ms of FFT work);
     2. *conditioning* — **+3.8 s**, CG goes 95 → >150 iterations (it hits `cg_maxit`, so
        the 3.44× is a **floor**). This is `λmin(M)` dropping by up to `gp_cap`, and it is
-       the one cost a per-`dot` benchmark cannot see;
+       the one cost a per-`dot` benchmark cannot see. **Slower CG is the designed
+       behaviour, not a bug** — the prior only ever *removes* curvature from `M` (the
+       roughest mode is anchored at `η` and smoother ones are relaxed toward `η/cap`), so
+       `cond(M)` rises by up to `gp_cap` and CG needs ~`√gp_cap` more iterations. It
+       shows up only where the data term has no curvature of its own: on a fully sampled
+       toy the same prior costs 20 → 22 iterations, on one with unsampled uv cells
+       72 → 240. Note this is the **opposite** of `eta_profile`, which is normalised so
+       `λmin(M)` cannot degrade — the two knobs pull opposite ways on CG. Pinned by
+       `test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature` and
+       `test_prior_needs_more_cg_iterations_and_that_is_expected`;
     3. *costlier dots* — **+8.4 s**, of which only ~0.5 s is the coupling arithmetic.
        The rest is **BLAS contention**: the `(nband,nband) @ (nband,npix)` matmul takes
        ~3 ms of wall but ~75 ms of driver CPU, i.e. it lands on ~22 BLAS threads that
@@ -959,7 +968,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **The fixed-point test cannot guard the prior's sign.** Flipping `dot`'s `+=` to `-=`
     yields `M_data + D + D^½(I − C⁻¹ₙ)D^½`, still SPD, so D22 says it reaches the same
     fixed point — and it does (verified). The prior term's value is pinned separately
-    against an explicit dense formula by `test_prior_term_matches_the_dense_congruence`.
+    against an explicit dense formula by `test_prior_term_matches_the_dense_congruence`,
+    and structurally by `test_prior_matches_the_kronecker_spectrum`: with one partition
+    shared by every band, `M_data = I⊗A` and `P = ηC⁻¹ₙ⊗I` commute, so the whole spectrum
+    must be `α_k + η·p_j`. That closed form catches the sign flip, a one-sided congruence
+    (dropping either `D^½`), a missing `−I`, and any band/pixel axis mix-up in the
+    `reshape(nband, -1)` — all four verified by mutation.
   - `hess_norm` is now cache-keyed on the M-defining options
     (`eta`, `eta_mode`, `eta_cap`, `gp_length_scale`, `gp_cap`), fixing a **pre-existing
     bug**: changing `--eta` between runs on the same `.dt` silently reused a stale norm.
@@ -973,7 +987,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `freq_precision`, `HessTreeRay`); `src/pfb_imaging/deconv/presets.py`;
   `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
   `src/pfb_imaging/cli/deconv.py`; `tests/test_freq_precision.py`,
-  `tests/test_hess_tree_ray.py`, `tests/test_deconv_hess_norm_cache.py`,
+  `tests/test_hess_tree_ray.py` (including the Kronecker-spectrum, band-vs-pixel coupling,
+  spatially-varying-eta congruence and CG-iteration guards), `tests/test_deconv_hess_norm_cache.py`,
   `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`,
   `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
   `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the γ measurements above, on

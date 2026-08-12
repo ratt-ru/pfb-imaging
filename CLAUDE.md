@@ -64,10 +64,10 @@ uv run ruff format . && uv run ruff check . --fix
 ```
 
 **Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
-`uv run pytest tests/` runs 593 tests in ~125 s. The 23 deselected tests are the end-to-end
+`uv run pytest tests/` runs 595 tests in ~127 s. The 27 deselected tests are the end-to-end
 pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci drivers) plus a few whose cost is
 Ray actor startup or a dense operator build (the `_build_hess` preset-wiring pair, the
-frequency-prior fixed-point guard). They are left to CI, which overrides with `-m ""`. Use
+frequency-prior fixed-point guard and the frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
 `-m ""` locally before finishing a branch — not per-task during development. A test earns the
 `slow` marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
 for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.
