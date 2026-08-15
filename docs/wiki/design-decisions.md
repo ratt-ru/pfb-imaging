@@ -1051,12 +1051,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Consequences:** the support width no longer carries correctness for the deconvolution
   path — the remaining `gaussian2d` callers only ever *multiply*, where a 3.7e-6 truncation
   step is harmless — but it is kept wide for spimple parity and because nothing gains from
-  narrowing it. **`restore` can now raise where it used to return garbage:**
-  `restoration.lowest_resolution` takes the max of each axis but the **mean** of the
-  position angles, so a band whose PA differs from the mean can give an indefinite
-  `Σf − Σi` even though both its axes grew. That is a real defect the old code hid by
-  silently amplifying instead of refusing; if it fires in practice the fix belongs in
-  `lowest_resolution` (a PA-aware envelope), not in loosening the check. `nsigma` survives
+  narrowing it. The new check immediately exposed that `restoration.lowest_resolution`
+  had been producing invalid targets all along — rewritten in D32. `nsigma` survives
   in `fitcleanbeam`, where it does mean standard deviations.
 - **Source:** issue #312; landmanbester/spimple#50 and `landmanbester/spimple@27a4bc8`
   (where the same regression was found first); the `gaussian2d` regression entered in
@@ -1066,6 +1062,50 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_convolve2gaussres.py::test_convolve2gaussres_preserves_position_when_deconvolving`,
   `…_conserves_flux_through_a_resolution_change`, `…_two_step_matches_direct_across_srf`,
   `…_refuses_to_sharpen`.
+
+### D32 — The common restoring resolution is a Loewner envelope, not a max of axes
+
+- **Context:** `--gausspar 0 0 0` homogenises every band to a common resolution — the
+  input a spectral-index fit needs (spimple). `restoration.lowest_resolution` built that
+  target as `nanmax(emaj)`, `nanmax(emin)`, `nanmean(pa)`. D31's semi-definiteness check
+  turned what had been silent corruption into a visible failure, and it fires on real
+  data: of six representative band sets, only the one with perfectly aligned position
+  angles produced a valid target.
+- **Decision:** the target is the smallest ellipse that dominates every input in the
+  **Loewner order** (`Σf − Σj ⪰ 0` for every input `j`), which is the exact condition for
+  `convolve2gaussres` to be a convolution from all of them. Candidate shapes are formed
+  from the max axes at each of several orientations (the circular mean of the input PAs,
+  plus each input's own PA) crossed with five axis ratios from the widest input's to
+  circular; each is inflated by the smallest scalar that makes it dominate — the largest
+  generalised eigenvalue of the pencil `(Σj, shape)`, closed form for 2×2 — and the
+  smallest resulting ellipse wins. `resolution_deficit` exposes the same quantity so the
+  explicit `--gausspar` branch can fail early with the viable floor instead of failing
+  inside an FFT. The MFS native beam is now part of the input set.
+- **Rationale:** "at least as wide as every input" is a statement about covariances, not
+  about the axes separately — a rotated ellipse pokes out diagonally, so matching axis by
+  axis is necessary but **not sufficient**. (Concretely: eigenvalues 4 and 1 at 45° project
+  to 2.5 on both coordinate axes, and `2.5·I` does not dominate it.) Three separate
+  defects were in that one line. (1) Rotation, above. (2) `nanmean` on position angles,
+  which are defined mod π: PAs of 0.05 and π − 0.05 are near-identical orientations that
+  average to π/2, orthogonal to both — the circular mean on the doubled angle fixes it.
+  (3) The MFS beam is `fitcleanbeam(Σ_b PSF_b)`, a fit to the summed PSF and not an
+  average of the band fits (D29), so nothing bounds it by the per-band envelope, yet it is
+  reconvolved to the same target. The candidate sweep matters because neither extreme is
+  right alone: with aligned PAs the max-axis ellipse is exactly optimal (bit-identical to
+  the old answer, area ratio 1.000), while over a ~1.5 rad PA spread a *circular* beam is
+  tighter than any scaling of the elongated one (2.00× the old area rather than 2.79×).
+- **Consequences:** with aligned PAs nothing changes. Otherwise the restoring beam grows —
+  measured at 1.02× to 2.0× in area over the six cases — which is a real resolution cost
+  and the honest price of a target every band can actually reach. A `1 + 1e-6` margin on
+  the scale keeps the binding input inside D31's tolerance. The search is
+  `(n + 1) × 5 × n` 2×2 eigenproblems per correlation, microseconds. `--gausspar` with an
+  impossible value now raises before any FFT, naming the shortfall factor and the floor.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`lowest_resolution`,
+  `resolution_deficit`, `_mean_pa`); `src/pfb_imaging/core/restore.py`;
+  `tests/test_restore.py::test_lowest_resolution_dominates_every_input` (the six cases),
+  `…_averages_position_angles_modulo_pi`, `…_takes_max_axes_when_the_angles_agree`,
+  `test_restore_zero_gausspar_handles_bands_at_different_angles`,
+  `test_restore_gausspar_sharper_than_the_data_raises`.
 
 ## Known debt
 
