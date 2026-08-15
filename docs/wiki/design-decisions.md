@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-12T17:05:00Z
-last_verified_commit: a07eb8a
+timestamp: 2026-08-15T12:00:00Z
+last_verified_commit: eb1bc6d
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1021,6 +1021,52 @@ update it (and this page's `last_verified_commit`) in the same session.
   `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above);
   `src/pfb_imaging/operators/gauss.py` (`eta_freq_mul`), `tests/test_eta_freq_mul.py`.
 
+### D31 — Resolution changes use the closed-form Gaussian transform ratio, never a sampled division
+
+- **Context:** `convolve2gaussres` took an image from resolution `gausspari` to `gaussparf`
+  by FFT-ing both sampled `gaussian2d` kernels and dividing (`convkernhat[msk] =
+  gausskernhat[msk] / thiskernhat[msk]`, masked only by `> 0.0`). Issue #312 found this
+  displacing sources: a delta at (170, 260) restored to (146, 260), with −0.81 of peak in
+  ringing. It reaches users through `restore_products` whenever a restoring resolution is
+  asked for — `pfb restore --gausspar` and the lowest-resolution mode.
+- **Decision:** the ratio of two Gaussian transforms is itself a Gaussian, so write it
+  down: `Kf(k)/Ki(k) = sqrt(|Σf|/|Σi|)·exp(−2π²·kᵀ(Σf−Σi)k)`, evaluated directly on the
+  padded rfft grid (`gauss_cov`, `gauss_ratio_hat`). `gaussian2d`'s support returns to
+  `nfwhm` major-axis FWHMs, and the parameter is renamed from `nsigma` to say so. A
+  non-positive-semi-definite `Σf − Σi` now raises `ValueError` instead of being applied.
+  The `gausspari=None` path (a plain convolution by the sampled kernel) is untouched.
+- **Rationale:** there were two independent error sources and the support width only fixes
+  one. (1) Truncating at 5 σ leaves a step of `exp(−12.5) = 3.7e-6` of peak, whose spectral
+  ripple dwarfs the transform's own ~1e-14 floor near Nyquist; at 5 FWHM (11.8 σ) the step
+  is ~4e-31 and the ripple is gone. This is the half issue #312 diagnosed, and the half
+  spimple fixed (`landmanbester/spimple@27a4bc8`). (2) A *sampled* Gaussian's DFT sinks
+  into FFT round-off before Nyquist regardless of support, so past that point the quotient
+  is noise over noise — and unbounded, since pfb's mask is `> 0.0`, not spimple's `> 1e-10`.
+  Source (2) gets *worse* as the beam is better sampled: measured on a band-limited sky at
+  `--super-resolution-factor` 2/3/4 with a matched 2·srf px beam, the two-step invariant
+  (`sky→gi→gf` vs `sky→gf`) broke by 4.0e-10, 1.8e-3 and 1.4e-4 of peak. The closed-form
+  ratio has neither problem (8.1e-10 at srf 2, ~6e-16 above — a kernel-aliasing floor),
+  conserves flux exactly (the sampled division was off by +6% at a 6 px beam and −25% at
+  12 px), and costs two FFTs less per plane.
+- **Consequences:** the support width no longer carries correctness for the deconvolution
+  path — the remaining `gaussian2d` callers only ever *multiply*, where a 3.7e-6 truncation
+  step is harmless — but it is kept wide for spimple parity and because nothing gains from
+  narrowing it. **`restore` can now raise where it used to return garbage:**
+  `restoration.lowest_resolution` takes the max of each axis but the **mean** of the
+  position angles, so a band whose PA differs from the mean can give an indefinite
+  `Σf − Σi` even though both its axes grew. That is a real defect the old code hid by
+  silently amplifying instead of refusing; if it fires in practice the fix belongs in
+  `lowest_resolution` (a PA-aware envelope), not in loosening the check. `nsigma` survives
+  in `fitcleanbeam`, where it does mean standard deviations.
+- **Source:** issue #312; landmanbester/spimple#50 and `landmanbester/spimple@27a4bc8`
+  (where the same regression was found first); the `gaussian2d` regression entered in
+  `1bde45d` (#218), which fixed a genuine width bug and narrowed the support in passing;
+  `src/pfb_imaging/utils/misc.py` (`gauss_cov`, `gauss_ratio_hat`, `convolve2gaussres`,
+  `gaussian2d`); `src/pfb_imaging/utils/restoration.py`;
+  `tests/test_convolve2gaussres.py::test_convolve2gaussres_preserves_position_when_deconvolving`,
+  `…_conserves_flux_through_a_resolution_change`, `…_two_step_matches_direct_across_srf`,
+  `…_refuses_to_sharpen`.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -1095,6 +1141,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
   `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
   elementwise to the (ra, dec) pair is safe.
+- **Never divide two sampled kernels' FFTs.** A sampled Gaussian's DFT sinks into
+  round-off before Nyquist, so the quotient is noise over noise there — and the
+  error grows as the kernel is *better* sampled, which is the opposite of the
+  intuition. When the quotient has a closed form (Gaussians do), evaluate it; see
+  D31. The same reasoning applies to any "divide by the transform of a model
+  kernel" step, and widening the kernel's support only fixes the truncation half.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests

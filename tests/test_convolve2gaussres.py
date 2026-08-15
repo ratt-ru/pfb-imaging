@@ -331,3 +331,149 @@ def test_convolve2gaussres_gausspari_shared_triple_matches_per_plane():
     per_plane = convolve2gaussres(img, xx, yy, gaussparf, nthreads=1, pfrac=0.2, gausspari=gausspari_per_plane)
 
     np.testing.assert_allclose(shared, per_plane, rtol=0, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Resolution changes (gausspari given). Issue #312: these all passed vacuously
+# before, because every test above uses gausspari None, equal to gaussparf, or
+# a smooth centred Gaussian whose spectrum dies exactly where the old sampled
+# division went wrong.
+# ---------------------------------------------------------------------------
+
+
+@pmp("npix", [128, 512])
+def test_convolve2gaussres_preserves_position_when_deconvolving(npix):
+    """A delta must land where it started after a resolution change.
+
+    The old sampled division put it elsewhere entirely -- at npix=512 a source
+    at (170, 260) came out at (146, 260), displaced by twice its offset from
+    the image centre, with -0.81 of peak in ringing (issue #312).
+    """
+    y0, x0 = npix // 3, npix // 2 + 4
+    image = np.zeros((1, npix, npix))
+    image[0, y0, x0] = 1.0
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+
+    out = convolve2gaussres(
+        image,
+        xx,
+        yy,
+        np.array([[6.3, 4.2, 0.0]]),
+        nthreads=1,
+        gausspari=np.array([[6.0, 4.0, 0.0]]),
+        norm_kernel=False,
+        yx_order=True,
+    )[0]
+
+    assert np.unravel_index(np.argmax(out), out.shape) == (y0, x0)
+    # a small broadening of a delta is a near-identity: no deep negatives
+    assert out.min() > -0.05 * out.max()
+
+
+@pmp("norm_kernel", [False, True])
+def test_convolve2gaussres_conserves_flux_through_a_resolution_change(norm_kernel):
+    """Total flux scales by the ratio of the kernels' volumes, exactly.
+
+    With norm_kernel both kernels carry unit volume, so the gain is 1; without
+    it the gain is (emaj_f * emin_f) / (emaj_i * emin_i). The old sampled
+    division missed this by +6 percent at a 6 px beam and -25 percent at 12 px.
+    """
+    npix = 256
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    image = np.zeros((1, npix, npix))
+    image[0, npix // 3, npix // 2 + 4] = 1.0
+    gausspari = np.array([5.0, 3.0, 0.4])
+    gaussparf = np.array([11.0, 7.0, 0.4])
+
+    out = convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=gausspari, norm_kernel=norm_kernel)
+
+    expected = 1.0 if norm_kernel else (gaussparf[0] * gaussparf[1]) / (gausspari[0] * gausspari[1])
+    assert out.sum() == pytest.approx(expected, rel=1e-6)
+
+
+@pmp("srf", [2.0, 3.0, 4.0])
+def test_convolve2gaussres_two_step_matches_direct_across_srf(srf):
+    """Going to gf via gi must equal going to gf directly.
+
+    The beam is 2 * srf pixels across and the sky is band limited to the uv
+    coverage that implies, so this is the invariant a restore run actually
+    depends on. The old sampled division broke it by 1.8e-3 and 1.4e-4 of peak
+    at srf 3 and 4, where the beam is well enough sampled that its transform
+    sinks into round-off before Nyquist and the quotient is noise over noise.
+    srf 2 is the one case it survived (4.0e-10): a 4 px FWHM aliases enough
+    that the transform never gets that small. The closed-form ratio is exact
+    at every srf, leaving only that aliasing floor (8.1e-10 at srf 2, 6e-16
+    above it).
+
+    The sky is windowed away from the frame edge and only the interior is
+    compared: the two-step path pads and unpads twice, and the flux that spills
+    into the pad is dropped at the first unpad. That edge artefact is real but
+    is not what this test is about, and it swamps everything at ~1e-1.
+    """
+    npix = 256
+    rng = np.random.default_rng(42)
+    # band limited to |k| <= 1 / (2 * srf) cycles/pixel, then tapered
+    k = np.fft.fftfreq(npix)
+    kr = np.sqrt(k[:, None] ** 2 + k[None, :] ** 2)
+    hat = np.fft.fft2(rng.standard_normal((npix, npix)))
+    hat[kr > 1.0 / (2 * srf)] = 0.0
+    sky = np.real(np.fft.ifft2(hat))
+    coord = -(npix // 2) + np.arange(npix)
+    radius = np.sqrt(coord[:, None] ** 2 + coord[None, :] ** 2)
+    sky = sky * np.exp(-0.5 * (radius / (npix / 8.0)) ** 2)
+    sky = (sky / np.abs(sky).max())[None]
+
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    fwhm = 2 * srf
+    gausspari = np.array([fwhm, 0.7 * fwhm, 0.0])
+    gaussparf = np.array([2 * fwhm, 1.4 * fwhm, 0.0])
+
+    im_i = convolve2gaussres(sky, xx, yy, gausspari, nthreads=1)
+    two_step = convolve2gaussres(im_i, xx, yy, gaussparf, nthreads=1, gausspari=gausspari)
+    direct = convolve2gaussres(sky, xx, yy, gaussparf, nthreads=1)
+
+    interior = slice(npix // 4, 3 * npix // 4)
+    err = np.abs(two_step[:, interior, interior] - direct[:, interior, interior]).max()
+    assert err < 1e-8 * np.abs(direct).max()
+
+
+@pmp(
+    "gausspari, gaussparf",
+    [
+        ((6.0, 4.0, 0.0), (5.0, 3.0, 0.0)),  # sharper on both axes
+        ((6.0, 4.0, 0.0), (7.0, 3.5, 0.0)),  # minor axis shrinks
+        ((10.0, 5.0, 0.0), (10.0, 5.0, 0.3)),  # same axes, rotated
+    ],
+)
+def test_convolve2gaussres_refuses_to_sharpen(gausspari, gaussparf):
+    """Sharpening is a deconvolution; say so instead of amplifying noise.
+
+    The rotated case is the one that catches callers by surprise:
+    restoration.lowest_resolution takes the max of each axis but the *mean* of
+    the position angles, so a band whose PA differs from the mean can land here
+    even though both its axes grew.
+    """
+    npix = 64
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    image = np.zeros((1, npix, npix))
+    image[0, npix // 2, npix // 2] = 1.0
+
+    with pytest.raises(ValueError, match="deconvolution"):
+        convolve2gaussres(image, xx, yy, np.array(gaussparf), nthreads=1, gausspari=np.array(gausspari))
+
+
+def test_convolve2gaussres_allows_an_unchanged_resolution():
+    """gaussparf == gausspari must survive the positive semi-definite check."""
+    npix = 64
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    image = np.zeros((1, npix, npix))
+    image[0, npix // 2 + 3, npix // 2 - 2] = 1.0
+    gausspar = np.array([6.0, 4.0, 0.7])
+
+    out = convolve2gaussres(image, xx, yy, gausspar, nthreads=1, gausspari=gausspar)
+
+    np.testing.assert_allclose(out, image, rtol=0, atol=1e-10)
