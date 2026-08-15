@@ -19,8 +19,21 @@ law, and a per-pixel fit reads that as spectral index: coherent, spatially
 periodic ripples, strongest where the residual carries a large fraction of the
 flux (the diffuse emission), weakest on the bright deconvolved structure.
 
-Six diagnostics, in decreasing order of how decisive they are:
+Seven diagnostics, in decreasing order of how decisive they are:
 
+0. **The uv plane**, which ``pfb restore --outputs F`` already writes as FITS.
+   Homogenisation is a pure multiplication there, so the whole question can be
+   settled in one place.  The sampling function ``FFT(PSF/WSUM)`` gives the
+   support and the hole, both of which scale as ``nu`` -- so no two bands carry
+   the same set of angular scales, neither the finest nor the coarsest, and the
+   coarsest end corrupts extended emission whatever the sidelobes do.  Then the
+   consistency ratio ``E_b = FFT(PSF_b) T_b / Ghat``, weighted by where the
+   residual actually has power, says how far the Gaussian reconvolution ``T_b``
+   is from scaling the residual correctly: ``E_b == 1`` iff band b's dirty beam
+   really is the Gaussian ``PSFPARSN_b``.  Its trend across bands is a uniform
+   spurious alpha; its scatter is the scale-dependent part that ripples.  A
+   self-check feeds the machinery exactly Gaussian PSFs and asserts ``E == 1``,
+   so a convention error cannot masquerade as a detection.
 1. **Sidelobes survive homogenisation.**  Convolve each band's stored PSF from
    ``PSFPARSN_b`` to ``G`` -- exactly what restore does to the residual -- and
    compare bands.  The cores must agree by construction; if the sidelobes do
@@ -347,6 +360,147 @@ def psf_diagnostics(dt, keep, freqs, wsums, psfparsn, gcommon, psf_size, nthread
         "psf_corr_raw": np.array(corr_raw),
         "psf_corr_scaled": np.array(corr_scaled),
         "beam_volume_ratio": np.array(eps),
+    }, psfs
+
+
+def uv_diagnostics(resids, psfs, psfparsn, gcommon, freqs, cell_rad, say):
+    """Diagnostic 0: the uv plane, which ``pfb restore --outputs F`` already writes.
+
+    ``FFT(RESIDUAL_b / WSUM_b)`` is the gridded residual visibility and
+    ``FFT(PSF_b / WSUM_b)`` is the sampling function itself.  Homogenisation is a
+    pure multiplication in this plane, so the whole question can be settled here.
+
+    Support and hole come from the PSF, which is the sampling function exactly
+    and carries no noise; the residual is used only to weight *where* in the uv
+    plane the errors actually matter.  Both edges scale as ``nu``: the finest
+    structure each band carries shrinks with frequency, and so does the coarsest,
+    which corrupts extended emission independently of any sidelobe argument.
+
+    The decisive quantity is the consistency ratio::
+
+        E_b(u) = Phat_b(u) T_b(u) / Ghat(u),
+        T_b(u) = sqrt(|S_G|/|S_b|) exp(-2 pi^2 u^T (S_G - S_b) u)
+
+    ``T_b`` is the Gaussian reconvolution restore applies.  If band b's dirty
+    beam really were the Gaussian ``PSFPARSN_b``, then ``Phat_b T_b`` would equal
+    the common clean beam ``Ghat`` and ``E_b`` would be 1 at every u, for every
+    band.  Wherever ``E_b`` departs from 1 the residual is being mis-scaled, and
+    wherever ``E_b`` differs *between bands* that mis-scaling is frequency
+    dependent -- which is precisely a spurious spectral index.
+    """
+    from pfb_imaging.utils.misc import gauss_cov
+
+    nband, ny, nx = resids.shape
+    win = np.hanning(ny)[:, None] * np.hanning(nx)[None, :]
+    rhat = np.stack([np.abs(np.fft.fftshift(np.fft.fft2(r * win))) for r in resids])
+    phat = np.stack([np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(p)))) for p in psfs])
+
+    def transfer(shape, cov_i, cov_f):
+        n0, n1 = shape
+        ky = np.fft.fftshift(np.fft.fftfreq(n0))[:, None] * np.ones((1, n1))
+        kx = np.ones((n0, 1)) * np.fft.fftshift(np.fft.fftfreq(n1))[None, :]
+        d = cov_f - cov_i
+        amp = np.sqrt(np.linalg.det(cov_f) / np.linalg.det(cov_i))
+        # gauss_cov indexes (x, y) but these arrays are (y, x)-ordered (wiki D19),
+        # so axis 0 pairs with d[1, 1] and axis 1 with d[0, 0]. Transposing the
+        # covariance leaves the cross term alone.
+        return amp * np.exp(-2 * np.pi**2 * (d[1, 1] * ky**2 + 2 * d[0, 1] * kx * ky + d[0, 0] * kx**2))
+
+    cov_g = gauss_cov(gcommon)
+    npy, npx = psfs.shape[1:]
+    # The target every band should reach. It must be built with the SAME
+    # convention as phat -- the FFT of the peak-1 sampled beam -- so that a band
+    # whose dirty beam really is the Gaussian PSFPARSN_b gives E_b == 1 exactly:
+    # phat_b = Ghat_b there, and Ghat_b * (Ghat / Ghat_b) = Ghat.
+    gxx, gyy = grids(npy, npx)
+    gkern = gaussian2d(gxx, gyy, gcommon, normalise=False).T
+    ghat = np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(gkern))))
+    gcut = 1e-6 * ghat.max()
+
+    # Self-check: feed the machinery PSFs that really ARE the Gaussians PSFPARSN
+    # claims. E must come back exactly 1, for every band and every position
+    # angle. Two convention bugs were caught this way -- a (y, x) vs (x, y)
+    # transpose in the transfer function, and zeros averaged in where the mask
+    # bites -- both of which faked a band-dependent signal. Cheap, so it runs.
+    gx, gy = grids(npy, npx)
+    fake = np.stack([gaussian2d(gx, gy, p, normalise=False).T for p in psfparsn])
+    fhat = np.stack([np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(p)))) for p in fake])
+    checks = []
+    for b in range(nband):
+        tb = transfer((npy, npx), gauss_cov(psfparsn[b]), cov_g)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            e = np.where(ghat > gcut, fhat[b] * tb / np.maximum(ghat, 1e-30), np.nan)
+        checks.append(float(np.nanmax(np.abs(radial_profile(e, nbins=140)[1] - 1.0))))
+    worst = max(checks)
+    if worst > 1e-3:
+        say(f"  SELF-CHECK FAILED: E is {worst:.3e} from 1 for exactly Gaussian PSFs.")
+        say("  The numbers below are measuring a convention error, not the data. Stop here.")
+    else:
+        say(f"  (self-check: E = 1 to {worst:.1e} when the PSFs are exactly Gaussian)")
+
+    say("DIAGNOSTIC 0 -- the uv plane (this is what restore --outputs F writes).")
+    say("  Support and hole are read off the sampling function FFT(PSF/WSUM); the residual")
+    say("  FFT weights where those errors matter. u is in cycles/pixel.")
+    say(f"{'band':>5} {'u_max':>9} {'u_max*nu0/nu':>13} {'u_min':>9} {'u_min*nu0/nu':>13} {'max scale/px':>13}")
+    umax, umin = [], []
+    for b in range(nband):
+        r, prof = radial_profile(phat[b], nbins=140)
+        prof = np.nan_to_num(prof)
+        u = r / npy
+        floor = np.median(prof[int(0.9 * len(prof)) :])
+        lvl = floor + 0.05 * (prof.max() - floor)
+        above = np.where(prof > lvl)[0]
+        umax.append(float(u[above[-1]]) if len(above) else np.nan)
+        umin.append(float(u[above[0]]) if len(above) else np.nan)
+        say(
+            f"{b:5d} {umax[-1]:9.5f} {umax[-1] * freqs[0] / freqs[b]:13.5f} {umin[-1]:9.5f} "
+            f"{umin[-1] * freqs[0] / freqs[b]:13.5f} {1 / max(umin[-1], 1e-9):13.1f}"
+        )
+    say("  Columns 3 and 5 rescale columns 2 and 4 back to band 0. Flat columns mean the uv")
+    say("  support really does scale as nu, so no two bands carry the same set of angular")
+    say("  scales -- neither the finest (u_max) nor the coarsest (u_min).")
+    if np.allclose(umin, umin[0]) and umin[0] <= 2.0 / npy:
+        say("  NOTE: u_min sits in the first radial bin for every band, so the short-baseline")
+        say("  hole is unresolved at this cutout size and the u_min columns say nothing.")
+    say()
+    say("  Consistency ratio E_b = FFT(PSF_b) * T_b / Ghat, weighted by residual power.")
+    say("  E_b == 1 everywhere would mean the Gaussian reconvolution scales the residual")
+    say("  exactly right. Departures are mis-scaling; band-to-band differences are a")
+    say("  spurious spectral index.")
+    say(f"{'band':>5} {'<E_b>':>10} {'rms(E_b - 1)':>14} {'kept vs band 0':>16}")
+    ebar, edev, eprof = [], [], []
+    for b in range(nband):
+        tb = transfer((npy, npx), gauss_cov(psfparsn[b]), cov_g)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            e = np.where(ghat > gcut, phat[b] * tb / np.maximum(ghat, 1e-30), np.nan)
+        # weight by where the residual has power, resampled onto the psf grid
+        w = np.nan_to_num(radial_profile(rhat[b] ** 2, nbins=140)[1])
+        # NOT nan_to_num: radial_profile skips NaN, but zeros would be averaged in
+        # and drag every bin straddling the cut towards zero
+        er, ep = radial_profile(e, nbins=140)
+        eprof.append(ep)
+        ok = np.isfinite(ep) & (w > 0)
+        m = float(np.sum(ep[ok] * w[ok]) / max(np.sum(w[ok]), 1e-30)) if ok.any() else np.nan
+        d = float(np.sqrt(np.sum((ep[ok] - 1) ** 2 * w[ok]) / max(np.sum(w[ok]), 1e-30))) if ok.any() else np.nan
+        ebar.append(m)
+        edev.append(d)
+        say(f"{b:5d} {m:10.4f} {d:14.4f} {m / max(ebar[0], 1e-30):16.4f}")
+    trend = np.log(max(ebar[-1], 1e-12) / max(ebar[0], 1e-12)) / np.log(freqs[-1] / freqs[0])
+    say(f"  band-to-band trend in <E_b> implies a spurious alpha of {trend:+.4f}, uniform over")
+    say("  every pixel the residual touches. rms(E_b - 1) is the scale-dependent part on top")
+    say("  of that -- the piece that varies across the image and shows up as ripples.")
+    say()
+
+    return {
+        "uv_u": np.array(radial_profile(phat[0], nbins=140)[0]) / npy,
+        "uv_sampling_amp": np.stack([np.nan_to_num(radial_profile(p, nbins=140)[1]) for p in phat]),
+        "uv_residual_amp": np.stack([np.nan_to_num(radial_profile(r, nbins=140)[1]) for r in rhat]),
+        "uv_consistency": np.stack(eprof),
+        "uv_umax": np.array(umax),
+        "uv_umin": np.array(umin),
+        "uv_ebar": np.array(ebar),
+        "uv_edev": np.array(edev),
+        "uv_cell_rad": np.array(cell_rad),
     }
 
 
@@ -429,22 +583,23 @@ def main():
         say(f"  (--size {args.size} was clamped to the image)")
     say()
 
-    bundle = psf_diagnostics(dt, keep, freqs, wsums, psfparsn, gcommon, args.psf_size, args.nthreads, say)
+    bundle, psfs = psf_diagnostics(dt, keep, freqs, wsums, psfparsn, gcommon, args.psf_size, args.nthreads, say)
 
     # ---- rebuild the restored image, term by term -------------------------
     say("Rebuilding the restored cutout term by term (this repeats what restore did).")
     sel = dict(corr=0, y=slice(y0, y1), x=slice(x0, x1))
-    mconv, rconv, rconv1, beams = [], [], [], []
+    mconv, rconv, rconv1, beams, resids = [], [], [], [], []
     for b, node in enumerate(keep):
         ds = dt[node].ds
         model = np.asarray(ds[args.model_name].isel(**sel).values, dtype=np.float64)
         resid = np.asarray(ds[args.residual_name].isel(**sel).values, dtype=np.float64) / wsums[b]
         beams.append(np.asarray(ds.BEAM.isel(**sel).values, dtype=np.float64)[trim])
+        resids.append(resid[trim])
         mconv.append(conv(model, gcommon, nthreads=args.nthreads)[trim])
         rconv.append(conv(resid, gcommon, gausspari=psfparsn[b], nthreads=args.nthreads)[trim])
         rconv1.append(conv(resid, gcommon, gausspari=psfparsn[b], nthreads=args.nthreads, pfrac=1.0)[trim])
     mconv, rconv, rconv1 = np.stack(mconv), np.stack(rconv), np.stack(rconv1)
-    beams = np.stack(beams)
+    beams, resids = np.stack(beams), np.stack(resids)
 
     with np.errstate(invalid="ignore", divide="ignore"):
         image_full = mconv + np.where(beams > 0, rconv / beams, 0.0)
@@ -462,6 +617,8 @@ def main():
             say("  --gausspar, or with a different pfrac? Interpret the alpha maps with care.")
         del stored
     say()
+
+    bundle.update(uv_diagnostics(resids, psfs, psfparsn, gcommon, freqs, float(ref.attrs["cell_rad"]), say))
 
     # ---- mask, matching what spifit would cut on --------------------------
     # spifit takes the rms as std(RESIDUAL/WSUM); reproduce that, but report a
@@ -655,6 +812,32 @@ def write_png(path, bundle, say):
     ax[1, 3].set_xlabel("frequency [MHz]")
     ax[1, 3].set_title("sidelobe correlation with band 0", fontsize=10)
     ax[1, 3].legend(fontsize=8)
+
+    # the uv plane: where the residual has power, and what homogenisation does there
+    fig2, bx = plt.subplots(1, 3, figsize=(17, 4.6))
+    u, amp, tra = bundle["uv_u"], bundle["uv_residual_amp"], bundle["uv_consistency"]
+    for b in range(amp.shape[0]):
+        c = plt.cm.viridis(b / max(amp.shape[0] - 1, 1))
+        bx[0].loglog(u, np.maximum(amp[b], 1e-30), color=c, label=f"{bundle['freqs'][b] / 1e6:.0f} MHz")
+        bx[1].loglog(u, np.maximum(bundle["uv_sampling_amp"][b], 1e-30), color=c)
+        bx[2].loglog(u, np.clip(tra[b], 1e-3, 1e3), color=c)
+    for a, t in zip(
+        bx,
+        (
+            "|FFT(residual)| per band",
+            "sampling function |FFT(PSF)|",
+            "consistency ratio E_b (1 = exact)",
+        ),
+    ):
+        a.set_xlabel("|u| [cycles/pixel]")
+        a.set_title(t, fontsize=10)
+    bx[0].legend(fontsize=7)
+    bx[2].axhline(1.0, color="k", lw=0.8, ls="--")
+    bx[2].set_ylim(1e-1, 1e1)  # E blows up where Ghat has decayed and nothing is left to scale
+    fig2.tight_layout()
+    fig2.savefig(path.replace(".png", "_uv.png"), dpi=110)
+    plt.close(fig2)
+    say(f"wrote {path.replace('.png', '_uv.png')}")
 
     fig.tight_layout()
     fig.savefig(path, dpi=110)
