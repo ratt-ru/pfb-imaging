@@ -24,8 +24,9 @@ from pfb_imaging.utils.fits import create_beams_table, save_fits, set_wcs
 from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam
 
 # CLI letter -> DataTree variable name. The B prefix follows the tree's
-# convention for beam-attenuated quantities (BDIRTY, BRESIDUAL).
-PRODUCT_VARS = {"a": "BIMAGE", "i": "IMAGE", "k": "KIMAGE"}
+# convention for beam-attenuated quantities (BDIRTY, BRESIDUAL); the C prefix on
+# CRESIDUAL means convolved to the restoring resolution.
+PRODUCT_VARS = {"a": "BIMAGE", "i": "IMAGE", "k": "KIMAGE", "s": "CRESIDUAL"}
 
 
 def clean_beam(psf, wsum):
@@ -160,8 +161,12 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
         gausspari: ``(ncorr, 3)`` intrinsic resolution of ``residual``, or None
             to skip the residual reconvolution. None is correct whenever
             ``gaussparf`` is the residual's own resolution.
-        products: iterable over ``"a"`` (apparent), ``"i"`` (intrinsic) and
-            ``"k"`` (intrinsic model plus apparent residual).
+        products: iterable over ``"a"`` (apparent), ``"i"`` (intrinsic),
+            ``"k"`` (intrinsic model plus apparent residual) and ``"s"``, the
+            residual convolved to ``gaussparf`` on its own. ``"s"`` is not a
+            restored image; it is the term the other three add to the model, and
+            it is stored because nothing else in the tree records what the
+            resolution change actually did to the residual.
         pb_min: beam floor below which the intrinsic image is zeroed, matching
             the cutoff convention in ``utils/spi.py``.
         nthreads: threads for the convolution FFTs.
@@ -201,6 +206,10 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
         # (B*m) (x) G, NOT B*(m (x) G) -- convolution does not commute with
         # multiplication by a spatially varying beam, so mconv cannot be reused
         out["a"] = convolve2gaussres(beam * model, xx, yy, gaussparf, **kw) + rconv
+    if "s" in products:
+        # apparent, pre-beam-division: BEAM is on the node, so the intrinsic form
+        # is one divide away, and this is the scale image-plane noise is flat on
+        out["s"] = rconv if rconv is not residual else residual.copy()
     return out
 
 

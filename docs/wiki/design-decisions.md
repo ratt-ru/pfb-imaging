@@ -1107,6 +1107,40 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_restore_zero_gausspar_handles_bands_at_different_angles`,
   `test_restore_gausspar_sharper_than_the_data_raises`.
 
+### D33 — `CRESIDUAL` records what the resolution change did to the residual
+
+- **Context:** the restored image is `MODEL ⊗ G + (RESIDUAL/WSUM) ⊗ [G/PSFPARSN_b]`, and the
+  second term is computed inside `restore_products` and discarded. Nothing in the tree
+  records it, so "what did homogenisation do to the residual" could only be answered by
+  redoing the convolution with the exact `G` and `PSFPARSN_b` of that run — which is what
+  `scripts/test_spi_ripples.py` has to do, and why it needs a rebuild-vs-`IMAGE` check at
+  all. The question matters because that term is the leading suspect for the ripples left in
+  a per-pixel spectral index fit (#312).
+- **Decision:** `--outputs s`/`S` stores it as band variable `CRESIDUAL`, **apparent**
+  (pre-beam-division) and at the restoring resolution. Off by default — it is another cube
+  per band. The `C` prefix means convolved, alongside the tree's existing `B` for
+  beam-attenuated.
+- **Rationale:** apparent because image-plane noise is flat on that scale and `BEAM` is
+  already on the node, so the intrinsic form is one divide away; the reverse is not true
+  where the beam is small. Storing it makes the tree self-describing: `MODEL ⊗ G + CRESIDUAL`
+  reproduces `KIMAGE` exactly, which is the property the tests pin. It also gives
+  `spifit` the array its SNR cut is actually applied to — the rms currently comes from
+  `std(RESIDUAL/WSUM)`, the *raw* residual, while the image being thresholded contains the
+  convolved one, whose rms differs by a band-dependent factor because the broadening needed
+  to reach `G` does. That is tidiness rather than a ripple source: the mask is a single
+  min-over-bands cut, so it shifts which pixels are fitted, not their spectra.
+- **Consequences:** `restore` still never writes `RESIDUAL` — only `PSFPARSF` and the
+  `PRODUCT_VARS` entries, so the raw residual survives untouched and `--outputs F` keeps
+  FFT-ing the raw array. The MFS `CRESIDUAL` FITS is written from the direct MFS path, not
+  by summing bands, for the same reason the restored MFS image is (D29): with no
+  homogenisation the per-band `CRESIDUAL` sit at different resolutions. When `gaussparf`
+  equals a band's own resolution the convolution is skipped and `CRESIDUAL` is that band's
+  residual — correct, since the restoring resolution *is* native there.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`PRODUCT_VARS`,
+  `restore_products`); `src/pfb_imaging/core/restore.py`; `src/pfb_imaging/cli/restore.py`;
+  `scripts/test_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
+  `…_is_apparent_and_not_the_raw_residual`, `test_restore_without_s_writes_no_cresidual`.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints

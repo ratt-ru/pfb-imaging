@@ -398,6 +398,67 @@ def test_restore_zero_gausspar_selects_lowest_resolution(tmp_path):
         np.testing.assert_allclose(pf[2], 0.3, rtol=1e-6)  # mean pa
 
 
+def test_restore_cresidual_completes_the_restored_image(tmp_path):
+    """CRESIDUAL is exactly the term KIMAGE adds to the convolved model.
+
+    That is the whole point of storing it: the resolution change applied to the
+    residual is otherwise unrecoverable from the tree, so nothing records what
+    it did (issue #312).
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kKsS", gausspar=(0.0, 0.0, 0.0))
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        ds = dt[f"band{b:04d}_time0000"].ds
+        assert "CRESIDUAL" in ds
+        model = ds.MODEL.values
+        _, ny, nx = model.shape
+        x = -(nx // 2) + np.arange(nx)
+        y = -(ny // 2) + np.arange(ny)
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        mconv = convolve2gaussres(
+            model, xx, yy, ds.PSFPARSF.values, nthreads=1, pfrac=0.2, norm_kernel=False, yx_order=True
+        )
+        np.testing.assert_allclose(mconv + ds.CRESIDUAL.values, ds.KIMAGE.values, rtol=0, atol=1e-5)
+
+
+def test_restore_cresidual_is_apparent_and_not_the_raw_residual(tmp_path):
+    """It is pre-beam-division, and it is not RESIDUAL untouched.
+
+    Apparent because that is the scale image-plane noise is flat on and BEAM is
+    already on the node; not RESIDUAL because the whole point is the resolution
+    change. RESIDUAL itself must survive unmodified.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+    before = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds.RESIDUAL.values.copy()
+
+    _run_restore(tmp_path, outputs="iIsS", gausspar=(0.0, 0.0, 0.0))
+
+    ds = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+    np.testing.assert_array_equal(ds.RESIDUAL.values, before)
+    raw = ds.RESIDUAL.values / ds.WSUM.values[:, None, None]
+    # band 0 is the narrow band, so it is genuinely broadened to reach the target
+    assert not np.allclose(ds.CRESIDUAL.values, raw, atol=1e-8)
+    # apparent: IMAGE divides it by the beam, CRESIDUAL does not
+    assert np.nanmax(np.abs(ds.CRESIDUAL.values)) < np.nanmax(np.abs(ds.CRESIDUAL.values / ds.BEAM.values)) * 1.001
+
+
+def test_restore_without_s_writes_no_cresidual(tmp_path):
+    """It is opt-in: a default run must not pay for another cube per band."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK")
+
+    assert "CRESIDUAL" not in xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+
+
 def test_restore_zero_gausspar_handles_bands_at_different_angles(tmp_path):
     """The real --gausspar 0 0 0 hazard: bands whose position angles differ.
 

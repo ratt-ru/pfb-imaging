@@ -605,6 +605,16 @@ def main():
         image_full = mconv + np.where(beams > 0, rconv / beams, 0.0)
         image_p1 = mconv + np.where(beams > 0, rconv1 / beams, 0.0)
 
+    # if restore stored CRESIDUAL (--outputs s), check the rebuild against it
+    # directly rather than only through the restored image
+    if "CRESIDUAL" in ref:
+        cres = np.stack([np.asarray(dt[n].ds.CRESIDUAL.isel(**sel).values, dtype=np.float64)[trim] for n in keep])
+        e = np.nanmax(np.abs(rconv - cres)) / max(np.nanmax(np.abs(cres)), 1e-30)
+        say(f"  rebuild vs stored CRESIDUAL: max relative difference {e:.3e}")
+        del cres
+    else:
+        say("  (no CRESIDUAL in the tree; re-run restore with --outputs s to store it)")
+
     # consistency: does the rebuild match what restore stored?
     if args.image_name in ref:
         stored = np.stack(

@@ -57,6 +57,9 @@ def restore(
         residual_name: band variable holding the residual image.
         suffix: namespaces the FITS outputs only, never the tree path.
         outputs: product letters, lowercase for MFS and uppercase for cubes.
+            ``s`` stores ``CRESIDUAL``, the residual convolved to the restoring
+            resolution -- the term the restored images add to the model, kept
+            because nothing else records what the resolution change did to it.
         gausspar: restoring resolution ``(emaj, emin, pa)`` in degrees, degrees
             and degrees. ``(0, 0, 0)`` selects the lowest-resolution band. None
             restores each band at its native resolution.
@@ -108,7 +111,7 @@ def restore(
         log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
 
     dropped = set(drop_bands or ())
-    products = tuple(k for k in ("a", "i", "k") if k in outputs.lower())
+    products = tuple(k for k in ("a", "i", "k", "s") if k in outputs.lower())
     timeids = sorted({int(dt[n].ds.attrs["timeid"]) for n in band_nodes})
     log.info(f"Number of output times = {len(timeids)}")
 
