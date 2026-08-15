@@ -86,8 +86,9 @@ def parse_args():
     p.add_argument(
         "--centre",
         default=None,
-        help="Cutout centre as 'y,x' in pixels. Default is the image centre; aim it at a "
-        "diffuse region where the ripples are visible",
+        help="Cutout centre as 'y,x' array indices into the full image (not offsets from "
+        "its centre). Default is the image centre; aim it at a diffuse region where the "
+        "ripples are visible. Clamped so the window stays inside the image",
     )
     p.add_argument("--psf-size", type=int, default=256, help="Side of the PSF window used for the sidelobe tests")
     p.add_argument("--timeid", type=int, default=None, help="Which timeid to analyse (default: the first)")
@@ -651,8 +652,23 @@ def main():
     mask = (beams.min(axis=0) > args.pb_min) & np.isfinite(apparent).all(axis=0) & (apparent.min(axis=0) > thresh)
     say(f"      threshold {args.threshold} x rms = {thresh:.4e} Jy/beam")
     say(f"      {int(mask.sum())} of {mask.size} pixels fitted ({100 * mask.mean():.1f} percent)")
-    if mask.sum() < 500:
-        say("      WARNING: very few pixels. Lower --threshold, pass --rms, or move --centre.")
+    if mask.sum() < 200:
+        # stop here rather than write a bundle of NaN: on a remote run that
+        # costs a download before anyone notices the maps are empty
+        peak = float(np.nanmax(apparent.min(axis=0))) if np.isfinite(apparent).any() else np.nan
+        bmin = float(np.nanmax(beams.min(axis=0)))
+        raise SystemExit(
+            f"\nOnly {int(mask.sum())} pixels pass the cuts -- not enough to diagnose anything.\n"
+            f"  brightest pixel (min over bands, apparent): {peak:.4e} Jy/beam\n"
+            f"  threshold currently:                        {thresh:.4e} Jy/beam\n"
+            f"  best beam value in the cutout:              {bmin:.3f} (--pb-min is {args.pb_min})\n"
+            f"Aim --centre at emission (it is (y, x) array indices into the full "
+            f"{ny} x {nx} image, so the middle is {ny // 2},{nx // 2}), pass --rms with the "
+            f"value your spifit run reported, or lower --threshold."
+        )
+    if mask.sum() < 2000:
+        say("      WARNING: few pixels. The power spectra will be noisy; consider a")
+        say("      brighter --centre or a lower --threshold.")
     say()
 
     # ---- diagnostics 3 and 5: alpha with and without the residual ---------
