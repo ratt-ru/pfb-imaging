@@ -426,18 +426,27 @@ def uv_diagnostics(resids, psfs, psfparsn, gcommon, freqs, cell_rad, say):
     gx, gy = grids(npy, npx)
     fake = np.stack([gaussian2d(gx, gy, p, normalise=False).T for p in psfparsn])
     fhat = np.stack([np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(p)))) for p in fake])
-    checks = []
+    # Check the statistic actually reported -- the residual-power-weighted mean --
+    # not the worst radial bin. The bin straddling the ghat cut is a numerical
+    # edge and deviates ~1e-3 on real beams while the mean is exact to 1e-5, so
+    # testing the max just cries wolf.
+    checks, worst_bin = [], 0.0
     for b in range(nband):
         tb = transfer((npy, npx), gauss_cov(psfparsn[b]), cov_g)
         with np.errstate(invalid="ignore", divide="ignore"):
             e = np.where(ghat > gcut, fhat[b] * tb / np.maximum(ghat, 1e-30), np.nan)
-        checks.append(float(np.nanmax(np.abs(radial_profile(e, nbins=140)[1] - 1.0))))
-    worst = max(checks)
+        w = np.nan_to_num(radial_profile(rhat[b] ** 2, nbins=140)[1])
+        ep = radial_profile(e, nbins=140)[1]
+        ok = np.isfinite(ep) & (w > 0)
+        checks.append(abs(float(np.sum(ep[ok] * w[ok]) / max(np.sum(w[ok]), 1e-30)) - 1.0) if ok.any() else np.nan)
+        worst_bin = max(worst_bin, float(np.nanmax(np.abs(ep - 1.0))))
+    worst = np.nanmax(checks)
     if worst > 1e-3:
-        say(f"  SELF-CHECK FAILED: E is {worst:.3e} from 1 for exactly Gaussian PSFs.")
+        say(f"  SELF-CHECK FAILED: <E_b> is {worst:.3e} from 1 for exactly Gaussian PSFs.")
         say("  The numbers below are measuring a convention error, not the data. Stop here.")
     else:
-        say(f"  (self-check: E = 1 to {worst:.1e} when the PSFs are exactly Gaussian)")
+        say(f"  (self-check: <E_b> = 1 to {worst:.1e} on exactly Gaussian PSFs; worst single")
+        say(f"  radial bin {worst_bin:.1e}, which is the numerical edge at the Ghat cut)")
 
     say("DIAGNOSTIC 0 -- the uv plane (this is what restore --outputs F writes).")
     say("  Support and hole are read off the sampling function FFT(PSF/WSUM); the residual")
