@@ -53,18 +53,26 @@ off-axis PSF mismatch; large-scale implicates the short-baseline hole).
 
 import argparse
 import json
+import os
 
-import numpy as np
-import psutil
-import xarray as xr
-from ducc0.misc import resize_thread_pool
+# Ray's uv_run_runtime_env hook (on under `uv run`) relaunches workers via
+# `uv run --frozen python`, rebuilding a venv that lacks the [full] extra where
+# ray itself lives -- workers then die on `import ray` and ray.wait() blocks
+# forever. Same workaround, and same reason, as tests/conftest.py. The constant
+# is read when ray is imported, so this must precede the pfb_imaging imports.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
-from pfb_imaging import init_ray, set_envs, setup_ray_worker
-from pfb_imaging.deconv.presets import _build_hess
-from pfb_imaging.operators.band_worker import BandWorkerPool
-from pfb_imaging.operators.hessian import ETA_MODES
-from pfb_imaging.opt.power_method import power_method_numba as power_method
-from pfb_imaging.utils.fits import save_fits, set_wcs
+import numpy as np  # noqa: E402
+import psutil  # noqa: E402
+import xarray as xr  # noqa: E402
+from ducc0.misc import resize_thread_pool  # noqa: E402
+
+from pfb_imaging import init_ray, set_envs, setup_ray_worker  # noqa: E402
+from pfb_imaging.deconv.presets import _build_hess  # noqa: E402
+from pfb_imaging.operators.band_worker import BandWorkerPool  # noqa: E402
+from pfb_imaging.operators.hessian import ETA_MODES  # noqa: E402
+from pfb_imaging.opt.power_method import power_method_numba as power_method  # noqa: E402
+from pfb_imaging.utils.fits import save_fits, set_wcs  # noqa: E402
 
 
 def parse_args():
@@ -78,6 +86,14 @@ def parse_args():
         help="Shape of a spatially varying eta (deconv --eta-mode); default is uniform",
     )
     p.add_argument("--eta-cap", type=float, default=1e2, help="Dynamic range of the --eta-mode profile")
+    p.add_argument(
+        "--gp-length-scale",
+        type=float,
+        default=None,
+        help="GP frequency prior length scale as a fraction of the band span (deconv --gp-length-scale); "
+        "unset disables the prior",
+    )
+    p.add_argument("--gp-cap", type=float, default=10.0, help="Max relaxation of the smoothest mode (deconv --gp-cap)")
     p.add_argument("--niter", type=int, default=15, help="Maximum power iterations")
     p.add_argument("--tol", type=float, default=5e-3, help="Stop when the relative change in lambda falls below this")
     p.add_argument("--nthreads", type=int, default=4, help="Threads per band worker")
@@ -118,18 +134,21 @@ def load_tree(dt_name):
     if "BDIRTY" not in first:
         raise ValueError(f"{dt_name} has no BDIRTY -- re-run pfb imager to regenerate the .dt")
     wsums = np.array([float(dt[n].ds.WSUM.values[0]) for n in nodes])
+    freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
     geometry = {
         "nx": first.x.size,
         "ny": first.y.size,
         "nx_psf": first.x_psf.size,
         "ny_psf": first.y_psf.size,
+        # required by _build_hess only when the GP frequency prior is requested
+        "freq_out": freq_out,
     }
     meta = {
         "cell_rad": float(first.attrs["cell_rad"]),
         "radec": [float(first.attrs["ra"]), float(first.attrs["dec"])],
         "l0": float(first.attrs.get("l0", 0.0)),
         "m0": float(first.attrs.get("m0", 0.0)),
-        "freq_out": np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes]),
+        "freq_out": freq_out,
     }
     cubes = {}
     for key in ("UPDATE", "DIRTY"):
@@ -296,6 +315,7 @@ def main():
     resize_thread_pool(args.nthreads)
     ncpu = int(np.minimum(args.nthreads, psutil.cpu_count(logical=False)))
     env_vars = set_envs(args.nthreads, ncpu)
+    env_vars["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"  # see the module-level note
     init_ray(
         nworkers,
         ray_address=args.ray_address,
@@ -311,6 +331,8 @@ def main():
         "eta": args.eta,
         "eta_mode": args.eta_mode,
         "eta_cap": args.eta_cap,
+        "gp_length_scale": args.gp_length_scale,
+        "gp_cap": args.gp_cap,
         "nthreads": args.nthreads,
         "cg_tol": args.cg_tol,
         "cg_maxit": args.cg_maxit,
@@ -357,6 +379,17 @@ def main():
     lam_m, _ = power_method(hess.dot, (nband, ny, nx), tol=args.pm_tol, maxit=args.pm_maxit, verbosity=0)
     emode = "uniform" if args.eta_mode is None else f"{args.eta_mode} (cap {args.eta_cap:g})"
     print(f"eta = {args.eta:.3e} [{emode}]   lambda_max(M) = {lam_m:.4e}   eta/lambda_max(M) = {args.eta / lam_m:.2e}")
+    prior = hess.get_freq_prior_stats()
+    if prior is None:
+        print("GP frequency prior: off")
+    else:
+        # prec_max == 1 by construction, so lambda_max(M) is unchanged and the
+        # prior only relaxes the smoother frequency modes (wiki D30)
+        print(
+            f"GP frequency prior: length_scale={args.gp_length_scale:g} cap={args.gp_cap:g}   "
+            f"precision spectrum [{prior['prec_min']:.4f}, {prior['prec_max']:.4f}]   "
+            f"eta contribution [{prior['lam_min']:.3e}, {prior['lam_max']:.3e}]"
+        )
     spectrum = spectrum_report(dt, nodes, wsum_tot, wsums, args.eta)
     print()
 
@@ -427,6 +460,9 @@ def main():
         "eta": args.eta,
         "eta_mode": args.eta_mode,
         "eta_cap": args.eta_cap,
+        "gp_length_scale": args.gp_length_scale,
+        "gp_cap": args.gp_cap,
+        "freq_prior": prior,
         "denominator": denom,
         "lambda_max_M": float(lam_m),
         "eta_over_lambda_max_M": args.eta / float(lam_m),
@@ -438,7 +474,9 @@ def main():
         "gamma_divergence_threshold": gamma_max,
         "gamma_recommended": gamma_rec,
     }
-    out = f"{dt_name}_max_gamma.json"
+    # tag the outputs so a with/without-prior pair does not clobber itself
+    tag = "" if args.gp_length_scale is None else f"_gp{args.gp_length_scale:g}_cap{args.gp_cap:g}"
+    out = f"{dt_name}_max_gamma{tag}.json"
     with open(out, "w") as f:
         json.dump(record, f, indent=2)
     print(f"\nwritten: {out}")
@@ -458,7 +496,7 @@ def main():
             l0=meta["l0"],
             m0=meta["m0"],
         )
-        name = f"{dt_name}_max_gamma_eigvec.fits"
+        name = f"{dt_name}_max_gamma{tag}_eigvec.fits"
         save_fits(np.mean(v, axis=0), name, hdr, yx_order=True)
         print(f"written: {name}")
 

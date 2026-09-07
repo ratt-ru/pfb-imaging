@@ -7,6 +7,7 @@ from ducc0.fft import c2r, r2c
 from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
+from pfb_imaging.operators.gauss import eta_freq_mul
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -440,6 +441,83 @@ def eta_profile(partitions, eta, mode, ny, nx, cap=1e2):
     return eta * np.minimum(f, cap)
 
 
+def freq_correlation(freq_out, length_scale):
+    """Squared-exponential correlation matrix over the imaged band.
+
+    Evaluated at the given frequencies, which need not be evenly spaced --
+    ``freq_out`` is the wsum-weighted effective frequency and is data-dependent
+    (wiki D28). The metric is linear in frequency with the length scale given as
+    a fraction of the band span, so the knob reads directly ("correlated over
+    half the band") and transfers between UHF and L-band runs. A log-frequency
+    metric is the same thing to 4% over a full 2:1 band, so the extra
+    parameterisation is not worth carrying.
+
+    Args:
+        freq_out: ``(nband,)`` band frequencies in Hz.
+        length_scale: Correlation length as a fraction of the ``freq_out`` span.
+
+    Returns:
+        ``(nband, nband)`` unit-diagonal correlation matrix.
+    """
+    freq_out = np.asarray(freq_out, dtype=np.float64)
+    span = float(freq_out.max() - freq_out.min())
+    d = (freq_out[:, None] - freq_out[None, :]) / (length_scale * span)
+    return np.exp(-0.5 * d**2)
+
+
+def freq_precision(freq_out, length_scale, cap=10.0):
+    """Normalised frequency precision for the preconditioner's GP prior (issue #307).
+
+    Generalises ``--eta`` from a scalar to an ``nband x nband`` matrix: today's
+    preconditioner carries ``K_nu^-1 = eta * I``, and this returns the ``C^-1_n``
+    that replaces the identity. The prior enters ``M`` **only** -- it is absent
+    from ``gridder.residual_from_partitions`` -- so the fixed point and the flux
+    scale are untouched and it only reshapes each forward update (wiki D22/D26).
+
+    The spectrum is normalised so ``eta`` is the precision on the **roughest
+    frequency mode present** and smoother modes are damped up to ``cap`` times
+    less. This is the "relax" convention: it makes the field-edge update *grow*
+    along the frequency-smooth direction that borrows from bands where the beam
+    is still open, which is the symptom issue #307 reports. Anchoring at the
+    rough end (dividing by ``prec.max()``, not by ``cap``) is load-bearing:
+    dividing by ``cap`` would make a white kernel return ``I/cap``, silently
+    weakening ``eta`` everywhere instead of degrading to today's behaviour.
+
+    Args:
+        freq_out: ``(nband,)`` band frequencies in Hz.
+        length_scale: Correlation length as a fraction of the band span, or None
+            to disable the prior.
+        cap: Ceiling on how far the smoothest mode may be relaxed. Bounds the
+            drop in ``lambda_min(M)`` and hence the erosion of the stable gamma.
+
+    Returns:
+        ``(nband, nband)`` symmetric positive-definite matrix whose largest
+        eigenvalue is exactly 1 and whose smallest is at least ``1/cap``, or
+        None when the prior is disabled (no length scale, fewer than two bands,
+        or every band at one frequency).
+
+    Raises:
+        ValueError: non-positive ``length_scale``, or ``cap < 1``.
+    """
+    if length_scale is None:
+        return None
+    if length_scale <= 0.0:
+        raise ValueError(f"gp_length_scale must be > 0 (got {length_scale}); use None to disable the prior")
+    if cap < 1.0:
+        raise ValueError(f"gp_cap must be >= 1 (got {cap}); cap=1 is the uniform-eta limit")
+    freq_out = np.asarray(freq_out, dtype=np.float64)
+    if freq_out.size < 2 or freq_out.max() == freq_out.min():
+        return None
+    corr = freq_correlation(freq_out, length_scale)
+    lam, evec = np.linalg.eigh(corr)
+    # roundoff can push the smallest eigenvalues slightly negative; they are the
+    # roughest modes and belong at the cap, so floor them rather than divide by them
+    ratio = lam.max() / np.maximum(lam, lam.max() * 1e-12)
+    prec = np.minimum(ratio, cap)
+    prec /= prec.max()  # roughest mode present -> exactly 1 (see the docstring)
+    return (evec * prec) @ evec.T
+
+
 class HessianTree(object):
     """Sum-over-partitions PSF-convolution Hessian for the DataTree imager.
 
@@ -563,6 +641,10 @@ class HessTreeRay:
         etas: Tikhonov parameter, scalar or per-band sequence.
         eta_mode, eta_cap: optional spatially varying ``eta``; each worker builds
             the profile from its own band's beams (see ``eta_profile``).
+        freq_prec: Optional ``(nband, nband)`` frequency precision from
+            ``freq_precision``. When given, bands couple through the
+            preconditioner and the forward CG runs at cube level on the driver
+            instead of band-parallel inside the workers (issue #307).
         nthreads: total FFT threads (ignored when ``workers`` is passed; the
             pool's per-band thread budget applies).
         wsums: optional normalisation override, scalar or per-band sequence
@@ -581,6 +663,7 @@ class HessTreeRay:
         etas=0.0,
         eta_mode=None,
         eta_cap=1e2,
+        freq_prec=None,
         nthreads=1,
         wsums=None,
         cg_tol=1e-3,
@@ -618,22 +701,110 @@ class HessTreeRay:
         self._pool = workers
         self._pool.init_hess(partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums, eta_mode, eta_cap)
 
+        # GP prior over frequency (issue #307). Applied through the identity
+        #   D^.5 Cinv D^.5 = D + D^.5 (Cinv - I) D^.5
+        # so the workers keep applying their own eta/eta_mode term (the D) and
+        # the driver adds only the remainder. That remainder is NEGATIVE
+        # semi-definite (Cinv's eigenvalues are in (0, 1]); the total operator
+        # is still symmetric positive definite, so CG applies -- but nothing may
+        # assume this term alone is PSD.
+        self._dC = None
+        self._s = None
+        if freq_prec is not None:
+            freq_prec = np.asarray(freq_prec, dtype=np.float64)
+            if freq_prec.shape != (self.nband, self.nband):
+                raise ValueError(f"freq_prec has shape {freq_prec.shape}, expected {(self.nband, self.nband)}")
+            self._dC = freq_prec - np.eye(self.nband)
+            if eta_mode is None:
+                # uniform eta: a per-band scalar, so no (nband, ny, nx) cube is
+                # fetched or held (that is ~1 GB of f8 at 4096^2 x 8 bands)
+                self._s = np.sqrt(etas)
+            else:
+                self._s = np.sqrt(self._pool.get_eta(ny, nx))
+            # pixel chunks for the fused kernel: sets its fan-out without
+            # touching the process-wide numba thread count
+            self._nchunk = max(1, int(nthreads))
+
     def dot(self, x):
-        return self._pool.hess_dot(x)
+        out = self._pool.hess_dot(x)
+        if self._dC is not None:
+            # One fused numba pass instead of four numpy ones, and no scratch
+            # cubes: at 8 bands x 8000^2 the numpy form held 7.6 GB of them in
+            # the driver, on top of the ~27 GB the cube-level CG already needs.
+            # numpy's matmul is also the wrong tool here -- k=nband is tiny and
+            # n=npix huge, so it is memory-bound, yet OpenBLAS spreads it over
+            # every core and those threads busy-poll for ~100 ms afterwards,
+            # straight through the next ray.get while the workers need the
+            # cores. See gauss.eta_freq_mul for the measurements.
+            eta_freq_mul(out, self._dC, self._s, x, nchunk=self._nchunk)
+        return out
 
     def hdot(self, x):
         return self.dot(x)
 
     def cg(self, rhs, x0=None, tol=None, maxit=None, minit=None):
-        """Distributed per-band CG solve of ``hess @ update = rhs``."""
+        """Solve ``hess @ update = rhs``.
+
+        Without a frequency prior the solve is band-parallel: one Ray dispatch
+        per band per call, each worker iterating its own CG to convergence in
+        process. A frequency prior couples the bands, so the solve moves to a
+        cube-level CG on the driver -- one dispatch per band per CG *iteration*.
+        The FFT work is unchanged and still happens in the workers; only the
+        round trips are added (the backward step already fans ``dot`` out this
+        way, up to ``pd_maxit`` times per major cycle).
+
+        Warning:
+            On the coupled path ``x0`` is bound as the iterate and updated
+            **in place** by ``pcg_numba``; the returned array IS ``x0``.
+        """
         tol = self.cg_tol if tol is None else tol
         maxit = self.cg_maxit if maxit is None else maxit
         minit = self.cg_minit if minit is None else minit
-        return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        if self._dC is None:
+            return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        return pcg(
+            self.dot,
+            rhs,
+            x0=x0,
+            tol=tol,
+            maxit=maxit,
+            minit=minit,
+            verbosity=self.cg_verbose,
+        )
 
     def get_eta(self):
         """Tikhonov coefficient per band as an ``(nband, ny, nx)`` cube."""
         return self._pool.get_eta(self.ny, self.nx)
+
+    def get_freq_prior_stats(self):
+        """Spectrum of the frequency prior, or None when it is disabled.
+
+        Returns:
+            dict with ``prec_min``/``prec_max`` (the normalised precision
+            spectrum, whose maximum is exactly 1 by construction) and
+            ``eta_max``/``lam_min``/``lam_max`` (the same scaled by the largest
+            eta, i.e. the prior's actual contribution to ``M``'s spectrum).
+            ``lam_max == eta_max`` is the invariant that bounds ``lambda_max(M)``
+            by its pre-prior value. Because ``Cinv <= I`` in the Loewner order,
+            ``M_gp <= M`` and ``lambda_max`` can only fall -- not stay equal, as
+            the eigenvectors do not align, and the top mode is frequency-flat,
+            i.e. exactly the one relaxed to ``1/cap``. The drop is at most
+            ``eta * (1 - 1/cap)``, ~9e-4 at the default ``eta=1e-3``, and
+            reusing the larger pre-prior ``hess_norm`` errs toward smaller
+            primal-dual steps. The cache still keys on the prior's options
+            (``core.deconv._M_OPTS``) rather than relying on that.
+        """
+        if self._dC is None:
+            return None
+        lam = np.linalg.eigvalsh(self._dC + np.eye(self.nband))
+        eta_max = float(np.max(self._s)) ** 2
+        return {
+            "prec_min": float(lam.min()),
+            "prec_max": float(lam.max()),
+            "eta_max": eta_max,
+            "lam_min": float(lam.min()) * eta_max,
+            "lam_max": float(lam.max()) * eta_max,
+        }
 
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""

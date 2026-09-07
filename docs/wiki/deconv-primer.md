@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-07-31T00:00:00Z
-last_verified_commit: e348d68
+timestamp: 2026-08-07T13:53:02Z
+last_verified_commit: 78de0cf
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -25,7 +25,9 @@ cycle (`core/deconv.py`):
    beam-attenuated gradient residual the driver passes (D23). `forward()` consumes
    this cache, NOT its own argument — calling `forward()` without `first()` raises.
 2. **forward** — `update ≈ H⁻¹ bresidual` by per-band conjugate gradients
-   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). The rhs is the
+   (`opt/pcg.PCG` → in-worker CG on `HessianTree`). **Band-parallel only when no
+   frequency prior is set**: `--gp-length-scale` couples the bands through `M`, and
+   `HessTreeRay.cg` then runs a cube-level CG on the driver instead (D30). The rhs is the
    **beam-attenuated gradient** `BRESIDUAL/wsum = Σ_p B_p·r_p / wsum` — the
    Hessian applies the beam on both sides, so the data-term gradient carries an
    outer per-partition beam (legacy sara's `residual *= beam`; D23). The

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-06T00:00:00Z
-last_verified_commit: 5a30f2a
+timestamp: 2026-09-07T18:00:00Z
+last_verified_commit: 3699b79
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -705,6 +705,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   band-uniformity for a beam-driven mode would need a driver-side reduction of `B2_eff`
   across bands (each worker sees only its own band). Both halves pinned by
   `tests/test_eta_profile.py::test_radial_is_identical_across_bands_and_beam_modes_are_not`.
+  **Since D30** this profile is no longer only a diagonal: `--gp-length-scale` reads `e(x)`
+  as a per-pixel inverse signal variance and couples bands through
+  `D^½C⁻¹ₙD^½`, making `M` the second band-coupling channel after the L21 prox. The
+  workers still apply `e(x)` exactly as described here; the coupling is a driver-side
+  remainder.
 - **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits`
   once per run — a `(band, corr, ny, nx)` cube (band on the FREQ axis, so band-to-band
   variation is visible; a 3D array would land it on STOKES because `to4d` prepends) with
@@ -857,8 +862,312 @@ update it (and this page's `last_verified_commit`) in the same session.
   `psfpars_var`); commits 84dd88b, 8501dee, 4b41d26, a4a6b08, 7b66502, d0bdd6b;
   `tests/test_restore.py`, `tests/test_convolve2gaussres.py`, `tests/test_fits_tree.py`.
 
+### D30 — The preconditioner's frequency prior generalises `--eta` to an nband×nband precision
+
+- **Context:** on a real wide-field mosaic the primary beam tapers the *forward update* at
+  the edges of the field, worst at the top of the band, and structure visible in the
+  residual never reaches the model (issue #307). The forward step already solves
+  `B†HB + K⁻¹` with `K⁻¹ = η·I` (`HessianTree.dot`), so exploiting smoothness in frequency
+  is a matter of replacing that scalar with a matrix — not a new mechanism.
+- **Decision:** `--gp-length-scale` (default None = off, unchanged behaviour) and
+  `--gp-cap` (default 10). The preconditioner becomes
+  `M x = M_data x + D^½ C⁻¹ₙ D^½ x`, with `D = diag_b(e_b(x))` the existing
+  `eta`/`eta_mode` profile and `C⁻¹ₙ` an `nband×nband` normalised precision. `e(x)` is read
+  as the **per-pixel inverse signal variance**, so `K = diag(σ)(C ⊗ I)diag(σ)` with
+  `σ² = 1/e` and `K⁻¹_{bb'}(x) = sqrt(e_b e_b') C⁻¹_{bb'}`. Applied through the identity
+  `D^½C⁻¹ₙD^½ = D + D^½(C⁻¹ₙ − I)D^½` so the **band workers are untouched** and the driver
+  adds only the remainder. Squared exponential on a **linear** frequency metric, length
+  scale a fraction of the band span. Zero-`wsum` bands take part (at their `freq_nominal`
+  fallback, D28) and are interpolated by the prior.
+- **Rationale — the normalisation is the load-bearing part.** `prec = min(λmax/λ, cap)`
+  then `prec /= prec.max()`, anchoring `η` to the **roughest frequency mode present** and
+  relaxing smoother modes by up to `cap` ("relax"). Three alternatives were rejected:
+  - *A spatially uniform `(K⁻¹ − ηI)` coupling on top of `diag(e)`.* Under
+    `--eta-mode radial --eta-cap 1000` the diagonal is `1000η` against a coupling of
+    `η(cap−1) ≈ 100η`, so the prior becomes **10× more white than correlated exactly at
+    the corners where it is needed** — backwards. It is also not any GP's precision
+    matrix, so the hyperparameter has no interpretation.
+  - *"Tighten" (`[η, η·cap]`, `η` on the smoothest mode).* Makes the field-edge update
+    *smaller*, not larger, so it does not address the reported symptom; and
+    `λmax(P) = η·eta_cap·gp_cap = 100` against the `λmax(M) ≈ 1.98` D26 measured, i.e. a
+    50× `hess_norm` inflation and `√50 ≈ 7×` the CG iterations.
+  - *Dividing by `cap` instead of `prec.max()`.* A white kernel has a flat eigenspectrum,
+    every ratio is 1, and the result is a uniform `I/cap` — silently weakening `eta`
+    everywhere instead of degrading to today's behaviour at `ℓ → 0`.
+  A **log-frequency metric was also rejected**: writing `ν = ν̄(1+a)`,
+  `log ν_i − log ν_j ≈ (ν_i−ν_j)/ν̄`, so linear *is* the first-order expansion of log and
+  over a full 2:1 band the two differ by 4% (`log 2 = 0.6931` vs `2/3 = 0.6667`) — far
+  inside the ambiguity in `ℓ`. The GP is over linear flux, so a log metric would not
+  encode power laws anyway; that needs a GP over `log S` vs `log ν`, which is nonlinear
+  and unavailable (the operator must stay linear and PSD for CG).
+- **Consequences:**
+  - **The forward CG moves from band-parallel in-worker to cube-level on the driver**
+    (`HessTreeRay.cg` branches on the prior). The FFT work is unchanged and still happens
+    in the workers; only `cg_maxit` round trips are added, against the `pd_maxit` the
+    backward step already pays per major cycle. **Measured cost is not negligible:** on
+    `subset_withbeam_I.dt` (3 bands, 750², 3 partitions/band) a `max_gamma` power
+    iteration — one exact sweep plus one CG solve — went **28 s → 115 s (4.1×)**. The
+    exact sweep is common to both, so the whole difference is in the forward solve.
+  - **That difference is three effects, not one**
+    (`scripts/profile_freq_correlated_hessian.py`, same tree, 7 threads/worker,
+    `--cg-tol 1e-3 --cg-maxit 150`; one forward solve **5.8 s → 20.0 s, 3.44×**):
+    1. *the fast path is lost* — **+1.4 s (1.25×)**, one round trip becomes 95, at ~38 ms
+       of Ray overhead each (a `pool.hess_dot` costs 70 ms against 31 ms of FFT work);
+    2. *conditioning* — **+3.8 s**, CG goes 95 → >150 iterations (it hits `cg_maxit`, so
+       the 3.44× is a **floor**). This is `λmin(M)` dropping by up to `gp_cap`, and it is
+       the one cost a per-`dot` benchmark cannot see. **Slower CG is the designed
+       behaviour, not a bug** — the prior only ever *removes* curvature from `M` (the
+       roughest mode is anchored at `η` and smoother ones are relaxed toward `η/cap`), so
+       `cond(M)` rises by up to `gp_cap` and CG needs ~`√gp_cap` more iterations. It
+       shows up only where the data term has no curvature of its own: on a fully sampled
+       toy the same prior costs 20 → 22 iterations, on one with unsampled uv cells
+       72 → 240. Note this is the **opposite** of `eta_profile`, which is normalised so
+       `λmin(M)` cannot degrade — the two knobs pull opposite ways on CG. Pinned by
+       `test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature` and
+       `test_prior_needs_more_cg_iterations_and_that_is_expected`;
+    3. *costlier dots* — originally **+8.4 s**, of which only ~0.5 s was the coupling
+       arithmetic. The rest was **BLAS spin**: `k = nband` is tiny and `n = npix` huge,
+       so `np.matmul` is memory-bound, but OpenBLAS spread it over every core and those
+       threads then busy-polled for ~100 ms (`THREAD_TIMEOUT`) — straight through the
+       *next* `ray.get`, while the workers needed the cores. Proven by inserting a sleep
+       between the matmul and the round trip: driver CPU during the round trip decayed
+       1598 → 1499 → 1242 → 705 → 14 ms as the sleep went 0 → 5 → 20 → 50 → 100 ms.
+       **Fixed** by `gauss.eta_freq_mul` (below): the solve is now **6.3 s → 12.7 s
+       (2.03×)** and this term is +0.7 s.
+  - **The coupling term is `operators/gauss.eta_freq_mul`, a fused numba kernel**, not
+    numpy. Band-major inside a 2048-pixel tile: band-major makes the inner loop
+    unit-stride and vectorisable, the tile keeps a band slice of `out` in L2 across the
+    `(b,c)` loops, and without the tile the kernel re-streams `out` `nband` times and
+    loses to numpy above ~1024². At 8 bands × 4096² numpy takes 287 ms on 11.5 cores
+    against 83 ms on 15.6. It holds **no scratch cubes** — the numpy form's two
+    `(nband, ny, nx)` buffers were 7.6 GB at 8 × 8000². Numba's TBB pool does not spin
+    into the next round trip (measured to 22 threads). `rarg_numba_patterns.load_data`
+    was tried and rejected: gathering a pixel's band column into a tuple blocks
+    vectorisation, and the result neither vectorises nor parallelises.
+  - **At production size the binding cost is the cube-level CG's transfer and driver
+    memory, not the coupling term.** Measured at 8 × 8000² (a 3.81 GB f8 cube), on an
+    echo actor with the FFT removed: one cube-level round trip is **1.63 s** — `ray.put`
+    of the band slices is 0.28 s and dispatch 0.15 s, so the *return* path (worker
+    result → plasma → the driver's `out[b] = res[0]` memcpy) dominates. The worker's
+    read of a task argument *is* zero-copy (`writeable=False`, a plasma view), but the
+    round trip is not zero-copy end to end: there are three copies per band slice and
+    only that one is free. So a 150-iteration forward solve moves **1.12 TB** through
+    the object store and spends **~4 min in transfer alone** before any gridding. The
+    band-parallel path pays that once, not 150 times. Driver memory is the other half:
+    `pcg_numba` holds 7 cubes (`b, x, r, p, xp, rp, aopp`) = **26.7 GB** at that size,
+    against 3.3 GB per worker for the in-worker path. `BandWorkerPool.hess_dot`
+    allocates its output with `np.empty_like`, not `zeros_like` — every band is
+    overwritten, and zeroing cost 1.07 s per call at this size.
+  - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so the prior's own contribution to `M`'s
+    spectrum has the same ceiling as the `η·I` it replaces. Pinned by
+    `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`. Note this **bounds**
+    `λmax(M)`, it does not fix it: `C⁻¹ ⪯ I` gives `M_gp ⪯ M`, so `λmax` can only fall.
+    It does fall, because the eigenvectors do not align and `M`'s top mode is
+    frequency-flat — precisely the mode relaxed to `1/gp_cap`. The drop is at most
+    `η(1 − 1/gp_cap)`, ~9e-4 against the `λmax(M) ≈ 1.98` D26 measured, so `hess_norm`
+    and the primal-dual step sizes move by <0.1% and in the conservative direction
+    (a norm that is too large means steps that are too small). The cache keys on
+    `gp_length_scale`/`gp_cap` regardless, so nothing rests on the approximation.
+  - `λmin(M)` drops by up to `gp_cap`, eroding the stable `γ`. The erosion is bounded by
+    the `η` fraction of `v'Mv` along the maximising direction — D26 measured 21% for the
+    binding mode, predicting `14.7 → 18.2` (24%) at `gp_cap=10`, not 10×.
+    **Measured** on `subset_withbeam_I.dt` at `--eta 1e-3 --gp-length-scale 0.5
+    --gp-cap 10` (precision spectrum `[0.107, 1.000]`, i.e. the cap fully saturated):
+    `λmax(M⁻¹H_exact)` **14.48 → 17.15 (+18.5%)**, so `γ` must shrink 15.6%
+    (`0.124 → 0.105`). The bound held and was slightly pessimistic. `λmax(M)` was
+    **unchanged (1.654 → 1.667, +0.8%, within the power-method tolerance)** — the
+    empirical confirmation of the `prec.max()` normalisation. **Measure with
+    `scripts/max_gamma.py` before raising the cap.**
+  - **The erosion lands in a mode the solver does not travel in, and the step it does
+    take gets longer.** The maximising eigenvector stayed pinned at the field edge but
+    moved to a much rougher spatial mode (high-frequency power fraction 0.49 → 0.83,
+    `η`'s share of `v'Mv` there 21.1% → 12.7%), while the Rayleigh quotients along the
+    stored `UPDATE` and `DIRTY` — the practically binding directions — were unchanged
+    (0.798 → 0.800, 0.819 → 0.820). Solving `u = M⁻¹·BRESIDUAL` both ways on the same rhs:
+    the update rotates **28.8°**, its norm grows **1.62×**, and per band the gain is
+    1.54 / 1.57 / **1.74** ascending in frequency — largest at the top of the band, which
+    is exactly the symptom #307 reported. Net of the 15.6% `γ` cut that is **≈1.37×
+    effective step overall and ≈1.47× in the top band.** The update's power moves into
+    the smoothest frequency eigenmode (41% → 59%) and out of the roughest (25% → 9%), so
+    genuinely rough spectra are approached *more slowly*; by D22 that is a rate effect,
+    never a bias.
+  - The driver-side remainder is **negative** semi-definite (`C⁻¹ₙ`'s eigenvalues are in
+    `(0, 1]`); the total operator is still symmetric positive definite, so CG applies, but
+    nothing may assume that term alone is PSD.
+  - Interpolated flux in zero-`wsum` bands enters L21's 2-norm over bands, so a
+    joint-sparsity decision can be taken partly on a band with no data. Accepted: the loop
+    already extrapolates into those bands via `model_to_ds`'s `nbasisf` refit.
+  - **The fixed-point test cannot guard the prior's sign.** Flipping `dot`'s `+=` to `-=`
+    yields `M_data + D + D^½(I − C⁻¹ₙ)D^½`, still SPD, so D22 says it reaches the same
+    fixed point — and it does (verified). The prior term's value is pinned separately
+    against an explicit dense formula by `test_prior_term_matches_the_dense_congruence`,
+    and structurally by `test_prior_matches_the_kronecker_spectrum`: with one partition
+    shared by every band, `M_data = I⊗A` and `P = ηC⁻¹ₙ⊗I` commute, so the whole spectrum
+    must be `α_k + η·p_j`. That closed form catches the sign flip, a one-sided congruence
+    (dropping either `D^½`), a missing `−I`, and any band/pixel axis mix-up in the
+    `reshape(nband, -1)` — all four verified by mutation.
+  - `hess_norm` is now cache-keyed on the M-defining options
+    (`eta`, `eta_mode`, `eta_cap`, `gp_length_scale`, `gp_cap`), fixing a **pre-existing
+    bug**: changing `--eta` between runs on the same `.dt` silently reused a stale norm.
+    Trees written before the key existed carry no `hess_norm_opts` and are re-estimated.
+    **Expect this once per existing tree:** the first `deconv` run on a `.dt` written
+    before this PR misses the cache by construction and pays a power-method estimate
+    (a handful of cube-level round trips at production size). It is logged —
+    "Preconditioner options changed since the cached hess_norm was written;
+    re-estimating" — and it is a one-off, not a per-run regression.
+  - Second band-coupling channel in `M` (see D26's band-consistency note — bands
+    previously coupled only through the L21 prox, D3).
+  - **Attribution:** `--nbasisf < nband` already smooths the *model* in frequency every
+    major cycle (`core/deconv.py`, `model_to_ds`). Run GP experiments at the default
+    full-rank `nbasisf` or the two effects cannot be separated.
+- **Source:** issue #307; `src/pfb_imaging/operators/hessian.py` (`freq_correlation`,
+  `freq_precision`, `HessTreeRay`); `src/pfb_imaging/deconv/presets.py`;
+  `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
+  `src/pfb_imaging/cli/deconv.py`; `tests/test_freq_precision.py`,
+  `tests/test_hess_tree_ray.py` (including the Kronecker-spectrum, band-vs-pixel coupling,
+  spatially-varying-eta congruence and CG-iteration guards), `tests/test_deconv_hess_norm_cache.py`,
+  `tests/test_pfb_solver.py`, `tests/test_preconditioner_consistency.py`,
+  `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
+  `scripts/max_gamma.py --gp-length-scale/--gp-cap` (the γ measurements above, on
+  `subset_withbeam_I.dt`, `--eta 1e-3`, 11 vs 9 power iterations to `--tol 5e-3`);
+  `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above);
+  `src/pfb_imaging/operators/gauss.py` (`eta_freq_mul`), `tests/test_eta_freq_mul.py`.
+
+### D31 — Resolution changes use the closed-form Gaussian transform ratio, never a sampled division
+
+- **Context:** `convolve2gaussres` took an image from resolution `gausspari` to `gaussparf`
+  by FFT-ing both sampled `gaussian2d` kernels and dividing (`convkernhat[msk] =
+  gausskernhat[msk] / thiskernhat[msk]`, masked only by `> 0.0`). Issue #312 found this
+  displacing sources: a delta at (170, 260) restored to (146, 260), with −0.81 of peak in
+  ringing. It reaches users through `restore_products` whenever a restoring resolution is
+  asked for — `pfb restore --gausspar` and the lowest-resolution mode.
+- **Decision:** the ratio of two Gaussian transforms is itself a Gaussian, so write it
+  down: `Kf(k)/Ki(k) = sqrt(|Σf|/|Σi|)·exp(−2π²·kᵀ(Σf−Σi)k)`, evaluated directly on the
+  padded rfft grid (`gauss_cov`, `gauss_ratio_hat`). `gaussian2d`'s support returns to
+  `nfwhm` major-axis FWHMs, and the parameter is renamed from `nsigma` to say so. A
+  non-positive-semi-definite `Σf − Σi` now raises `ValueError` instead of being applied.
+  The `gausspari=None` path (a plain convolution by the sampled kernel) is untouched.
+- **Rationale:** there were two independent error sources and the support width only fixes
+  one. (1) Truncating at 5 σ leaves a step of `exp(−12.5) = 3.7e-6` of peak, whose spectral
+  ripple dwarfs the transform's own ~1e-14 floor near Nyquist; at 5 FWHM (11.8 σ) the step
+  is ~4e-31 and the ripple is gone. This is the half issue #312 diagnosed, and the half
+  spimple fixed (`landmanbester/spimple@27a4bc8`). (2) A *sampled* Gaussian's DFT sinks
+  into FFT round-off before Nyquist regardless of support, so past that point the quotient
+  is noise over noise — and unbounded, since pfb's mask is `> 0.0`, not spimple's `> 1e-10`.
+  Source (2) gets *worse* as the beam is better sampled: measured on a band-limited sky at
+  `--super-resolution-factor` 2/3/4 with a matched 2·srf px beam, the two-step invariant
+  (`sky→gi→gf` vs `sky→gf`) broke by 4.0e-10, 1.8e-3 and 1.4e-4 of peak. The closed-form
+  ratio has neither problem (8.1e-10 at srf 2, ~6e-16 above — a kernel-aliasing floor),
+  conserves flux exactly (the sampled division was off by +6% at a 6 px beam and −25% at
+  12 px), and costs two FFTs less per plane.
+- **Consequences:** the support width no longer carries correctness for the deconvolution
+  path — the remaining `gaussian2d` callers only ever *multiply*, where a 3.7e-6 truncation
+  step is harmless — but it is kept wide for spimple parity and because nothing gains from
+  narrowing it. The new check immediately exposed that `restoration.lowest_resolution`
+  had been producing invalid targets all along — rewritten in D32. `nsigma` survives
+  in `fitcleanbeam`, where it does mean standard deviations.
+- **Source:** issue #312; landmanbester/spimple#50 and `landmanbester/spimple@27a4bc8`
+  (where the same regression was found first); the `gaussian2d` regression entered in
+  `1bde45d` (#218), which fixed a genuine width bug and narrowed the support in passing;
+  `src/pfb_imaging/utils/misc.py` (`gauss_cov`, `gauss_ratio_hat`, `convolve2gaussres`,
+  `gaussian2d`); `src/pfb_imaging/utils/restoration.py`;
+  `tests/test_convolve2gaussres.py::test_convolve2gaussres_preserves_position_when_deconvolving`,
+  `…_conserves_flux_through_a_resolution_change`, `…_two_step_matches_direct_across_srf`,
+  `…_refuses_to_sharpen`, `…_rejects_xy_ordered_grids`.
+
+### D32 — The common restoring resolution is a Loewner envelope, not a max of axes
+
+- **Context:** `--gausspar 0 0 0` homogenises every band to a common resolution — the
+  input a spectral-index fit needs (spimple). `restoration.lowest_resolution` built that
+  target as `nanmax(emaj)`, `nanmax(emin)`, `nanmean(pa)`. D31's semi-definiteness check
+  turned what had been silent corruption into a visible failure, and it fires on real
+  data: of six representative band sets, only the one with perfectly aligned position
+  angles produced a valid target.
+- **Decision:** the target is the smallest ellipse that dominates every input in the
+  **Loewner order** (`Σf − Σj ⪰ 0` for every input `j`), which is the exact condition for
+  `convolve2gaussres` to be a convolution from all of them. Candidate shapes are formed
+  from the max axes at each of several orientations (the circular mean of the input PAs,
+  plus each input's own PA) crossed with five axis ratios from the widest input's to
+  circular; each is inflated by the smallest scalar that makes it dominate — the largest
+  generalised eigenvalue of the pencil `(Σj, shape)`, closed form for 2×2 — and the
+  smallest resulting ellipse wins. `resolution_deficit` exposes the same quantity so the
+  explicit `--gausspar` branch can fail early with the viable floor instead of failing
+  inside an FFT. The MFS native beam is now part of the input set.
+- **Rationale:** "at least as wide as every input" is a statement about covariances, not
+  about the axes separately — a rotated ellipse pokes out diagonally, so matching axis by
+  axis is necessary but **not sufficient**. (Concretely: eigenvalues 4 and 1 at 45° project
+  to 2.5 on both coordinate axes, and `2.5·I` does not dominate it.) Three separate
+  defects were in that one line. (1) Rotation, above. (2) `nanmean` on position angles,
+  which are defined mod π: PAs of 0.05 and π − 0.05 are near-identical orientations that
+  average to π/2, orthogonal to both — the circular mean on the doubled angle fixes it.
+  (3) The MFS beam is `fitcleanbeam(Σ_b PSF_b)`, a fit to the summed PSF and not an
+  average of the band fits (D29), so nothing bounds it by the per-band envelope, yet it is
+  reconvolved to the same target. The candidate sweep matters because neither extreme is
+  right alone: with aligned PAs the max-axis ellipse is exactly optimal (bit-identical to
+  the old answer, area ratio 1.000), while over a ~1.5 rad PA spread a *circular* beam is
+  tighter than any scaling of the elongated one (2.00× the old area rather than 2.79×).
+- **Consequences:** with aligned PAs nothing changes. Otherwise the restoring beam grows —
+  measured at 1.02× to 2.0× in area over the six cases — which is a real resolution cost
+  and the honest price of a target every band can actually reach. A `1 + 1e-6` margin on
+  the scale keeps the binding input inside D31's tolerance. The search is
+  `(n + 1) × 5 × n` 2×2 eigenproblems per correlation, microseconds. `--gausspar` with an
+  impossible value now raises before any FFT, naming the shortfall factor and the floor.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`lowest_resolution`,
+  `resolution_deficit`, `_mean_pa`); `src/pfb_imaging/core/restore.py`;
+  `tests/test_restore.py::test_lowest_resolution_dominates_every_input` (the six cases),
+  `…_averages_position_angles_modulo_pi`, `…_takes_max_axes_when_the_angles_agree`,
+  `test_restore_zero_gausspar_handles_bands_at_different_angles`,
+  `test_restore_gausspar_sharper_than_the_data_raises`.
+
+### D33 — `CRESIDUAL` records what the resolution change did to the residual
+
+- **Context:** the restored image is `MODEL ⊗ G + (RESIDUAL/WSUM) ⊗ [G/PSFPARSN_b]`, and the
+  second term is computed inside `restore_products` and discarded. Nothing in the tree
+  records it, so "what did homogenisation do to the residual" could only be answered by
+  redoing the convolution with the exact `G` and `PSFPARSN_b` of that run — which is what
+  `scripts/check_spi_ripples.py` has to do, and why it needs a rebuild-vs-`IMAGE` check at
+  all. The question matters because that term is the leading suspect for the ripples left in
+  a per-pixel spectral index fit (#312).
+- **Decision:** `--outputs s`/`S` stores it as band variable `CRESIDUAL`, **apparent**
+  (pre-beam-division) and at the restoring resolution. Off by default — it is another cube
+  per band. The `C` prefix means convolved, alongside the tree's existing `B` for
+  beam-attenuated.
+- **Rationale:** apparent because image-plane noise is flat on that scale and `BEAM` is
+  already on the node, so the intrinsic form is one divide away; the reverse is not true
+  where the beam is small. Storing it makes the tree self-describing: `MODEL ⊗ G + CRESIDUAL`
+  reproduces `KIMAGE` exactly, which is the property the tests pin. It also gives
+  `spifit` the array its SNR cut is actually applied to — the rms currently comes from
+  `std(RESIDUAL/WSUM)`, the *raw* residual, while the image being thresholded contains the
+  convolved one, whose rms differs by a band-dependent factor because the broadening needed
+  to reach `G` does. That is tidiness rather than a ripple source: the mask is a single
+  min-over-bands cut, so it shifts which pixels are fitted, not their spectra.
+- **Consequences:** `restore` still never writes `RESIDUAL` — only `PSFPARSF` and the
+  `PRODUCT_VARS` entries, so the raw residual survives untouched and `--outputs F` keeps
+  FFT-ing the raw array. The MFS `CRESIDUAL` FITS is written from the direct MFS path, not
+  by summing bands, for the same reason the restored MFS image is (D29): with no
+  homogenisation the per-band `CRESIDUAL` sit at different resolutions. When `gaussparf`
+  equals a band's own resolution the convolution is skipped and `CRESIDUAL` is that band's
+  residual — correct, since the restoring resolution *is* native there.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`PRODUCT_VARS`,
+  `restore_products`); `src/pfb_imaging/core/restore.py`; `src/pfb_imaging/cli/restore.py`;
+  `scripts/check_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
+  `…_is_apparent_and_not_the_raw_residual`, `test_restore_without_s_writes_no_cresidual`.
+
 ## Known debt
 
+- **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing, and the caller only
+  happens to be safe.** The uncoupled branch (`BandWorkerPool.hess_cg`) allocates a fresh
+  `out` and leaves `x0` untouched; the coupled branch hands `x0` to `pcg_numba`, which
+  binds it as the iterate and mutates it in place, so the returned array *is* `x0`. The
+  one caller, `PFBSolver.forward`, passes `x0 = self._update` and immediately rebinds
+  `self._update` to the return value, which is correct either way — but only by accident,
+  and a second caller that keeps its `x0` would get branch-dependent behaviour with no
+  error. Both docstrings warn; that is mitigation, not a fix. **Follow-up:** make the two
+  branches agree, preferably by having the coupled branch copy (matching
+  `_BandWorkerImpl.cg`, which already copies because Ray hands it a read-only view) and
+  dropping the warnings. Found reviewing #308; not fixed there because it changes the
+  contract of a frozen oracle's caller and deserves its own PR with a test that pins the
+  aliasing on both branches.
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
   (zero-model and NaN-eps paths) — hangs unattended runs if triggered. Kept because the
   function is a frozen oracle; remove if it ever stops being one.
@@ -931,6 +1240,17 @@ update it (and this page's `last_verified_commit`) in the same session.
   RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
   `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
   elementwise to the (ra, dec) pair is safe.
+- **`convolve2gaussres` reads the pixel size off `xx`/`yy` on the `gausspari` path,**
+  so the grids must be `np.meshgrid(x, y, indexing="ij")`. numpy's *default* is
+  `indexing="xy"`, which transposes both, makes the inferred spacings zero and every
+  frequency infinite — an all-NaN image. It now raises instead; before the closed form
+  (D31) the kernel was evaluated on the grids themselves and the mistake was invisible.
+- **Never divide two sampled kernels' FFTs.** A sampled Gaussian's DFT sinks into
+  round-off before Nyquist, so the quotient is noise over noise there — and the
+  error grows as the kernel is *better* sampled, which is the opposite of the
+  intuition. When the quotient has a closed form (Gaussians do), evaluate it; see
+  D31. The same reasoning applies to any "divide by the transform of a model
+  kernel" step, and widening the kernel's support only fixes the truncation half.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests

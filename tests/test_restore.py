@@ -147,11 +147,85 @@ def test_clean_beam_zero_wsum_is_nan_not_a_crash():
     assert np.isnan(out).all()
 
 
-def test_lowest_resolution_takes_max_axes_and_mean_pa():
+def test_lowest_resolution_takes_max_axes_when_the_angles_agree():
+    """Aligned inputs: the answer is still just the max of each axis."""
     from pfb_imaging.utils.restoration import lowest_resolution
 
-    gp = np.array([[[6.0, 3.0, 0.2]], [[4.0, 5.0, 0.6]]])
-    np.testing.assert_allclose(lowest_resolution(gp), np.array([[6.0, 5.0, 0.4]]))
+    gp = np.array([[[6.0, 3.0, 0.2]], [[5.0, 4.0, 0.2]]])
+    np.testing.assert_allclose(lowest_resolution(gp), np.array([[6.0, 4.0, 0.2]]), rtol=1e-5)
+
+
+LOWEST_RESOLUTION_CASES = [
+    ([(10.0, 5.0, 0.3), (11.0, 5.4, 0.3), (12.0, 6.0, 0.3)], "aligned"),
+    ([(10.0, 5.0, 0.0), (10.2, 5.1, 0.15), (10.4, 5.2, -0.1)], "small pa spread"),
+    ([(10.0, 5.0, 0.0), (10.2, 5.1, 0.8), (9.8, 4.9, -0.7)], "large pa spread"),
+    ([(10.0, 5.0, 0.05), (10.1, 5.05, np.pi - 0.05)], "across the mod-pi seam"),
+    ([(20.0, 12.0, 0.4), (8.0, 4.0, -0.9), (7.0, 3.5, 1.2)], "one dominant band"),
+    ([(9.0, 8.9, 0.2), (9.1, 8.8, 1.3)], "near circular"),
+]
+
+
+@pytest.mark.parametrize("rows, label", LOWEST_RESOLUTION_CASES)
+def test_lowest_resolution_dominates_every_input(rows, label):
+    """Every input must be convolvable to the result.
+
+    Taking the max of each axis and the mean of the angles does not give this:
+    a rotated ellipse pokes out diagonally, so the difference of covariances is
+    indefinite and the "convolution" is a deconvolution along some direction.
+    Only one of these six cases passed under that heuristic (issue #312, D31).
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+    from pfb_imaging.utils.restoration import lowest_resolution, resolution_deficit
+
+    gausspars = np.array(rows)[:, None, :]  # (n, ncorr=1, 3)
+    target = lowest_resolution(gausspars)
+
+    assert resolution_deficit(target, gausspars)[0] <= 1.0
+
+    # and end to end: convolve2gaussres must accept every one of them
+    npix = 128
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord, indexing="ij")
+    image = np.zeros((1, npix, npix))
+    image[0, npix // 2 + 3, npix // 2 - 2] = 1.0
+    for row in rows:
+        convolve2gaussres(image, xx, yy, target[0], nthreads=1, gausspari=np.array(row))
+
+
+def test_lowest_resolution_averages_position_angles_modulo_pi():
+    """PA is defined mod pi, so 0.05 and pi - 0.05 are nearly the same angle.
+
+    np.mean puts them at pi/2, orthogonal to both, which then needs a hugely
+    inflated beam to still dominate. The circular mean keeps them together.
+    """
+    from pfb_imaging.utils.restoration import lowest_resolution
+
+    gp = np.array([[[10.0, 5.0, 0.05]], [[10.0, 5.0, np.pi - 0.05]]])
+    target = lowest_resolution(gp)[0]
+
+    assert abs(target[2]) < 0.1 or abs(abs(target[2]) - np.pi) < 0.1
+    # near-aligned inputs need only a slight inflation, not a near-circular beam
+    assert target[0] / target[1] > 1.8
+
+
+def test_lowest_resolution_skips_nan_rows():
+    """Fully flagged bands come through as NaN and must not poison the result."""
+    from pfb_imaging.utils.restoration import lowest_resolution
+
+    gp = np.array([[[10.0, 5.0, 0.2]], [[np.nan] * 3], [[11.0, 5.5, 0.2]]])
+    np.testing.assert_allclose(lowest_resolution(gp), np.array([[11.0, 5.5, 0.2]]), rtol=1e-5)
+
+    assert np.isnan(lowest_resolution(np.array([[[np.nan] * 3]]))).all()
+
+
+def test_resolution_deficit_flags_a_target_that_is_too_sharp():
+    """The guard the --gausspar branch uses to fail early with a useful message."""
+    from pfb_imaging.utils.restoration import resolution_deficit
+
+    gausspars = np.array([[[10.0, 5.0, 0.0]], [[10.0, 5.0, 0.6]]])
+
+    assert resolution_deficit(np.array([[10.0, 5.0, 0.0]]), gausspars)[0] > 1.0
+    assert resolution_deficit(np.array([[20.0, 20.0, 0.0]]), gausspars)[0] <= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +396,121 @@ def test_restore_zero_gausspar_selects_lowest_resolution(tmp_path):
         np.testing.assert_allclose(pf[0], 10.0, rtol=1e-6)  # max emaj over bands
         np.testing.assert_allclose(pf[1], 6.0, rtol=1e-6)  # max emin over bands
         np.testing.assert_allclose(pf[2], 0.3, rtol=1e-6)  # mean pa
+
+
+def test_restore_cresidual_completes_the_restored_image(tmp_path):
+    """CRESIDUAL is exactly the term KIMAGE adds to the convolved model.
+
+    That is the whole point of storing it: the resolution change applied to the
+    residual is otherwise unrecoverable from the tree, so nothing records what
+    it did (issue #312).
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kKsS", gausspar=(0.0, 0.0, 0.0))
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        ds = dt[f"band{b:04d}_time0000"].ds
+        assert "CRESIDUAL" in ds
+        model = ds.MODEL.values
+        _, ny, nx = model.shape
+        x = -(nx // 2) + np.arange(nx)
+        y = -(ny // 2) + np.arange(ny)
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        mconv = convolve2gaussres(
+            model, xx, yy, ds.PSFPARSF.values, nthreads=1, pfrac=0.2, norm_kernel=False, yx_order=True
+        )
+        np.testing.assert_allclose(mconv + ds.CRESIDUAL.values, ds.KIMAGE.values, rtol=0, atol=1e-5)
+
+
+def test_restore_cresidual_is_apparent_and_not_the_raw_residual(tmp_path):
+    """It is pre-beam-division, and it is not RESIDUAL untouched.
+
+    Apparent because that is the scale image-plane noise is flat on and BEAM is
+    already on the node; not RESIDUAL because the whole point is the resolution
+    change. RESIDUAL itself must survive unmodified.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+    before = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds.RESIDUAL.values.copy()
+
+    _run_restore(tmp_path, outputs="iIsS", gausspar=(0.0, 0.0, 0.0))
+
+    ds = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+    np.testing.assert_array_equal(ds.RESIDUAL.values, before)
+    raw = ds.RESIDUAL.values / ds.WSUM.values[:, None, None]
+    # band 0 is the narrow band, so it is genuinely broadened to reach the target
+    assert not np.allclose(ds.CRESIDUAL.values, raw, atol=1e-8)
+
+    # apparent: the beam divide happens in IMAGE, not in CRESIDUAL, so what
+    # IMAGE adds to the convolved model is CRESIDUAL / BEAM and not CRESIDUAL.
+    # Band 1 carries the sub-unit beam, so it is the one where that differs.
+    ds1 = xr.open_datatree(store, engine="zarr", chunks=None)["band0001_time0000"].ds
+    beam = ds1.BEAM.values
+    assert beam.max() < 0.9, "a unit beam would make this vacuous"
+    _, ny, nx = ds1.MODEL.shape
+    xx, yy = np.meshgrid(-(nx // 2) + np.arange(nx), -(ny // 2) + np.arange(ny), indexing="ij")
+    mconv = convolve2gaussres(
+        ds1.MODEL.values, xx, yy, ds1.PSFPARSF.values, nthreads=1, pfrac=0.2, norm_kernel=False, yx_order=True
+    )
+    keep = beam > 0.1  # the pb_min core/restore.py defaults to
+    np.testing.assert_allclose((ds1.IMAGE.values - mconv)[keep], (ds1.CRESIDUAL.values / beam)[keep], rtol=0, atol=1e-5)
+
+
+def test_restore_without_s_writes_no_cresidual(tmp_path):
+    """It is opt-in: a default run must not pay for another cube per band."""
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    _run_restore(tmp_path, outputs="kK")
+
+    assert "CRESIDUAL" not in xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+
+
+def test_restore_zero_gausspar_handles_bands_at_different_angles(tmp_path):
+    """The real --gausspar 0 0 0 hazard: bands whose position angles differ.
+
+    Max-of-each-axis with the mean angle is not wide enough to contain a
+    rotated ellipse, so restoring to it is a deconvolution along some direction
+    (issue #312). The envelope must both complete and dominate every band.
+    """
+    from pfb_imaging.utils.restoration import resolution_deficit
+
+    store = str(tmp_path / "rt_I.dt")
+    gpars = ((10.0, 5.0, 0.0), (10.4, 5.2, 0.7))
+    _write_restore_dt(store, gpars=gpars)
+
+    _run_restore(tmp_path, outputs="kK", gausspar=(0.0, 0.0, 0.0))
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    target = dt["band0000_time0000"].ds.PSFPARSF.values  # (ncorr, 3)
+    # every band shares the target, and the target contains every band
+    for b in range(2):
+        np.testing.assert_allclose(dt[f"band{b:04d}_time0000"].ds.PSFPARSF.values, target, rtol=1e-12)
+    assert resolution_deficit(target, np.array(gpars)[:, None, :])[0] <= 1.0
+    # the old max-axis, mean-pa answer would not have contained them
+    old = np.array([[10.4, 5.2, 0.35]])
+    assert resolution_deficit(old, np.array(gpars)[:, None, :])[0] > 1.0
+
+
+def test_restore_gausspar_sharper_than_the_data_raises(tmp_path):
+    """An impossible --gausspar must say so, not ring the image.
+
+    The old code divided by a near-zero transform and returned noise; the error
+    names the factor short and the resolution that would work.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+    cell_deg = np.rad2deg(1.0e-6)
+
+    with pytest.raises(ValueError, match="deconvolution"):
+        _run_restore(tmp_path, outputs="kK", gausspar=(4.0 * cell_deg, 2.0 * cell_deg, 0.3))
 
 
 def test_restore_skips_zero_wsum_bands(tmp_path):

@@ -206,6 +206,23 @@ def deconv(
             rich_help_panel="PFB",
         ),
     ] = 100.0,
+    gp_length_scale: Annotated[
+        float | None,
+        typer.Option(
+            help="Correlation length of the frequency prior in the preconditioner. "
+            "Given as a fraction of the imaged band span. "
+            "By default the prior is uncorrelated and eta damps every band independently. "
+            "This reshapes the forward update without moving the fixed point, so the flux scale is unchanged.",
+            rich_help_panel="PFB",
+        ),
+    ] = None,
+    gp_cap: Annotated[
+        float,
+        typer.Option(
+            help="Dynamic range of the frequency prior. Ignored when gp-length-scale is unset.",
+            rich_help_panel="PFB",
+        ),
+    ] = 10.0,
     gamma: Annotated[
         float,
         typer.Option(
@@ -518,6 +535,8 @@ def deconv(
                     eta=eta,
                     eta_mode=eta_mode,
                     eta_cap=eta_cap,
+                    gp_length_scale=gp_length_scale,
+                    gp_cap=gp_cap,
                     gamma=gamma,
                     nbasisf=nbasisf,
                     positivity=positivity,
@@ -578,6 +597,8 @@ def deconv(
                 eta=eta,
                 eta_mode=eta_mode,
                 eta_cap=eta_cap,
+                gp_length_scale=gp_length_scale,
+                gp_cap=gp_cap,
                 gamma=gamma,
                 nbasisf=nbasisf,
                 positivity=positivity,
@@ -647,6 +668,8 @@ def deconv(
             eta=eta,
             eta_mode=eta_mode,
             eta_cap=eta_cap,
+            gp_length_scale=gp_length_scale,
+            gp_cap=gp_cap,
             gamma=gamma,
             nbasisf=nbasisf,
             positivity=positivity,

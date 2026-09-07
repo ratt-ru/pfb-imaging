@@ -139,7 +139,9 @@ scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only be
 `.T` views at the wgridder call sites (wiki design-decisions D19/D20).
 `MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer, and
 `IMAGE`/`BIMAGE`/`KIMAGE` plus `PSFPARSF` by the `restore` consumer (the intrinsic,
-apparent and mixed flux scales — wiki D29).
+apparent and mixed flux scales — wiki D29), and optionally `CRESIDUAL` (`--outputs s`/`S`),
+the residual convolved to the restoring resolution — apparent, pre-beam-division, and the
+only record of what the resolution change did to the residual (wiki D33).
 
 **Access layer — native DataTree only.** Use `xr.open_datatree(store)`,
 `ds.to_zarr(store, group="band…/part…", mode="a")`, and `dt.children` directly. Do **not** add

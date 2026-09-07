@@ -18,13 +18,15 @@ must say which scale it is on. Three are offered, keyed by their CLI letter.
 
 import numpy as np
 import xarray as xr
+from scipy.linalg import eigh
 
 from pfb_imaging.utils.fits import create_beams_table, save_fits, set_wcs
-from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam
+from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam, gauss_cov
 
 # CLI letter -> DataTree variable name. The B prefix follows the tree's
-# convention for beam-attenuated quantities (BDIRTY, BRESIDUAL).
-PRODUCT_VARS = {"a": "BIMAGE", "i": "IMAGE", "k": "KIMAGE"}
+# convention for beam-attenuated quantities (BDIRTY, BRESIDUAL); the C prefix on
+# CRESIDUAL means convolved to the restoring resolution.
+PRODUCT_VARS = {"a": "BIMAGE", "i": "IMAGE", "k": "KIMAGE", "s": "CRESIDUAL"}
 
 
 def clean_beam(psf, wsum):
@@ -46,22 +48,97 @@ def clean_beam(psf, wsum):
     return np.array(fitcleanbeam(norm, yx_order=True))
 
 
-def lowest_resolution(gausspars):
-    """Reduce per-band resolutions to the lowest-resolution one.
+def _mean_pa(pas):
+    """Circular mean of position angles, which are defined modulo pi.
+
+    ``np.nanmean`` is wrong for angles: PAs of 0.05 and pi - 0.05 describe two
+    nearly identical orientations but average to pi/2, which is orthogonal to
+    both. Doubling before averaging maps the modulo-pi circle onto a full one.
+    """
+    pas = np.asarray(pas, dtype=float)
+    return 0.5 * np.arctan2(np.nanmean(np.sin(2 * pas)), np.nanmean(np.cos(2 * pas)))
+
+
+def resolution_deficit(target, gausspars):
+    """How far short of dominating every input the target resolution falls.
 
     Args:
-        gausspars: ``(nband, ncorr, 3)`` in pixels, pixels, radians. NaN rows
-            (fully flagged bands) are skipped.
+        target: ``(ncorr, 3)`` candidate restoring resolution.
+        gausspars: ``(n, ncorr, 3)`` resolutions it must be convolvable from.
+            NaN rows are skipped.
 
     Returns:
-        ``(ncorr, 3)``: the largest major and minor axes over bands and the mean
-        position angle.
+        ``(ncorr,)`` largest factor by which ``target``'s axes must grow, as a
+        ratio of areas. At most 1.0 means the target is valid; above 1.0 the
+        target is sharper than some input along some direction, and each axis
+        must grow by its square root. NaN where every input is NaN.
+    """
+    target = np.asarray(target, dtype=float)
+    gausspars = np.asarray(gausspars, dtype=float)
+    out = np.full(gausspars.shape[1], np.nan, dtype=float)
+    for c in range(gausspars.shape[1]):
+        rows = gausspars[:, c, :]
+        rows = rows[~np.isnan(rows).any(axis=1)]
+        if not len(rows):
+            continue
+        shape = gauss_cov(target[c])
+        out[c] = max(eigh(gauss_cov(row), shape, eigvals_only=True).max() for row in rows)
+    return out
+
+
+def lowest_resolution(gausspars):
+    """Smallest common resolution every input Gaussian can be convolved to.
+
+    "At least as wide as every input" is a statement about the covariances in
+    the Loewner order -- ``Sf - Sj`` positive semi-definite for every input j --
+    not about the axes separately. Taking the max of each axis and the mean of
+    the position angles satisfies the second and not the first: a rotated
+    ellipse pokes out diagonally, and convolving to such a target is a
+    deconvolution along some direction. ``convolve2gaussres`` now refuses it
+    (wiki D31), where it used to silently amplify noise.
+
+    So the max-axis, mean-PA ellipse is used only as a candidate *shape*. Each
+    candidate is inflated by the smallest scalar that makes it dominate every
+    input -- the largest generalised eigenvalue, exact in closed form -- and the
+    smallest resulting ellipse wins. Candidates are the circular-mean PA plus
+    each input's own PA, so when one input is the widest at its own angle the
+    result is that input, with no inflation at all.
+
+    Args:
+        gausspars: ``(n, ncorr, 3)`` in pixels, pixels, radians, over whatever
+            set must be dominated -- the per-band beams, and the MFS beam too
+            when it is reconvolved to the same target. NaN rows (fully flagged
+            bands) are skipped.
+
+    Returns:
+        ``(ncorr, 3)``: a resolution at least as low as every input, in every
+        direction. Rows are NaN where every input is NaN.
     """
     gausspars = np.asarray(gausspars, dtype=float)
-    out = np.empty(gausspars.shape[1:], dtype=float)
-    out[:, 0] = np.nanmax(gausspars[:, :, 0], axis=0)
-    out[:, 1] = np.nanmax(gausspars[:, :, 1], axis=0)
-    out[:, 2] = np.nanmean(gausspars[:, :, 2], axis=0)
+    out = np.full(gausspars.shape[1:], np.nan, dtype=float)
+    for c in range(gausspars.shape[1]):
+        rows = gausspars[:, c, :]
+        rows = rows[~np.isnan(rows).any(axis=1)]
+        if not len(rows):
+            continue
+        covs = [gauss_cov(row) for row in rows]
+        emaj, emin = rows[:, 0].max(), rows[:, 1].max()
+        best = None
+        # candidate orientations, and candidate axis ratios between the widest
+        # input's and circular. Neither alone is enough: when the inputs share a
+        # PA the max-axis ellipse wins, and when they are spread over a wide
+        # range of angles a rounder beam contains them more tightly.
+        for pa in np.concatenate([[_mean_pa(rows[:, 2])], rows[:, 2]]):
+            for ratio in np.linspace(emin / emaj, 1.0, 5):
+                shape = gauss_cov((emaj, emaj * ratio, pa))
+                # smallest s with s * shape >= cov, i.e. the largest generalised
+                # eigenvalue of the pencil (cov, shape). A margin keeps the
+                # binding input inside gauss_ratio_hat's definiteness check.
+                scale = (1.0 + 1e-6) * max(eigh(cov, shape, eigvals_only=True).max() for cov in covs)
+                area = emaj * emaj * ratio * scale
+                if best is None or area < best[0]:
+                    best = (area, np.sqrt(scale) * emaj, np.sqrt(scale) * emaj * ratio, pa)
+        out[c] = best[1:]
     return out
 
 
@@ -77,8 +154,12 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
         gausspari: ``(ncorr, 3)`` intrinsic resolution of ``residual``, or None
             to skip the residual reconvolution. None is correct whenever
             ``gaussparf`` is the residual's own resolution.
-        products: iterable over ``"a"`` (apparent), ``"i"`` (intrinsic) and
-            ``"k"`` (intrinsic model plus apparent residual).
+        products: iterable over ``"a"`` (apparent), ``"i"`` (intrinsic),
+            ``"k"`` (intrinsic model plus apparent residual) and ``"s"``, the
+            residual convolved to ``gaussparf`` on its own. ``"s"`` is not a
+            restored image; it is the term the other three add to the model, and
+            it is stored because nothing else in the tree records what the
+            resolution change actually did to the residual.
         pb_min: beam floor below which the intrinsic image is zeroed, matching
             the cutoff convention in ``utils/spi.py``.
         nthreads: threads for the convolution FFTs.
@@ -118,6 +199,10 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
         # (B*m) (x) G, NOT B*(m (x) G) -- convolution does not commute with
         # multiplication by a spatially varying beam, so mconv cannot be reused
         out["a"] = convolve2gaussres(beam * model, xx, yy, gaussparf, **kw) + rconv
+    if "s" in products:
+        # apparent, pre-beam-division: BEAM is on the node, so the intrinsic form
+        # is one divide away, and this is the scale image-plane noise is flat on
+        out["s"] = rconv if rconv is not residual else residual.copy()
     return out
 
 

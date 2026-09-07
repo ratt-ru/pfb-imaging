@@ -429,3 +429,68 @@ def test_deconv_requires_bdirty(tmp_path):
         deconv_core(
             output_filename, product="I", nthreads=1, fits_mfs=False, fits_cubes=False, log_directory=str(tmp_path)
         )
+
+
+@pytest.mark.slow
+def test_deconv_driver_runs_with_the_frequency_prior(tmp_path):
+    """End-to-end driver path with --gp-length-scale on (issue #307).
+
+    The unit tests stop at presets; this is the only coverage of the whole
+    chain -- core params -> geometry["freq_out"] -> _build_hess -> HessTreeRay
+    -> the cube-level CG that replaces the band-parallel one -> the exact
+    residual -> the hess_norm signature written back to the band attrs.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import _m_signature
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(43)
+    nx = ny = 32
+    output_filename = str(tmp_path / "synthgp")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, nx, ny, 64, 1, rng)
+
+    opts = dict(
+        product="I",
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=1,
+        hess_norm=None,  # exercise the power method on the coupled operator
+        pd_maxit=20,
+        cg_maxit=20,
+        pm_maxit=20,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=2,
+        nworkers=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+        # the synthetic tree has a unit PSF, so at the default eta=1e-3 the data
+        # term swamps the prior and it moves the update by only ~3e-4. Raise eta
+        # so the test probes the regime the prior is for (eta a real share of M).
+        eta=0.1,
+    )
+    deconv_core(output_filename, gp_length_scale=0.5, gp_cap=10.0, **opts)
+
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    band = dt["band0000_time0000"].ds
+    assert np.isfinite(band.MODEL.values).all()
+    assert np.isfinite(band.UPDATE.values).all()
+    assert band.attrs["niters"] == 1
+
+    # the cached norm must be labelled with the prior settings, so a later run
+    # without them re-estimates rather than reusing lambda_max of a different M
+    sig = band.attrs["hess_norm_opts"]
+    assert sig == _m_signature(dict(eta=0.1, eta_mode=None, eta_cap=100.0, gp_length_scale=0.5, gp_cap=10.0))
+    assert sig != _m_signature(dict(eta=0.1, eta_mode=None, eta_cap=100.0, gp_length_scale=None, gp_cap=10.0))
+
+    # the prior actually changed the update: same tree, same seed, prior off
+    out2 = str(tmp_path / "synthref")
+    _write_synthetic_dt(f"{out2}_I.dt", nx, ny, 64, 1, np.random.default_rng(43))
+    deconv_core(out2, gp_length_scale=None, **opts)
+    ref = xr.open_datatree(f"{out2}_I.dt", engine="zarr", chunks=None)["band0000_time0000"].ds
+    rel = np.linalg.norm(band.UPDATE.values - ref.UPDATE.values) / np.linalg.norm(ref.UPDATE.values)
+    assert rel > 1e-2, f"the prior left the update unchanged (rel={rel:.3e})"

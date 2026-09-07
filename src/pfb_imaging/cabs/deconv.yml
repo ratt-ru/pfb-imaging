@@ -155,6 +155,23 @@ cabs:
         default: 100.0
         metadata:
           rich_help_panel: PFB
+      gp-length-scale:
+        info:
+          Correlation length of the frequency prior in the preconditioner.
+          Given as a fraction of the imaged band span.
+          By default the prior is uncorrelated and eta damps every band independently.
+          This reshapes the forward update without moving the fixed point, so the flux scale is unchanged.
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: PFB
+      gp-cap:
+        info:
+          Dynamic range of the frequency prior.
+          Ignored when gp-length-scale is unset.
+        dtype: float
+        default: 10.0
+        metadata:
+          rich_help_panel: PFB
       gamma:
         info:
           Step size of update.
