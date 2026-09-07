@@ -434,6 +434,8 @@ def test_restore_cresidual_is_apparent_and_not_the_raw_residual(tmp_path):
     already on the node; not RESIDUAL because the whole point is the resolution
     change. RESIDUAL itself must survive unmodified.
     """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
     store = str(tmp_path / "rt_I.dt")
     _write_restore_dt(store)
     before = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds.RESIDUAL.values.copy()
@@ -445,8 +447,20 @@ def test_restore_cresidual_is_apparent_and_not_the_raw_residual(tmp_path):
     raw = ds.RESIDUAL.values / ds.WSUM.values[:, None, None]
     # band 0 is the narrow band, so it is genuinely broadened to reach the target
     assert not np.allclose(ds.CRESIDUAL.values, raw, atol=1e-8)
-    # apparent: IMAGE divides it by the beam, CRESIDUAL does not
-    assert np.nanmax(np.abs(ds.CRESIDUAL.values)) < np.nanmax(np.abs(ds.CRESIDUAL.values / ds.BEAM.values)) * 1.001
+
+    # apparent: the beam divide happens in IMAGE, not in CRESIDUAL, so what
+    # IMAGE adds to the convolved model is CRESIDUAL / BEAM and not CRESIDUAL.
+    # Band 1 carries the sub-unit beam, so it is the one where that differs.
+    ds1 = xr.open_datatree(store, engine="zarr", chunks=None)["band0001_time0000"].ds
+    beam = ds1.BEAM.values
+    assert beam.max() < 0.9, "a unit beam would make this vacuous"
+    _, ny, nx = ds1.MODEL.shape
+    xx, yy = np.meshgrid(-(nx // 2) + np.arange(nx), -(ny // 2) + np.arange(ny), indexing="ij")
+    mconv = convolve2gaussres(
+        ds1.MODEL.values, xx, yy, ds1.PSFPARSF.values, nthreads=1, pfrac=0.2, norm_kernel=False, yx_order=True
+    )
+    keep = beam > 0.1  # the pb_min core/restore.py defaults to
+    np.testing.assert_allclose((ds1.IMAGE.values - mconv)[keep], (ds1.CRESIDUAL.values / beam)[keep], rtol=0, atol=1e-5)
 
 
 def test_restore_without_s_writes_no_cresidual(tmp_path):

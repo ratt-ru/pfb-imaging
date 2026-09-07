@@ -21,7 +21,7 @@ import xarray as xr
 from scipy.linalg import eigh
 
 from pfb_imaging.utils.fits import create_beams_table, save_fits, set_wcs
-from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam
+from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam, gauss_cov
 
 # CLI letter -> DataTree variable name. The B prefix follows the tree's
 # convention for beam-attenuated quantities (BDIRTY, BRESIDUAL); the C prefix on
@@ -73,9 +73,6 @@ def resolution_deficit(target, gausspars):
         target is sharper than some input along some direction, and each axis
         must grow by its square root. NaN where every input is NaN.
     """
-    # deferred: import cycle with utils.misc (see lowest_resolution)
-    from pfb_imaging.utils.misc import gauss_cov
-
     target = np.asarray(target, dtype=float)
     gausspars = np.asarray(gausspars, dtype=float)
     out = np.full(gausspars.shape[1], np.nan, dtype=float)
@@ -117,10 +114,6 @@ def lowest_resolution(gausspars):
         ``(ncorr, 3)``: a resolution at least as low as every input, in every
         direction. Rows are NaN where every input is NaN.
     """
-    # deferred: import cycle with utils.misc, which imports utils.fits, which
-    # this module also imports -- gauss_cov is only needed on this path
-    from pfb_imaging.utils.misc import gauss_cov
-
     gausspars = np.asarray(gausspars, dtype=float)
     out = np.full(gausspars.shape[1:], np.nan, dtype=float)
     for c in range(gausspars.shape[1]):

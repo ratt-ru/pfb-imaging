@@ -450,10 +450,10 @@ def test_convolve2gaussres_two_step_matches_direct_across_srf(srf):
 def test_convolve2gaussres_refuses_to_sharpen(gausspari, gaussparf):
     """Sharpening is a deconvolution; say so instead of amplifying noise.
 
-    The rotated case is the one that catches callers by surprise:
-    restoration.lowest_resolution takes the max of each axis but the *mean* of
-    the position angles, so a band whose PA differs from the mean can land here
-    even though both its axes grew.
+    The rotated case is the one that catches callers by surprise, and it is
+    what forced restoration.lowest_resolution to become a Loewner envelope
+    (D32): its old max-of-each-axis, mean-of-the-position-angles target landed
+    here routinely, with both axes grown.
     """
     npix = 64
     coord = -(npix // 2) + np.arange(npix)
@@ -463,6 +463,23 @@ def test_convolve2gaussres_refuses_to_sharpen(gausspari, gaussparf):
 
     with pytest.raises(ValueError, match="deconvolution"):
         convolve2gaussres(image, xx, yy, np.array(gaussparf), nthreads=1, gausspari=np.array(gausspari))
+
+
+def test_convolve2gaussres_rejects_xy_ordered_grids():
+    """The closed-form ratio reads the pixel size off xx/yy, so order matters.
+
+    np.meshgrid's *default* indexing is "xy", which transposes both grids and
+    makes the inferred spacings zero -- every frequency infinite and the whole
+    image NaN. Fail instead of returning that.
+    """
+    npix = 64
+    coord = -(npix // 2) + np.arange(npix)
+    xx, yy = np.meshgrid(coord, coord)  # note: no indexing="ij"
+    image = np.zeros((1, npix, npix))
+    image[0, npix // 2, npix // 2] = 1.0
+
+    with pytest.raises(ValueError, match="indexing='ij'"):
+        convolve2gaussres(image, xx, yy, np.array([6.3, 4.2, 0.0]), nthreads=1, gausspari=np.array([6.0, 4.0, 0.0]))
 
 
 def test_convolve2gaussres_allows_an_unchanged_resolution():

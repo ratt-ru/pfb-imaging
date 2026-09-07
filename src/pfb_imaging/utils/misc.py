@@ -334,6 +334,14 @@ def convolve2gaussres(
         xs, ys = np.squeeze(xx), np.squeeze(yy)
         dx = float(xs[1, 0] - xs[0, 0]) if xs.ndim == 2 and nx > 1 else 1.0
         dy = float(ys[0, 1] - ys[0, 0]) if ys.ndim == 2 and ny > 1 else 1.0
+        if dx == 0.0 or dy == 0.0:
+            # np.meshgrid's default indexing="xy" transposes the grids, which
+            # makes both differences zero and every frequency infinite. Say so:
+            # the resulting all-NaN image is otherwise silent.
+            raise ValueError(
+                f"xx/yy must be (X, Y)-ordered grids, i.e. np.meshgrid(x, y, indexing='ij'); "
+                f"the inferred grid spacing is ({dx}, {dy})"
+            )
         for b in range(nband):
             gpi = gausspari if gausspari.ndim == 1 else gausspari[b]
             gpf = gaussparf if np.ndim(gaussparf) == 1 else gaussparf[b]

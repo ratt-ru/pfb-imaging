@@ -1061,7 +1061,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `gaussian2d`); `src/pfb_imaging/utils/restoration.py`;
   `tests/test_convolve2gaussres.py::test_convolve2gaussres_preserves_position_when_deconvolving`,
   `…_conserves_flux_through_a_resolution_change`, `…_two_step_matches_direct_across_srf`,
-  `…_refuses_to_sharpen`.
+  `…_refuses_to_sharpen`, `…_rejects_xy_ordered_grids`.
 
 ### D32 — The common restoring resolution is a Loewner envelope, not a max of axes
 
@@ -1215,6 +1215,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
   `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
   elementwise to the (ra, dec) pair is safe.
+- **`convolve2gaussres` reads the pixel size off `xx`/`yy` on the `gausspari` path,**
+  so the grids must be `np.meshgrid(x, y, indexing="ij")`. numpy's *default* is
+  `indexing="xy"`, which transposes both, makes the inferred spacings zero and every
+  frequency infinite — an all-NaN image. It now raises instead; before the closed form
+  (D31) the kernel was evaluated on the grids themselves and the mistake was invisible.
 - **Never divide two sampled kernels' FFTs.** A sampled Gaussian's DFT sinks into
   round-off before Nyquist, so the quotient is noise over noise there — and the
   error grows as the kernel is *better* sampled, which is the opposite of the
