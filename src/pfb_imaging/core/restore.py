@@ -27,6 +27,7 @@ from pfb_imaging.utils.restoration import (
     beams_table,
     clean_beam,
     lowest_resolution,
+    resolution_deficit,
     restore_products,
     write_fits,
 )
@@ -56,6 +57,9 @@ def restore(
         residual_name: band variable holding the residual image.
         suffix: namespaces the FITS outputs only, never the tree path.
         outputs: product letters, lowercase for MFS and uppercase for cubes.
+            ``s`` stores ``CRESIDUAL``, the residual convolved to the restoring
+            resolution -- the term the restored images add to the model, kept
+            because nothing else records what the resolution change did to it.
         gausspar: restoring resolution ``(emaj, emin, pa)`` in degrees, degrees
             and degrees. ``(0, 0, 0)`` selects the lowest-resolution band. None
             restores each band at its native resolution.
@@ -107,7 +111,7 @@ def restore(
         log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
 
     dropped = set(drop_bands or ())
-    products = tuple(k for k in ("a", "i", "k") if k in outputs.lower())
+    products = tuple(k for k in ("a", "i", "k", "s") if k in outputs.lower())
     timeids = sorted({int(dt[n].ds.attrs["timeid"]) for n in band_nodes})
     log.info(f"Number of output times = {len(timeids)}")
 
@@ -180,11 +184,29 @@ def restore(
             log.info(
                 f"Using specified resolution of ({gausspar[0]:.3e} deg, {gausspar[1]:.3e} deg, {gausspar[2]:.3e} deg)"
             )
+            # fail here rather than inside the FFT: a target sharper than some
+            # band along some direction is a deconvolution (wiki D31)
+            native = np.concatenate([psfparsn, gausspar_mfs_native[None]], axis=0)
+            deficit = np.nanmax(resolution_deficit(target, native))
+            if deficit > 1.0:
+                floor = lowest_resolution(native)
+                log.error_and_raise(
+                    f"--gausspar ({gausspar[0]:.3e}, {gausspar[1]:.3e}, {gausspar[2]:.3e}) deg is sharper than "
+                    f"the data along some direction, by a factor {np.sqrt(deficit):.4f} in each axis. Restoring "
+                    f"to it is a deconvolution, not a convolution. The lowest resolution that works here is "
+                    f"({floor[0, 0] * cell_deg:.3e}, {floor[0, 1] * cell_deg:.3e}, "
+                    f"{np.rad2deg(floor[0, 2]):.3e}) deg, which --gausspar 0 0 0 selects automatically.",
+                    ValueError,
+                )
             gaussparf = np.tile(target, (nband, 1, 1))
             gaussparf_mfs = target
             gausspari_band, gausspari_mfs = psfparsn, gausspar_mfs_native
         elif gausspar is not None:
-            target = lowest_resolution(psfparsn)
+            # the MFS residual is reconvolved to this target too, from its own
+            # native beam, so that beam has to be inside the envelope. It is a
+            # fit to the summed PSF, not an average of the band fits (D29), and
+            # is not bounded by them.
+            target = lowest_resolution(np.concatenate([psfparsn, gausspar_mfs_native[None]], axis=0))
             log.info(
                 f"Using lowest resolution of ({target[0, 0] * cell_deg:.3e} deg, "
                 f"{target[0, 1] * cell_deg:.3e} deg, {np.rad2deg(target[0, 2]):.3e} deg)"

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-08-12T17:05:00Z
-last_verified_commit: a07eb8a
+timestamp: 2026-09-07T12:00:00Z
+last_verified_commit: 3699b79
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1021,6 +1021,126 @@ update it (and this page's `last_verified_commit`) in the same session.
   `scripts/profile_freq_correlated_hessian.py` (the cost decomposition above);
   `src/pfb_imaging/operators/gauss.py` (`eta_freq_mul`), `tests/test_eta_freq_mul.py`.
 
+### D31 — Resolution changes use the closed-form Gaussian transform ratio, never a sampled division
+
+- **Context:** `convolve2gaussres` took an image from resolution `gausspari` to `gaussparf`
+  by FFT-ing both sampled `gaussian2d` kernels and dividing (`convkernhat[msk] =
+  gausskernhat[msk] / thiskernhat[msk]`, masked only by `> 0.0`). Issue #312 found this
+  displacing sources: a delta at (170, 260) restored to (146, 260), with −0.81 of peak in
+  ringing. It reaches users through `restore_products` whenever a restoring resolution is
+  asked for — `pfb restore --gausspar` and the lowest-resolution mode.
+- **Decision:** the ratio of two Gaussian transforms is itself a Gaussian, so write it
+  down: `Kf(k)/Ki(k) = sqrt(|Σf|/|Σi|)·exp(−2π²·kᵀ(Σf−Σi)k)`, evaluated directly on the
+  padded rfft grid (`gauss_cov`, `gauss_ratio_hat`). `gaussian2d`'s support returns to
+  `nfwhm` major-axis FWHMs, and the parameter is renamed from `nsigma` to say so. A
+  non-positive-semi-definite `Σf − Σi` now raises `ValueError` instead of being applied.
+  The `gausspari=None` path (a plain convolution by the sampled kernel) is untouched.
+- **Rationale:** there were two independent error sources and the support width only fixes
+  one. (1) Truncating at 5 σ leaves a step of `exp(−12.5) = 3.7e-6` of peak, whose spectral
+  ripple dwarfs the transform's own ~1e-14 floor near Nyquist; at 5 FWHM (11.8 σ) the step
+  is ~4e-31 and the ripple is gone. This is the half issue #312 diagnosed, and the half
+  spimple fixed (`landmanbester/spimple@27a4bc8`). (2) A *sampled* Gaussian's DFT sinks
+  into FFT round-off before Nyquist regardless of support, so past that point the quotient
+  is noise over noise — and unbounded, since pfb's mask is `> 0.0`, not spimple's `> 1e-10`.
+  Source (2) gets *worse* as the beam is better sampled: measured on a band-limited sky at
+  `--super-resolution-factor` 2/3/4 with a matched 2·srf px beam, the two-step invariant
+  (`sky→gi→gf` vs `sky→gf`) broke by 4.0e-10, 1.8e-3 and 1.4e-4 of peak. The closed-form
+  ratio has neither problem (8.1e-10 at srf 2, ~6e-16 above — a kernel-aliasing floor),
+  conserves flux exactly (the sampled division was off by +6% at a 6 px beam and −25% at
+  12 px), and costs two FFTs less per plane.
+- **Consequences:** the support width no longer carries correctness for the deconvolution
+  path — the remaining `gaussian2d` callers only ever *multiply*, where a 3.7e-6 truncation
+  step is harmless — but it is kept wide for spimple parity and because nothing gains from
+  narrowing it. The new check immediately exposed that `restoration.lowest_resolution`
+  had been producing invalid targets all along — rewritten in D32. `nsigma` survives
+  in `fitcleanbeam`, where it does mean standard deviations.
+- **Source:** issue #312; landmanbester/spimple#50 and `landmanbester/spimple@27a4bc8`
+  (where the same regression was found first); the `gaussian2d` regression entered in
+  `1bde45d` (#218), which fixed a genuine width bug and narrowed the support in passing;
+  `src/pfb_imaging/utils/misc.py` (`gauss_cov`, `gauss_ratio_hat`, `convolve2gaussres`,
+  `gaussian2d`); `src/pfb_imaging/utils/restoration.py`;
+  `tests/test_convolve2gaussres.py::test_convolve2gaussres_preserves_position_when_deconvolving`,
+  `…_conserves_flux_through_a_resolution_change`, `…_two_step_matches_direct_across_srf`,
+  `…_refuses_to_sharpen`, `…_rejects_xy_ordered_grids`.
+
+### D32 — The common restoring resolution is a Loewner envelope, not a max of axes
+
+- **Context:** `--gausspar 0 0 0` homogenises every band to a common resolution — the
+  input a spectral-index fit needs (spimple). `restoration.lowest_resolution` built that
+  target as `nanmax(emaj)`, `nanmax(emin)`, `nanmean(pa)`. D31's semi-definiteness check
+  turned what had been silent corruption into a visible failure, and it fires on real
+  data: of six representative band sets, only the one with perfectly aligned position
+  angles produced a valid target.
+- **Decision:** the target is the smallest ellipse that dominates every input in the
+  **Loewner order** (`Σf − Σj ⪰ 0` for every input `j`), which is the exact condition for
+  `convolve2gaussres` to be a convolution from all of them. Candidate shapes are formed
+  from the max axes at each of several orientations (the circular mean of the input PAs,
+  plus each input's own PA) crossed with five axis ratios from the widest input's to
+  circular; each is inflated by the smallest scalar that makes it dominate — the largest
+  generalised eigenvalue of the pencil `(Σj, shape)`, closed form for 2×2 — and the
+  smallest resulting ellipse wins. `resolution_deficit` exposes the same quantity so the
+  explicit `--gausspar` branch can fail early with the viable floor instead of failing
+  inside an FFT. The MFS native beam is now part of the input set.
+- **Rationale:** "at least as wide as every input" is a statement about covariances, not
+  about the axes separately — a rotated ellipse pokes out diagonally, so matching axis by
+  axis is necessary but **not sufficient**. (Concretely: eigenvalues 4 and 1 at 45° project
+  to 2.5 on both coordinate axes, and `2.5·I` does not dominate it.) Three separate
+  defects were in that one line. (1) Rotation, above. (2) `nanmean` on position angles,
+  which are defined mod π: PAs of 0.05 and π − 0.05 are near-identical orientations that
+  average to π/2, orthogonal to both — the circular mean on the doubled angle fixes it.
+  (3) The MFS beam is `fitcleanbeam(Σ_b PSF_b)`, a fit to the summed PSF and not an
+  average of the band fits (D29), so nothing bounds it by the per-band envelope, yet it is
+  reconvolved to the same target. The candidate sweep matters because neither extreme is
+  right alone: with aligned PAs the max-axis ellipse is exactly optimal (bit-identical to
+  the old answer, area ratio 1.000), while over a ~1.5 rad PA spread a *circular* beam is
+  tighter than any scaling of the elongated one (2.00× the old area rather than 2.79×).
+- **Consequences:** with aligned PAs nothing changes. Otherwise the restoring beam grows —
+  measured at 1.02× to 2.0× in area over the six cases — which is a real resolution cost
+  and the honest price of a target every band can actually reach. A `1 + 1e-6` margin on
+  the scale keeps the binding input inside D31's tolerance. The search is
+  `(n + 1) × 5 × n` 2×2 eigenproblems per correlation, microseconds. `--gausspar` with an
+  impossible value now raises before any FFT, naming the shortfall factor and the floor.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`lowest_resolution`,
+  `resolution_deficit`, `_mean_pa`); `src/pfb_imaging/core/restore.py`;
+  `tests/test_restore.py::test_lowest_resolution_dominates_every_input` (the six cases),
+  `…_averages_position_angles_modulo_pi`, `…_takes_max_axes_when_the_angles_agree`,
+  `test_restore_zero_gausspar_handles_bands_at_different_angles`,
+  `test_restore_gausspar_sharper_than_the_data_raises`.
+
+### D33 — `CRESIDUAL` records what the resolution change did to the residual
+
+- **Context:** the restored image is `MODEL ⊗ G + (RESIDUAL/WSUM) ⊗ [G/PSFPARSN_b]`, and the
+  second term is computed inside `restore_products` and discarded. Nothing in the tree
+  records it, so "what did homogenisation do to the residual" could only be answered by
+  redoing the convolution with the exact `G` and `PSFPARSN_b` of that run — which is what
+  `scripts/check_spi_ripples.py` has to do, and why it needs a rebuild-vs-`IMAGE` check at
+  all. The question matters because that term is the leading suspect for the ripples left in
+  a per-pixel spectral index fit (#312).
+- **Decision:** `--outputs s`/`S` stores it as band variable `CRESIDUAL`, **apparent**
+  (pre-beam-division) and at the restoring resolution. Off by default — it is another cube
+  per band. The `C` prefix means convolved, alongside the tree's existing `B` for
+  beam-attenuated.
+- **Rationale:** apparent because image-plane noise is flat on that scale and `BEAM` is
+  already on the node, so the intrinsic form is one divide away; the reverse is not true
+  where the beam is small. Storing it makes the tree self-describing: `MODEL ⊗ G + CRESIDUAL`
+  reproduces `KIMAGE` exactly, which is the property the tests pin. It also gives
+  `spifit` the array its SNR cut is actually applied to — the rms currently comes from
+  `std(RESIDUAL/WSUM)`, the *raw* residual, while the image being thresholded contains the
+  convolved one, whose rms differs by a band-dependent factor because the broadening needed
+  to reach `G` does. That is tidiness rather than a ripple source: the mask is a single
+  min-over-bands cut, so it shifts which pixels are fitted, not their spectra.
+- **Consequences:** `restore` still never writes `RESIDUAL` — only `PSFPARSF` and the
+  `PRODUCT_VARS` entries, so the raw residual survives untouched and `--outputs F` keeps
+  FFT-ing the raw array. The MFS `CRESIDUAL` FITS is written from the direct MFS path, not
+  by summing bands, for the same reason the restored MFS image is (D29): with no
+  homogenisation the per-band `CRESIDUAL` sit at different resolutions. When `gaussparf`
+  equals a band's own resolution the convolution is skipped and `CRESIDUAL` is that band's
+  residual — correct, since the restoring resolution *is* native there.
+- **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`PRODUCT_VARS`,
+  `restore_products`); `src/pfb_imaging/core/restore.py`; `src/pfb_imaging/cli/restore.py`;
+  `scripts/check_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
+  `…_is_apparent_and_not_the_raw_residual`, `test_restore_without_s_writes_no_cresidual`.
+
 ## Known debt
 
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
@@ -1095,6 +1215,17 @@ update it (and this page's `last_verified_commit`) in the same session.
   RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
   `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
   elementwise to the (ra, dec) pair is safe.
+- **`convolve2gaussres` reads the pixel size off `xx`/`yy` on the `gausspari` path,**
+  so the grids must be `np.meshgrid(x, y, indexing="ij")`. numpy's *default* is
+  `indexing="xy"`, which transposes both, makes the inferred spacings zero and every
+  frequency infinite — an all-NaN image. It now raises instead; before the closed form
+  (D31) the kernel was evaluated on the grids themselves and the mistake was invisible.
+- **Never divide two sampled kernels' FFTs.** A sampled Gaussian's DFT sinks into
+  round-off before Nyquist, so the quotient is noise over noise there — and the
+  error grows as the kernel is *better* sampled, which is the opposite of the
+  intuition. When the quotient has a closed form (Gaussians do), evaluate it; see
+  D31. The same reasoning applies to any "divide by the transform of a model
+  kernel" step, and widening the kernel's support only fixes the truncation half.
 - **Warm-cache timing:** back-to-back runs on the same MS read from page cache
   (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
 - **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests

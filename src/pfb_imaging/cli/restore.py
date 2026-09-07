@@ -101,6 +101,7 @@ def restore(
             "(d)irty, (m)odel, (r)esidual, (k) restored with intrinsic model and apparent residual. "
             "(a) restored fully apparent, (i) restored fully intrinsic (primary beam corrected). "
             "(c)lean beam image, (f)ft of the residual. "
+            "(s)moothed residual, the residual convolved to the restoring resolution. "
             "Use capitals to produce corresponding cubes.",
             rich_help_panel="Output",
         ),
