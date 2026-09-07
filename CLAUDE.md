@@ -95,6 +95,17 @@ rediscovery:
   stats `R GB` column shows ~0); only compare wall times at matching cache state.
 * **One mechanism per commit,** with the measured before/after in the commit message. It keeps
   cluster-run bisection possible when a change must be re-litigated.
+* **`gh issue view` and `gh pr edit` are broken on this machine — use `gh api` instead.** The
+  system `gh` is Ubuntu's 2.46.0, which asks GraphQL for the Projects-classic `projectCards`
+  field; the API has hard-errored on that since the May 2024 sunset, so both commands die with
+  `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+  Upstream feature-detects v1 projects from **2.71.0** (`issue view`) and **2.73.0** (`pr edit`),
+  but the machine deliberately stays on the distro package, so treat this as permanent. It is
+  the client, not the repo — it reproduces against `cli/cli`. Reach for REST:
+  `gh api repos/ratt-ru/pfb-imaging/issues/<n> --jq '{title,state,body}'` to read an issue, and
+  `gh api -X PATCH repos/ratt-ru/pfb-imaging/pulls/<n> --input body.json` (a `{"body": …}` file,
+  so markdown survives shell quoting) to edit a PR. `gh pr view`/`list`/`checks`/`create`/`merge`
+  and every `gh api` call are unaffected, as is CI — both workflow uses are already `gh api`.
 
 ## Project Structure
 
