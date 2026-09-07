@@ -465,3 +465,27 @@ def test_build_hess_wires_the_frequency_prior_when_requested():
     assert solver.hess._dC.shape == (nband, nband)
     # the remainder is not trivial: a zero dC would mean the kernel collapsed to I
     assert np.abs(solver.hess._dC).max() > 1e-6
+
+
+@pytest.mark.slow
+def test_build_hess_warns_when_the_prior_is_requested_but_undefinable(monkeypatch):
+    """A single band has nothing to correlate; do not accept the flag in silence.
+
+    freq_precision returns None there, so the run proceeds with an uncorrelated
+    eta -- correct, but indistinguishable from the option being unset unless it
+    is said out loud. Captured off the module logger rather than caplog: the
+    pfb root logger sets propagate = False, so caplog sees nothing.
+    """
+    from pfb_imaging.deconv import presets
+
+    warnings = []
+    monkeypatch.setattr(presets.log, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+
+    geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32, "freq_out": np.array([1.0e9])}
+    opts = _gp_opts(gp_length_scale=0.5)
+    solver = presets.make_sara(
+        _delta_partitions(1, 16, 16), geometry, np.zeros((1, 16, 16)), np.zeros((1, 16, 16)), opts
+    )
+
+    assert solver.hess._dC is None  # genuinely off, as freq_precision decided
+    assert any("nothing to correlate" in w for w in warnings), warnings

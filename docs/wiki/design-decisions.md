@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-07T12:00:00Z
+timestamp: 2026-09-07T18:00:00Z
 last_verified_commit: 3699b79
 ---
 
@@ -958,9 +958,16 @@ update it (and this page's `last_verified_commit`) in the same session.
     against 3.3 GB per worker for the in-worker path. `BandWorkerPool.hess_dot`
     allocates its output with `np.empty_like`, not `zeros_like` — every band is
     overwritten, and zeroing cost 1.07 s per call at this size.
-  - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so `λmax(M)`, `hess_norm` and the
-    primal-dual step sizes are unchanged. Pinned by
-    `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`.
+  - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so the prior's own contribution to `M`'s
+    spectrum has the same ceiling as the `η·I` it replaces. Pinned by
+    `test_prior_stats_report_the_spectrum_and_its_contribution_to_m`. Note this **bounds**
+    `λmax(M)`, it does not fix it: `C⁻¹ ⪯ I` gives `M_gp ⪯ M`, so `λmax` can only fall.
+    It does fall, because the eigenvectors do not align and `M`'s top mode is
+    frequency-flat — precisely the mode relaxed to `1/gp_cap`. The drop is at most
+    `η(1 − 1/gp_cap)`, ~9e-4 against the `λmax(M) ≈ 1.98` D26 measured, so `hess_norm`
+    and the primal-dual step sizes move by <0.1% and in the conservative direction
+    (a norm that is too large means steps that are too small). The cache keys on
+    `gp_length_scale`/`gp_cap` regardless, so nothing rests on the approximation.
   - `λmin(M)` drops by up to `gp_cap`, eroding the stable `γ`. The erosion is bounded by
     the `η` fraction of `v'Mv` along the maximising direction — D26 measured 21% for the
     binding mode, predicting `14.7 → 18.2` (24%) at `gp_cap=10`, not 10×.
@@ -1003,6 +1010,11 @@ update it (and this page's `last_verified_commit`) in the same session.
     (`eta`, `eta_mode`, `eta_cap`, `gp_length_scale`, `gp_cap`), fixing a **pre-existing
     bug**: changing `--eta` between runs on the same `.dt` silently reused a stale norm.
     Trees written before the key existed carry no `hess_norm_opts` and are re-estimated.
+    **Expect this once per existing tree:** the first `deconv` run on a `.dt` written
+    before this PR misses the cache by construction and pays a power-method estimate
+    (a handful of cube-level round trips at production size). It is logged —
+    "Preconditioner options changed since the cached hess_norm was written;
+    re-estimating" — and it is a one-off, not a per-run regression.
   - Second band-coupling channel in `M` (see D26's band-consistency note — bands
     previously coupled only through the L21 prox, D3).
   - **Attribution:** `--nbasisf < nband` already smooths the *model* in frequency every
@@ -1143,6 +1155,19 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Known debt
 
+- **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing, and the caller only
+  happens to be safe.** The uncoupled branch (`BandWorkerPool.hess_cg`) allocates a fresh
+  `out` and leaves `x0` untouched; the coupled branch hands `x0` to `pcg_numba`, which
+  binds it as the iterate and mutates it in place, so the returned array *is* `x0`. The
+  one caller, `PFBSolver.forward`, passes `x0 = self._update` and immediately rebinds
+  `self._update` to the return value, which is correct either way — but only by accident,
+  and a second caller that keeps its `x0` would get branch-dependent behaviour with no
+  error. Both docstrings warn; that is mitigation, not a fix. **Follow-up:** make the two
+  branches agree, preferably by having the coupled branch copy (matching
+  `_BandWorkerImpl.cg`, which already copies because Ray hands it a read-only view) and
+  dropping the warnings. Found reviewing #308; not fixed there because it changes the
+  contract of a frozen oracle's caller and deserves its own PR with a test that pins the
+  aliasing on both branches.
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
   (zero-model and NaN-eps paths) — hangs unattended runs if triggered. Kept because the
   function is a frozen oracle; remove if it ever stops being one.

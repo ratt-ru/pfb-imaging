@@ -6,9 +6,10 @@ option that defines M must therefore take part in the cache key -- otherwise cha
 operator, and the primal-dual step sizes are set from it.
 """
 
+import inspect
 import json
 
-from pfb_imaging.core.deconv import _M_OPTS, _cached_hess_norm, _m_signature
+from pfb_imaging.core.deconv import _M_OPTS, _cached_hess_norm, _m_signature, deconv
 
 BASE = {
     "eta": 1e-3,
@@ -24,8 +25,29 @@ def _attrs(opts, value=1.68):
     return {"hess_norm": value, "hess_norm_opts": _m_signature(opts)}
 
 
-def test_every_m_defining_option_is_in_the_key():
+def test_the_m_option_set_is_pinned():
+    """Change-detector, not a proof.
+
+    Whether an option defines M is a fact about ``presets._build_hess``, which
+    no assertion here can read. This pins the set so that adding a knob to the
+    preconditioner has to touch this file, and the next reader has to decide
+    whether the new knob belongs in the key.
+    """
     assert set(_M_OPTS) == {"eta", "eta_mode", "eta_cap", "gp_length_scale", "gp_cap"}
+
+
+def test_every_key_name_is_a_real_deconv_option():
+    """A name that no longer exists keys on None for every run.
+
+    ``_m_signature`` reads the options with ``.get``, so renaming an option in
+    the CLI without renaming it here does not raise -- the entry silently
+    becomes None for everybody, the signature stops discriminating on it, and
+    the cache starts handing out a norm for a different M. That is the failure
+    mode the tautological version of this test could not see.
+    """
+    params = set(inspect.signature(deconv).parameters)
+    missing = [k for k in _M_OPTS if k not in params]
+    assert not missing, f"_M_OPTS names that are not deconv options: {missing}"
 
 
 def test_signature_ignores_options_that_do_not_define_m():

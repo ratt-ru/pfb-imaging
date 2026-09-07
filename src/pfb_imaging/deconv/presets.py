@@ -48,6 +48,16 @@ def _build_hess(partitions_per_band, geometry, opts, workers=None, wsums=None):
             f"GP frequency prior: length_scale={opts['gp_length_scale']} of the band span, "
             f"cap={opts.get('gp_cap', 10.0)}; band 0 correlation with each band: " + " ".join(f"{v:.2f}" for v in row)
         )
+    elif opts.get("gp_length_scale") is not None:
+        # freq_precision returns None for a single band or a degenerate band
+        # span. Say so: the request was explicit, and the nband > 1 case logs a
+        # whole correlation row, which makes silence here read as "it is on".
+        nu = np.atleast_1d(np.asarray(geometry["freq_out"], dtype=float))
+        log.warning(
+            f"--gp-length-scale {opts['gp_length_scale']} was requested but there is nothing to correlate: "
+            f"{nu.size} band(s) spanning {nu.max() - nu.min():.3e} Hz. "
+            "Running with an uncorrelated eta, i.e. as if the option were unset."
+        )
     # --eta is a fraction of the TOTAL wsum: the band operators are normalised
     # by wsum_tot, so the Tikhonov term is a uniform +eta*x on every band
     # (eta*wsum_tot in raw units), invariant to how the data is split into

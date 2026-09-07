@@ -784,8 +784,15 @@ class HessTreeRay:
             spectrum, whose maximum is exactly 1 by construction) and
             ``eta_max``/``lam_min``/``lam_max`` (the same scaled by the largest
             eta, i.e. the prior's actual contribution to ``M``'s spectrum).
-            ``lam_max == eta_max`` is the invariant that keeps ``lambda_max(M)``
-            -- hence ``hess_norm`` and the primal-dual step sizes -- unchanged.
+            ``lam_max == eta_max`` is the invariant that bounds ``lambda_max(M)``
+            by its pre-prior value. Because ``Cinv <= I`` in the Loewner order,
+            ``M_gp <= M`` and ``lambda_max`` can only fall -- not stay equal, as
+            the eigenvectors do not align, and the top mode is frequency-flat,
+            i.e. exactly the one relaxed to ``1/cap``. The drop is at most
+            ``eta * (1 - 1/cap)``, ~9e-4 at the default ``eta=1e-3``, and
+            reusing the larger pre-prior ``hess_norm`` errs toward smaller
+            primal-dual steps. The cache still keys on the prior's options
+            (``core.deconv._M_OPTS``) rather than relying on that.
         """
         if self._dC is None:
             return None

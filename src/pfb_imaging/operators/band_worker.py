@@ -468,10 +468,21 @@ class BandWorkerPool:
     def hess_dot(self, x):
         # empty, not zeros: every band is overwritten below, and zeroing costs a
         # full pass over the cube -- 1.07 s at 8 bands x 8000^2, paid once per
-        # CG iteration on the band-coupled forward path
+        # CG iteration on the band-coupled forward path. That makes "every band
+        # is overwritten" load-bearing rather than merely true, so check it:
+        # _map's local branch returns ONE result whatever nband is (it exists
+        # only for nband == 1) and its Ray branch zips against self.actors, so
+        # either mismatch would leave uninitialised rows instead of the zeros
+        # the old allocation happened to supply.
+        if x.shape[0] != self.nband:
+            raise ValueError(f"got {x.shape[0]} bands for {self.nband} workers")
         out = np.empty_like(x)
+        nwritten = 0
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
             out[b] = res[0]
+            nwritten += 1
+        if nwritten != self.nband:
+            raise ValueError(f"{nwritten} band results for {self.nband} workers")
         return out
 
     def get_eta(self, ny, nx):
