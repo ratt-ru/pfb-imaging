@@ -1113,7 +1113,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   second term is computed inside `restore_products` and discarded. Nothing in the tree
   records it, so "what did homogenisation do to the residual" could only be answered by
   redoing the convolution with the exact `G` and `PSFPARSN_b` of that run — which is what
-  `scripts/test_spi_ripples.py` has to do, and why it needs a rebuild-vs-`IMAGE` check at
+  `scripts/check_spi_ripples.py` has to do, and why it needs a rebuild-vs-`IMAGE` check at
   all. The question matters because that term is the leading suspect for the ripples left in
   a per-pixel spectral index fit (#312).
 - **Decision:** `--outputs s`/`S` stores it as band variable `CRESIDUAL`, **apparent**
@@ -1138,7 +1138,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   residual — correct, since the restoring resolution *is* native there.
 - **Source:** issue #312; `src/pfb_imaging/utils/restoration.py` (`PRODUCT_VARS`,
   `restore_products`); `src/pfb_imaging/core/restore.py`; `src/pfb_imaging/cli/restore.py`;
-  `scripts/test_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
+  `scripts/check_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
   `…_is_apparent_and_not_the_raw_residual`, `test_restore_without_s_writes_no_cresidual`.
 
 ## Known debt

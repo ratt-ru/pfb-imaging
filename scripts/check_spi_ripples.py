@@ -57,7 +57,7 @@ Seven diagnostics, in decreasing order of how decisive they are:
 
 Run (from the repo root, on the box holding the tree)::
 
-    uv run python scripts/test_spi_ripples.py /path/to/out_I.dt --nthreads 16
+    uv run python scripts/check_spi_ripples.py /path/to/out_I.dt --nthreads 16
 
 Writes ``<outdir>/spi_ripples_report.txt`` (read this first),
 ``spi_ripples_diagnostics.npz`` and ``spi_ripples_summary.png``.  Default
