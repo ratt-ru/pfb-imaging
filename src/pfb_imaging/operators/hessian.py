@@ -708,6 +708,8 @@ class HessTreeRay:
         # semi-definite (Cinv's eigenvalues are in (0, 1]); the total operator
         # is still symmetric positive definite, so CG applies -- but nothing may
         # assume this term alone is PSD.
+        self._etas = etas
+        self._eta_mode = eta_mode
         self._dC = None
         self._s = None
         if freq_prec is not None:
@@ -715,12 +717,6 @@ class HessTreeRay:
             if freq_prec.shape != (self.nband, self.nband):
                 raise ValueError(f"freq_prec has shape {freq_prec.shape}, expected {(self.nband, self.nband)}")
             self._dC = freq_prec - np.eye(self.nband)
-            if eta_mode is None:
-                # uniform eta: a per-band scalar, so no (nband, ny, nx) cube is
-                # fetched or held (that is ~1 GB of f8 at 4096^2 x 8 bands)
-                self._s = np.sqrt(etas)
-            else:
-                self._s = np.sqrt(self._pool.get_eta(ny, nx))
             # pixel chunks for the fused kernel: sets its fan-out without
             # touching the process-wide numba thread count
             self._nchunk = max(1, int(nthreads))
@@ -728,6 +724,7 @@ class HessTreeRay:
     def dot(self, x):
         out = self._pool.hess_dot(x)
         if self._dC is not None:
+            s = self._prior_s()
             # One fused numba pass instead of four numpy ones, and no scratch
             # cubes: at 8 bands x 8000^2 the numpy form held 7.6 GB of them in
             # the driver, on top of the ~27 GB the cube-level CG already needs.
@@ -736,11 +733,67 @@ class HessTreeRay:
             # every core and those threads busy-poll for ~100 ms afterwards,
             # straight through the next ray.get while the workers need the
             # cores. See gauss.eta_freq_mul for the measurements.
-            eta_freq_mul(out, self._dC, self._s, x, nchunk=self._nchunk)
+            eta_freq_mul(out, self._dC, s, x, nchunk=self._nchunk)
         return out
 
     def hdot(self, x):
         return self.dot(x)
+
+    def prior_dot(self, x):
+        """Apply the prior term of ``M`` alone: ``D^half Cinv D^half x``.
+
+        ``M x = M_data x + prior_dot(x)``, so this is what ``--eta-in-grad``
+        adds to the gradient (issue #310) -- the term that makes the prior part
+        of the objective rather than only of the preconditioner. Built from the
+        same ``etas``/``eta_mode``/``freq_prec`` the operator was constructed
+        with, never from a re-derived ``eta * x``, so it cannot drift from
+        ``M``.
+
+        Driver-local: ``_s`` and ``_dC`` live here, so no Ray round trip --
+        except the first call under ``eta_mode``, which fetches the profile
+        cube once and caches it.
+
+        Args:
+            x: ``(nband, ny, nx)`` cube. Not modified.
+
+        Returns:
+            A new ``(nband, ny, nx)`` cube.
+        """
+        s = self._prior_s()
+        x = np.ascontiguousarray(x)
+        # D x is the whole term without a prior; with one, the identity
+        # D^half Cinv D^half = D + D^half (Cinv - I) D^half applies, exactly as
+        # in dot -- the workers supply the D there, and it is written out here.
+        #
+        # s twice into the output buffer rather than (s**2) * x: under
+        # --eta-mode s is a full (nband, ny, nx) cube, so s**2 would be a whole
+        # extra temporary alongside out -- ~1 GB of f8 at 4096^2 x 8 bands.
+        out = s * x
+        out *= s
+        if self._dC is not None:
+            eta_freq_mul(out, self._dC, s, x, nchunk=self._nchunk)
+        return out
+
+    def _prior_s(self):
+        """``D^half``, per-band when eta is uniform and a cube under eta_mode.
+
+        Cached: under ``eta_mode`` the cube is an ``(nband, ny, nx)`` fetch from
+        the workers (~1 GB of f8 at 4096^2 x 8 bands), so it is pulled at most
+        once and only if something actually asks for the prior term.
+        """
+        if self._s is None:
+            if self._eta_mode is None:
+                # per-band scalars, kept as (nband, 1, 1) so they broadcast down
+                # the BAND axis: a bare (nband,) would broadcast along nx.
+                # No (nband, ny, nx) cube is fetched or held either way -- that
+                # is ~1 GB of f8 at 4096^2 x 8 bands.
+                self._s = np.sqrt(np.asarray(self._etas, dtype=float)).reshape(self.nband, 1, 1)
+            else:
+                # in place: get_eta returns a fresh cube, so this avoids a
+                # second (nband, ny, nx) allocation on the way to sqrt(D)
+                self._s = self._pool.get_eta(self.ny, self.nx)
+                np.sqrt(self._s, out=self._s)
+        return self._s
 
     def cg(self, rhs, x0=None, tol=None, maxit=None, minit=None):
         """Solve ``hess @ update = rhs``.
@@ -797,7 +850,7 @@ class HessTreeRay:
         if self._dC is None:
             return None
         lam = np.linalg.eigvalsh(self._dC + np.eye(self.nband))
-        eta_max = float(np.max(self._s)) ** 2
+        eta_max = float(np.max(self._prior_s())) ** 2
         return {
             "prec_min": float(lam.min()),
             "prec_max": float(lam.max()),

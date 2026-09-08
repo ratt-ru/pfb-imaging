@@ -206,6 +206,26 @@ def deconv(
             rich_help_panel="PFB",
         ),
     ] = 100.0,
+    mop: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the mopped model and residual at the end of the run. "
+            "The final forward update is added to the model, which very nearly cancels the residual. "
+            "Stored as MODEL_MOPPED and RESIDUAL_MOPPED for restore to consume. "
+            "Costs one extra forward solve and one gridding sweep.",
+            rich_help_panel="PFB",
+        ),
+    ] = True,
+    eta_in_grad: Annotated[
+        bool,
+        typer.Option(
+            help="Include the eta term in the gradient, not only in the preconditioner. "
+            "By default the prior shapes each update without entering the objective. "
+            "It therefore cannot move the fixed point. "
+            "With this set the reported residual is the gradient of the regularised objective.",
+            rich_help_panel="PFB",
+        ),
+    ] = False,
     gp_length_scale: Annotated[
         float | None,
         typer.Option(
@@ -535,6 +555,8 @@ def deconv(
                     eta=eta,
                     eta_mode=eta_mode,
                     eta_cap=eta_cap,
+                    mop=mop,
+                    eta_in_grad=eta_in_grad,
                     gp_length_scale=gp_length_scale,
                     gp_cap=gp_cap,
                     gamma=gamma,
@@ -597,6 +619,8 @@ def deconv(
                 eta=eta,
                 eta_mode=eta_mode,
                 eta_cap=eta_cap,
+                mop=mop,
+                eta_in_grad=eta_in_grad,
                 gp_length_scale=gp_length_scale,
                 gp_cap=gp_cap,
                 gamma=gamma,
@@ -668,6 +692,8 @@ def deconv(
             eta=eta,
             eta_mode=eta_mode,
             eta_cap=eta_cap,
+            mop=mop,
+            eta_in_grad=eta_in_grad,
             gp_length_scale=gp_length_scale,
             gp_cap=gp_cap,
             gamma=gamma,

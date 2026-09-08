@@ -109,6 +109,19 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         i0, i1 = np.unravel_index(int(np.argmax(box.values)), box.shape)
         assert (i0, i1) == (half, half), f"source {s}: model peak off-centre ({i0},{i1})"
 
+    # mopped products (#311). --mop is on by default, so this run wrote them.
+    # The claim is that model + M^-1 r very nearly cancels the residual:
+    # A(m + M^-1 r) = A m + A M^-1 r ~= A m + r = data wherever M ~= A. Needs
+    # consistent data to mean anything, which is why it is asserted here and
+    # not on the synthetic tree.
+    for n in nodes:
+        assert "MODEL_MOPPED" in dt[n].ds and "RESIDUAL_MOPPED" in dt[n].ds
+    residual_mopped = sum(dt[n].ds.RESIDUAL_MOPPED[0] for n in nodes).values
+    peak, peak_mopped = np.abs(residual).max(), np.abs(residual_mopped).max()
+    assert peak_mopped < 0.5 * peak, f"mopped peak {peak_mopped:.3e} vs deconvolved {peak:.3e}"
+    # and it must be a different model, not a copy of MODEL
+    assert not np.allclose(dt[nodes[0]].ds.MODEL.values, dt[nodes[0]].ds.MODEL_MOPPED.values)
+
     # per-partition debug FITS: with a single partition per band, the
     # re-gridded partition residual must reproduce the stored band RESIDUAL
     import glob
@@ -494,3 +507,253 @@ def test_deconv_driver_runs_with_the_frequency_prior(tmp_path):
     ref = xr.open_datatree(f"{out2}_I.dt", engine="zarr", chunks=None)["band0000_time0000"].ds
     rel = np.linalg.norm(band.UPDATE.values - ref.UPDATE.values) / np.linalg.norm(ref.UPDATE.values)
     assert rel > 1e-2, f"the prior left the update unchanged (rel={rel:.3e})"
+
+
+# ---------------------------------------------------------------------------
+# --eta-in-grad (issue #310): the prior enters the objective, not only M
+# ---------------------------------------------------------------------------
+
+
+def _eta_grad_opts(**over):
+    """Driver opts for the --eta-in-grad tests.
+
+    eta is 0.1, not the 1e-3 default: the synthetic tree has a unit PSF, so at
+    the default the data term swamps the prior and the correction is lost in
+    the CG tolerance (same reason as the frequency-prior driver test).
+    """
+    opts = dict(
+        product="I",
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=1,
+        hess_norm=1.0,
+        pd_maxit=20,
+        cg_maxit=20,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=2,
+        nworkers=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+        eta=0.1,
+    )
+    opts.update(over)
+    return opts
+
+
+def _run_two_cycles(tmp_path, tag, eta_in_grad):
+    """Two major cycles on a fresh synthetic tree; returns the final UPDATE."""
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    output_filename = str(tmp_path / tag)
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(51))
+    deconv_core(output_filename, eta_in_grad=eta_in_grad, **_eta_grad_opts(niter=2))
+    ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+    return ds.UPDATE.values.copy()
+
+
+@pytest.mark.slow
+def test_eta_in_grad_changes_the_update_once_the_model_is_nonzero(tmp_path):
+    """The prior term is -K^-1 m, so it bites from the second cycle on.
+
+    Cycle 1 starts from a zero model and is identical either way; cycle 2 sees
+    a gradient that differs by K^-1 m, so its update must differ too.
+    """
+    off = _run_two_cycles(tmp_path, "eig0", False)
+    on = _run_two_cycles(tmp_path, "eig1", True)
+
+    assert not np.allclose(off, on, rtol=1e-6, atol=1e-12)
+
+
+@pytest.mark.slow
+def test_eta_in_grad_is_a_no_op_on_the_first_step_from_a_zero_model(tmp_path):
+    """K^-1 * 0 == 0: a fresh tree's first update cannot move, bit for bit.
+
+    Also guards the scale. Applying the correction to the raw residual instead
+    of the wsum-normalised one, or dropping the model factor, would perturb
+    this even at a zero model.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    updates = {}
+    for flag in (False, True):
+        output_filename = str(tmp_path / f"eigz{int(flag)}")
+        dt_name = f"{output_filename}_I.dt"
+        _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(52))
+        deconv_core(output_filename, eta_in_grad=flag, **_eta_grad_opts())
+        ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+        updates[flag] = ds.UPDATE.values.copy()
+
+    np.testing.assert_allclose(updates[False], updates[True], rtol=0, atol=0)
+
+
+def test_grad_with_prior_subtracts_the_prior_term_on_the_normalised_scale():
+    """The scale decision, isolated.
+
+    ``residual``/``bresidual`` reaching the solver are already divided by the
+    total wsum, and ``prior_dot`` is defined on that same normalised operator
+    (--eta is a fraction of the total wsum), so the correction is subtracted
+    with no further scaling. It must not touch the caller's arrays: the raw
+    ones are what get stored, and storing an eta-inclusive gradient would
+    double-count it on every resume.
+    """
+    from pfb_imaging.core.deconv import _grad_with_prior
+
+    class _Prior:
+        def __init__(self, eta):
+            self.eta = eta
+
+        def prior_dot(self, x):
+            return self.eta * x
+
+    rng = np.random.default_rng(54)
+    nband, ny, nx = 2, 4, 4
+    residual = rng.standard_normal((nband, ny, nx))
+    bresidual = rng.standard_normal((nband, ny, nx))
+    model = rng.standard_normal((nband, ny, nx))
+    r0, b0 = residual.copy(), bresidual.copy()
+
+    r, b = _grad_with_prior(residual, bresidual, model, _Prior(0.25))
+
+    np.testing.assert_allclose(r, r0 - 0.25 * model, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(b, b0 - 0.25 * model, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(residual, r0, rtol=0, atol=0)
+    np.testing.assert_allclose(bresidual, b0, rtol=0, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# --mop (issue #311): the near-perfect-residual products
+# ---------------------------------------------------------------------------
+
+
+def _run_mop(tmp_path, tag, **over):
+    """One major cycle on a fresh synthetic tree; returns the band 0 dataset."""
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    output_filename = str(tmp_path / tag)
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(61))
+    deconv_core(output_filename, **_eta_grad_opts(**over))
+    return xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+
+
+@pytest.mark.slow
+def test_mop_writes_mopped_products_by_default(tmp_path):
+    """--mop is on by default and lands both products in the band node."""
+    ds = _run_mop(tmp_path, "mop_on")
+
+    assert "MODEL_MOPPED" in ds
+    assert "RESIDUAL_MOPPED" in ds
+    assert ds.MODEL_MOPPED.dims == ("corr", "y", "x")
+    assert np.isfinite(ds.MODEL_MOPPED.values).all()
+    assert np.isfinite(ds.RESIDUAL_MOPPED.values).all()
+
+
+@pytest.mark.slow
+def test_no_mop_writes_neither_product(tmp_path):
+    """It costs a forward solve and a gridding sweep, so it must be skippable."""
+    ds = _run_mop(tmp_path, "mop_off", mop=False)
+
+    assert "MODEL_MOPPED" not in ds
+    assert "RESIDUAL_MOPPED" not in ds
+    assert "MODEL" in ds  # the ordinary products are unaffected
+
+
+@pytest.mark.slow
+def test_mop_leaves_the_deconvolved_model_alone(tmp_path):
+    """MODEL stays the regularised model; the mop is a separate product.
+
+    MODEL_MOPPED is MODEL plus a least-squares update, so it is not sparse and
+    not a component model -- it must not overwrite what deconv converged to.
+    """
+    ds = _run_mop(tmp_path, "mop_sep")
+
+    assert not np.allclose(ds.MODEL.values, ds.MODEL_MOPPED.values, rtol=1e-6, atol=1e-12)
+
+
+# Note: "mopping lowers the residual" is NOT tested on _write_synthetic_dt.
+# That fixture's DIRTY and its partitions' VIS are independent random draws, so
+# the operator and the right-hand side describe different data and M is nowhere
+# near A -- M^-1 r is then a large least-squares answer to an inconsistent
+# system and the exact residual against it is worse, not better (measured:
+# 5.2e8 against 9.5e3). The claim needs consistent data, so it lives in
+# test_deconv_groundtruth, which images a real MS with a known injected sky.
+
+
+@pytest.mark.slow
+def test_mop_preserves_the_run_attrs(tmp_path):
+    """The mop write must not wipe niters/rms/hess_norm off the band node.
+
+    to_zarr(mode="a") merges variables but REPLACES attrs wholesale, so a
+    second write built from the band's original attrs silently drops
+    everything the major cycle recorded -- and a resumed run would then restart
+    from iteration 0 and re-estimate the norm.
+    """
+    ds = _run_mop(tmp_path, "mop_attrs")
+
+    assert ds.attrs["niters"] == 1
+    assert "hess_norm" in ds.attrs
+    assert "hess_norm_opts" in ds.attrs
+    assert "rms" in ds.attrs and "rmax" in ds.attrs
+    assert ds.attrs["bandid"] == 0  # the original attrs survive too
+
+
+def _seed_model(store, rng, nband=2, nx=32, ny=32):
+    """Put a nonzero MODEL and its matching BRESIDUAL into a synthetic tree.
+
+    Lets a run start from a model without spending a major cycle to build one,
+    which is what makes a niter=0 comparison possible.
+    """
+    import xarray as xr
+
+    for b in range(nband):
+        n = f"band{b:04d}_time0000"
+        ds = xr.open_datatree(store, engine="zarr", chunks=None)[n].ds
+        model = rng.standard_normal((1, ny, nx))
+        xr.Dataset(
+            {
+                "MODEL": (("corr", "y", "x"), model),
+                "BRESIDUAL": (("corr", "y", "x"), ds.BDIRTY.values.copy()),
+            },
+            attrs=dict(ds.attrs),
+        ).to_zarr(store, group=n, mode="a")
+
+
+@pytest.mark.slow
+def test_mop_uses_the_data_gradient_not_the_eta_corrected_one(tmp_path):
+    """The mop must solve against r_data, whatever --eta-in-grad is doing.
+
+    "Near perfect residual" means the *data* residual is near zero, so the mop
+    direction is M^-1 r_data. Solving against the eta-corrected gradient
+    r_data - K^-1 m instead makes the mop collapse to nothing exactly where it
+    is wanted: at a regularised fixed point that gradient is ~0, so
+    MODEL_MOPPED -> MODEL and the residual is not mopped at all.
+
+    Pinned by holding the model fixed (niter=0, seeded MODEL) so the only thing
+    the flag can change is the mop right-hand side. The two must agree exactly.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    mopped = {}
+    for flag in (False, True):
+        output_filename = str(tmp_path / f"moprhs{int(flag)}")
+        dt_name = f"{output_filename}_I.dt"
+        _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(71))
+        _seed_model(dt_name, np.random.default_rng(72))
+        deconv_core(output_filename, eta_in_grad=flag, **_eta_grad_opts(niter=0))
+        ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+        mopped[flag] = ds.MODEL_MOPPED.values.copy()
+        assert not np.allclose(ds.MODEL_MOPPED.values, ds.MODEL.values), "mop was a no-op"
+
+    np.testing.assert_allclose(mopped[False], mopped[True], rtol=0, atol=0)

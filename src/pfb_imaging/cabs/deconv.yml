@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:dev-0.1.0
+    image: ghcr.io/ratt-ru/pfb-imaging:issue310-311
     inputs:
       output-filename:
         info:
@@ -153,6 +153,26 @@ cabs:
           Ignored when eta-mode is unset.
         dtype: float
         default: 100.0
+        metadata:
+          rich_help_panel: PFB
+      mop:
+        info:
+          Compute the mopped model and residual at the end of the run.
+          The final forward update is added to the model, which very nearly cancels the residual.
+          Stored as MODEL_MOPPED and RESIDUAL_MOPPED for restore to consume.
+          Costs one extra forward solve and one gridding sweep.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: PFB
+      eta-in-grad:
+        info:
+          Include the eta term in the gradient, not only in the preconditioner.
+          By default the prior shapes each update without entering the objective.
+          It therefore cannot move the fixed point.
+          With this set the reported residual is the gradient of the regularised objective.
+        dtype: bool
+        default: false
         metadata:
           rich_help_panel: PFB
       gp-length-scale:

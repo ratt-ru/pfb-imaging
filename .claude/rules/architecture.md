@@ -137,7 +137,8 @@ falls back to `DIRTY` when it is absent.
 **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")` etc.,
 scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only behind zero-copy
 `.T` views at the wgridder call sites (wiki design-decisions D19/D20).
-`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer, and
+`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer (plus
+`MODEL_MOPPED`/`RESIDUAL_MOPPED` when `--mop` is on, the default — wiki D35), and
 `IMAGE`/`BIMAGE`/`KIMAGE` plus `PSFPARSF` by the `restore` consumer (the intrinsic,
 apparent and mixed flux scales — wiki D29), and optionally `CRESIDUAL` (`--outputs s`/`S`),
 the residual convolved to the restoring resolution — apparent, pre-beam-division, and the

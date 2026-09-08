@@ -858,3 +858,56 @@ def test_restore_multi_corr_products_keep_every_correlation(tmp_path):
     # integrates to ~4x more -- identical planes would mean a collapse to corr 0
     assert cpsf_mfs[1, 0].sum() > 2.0 * cpsf_mfs[0, 0].sum()
     assert cpsf_cube[1, 0].sum() > 2.0 * cpsf_cube[0, 0].sum()
+
+
+def test_restore_consumes_the_mopped_products(tmp_path):
+    """`restore --model-name MODEL_MOPPED --residual-name RESIDUAL_MOPPED`.
+
+    The whole point of storing the mopped pair (#311) is building restored
+    images -- and thence a spectral index map -- from it. restore is already
+    parameterised on the input variable names, so this must need no restore
+    change at all; the test is here to keep that true.
+
+    The mopped variables are deliberately *scaled copies*, not copies: with
+    identical inputs the run would produce identical output whether or not
+    restore honoured the name arguments, so the test would pass on a restore
+    that silently read MODEL/RESIDUAL. The factors are distinct and known, so
+    the restored image is predictable from them.
+    """
+    from pfb_imaging.utils.misc import convolve2gaussres
+
+    mscale, rscale = 3.0, 5.0
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        n = f"band{b:04d}_time0000"
+        ds = dt[n].ds
+        xr.Dataset(
+            {
+                "MODEL_MOPPED": (("corr", "y", "x"), mscale * ds.MODEL.values),
+                "RESIDUAL_MOPPED": (("corr", "y", "x"), rscale * ds.RESIDUAL.values),
+            },
+            attrs=dict(ds.attrs),
+        ).to_zarr(store, group=n, mode="a")
+
+    _run_restore(tmp_path, outputs="kK", model_name="MODEL_MOPPED", residual_name="RESIDUAL_MOPPED")
+
+    out = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+    assert "KIMAGE" in out
+    assert np.isfinite(out.KIMAGE.values).all()
+
+    # KIMAGE == MODEL_MOPPED (x) G + RESIDUAL_MOPPED / WSUM, at native
+    # resolution so the residual is not reconvolved. Both scale factors have to
+    # show up: reading MODEL/RESIDUAL instead would miss them.
+    _, ny, nx = out.MODEL.shape
+    xx, yy = np.meshgrid(-(nx // 2) + np.arange(nx), -(ny // 2) + np.arange(ny), indexing="ij")
+    mconv = convolve2gaussres(
+        mscale * out.MODEL.values, xx, yy, out.PSFPARSF.values, nthreads=1, pfrac=0.2, norm_kernel=False, yx_order=True
+    )
+    want = mconv + rscale * out.RESIDUAL.values / out.WSUM.values[:, None, None]
+    np.testing.assert_allclose(out.KIMAGE.values, want, rtol=0, atol=1e-5)
+
+    # and the unscaled inputs really would have given something else
+    assert not np.allclose(out.KIMAGE.values, want / mscale, atol=1e-3)

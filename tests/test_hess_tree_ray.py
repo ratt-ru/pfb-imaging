@@ -452,3 +452,74 @@ def test_prior_needs_more_cg_iterations_and_that_is_expected():
     off_f, on_f = _pair(full, nx, ny, eta, kinv)
     it_full, it_full_gp = applications(off_f), applications(on_f)
     assert it_full_gp < 1.3 * it_full, f"expected the prior to be nearly free here, got {it_full} -> {it_full_gp}"
+
+
+# ---------------------------------------------------------------------------
+# prior_dot: the non-data part of M, exposed so the gradient can carry it
+# (issue #310, --eta-in-grad). M itself is only ever applied as a whole.
+# ---------------------------------------------------------------------------
+
+
+@pmp("length_scale", [None, 0.5])
+def test_prior_dot_is_exactly_the_non_data_part_of_m(length_scale):
+    """``dot(x) == M_data x + prior_dot(x)``, prior on or off.
+
+    This is the contract --eta-in-grad rests on: the gradient must gain
+    precisely the term the preconditioner adds, so building it from anything
+    but M itself (a hardcoded ``eta * x``, say) would drift from M the moment
+    the prior or eta_mode is on.
+    """
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(20)
+    nband, nx, ny = 3, 8, 8
+    eta = 1e-2
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = None if length_scale is None else freq_precision(np.linspace(1.0e9, 1.4e9, nband), length_scale)
+
+    data_only = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.0)
+    full = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+
+    x = rng.standard_normal((nband, nx, ny))
+    assert_allclose(full.dot(x) - data_only.dot(x), full.prior_dot(x), rtol=1e-11, atol=1e-13)
+
+
+def test_prior_dot_is_eta_times_x_when_the_prior_is_off():
+    """The uncorrelated limit, written out: K^-1 = eta * I."""
+    rng = np.random.default_rng(21)
+    nband, nx, ny = 2, 8, 8
+    eta = 3e-2
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta)
+
+    x = rng.standard_normal((nband, nx, ny))
+    assert_allclose(hess.prior_dot(x), eta * x, rtol=1e-12, atol=0)
+
+
+def test_prior_dot_couples_bands_through_the_correlation_matrix():
+    """With the prior on and uniform eta: K^-1 x == eta * (Cinv @ x)."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(22)
+    nband, nx, ny = 3, 8, 8
+    eta = 1e-2
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+
+    x = rng.standard_normal((nband, nx, ny))
+    want = eta * np.einsum("bc,cyx->byx", kinv, x)
+    assert_allclose(hess.prior_dot(x), want, rtol=1e-11, atol=1e-13)
+
+
+def test_prior_dot_does_not_mutate_its_argument():
+    """The driver subtracts it from a residual it still needs."""
+    rng = np.random.default_rng(23)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2)
+
+    x = rng.standard_normal((nband, nx, ny))
+    before = x.copy()
+    hess.prior_dot(x)
+    assert_allclose(x, before, rtol=0, atol=0)
