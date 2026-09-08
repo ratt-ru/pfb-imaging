@@ -25,6 +25,7 @@ from zarr import ProcessSynchronizer
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.astrometry import resolve_target_radec
 from pfb_imaging.utils.misc import construct_mappings, set_image_size
 from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
@@ -399,6 +400,7 @@ def hci(
         nx_psf,
         ny_psf,
         cell_deg,
+        target=target,
         spatial_chunk=128,  # hardcode for now
         images_per_chunk=images_per_chunk,
         integrations_per_image=integrations_per_image,
@@ -791,6 +793,7 @@ def make_dummy_dataset(
     nx_psf,
     ny_psf,
     cell_deg,
+    target=None,
     spatial_chunk=128,
     images_per_chunk=16,
     integrations_per_image=1,
@@ -847,6 +850,15 @@ def make_dummy_dataset(
     n_times = out_times.size
     n_freqs = out_freqs.size
 
+    if n_times == 0 or n_freqs == 0:
+        # the time loop steps by integrations_per_image, so a value < 1 gives an
+        # empty range and hence no output images at all
+        raise ValueError(
+            f"selection produced {n_times} time bins and {n_freqs} frequency bins, so there is "
+            f"nothing to image. integrations_per_image must be >= 1 (got {integrations_per_image}); "
+            "pass the scan length for a single time bin."
+        )
+
     # spatial coordinates
     if phase_dir is None:
         # these are in radians
@@ -883,6 +895,29 @@ def make_dummy_dataset(
     # remove duplicates
     out_times = np.unique(out_times)
     out_freqs = np.unique(out_freqs)
+
+    # --target moves the image centre off the tangent point, so the scaffold's
+    # X/Y coords (and the header's CRVAL) must move with it: stokes_image labels
+    # its grid from the target, and its slab is written back with
+    # to_zarr(region="auto"), which resolves the region by looking those values
+    # up here. Same resolver on both sides so they cannot disagree.
+    if target is not None:
+        ra_t, dec_t, moving = resolve_target_radec(target, float(out_times[0]))
+        if moving and out_times.size > 1:
+            # an ephemeris target moves between images, but X/Y is one axis shared
+            # across TIME, so no single labelling is correct for the whole cube
+            refs = np.rad2deg([resolve_target_radec(target, float(t))[:2] for t in out_times])
+            if not np.all(refs == refs[0]):
+                raise ValueError(
+                    f"target '{target}' is a solar-system body, so its position differs across the "
+                    f"{out_times.size} output time bins ({np.ptp(refs[:, 0]):.4f} deg in RA, "
+                    f"{np.ptp(refs[:, 1]):.4f} deg in Dec) and the cube's shared X/Y axis cannot "
+                    "label all of them. Either ask for a single time bin "
+                    "(--integrations-per-image >= the number of integrations in the scan), or pass "
+                    "the position explicitly as --target 'HH:MM:SS,DD:MM:SS'."
+                )
+        out_ra_deg = np.array([np.rad2deg(ra_t)])
+        out_dec_deg = np.array([np.rad2deg(dec_t)])
 
     n_stokes = len(set(product))
     n_times = out_times.size
@@ -951,7 +986,7 @@ def make_dummy_dataset(
         "fits_dims": (("X", ra_dim), ("Y", dec_dim), ("TIME", "TIME"), ("FREQ", "FREQ"), ("STOKES", "STOKES")),
     }
 
-    # Quantise to 1e-12 deg (3.6 nano-pixel) so the workers' independently computed
+    # Quantise to 1e-12 deg (3.6 nanoarcsec) so the workers' independently computed
     # X/Y coords agree bitwise with this scaffold: they write back with
     # to_zarr(region="auto"), which looks the values up in the stored coords and
     # raises KeyError on a 1-ulp difference. Redundant with the deg->rad->deg
