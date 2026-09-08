@@ -327,7 +327,9 @@ def hci(
         str | None,
         typer.Option(
             help="Predefined celestial objects known to astropy. "
-            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter). "
+            "The image centre moves to the target. "
+            "A named body moves between images, so it needs a single time bin.",
             rich_help_panel="Imaging",
         ),
     ] = None,

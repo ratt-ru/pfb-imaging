@@ -6,7 +6,6 @@ import numexpr as ne
 import numpy as np
 import ray
 import xarray as xr
-from africanus.coordinates import radec_to_lm
 from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
@@ -18,9 +17,9 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
-from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
+from pfb_imaging.utils.astrometry import resolve_target_radec, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
-from pfb_imaging.utils.misc import fitcleanbeam, to_unix_time
+from pfb_imaging.utils.misc import fitcleanbeam, radec_to_lm, to_unix_time
 from pfb_imaging.utils.weighting import (
     _compute_counts,
     as_contiguous_readonly_view,
@@ -392,19 +391,10 @@ def stokes_image(
 
     # compute lm coordinates of target if requested
     if target is not None:
-        tmp = target.split(",")
-        if len(tmp) == 1 and tmp[0] == target:
-            obs_time = time_out
-            tra, tdec = get_coordinates(obs_time, target=target)
-        else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            c = SkyCoord(tmp[0], tmp[1], frame="fk5", unit=(units.hourangle, units.deg))
-            tra = np.deg2rad(c.ra.value)
-            tdec = np.deg2rad(c.dec.value)
-
-        tcoords = np.zeros((1, 2))
-        tcoords[0, 0] = tra
-        tcoords[0, 1] = tdec
-        lm0 = radec_to_lm(tcoords, radec_new[None, :]).squeeze()
+        # same resolver the hci driver uses to place the scaffold's coords, so the
+        # two cannot drift apart (wiki design-decisions D36)
+        tra, tdec, _ = resolve_target_radec(target, time_out)
+        lm0 = radec_to_lm((tra, tdec), radec_new)
         # flip for wgridder conventions
         x0 = -lm0[0]
         y0 = -lm0[1]
@@ -474,12 +464,8 @@ def stokes_image(
         for name, ra, dec in zip(names, ras, decs):
             ra_rad = np.deg2rad(ra)
             dec_rad = np.deg2rad(dec)
-            tcoords = np.zeros((1, 2))
-            tcoords[0, 0] = ra_rad
-            tcoords[0, 1] = dec_rad
             # use initial radec as reference since rephasing happens after beam application
-            coords0 = np.array((radec[0], radec[1]))
-            lm0t = radec_to_lm(tcoords, coords0).squeeze()
+            lm0t = radec_to_lm((ra_rad, dec_rad), radec)
             x0t = lm0t[0]
             y0t = lm0t[1]
             n0t = np.sqrt(1 - x0t**2 - y0t**2)
@@ -734,6 +720,9 @@ def stokes_image(
     # set corr coords (removing duplicates and sorting)
     corr = list(sorted(set(product)))
 
+    # Quantise to 1e-12 deg so these agree bitwise with the scaffold hci wrote:
+    # the region="auto" write below looks these values up in the stored coords and
+    # raises KeyError on a 1-ulp difference. See wiki design-decisions D36 (#155).
     out_ras = ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
     out_decs = dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
     out_ras = np.round(out_ras, decimals=12)

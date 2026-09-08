@@ -30,6 +30,7 @@ from pfb_imaging.core.hci import (
 from pfb_imaging.core.hci import (
     hci as hci_core,
 )
+from pfb_imaging.utils.astrometry import resolve_target_radec
 from pfb_imaging.utils.misc import set_image_size
 from pfb_imaging.utils.stokes2im import beam_for_band, beam_gain_for_source
 from pfb_imaging.utils.transients import generate_transient_spectra
@@ -794,3 +795,255 @@ def test_beam_for_band_stokes_order():
     assert [kw["i"] for _, kw in bw.get_rotation_averaged_beam.call_args_list] == ["I", "Q", "U", "V"]
     for index, prod in enumerate("IQUV"):
         assert_allclose(pbeam[index], levels[prod], rtol=1e-6)
+
+
+def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, ms_meta, tmp_path):
+    """The driver's scaffold coords must match what the workers compute, bitwise.
+
+    Workers write their slabs back with ``to_zarr(region="auto")``, which resolves
+    the target slice by looking their X/Y values up in the stored coords, so a
+    1-ulp disagreement is a hard KeyError rather than a small astrometric error.
+    The two sides reach degrees differently -- the worker via
+    ``rad2deg(deg2rad(...))``, because everything between works in radians -- and
+    that round trip is not the float64 identity for every mantissa. This test
+    picks a phase centre where it demonstrably is not, so the failure lands here
+    instead of on a user's field.
+
+    Two guards keep this working and they are redundant with each other: the
+    driver mirroring the worker's conversion, and the 1e-12 deg quantisation on
+    both sides. Removing either one alone still passes; removing both raises
+    ``KeyError: Not all values of coordinate 'Y' ... were found in the original
+    store`` from inside the Ray task. So this guards the contract, not one
+    mechanism -- see wiki design-decisions D36 (#155) before deleting either.
+    """
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    def hostile(coord):
+        """True if this centre's degrees do not survive the deg->rad->deg trip."""
+        return coord.ra.value != np.rad2deg(np.deg2rad(coord.ra.value)) or coord.dec.value != np.rad2deg(
+            np.deg2rad(coord.dec.value)
+        )
+
+    # walk small dec offsets until we land on a centre that actually diverges;
+    # staying within ~0.05 deg keeps the field centre inside the image
+    phase_dir = None
+    for k in range(1, 2001):
+        cand = SkyCoord(ra0 * u.rad, (dec0 + np.deg2rad(2.5e-5 * k)) * u.rad, frame="fk5")
+        as_parsed = SkyCoord(
+            f"{cand.ra.to_string(unit=u.hourangle, sep=':')}",
+            f"{cand.dec.to_string(unit=u.deg, sep=':')}",
+            frame="fk5",
+            unit=(u.hourangle, u.deg),
+        )
+        if hostile(as_parsed):
+            phase_dir = f"{cand.ra.to_string(unit=u.hourangle, sep=':')},{cand.dec.to_string(unit=u.deg, sep=':')}"
+            break
+
+    assert phase_dir is not None, "found no ulp-hostile phase centre near the test MS -- test would be vacuous"
+
+    out = str(tmp_path / "hci_ulp.zarr")
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        phase_dir=phase_dir,
+        channels_per_image=-1,
+        integrations_per_image=ms_meta.ntime,  # single time bin -- one rephasing pass
+        images_per_chunk=1,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=None,  # natural: the coord contract is weighting-independent
+        epsilon=1e-7,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    # the region="auto" write is the assertion: if the coords disagreed we never
+    # get here. Confirm the slabs actually landed rather than staying empty.
+    ds = xr.open_zarr(out)
+    assert ds.cube.dims == ("STOKES", "FREQ", "TIME", "Y", "X")
+    assert ds.sizes["TIME"] == 1
+    assert np.any(ds.nonzero.values), "no data recorded -- the slab did not land"
+
+
+def test_hci_target_recentres_the_grid(ms_name, ms_meta, tmp_path):
+    """``--target`` moves the image centre, so the scaffold's coords must move with it.
+
+    The worker centres the grid on the target (``center_x``/``center_y`` from the
+    target's l/m) and labels its X/Y coords from the target's RA/Dec, while the
+    driver's scaffold was built on the phase centre and never saw ``target`` at
+    all. That is a whole-degree disagreement, so ``region="auto"`` cannot resolve
+    the slab and the run dies inside the Ray task. Sources injected about the
+    target must land at their predicted pixels about the image centre.
+    """
+    import dask
+    import dask.array as da
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
+
+    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    nrow_, nchan_, ncorr_ = xds0.FLAG.shape
+    xds0 = xds0.assign(
+        FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+
+    out = str(tmp_path / "hci_target.zarr")
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    # put the target well off the phase centre so a mismatch cannot hide inside
+    # rounding, and round-trip the string exactly as hci/stokes2im parse it
+    dit, djt = 30, -20
+    ra_t, dec_t = _lm_to_radec(dit * cell_rad, djt * cell_rad, ra0, dec0)
+    tc = SkyCoord(ra_t * u.rad, dec_t * u.rad, frame="fk5")
+    target = f"{tc.ra.to_string(unit=u.hourangle, sep=':')},{tc.dec.to_string(unit=u.deg, sep=':')}"
+
+    # sources at offsets from the *phase centre*; the first coincides with the
+    # target and so must land dead centre once the grid is recentred
+    offsets = [(dit, djt), (dit - 25, djt - 18), (dit + 25, djt + 18)]
+    transients = []
+    for k, (di, dj) in enumerate(offsets):
+        ra, dec = _lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)
+        transients.append(
+            {
+                "name": f"src{k}",
+                "time": {"peak_time": 1800.0, "duration": 3000.0, "shape": "gaussian"},
+                "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": 0.0},
+                "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+            }
+        )
+    config_path = tmp_path / "transients_target.yaml"
+    with open(config_path, "w") as f:
+        yaml.safe_dump({"transients": transients}, f)
+
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        data_column="DATA-DATA",
+        inject_transients=str(config_path),
+        target=target,
+        channels_per_image=-1,
+        channels_per_bin=-1,
+        integrations_per_image=ms_meta.ntime,  # single time bin
+        images_per_chunk=1,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=None,
+        epsilon=1e-8,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    ds = xr.open_zarr(out)
+    img = ds.cube.values[0, 0, 0]  # (Y, X)
+
+    for di, dj in offsets:
+        # the grid is centred on the target, so offsets are measured from it
+        ix_pred = nx // 2 - (di - dit)
+        iy_pred = ny // 2 + (dj - djt)
+        lo_y, lo_x = max(0, iy_pred - 5), max(0, ix_pred - 5)
+        win = img[lo_y : iy_pred + 6, lo_x : ix_pred + 6]
+        ly, lx = np.unravel_index(np.argmax(win), win.shape)
+        err = np.hypot(lo_x + lx - ix_pred, lo_y + ly - iy_pred)
+        assert win.max() > 0.0, f"no flux recovered for source at offset ({di},{dj})"
+        assert err <= 1.0, f"source at offset ({di},{dj}) landed {err:.1f} px from prediction"
+
+    # the stored coords must be labelled from the target, not the phase centre
+    assert_allclose(ds.X.values[nx // 2], tc.ra.value, atol=1e-9)
+    assert_allclose(ds.Y.values[ny // 2], tc.dec.value, atol=1e-9)
+
+
+def test_hci_rejects_a_moving_target_across_multiple_time_bins(ms_name, ms_meta, tmp_path):
+    """An ephemeris target moves between images; one shared X/Y axis cannot label both.
+
+    ``--target Sun`` resolves per image (``get_coordinates(time_out)``), so with
+    more than one output time bin there is no single correct labelling for the
+    cube's shared X/Y coords. That must be an up-front error naming the problem,
+    not a KeyError from inside a Ray task once the workers disagree with the
+    scaffold.
+    """
+    out = str(tmp_path / "hci_moving.zarr")
+    with pytest.raises(ValueError, match="solar-system body"):
+        hci_core(
+            [ms_name],
+            out,
+            product="I",
+            target="Sun",
+            channels_per_image=-1,
+            integrations_per_image=20,  # 60 integrations -> 3 time bins
+            images_per_chunk=3,
+            max_simul_chunks=1,
+            field_of_view=0.5,
+            super_resolution_factor=2.0,
+            nworkers=1,
+            nthreads=1,
+            beam_model=None,
+            robustness=0.0,
+            epsilon=1e-7,
+            overwrite=True,
+            keep_ray_alive=True,
+            log_directory=str(tmp_path / "logs"),
+        )
+
+
+def test_hci_accepts_a_moving_target_in_a_single_time_bin(ms_name, ms_meta, tmp_path):
+    """One time bin has one target position, so an ephemeris target is well defined.
+
+    The complement of the multi-bin rejection: with a single output image the
+    driver and the worker both resolve the body at the same ``time_out``, so the
+    scaffold's coords match what the worker writes back and the run completes.
+    """
+    out = str(tmp_path / "hci_moving_ok.zarr")
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        target="Sun",
+        channels_per_image=-1,
+        integrations_per_image=ms_meta.ntime,  # single time bin
+        images_per_chunk=1,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=0.0,
+        epsilon=1e-7,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    ds = xr.open_zarr(out)
+    assert ds.sizes["TIME"] == 1
+    # the grid must be labelled from the body's position at that image's time,
+    # and the FITS CRVAL must agree with it
+    ra_sun, dec_sun, moving = resolve_target_radec("Sun", float(ds.TIME.values[0]))
+    assert moving
+    nx, ny = ds.sizes["X"], ds.sizes["Y"]
+    assert_allclose(ds.X.values[nx // 2], np.rad2deg(ra_sun), atol=1e-9)
+    assert_allclose(ds.Y.values[ny // 2], np.rad2deg(dec_sun), atol=1e-9)
+    hdr = dict(ds.attrs["fits_header"])
+    assert_allclose(hdr["CRVAL1"], np.rad2deg(ra_sun), atol=1e-9)
+    assert_allclose(hdr["CRVAL2"], np.rad2deg(dec_sun), atol=1e-9)

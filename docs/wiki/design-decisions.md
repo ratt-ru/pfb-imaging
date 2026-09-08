@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-08T10:00:00Z
-last_verified_commit: 64bae7c
+timestamp: 2026-09-08T12:22:55Z
+last_verified_commit: af344c5
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1228,6 +1228,98 @@ update it (and this page's `last_verified_commit`) in the same session.
   `…test_mop_writes_mopped_products_by_default`, `…test_no_mop_writes_neither_product`,
   `…test_mop_leaves_the_deconvolved_model_alone`, `…test_mop_preserves_the_run_attrs`,
   `tests/test_restore.py::test_restore_consumes_the_mopped_products`.
+
+### D36 — hci's zarr coords are quantised to 1e-12 deg because `region="auto"` demands bitwise equality
+
+- **Context:** `hci --output-format zarr` writes a full-cube scaffold from the driver
+  (`make_dummy_dataset` → `to_zarr(mode="w", compute=False)`), then each Ray worker writes its
+  own `(TIME, FREQ)` slab back with `to_zarr(region="auto")` (`batch_stokes_image`). Both sides
+  compute the `X`/`Y` pixel-centre coordinates *independently*, from the same formula
+  `ref_deg + arange(...) * cell_deg`. `region="auto"` resolves the target slice by **looking
+  the incoming coordinate values up in the stored coordinate arrays**, so it needs exact
+  float64 equality — a 1-ulp difference is `KeyError: Not all values of coordinate 'Y' in the
+  new array were found in the original store`. Issue #155 recorded the rounding needed to make
+  them match and asked why it was ever necessary.
+- **Decision:** both sides quantise with `np.round(..., decimals=12)` before building the
+  coords (`core/hci.py`, `utils/stokes2im.py`), **and** the driver mirrors the worker's
+  conversion arithmetic exactly — `np.rad2deg(np.deg2rad(coord.ra.value))`, not
+  `coord.ra.value` (`core/hci.py`, the `phase_dir is not None` branch).
+- **Rationale:** the divergence was an arithmetic asymmetry in how the reference coordinate
+  reached degrees. The driver took astropy's degrees directly; the worker went
+  degrees → radians (`np.deg2rad`) → degrees (`np.rad2deg`), because everything between
+  (rephasing, `synthesize_uvw`, `radec_to_lm`, the wgridder) works in radians. That round trip
+  is `fl(fl(x·π/180)·180/π)`: the two constants multiply to exactly 1.0 in float64, but the
+  intermediate rounds, so the composition is **not** the identity for all `x` — it is off by
+  1–2 ulp for whichever mantissas do not cancel. Measured over 4000 random phase centres, the
+  pre-fix driver path disagreed with the worker for **13%** of them, worst case 1.42e-14 deg at
+  |dec| ≈ 64°. That is the "sometimes" in the original TODO: it is a property of the
+  coordinate's bit pattern, not of the observation, so it reproduces perfectly on one field and
+  never appears on another. `decimals=12` is a quantum of 1e-12 deg — ~70× the float64 ulp at
+  |coord| ~ 100 deg, so it absorbs the divergence, and 3.6e-9 pixel at 1 arcsec cells, so it
+  costs nothing astrometrically. (`decimals=13` is already too fine to absorb it.)
+- **Consequences:** the rounding is now **belt-and-braces**, not load-bearing: with the
+  `deg2rad`/`rad2deg` symmetry in place, and with the `phase_dir is None` branch passing the
+  driver and the worker the *same* `radecs[ms][idt]` float64, the two sides agree bitwise by
+  construction, and `tests/test_hci.py` passes in full with both `np.round` calls deleted.
+  Keep it anyway — it is two array ops per image against a silent-to-write, loud-to-debug
+  failure mode, and it re-arms automatically if a future path reintroduces an asymmetry.
+  **Do not "fix" the driver's redundant-looking `rad2deg(deg2rad(...))` back to
+  `coord.ra.value`** — that is the bug, restored. Any new consumer that computes these coords
+  a third way must round the same way. Quantisation alone cannot save a path whose reference is
+  *genuinely* different, which is what D37 was: `--target` moved the worker's grid a whole
+  degree away from the scaffold, and no rounding reaches that.
+- **Source:** issue #155; `src/pfb_imaging/core/hci.py` (`make_dummy_dataset`);
+  `src/pfb_imaging/utils/stokes2im.py` (`batch_stokes_image`'s `region="auto"` write and
+  `stokes_image`'s coord construction); xarray `to_zarr` region resolution;
+  `tests/test_hci.py::test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre`.
+
+### D37 — `--target` recentres hci's grid, so one resolver serves the driver and the worker
+
+- **Context:** on the hci path `--target` is not a label — it is passed to ducc as
+  `center_x`/`center_y`, so the **image centre moves off the tangent point** and
+  `stokes_image` labels its `X`/`Y` coords (and historically its FITS `CRVAL`) from the target
+  rather than the phase centre. `make_dummy_dataset` never looked at `target` at all, so the
+  scaffold stayed on the phase centre: a whole-degree disagreement, and by D36 that is a hard
+  `KeyError` out of `region="auto"`. Behind that sat a second, earlier failure —
+  `radec_to_lm(tcoords, radec_new[None, :])` passed a `(1, 2)` `phase_centre` to africanus,
+  whose implementation unpacks it as two scalars (`pc_ra, pc_dec = …`), so the whole path died
+  in numba type inference before ever reaching the coords. `--target` had no test coverage on
+  this path.
+- **Decision:** one resolver, `astrometry.resolve_target_radec(target, obs_time) ->
+  (ra, dec, moving)`, called by **both** `stokes_image` and `make_dummy_dataset`; the driver
+  sets both the scaffold coords and the header `CRVAL` from it. `stokes2im` now uses the
+  repo's own pure-numpy `misc.radec_to_lm` (identical formula, 1-D `(2,)` convention, already
+  what the imager path uses) instead of africanus's numba version, at both call sites.
+- **Rationale:** the reference coordinate is exactly the quantity D36 shows must not be
+  computed twice. Making it one function removes the possibility of the two sides drifting
+  rather than papering over a drift that already happened. Dropping africanus's `radec_to_lm`
+  here also removes the `(1, 2)`-vs-`(2,)` trap that caused the numba failure: the numpy
+  version takes and returns plain pairs, so the shape confusion cannot recur.
+- **Consequences:** the **ephemeris form** of `--target` (a bare body name, resolved at the
+  image's own `time_out`) moves between output images, but `X`/`Y` is a *single axis shared
+  across `TIME`*, so no one labelling is correct for a multi-bin cube. The driver resolves the
+  target at every output time and **raises** if the positions differ, naming the drift in
+  degrees and pointing at the two ways out (one time bin, or the explicit
+  `'HH:MM:SS,DD:MM:SS'` form). A single time bin is allowed and works, because the driver and
+  the worker average the *same* time slice and so resolve the same position. Recording the
+  per-image centre as a `TIME`-indexed variable would lift the restriction; not done.
+  Two further notes: the header keeps `CRPIX` at the image centre and moves `CRVAL` to the
+  target, which declares the SIN projection tangent at the target while the image was gridded
+  tangent at the phase centre — an `O(θ²)` error in the offset, negligible for the arcminute
+  offsets this is used for but not for a body tens of degrees away (the exact form is D21's
+  `CRPIX` shift, as used on the imager path; the zarr `X`/`Y` ramp is equally approximate, so
+  the two are at least self-consistent). And `integrations_per_image < 1` makes the driver's
+  time loop (`range(tlow, tlow + tcounts, integrations_per_image)`) empty, which used to
+  surface as an `IndexError` on `out_times[0]` while building the WCS; it now raises where it
+  is caused. The CLI help still advertises `-1` as "dataset per scan", which that loop does
+  not implement.
+- **Source:** issue #155 (found while documenting D36); `src/pfb_imaging/utils/astrometry.py`
+  (`resolve_target_radec`); `src/pfb_imaging/core/hci.py` (`make_dummy_dataset`);
+  `src/pfb_imaging/utils/stokes2im.py`;
+  `tests/test_hci.py::test_hci_target_recentres_the_grid` (astrometry: sources injected about
+  the target land at their predicted pixels about the image centre),
+  `…::test_hci_rejects_a_moving_target_across_multiple_time_bins`,
+  `…::test_hci_accepts_a_moving_target_in_a_single_time_bin`.
 
 ## Known debt
 
