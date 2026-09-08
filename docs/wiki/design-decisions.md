@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-07T18:00:00Z
+timestamp: 2026-09-08T10:00:00Z
 last_verified_commit: 3699b79
 ---
 
@@ -1152,6 +1152,75 @@ update it (and this page's `last_verified_commit`) in the same session.
   `restore_products`); `src/pfb_imaging/core/restore.py`; `src/pfb_imaging/cli/restore.py`;
   `scripts/check_spi_ripples.py`; `tests/test_restore.py::test_restore_cresidual_completes_the_restored_image`,
   `…_is_apparent_and_not_the_raw_residual`, `test_restore_without_s_writes_no_cresidual`.
+
+### D34 — `--eta-in-grad` moves the prior from the preconditioner into the objective
+
+- **Context:** the `eta` term (and, since D30, the whole frequency prior) entered `M` only,
+  never `residual_from_partitions`. That is what makes it a *preconditioner*: preconditioned
+  Richardson converges to `A⁻¹b` for any nonsingular `M` (D22), so the prior reshaped every
+  forward update while leaving the fixed point and the flux scale exactly where they were
+  (`test_frequency_prior_does_not_move_the_fixed_point`). Issue #310 asked what happens when
+  it enters the objective instead.
+- **Decision:** `--eta-in-grad` (default **off**, so nothing changes unasked). The objective
+  gains `½ mᵀK⁻¹m`, whose gradient is `K⁻¹m`, and in pfb's sign convention (`residual =
+  −grad`) both the apparent and beam-attenuated gradients lose that term. `K⁻¹` is applied by
+  `HessTreeRay.prior_dot`, which is the *same* term `dot` adds — never a re-derived `eta*x`,
+  which would drift the moment `--gp-length-scale` or `--eta-mode` is on.
+- **Rationale — two things the correction deliberately does not do.** (1) **No beam.**
+  `bresidual` carries the outer per-partition beam because the data Hessian is `B GᵀWG B`
+  (D23), but the prior acts on the *intrinsic* model, so `K⁻¹` has no beam on either side and
+  the identical term comes off both gradients. (2) **No rescaling.** The residuals reaching
+  the solver are already divided by the total wsum, which is the operator `prior_dot` is
+  defined on (`--eta` is a fraction of the total wsum, D4).
+- **Consequences:** with the flag, "converged" means the *regularised* gradient is small, and
+  `--rmsfactor`'s λ is derived from it — so the L1 threshold shifts too. `RESIDUAL`/`BRESIDUAL`
+  keep storing the **pure data term** whatever the flag: a resumed run reads `BRESIDUAL` and
+  applies the prior itself, so an eta-inclusive stored gradient would double-count on every
+  restart. The flag therefore changes what is *reported* (FITS, rms, λ), not what is stored.
+  Combined with D30 this is the knob that makes the frequency prior actual regularisation
+  rather than preconditioning — the two are different experiments.
+- **Source:** issue #310; `src/pfb_imaging/core/deconv.py` (`_grad_with_prior`);
+  `src/pfb_imaging/operators/hessian.py` (`prior_dot`, `_prior_s`);
+  `tests/test_hess_tree_ray.py::test_prior_dot_is_exactly_the_non_data_part_of_m`,
+  `tests/test_deconv.py::test_eta_in_grad_changes_the_update_once_the_model_is_nonzero`,
+  `…_is_a_no_op_on_the_first_step_from_a_zero_model`, `test_grad_with_prior_subtracts_the_prior_term_on_the_normalised_scale`.
+
+### D35 — `--mop` stores the near-perfect-residual model, solved fresh at the final model
+
+- **Context:** a prior necessarily makes the residual look worse — that is what a prior does.
+  But `A(m + M⁻¹r) = Am + AM⁻¹r ≈ Am + r = data` wherever `M ≈ A`, so `m + M⁻¹r` is the model
+  whose residual is near perfect. Issue #311 asked for that pair as a stored product.
+- **Decision:** `--mop` (default **on**) writes `MODEL_MOPPED`/`RESIDUAL_MOPPED` to each band
+  node plus `_model_mopped`/`_residual_mopped` MFS FITS. The update is **solved fresh** after
+  the loop, not taken from the loop's last forward step: that update was computed at the
+  *pre-backward* model, so `model + update` is the near-perfect point only if the prox barely
+  moved — true at convergence, false on a `niter` or divergence exit. `bresidual` is already
+  the gradient against the final model, so the extra cost is one CG solve and **no** extra
+  gridding for the gradient (one sweep is still needed for `RESIDUAL_MOPPED` itself).
+- **Rationale:** `restore` is already parameterised on its input variables, so
+  `pfb restore --model-name MODEL_MOPPED --residual-name RESIDUAL_MOPPED` builds restored
+  images — and thence a spectral index map — with **no restore change at all**
+  (`test_restore_consumes_the_mopped_products` keeps that true). This is also where D30's
+  frequency prior reaches the *output*: the deconvolved model's fixed point is
+  prior-independent without D34, but the mop update **is** `M⁻¹r` and therefore carries the
+  band coupling directly.
+- **Consequences:** `MODEL` is untouched — the mopped model is `MODEL` plus a least-squares
+  update, so it is neither sparse nor a component model, and it does **not** go through
+  `model_to_ds`; there is no `.mds`/`degrid` path for it. The mop write goes to the band nodes
+  *after* the major-cycle write, and `to_zarr(mode="a")` replaces attrs wholesale, so it
+  extends the attrs the loop last wrote (`final_attrs`) rather than the band's original ones —
+  building it from `band_attrs` silently dropped `niters`/`rms`/`hess_norm`/`hess_norm_opts`,
+  which would restart a resumed run from iteration 0 (caught by
+  `test_mop_preserves_the_run_attrs`). **Interpretation warning:** the mopped residual is
+  near zero by construction, which removes the D33 ripple source (a residual reconvolved from
+  a Gaussian fit to a non-Gaussian dirty beam) — so a cleaner spectral index map off mopped
+  products is *not* by itself evidence about the prior.
+- **Source:** issue #311; `src/pfb_imaging/core/deconv.py`; `src/pfb_imaging/cli/deconv.py`;
+  `tests/test_deconv.py::test_deconv_groundtruth` (the residual-reduction claim, on
+  consistent data — see the note there on why the synthetic tree cannot carry it),
+  `…test_mop_writes_mopped_products_by_default`, `…test_no_mop_writes_neither_product`,
+  `…test_mop_leaves_the_deconvolved_model_alone`, `…test_mop_preserves_the_run_attrs`,
+  `tests/test_restore.py::test_restore_consumes_the_mopped_products`.
 
 ## Known debt
 

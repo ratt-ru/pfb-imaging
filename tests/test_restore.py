@@ -858,3 +858,36 @@ def test_restore_multi_corr_products_keep_every_correlation(tmp_path):
     # integrates to ~4x more -- identical planes would mean a collapse to corr 0
     assert cpsf_mfs[1, 0].sum() > 2.0 * cpsf_mfs[0, 0].sum()
     assert cpsf_cube[1, 0].sum() > 2.0 * cpsf_cube[0, 0].sum()
+
+
+def test_restore_consumes_the_mopped_products(tmp_path):
+    """`restore --model-name MODEL_MOPPED --residual-name RESIDUAL_MOPPED`.
+
+    The whole point of storing the mopped pair (#311) is building restored
+    images -- and thence a spectral index map -- from it. restore is already
+    parameterised on the input variable names, so this must need no restore
+    change at all; the test is here to keep that true.
+    """
+    store = str(tmp_path / "rt_I.dt")
+    _write_restore_dt(store)
+
+    # rename the seeded products to the mopped names, as deconv --mop writes them
+    dt = xr.open_datatree(store, engine="zarr", chunks=None)
+    for b in range(2):
+        n = f"band{b:04d}_time0000"
+        ds = dt[n].ds
+        xr.Dataset(
+            {
+                "MODEL_MOPPED": (("corr", "y", "x"), ds.MODEL.values),
+                "RESIDUAL_MOPPED": (("corr", "y", "x"), ds.RESIDUAL.values),
+            },
+            attrs=dict(ds.attrs),
+        ).to_zarr(store, group=n, mode="a")
+
+    _run_restore(tmp_path, outputs="kKiI", model_name="MODEL_MOPPED", residual_name="RESIDUAL_MOPPED")
+
+    out = xr.open_datatree(store, engine="zarr", chunks=None)["band0000_time0000"].ds
+    assert "KIMAGE" in out and "IMAGE" in out
+    assert np.isfinite(out.KIMAGE.values).all()
+    # and it restored the mopped residual, not the plain one
+    assert "PSFPARSF" in out

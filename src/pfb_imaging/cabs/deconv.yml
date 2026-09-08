@@ -155,6 +155,16 @@ cabs:
         default: 100.0
         metadata:
           rich_help_panel: PFB
+      mop:
+        info:
+          Compute the mopped model and residual at the end of the run.
+          The final forward update is added to the model, which very nearly cancels the residual.
+          Stored as MODEL_MOPPED and RESIDUAL_MOPPED for restore to consume.
+          Costs one extra forward solve and one gridding sweep.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: PFB
       eta-in-grad:
         info:
           Include the eta term in the gradient, not only in the preconditioner.

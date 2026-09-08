@@ -109,6 +109,19 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
         i0, i1 = np.unravel_index(int(np.argmax(box.values)), box.shape)
         assert (i0, i1) == (half, half), f"source {s}: model peak off-centre ({i0},{i1})"
 
+    # mopped products (#311). --mop is on by default, so this run wrote them.
+    # The claim is that model + M^-1 r very nearly cancels the residual:
+    # A(m + M^-1 r) = A m + A M^-1 r ~= A m + r = data wherever M ~= A. Needs
+    # consistent data to mean anything, which is why it is asserted here and
+    # not on the synthetic tree.
+    for n in nodes:
+        assert "MODEL_MOPPED" in dt[n].ds and "RESIDUAL_MOPPED" in dt[n].ds
+    residual_mopped = sum(dt[n].ds.RESIDUAL_MOPPED[0] for n in nodes).values
+    peak, peak_mopped = np.abs(residual).max(), np.abs(residual_mopped).max()
+    assert peak_mopped < 0.5 * peak, f"mopped peak {peak_mopped:.3e} vs deconvolved {peak:.3e}"
+    # and it must be a different model, not a copy of MODEL
+    assert not np.allclose(dt[nodes[0]].ds.MODEL.values, dt[nodes[0]].ds.MODEL_MOPPED.values)
+
     # per-partition debug FITS: with a single partition per band, the
     # re-gridded partition residual must reproduce the stored band RESIDUAL
     import glob
@@ -613,3 +626,82 @@ def test_grad_with_prior_subtracts_the_prior_term_on_the_normalised_scale():
     np.testing.assert_allclose(b, b0 - 0.25 * model, rtol=0, atol=1e-15)
     np.testing.assert_allclose(residual, r0, rtol=0, atol=0)
     np.testing.assert_allclose(bresidual, b0, rtol=0, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# --mop (issue #311): the near-perfect-residual products
+# ---------------------------------------------------------------------------
+
+
+def _run_mop(tmp_path, tag, **over):
+    """One major cycle on a fresh synthetic tree; returns the band 0 dataset."""
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    output_filename = str(tmp_path / tag)
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(61))
+    deconv_core(output_filename, **_eta_grad_opts(**over))
+    return xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+
+
+@pytest.mark.slow
+def test_mop_writes_mopped_products_by_default(tmp_path):
+    """--mop is on by default and lands both products in the band node."""
+    ds = _run_mop(tmp_path, "mop_on")
+
+    assert "MODEL_MOPPED" in ds
+    assert "RESIDUAL_MOPPED" in ds
+    assert ds.MODEL_MOPPED.dims == ("corr", "y", "x")
+    assert np.isfinite(ds.MODEL_MOPPED.values).all()
+    assert np.isfinite(ds.RESIDUAL_MOPPED.values).all()
+
+
+@pytest.mark.slow
+def test_no_mop_writes_neither_product(tmp_path):
+    """It costs a forward solve and a gridding sweep, so it must be skippable."""
+    ds = _run_mop(tmp_path, "mop_off", mop=False)
+
+    assert "MODEL_MOPPED" not in ds
+    assert "RESIDUAL_MOPPED" not in ds
+    assert "MODEL" in ds  # the ordinary products are unaffected
+
+
+@pytest.mark.slow
+def test_mop_leaves_the_deconvolved_model_alone(tmp_path):
+    """MODEL stays the regularised model; the mop is a separate product.
+
+    MODEL_MOPPED is MODEL plus a least-squares update, so it is not sparse and
+    not a component model -- it must not overwrite what deconv converged to.
+    """
+    ds = _run_mop(tmp_path, "mop_sep")
+
+    assert not np.allclose(ds.MODEL.values, ds.MODEL_MOPPED.values, rtol=1e-6, atol=1e-12)
+
+
+# Note: "mopping lowers the residual" is NOT tested on _write_synthetic_dt.
+# That fixture's DIRTY and its partitions' VIS are independent random draws, so
+# the operator and the right-hand side describe different data and M is nowhere
+# near A -- M^-1 r is then a large least-squares answer to an inconsistent
+# system and the exact residual against it is worse, not better (measured:
+# 5.2e8 against 9.5e3). The claim needs consistent data, so it lives in
+# test_deconv_groundtruth, which images a real MS with a known injected sky.
+
+
+@pytest.mark.slow
+def test_mop_preserves_the_run_attrs(tmp_path):
+    """The mop write must not wipe niters/rms/hess_norm off the band node.
+
+    to_zarr(mode="a") merges variables but REPLACES attrs wholesale, so a
+    second write built from the band's original attrs silently drops
+    everything the major cycle recorded -- and a resumed run would then restart
+    from iteration 0 and re-estimate the norm.
+    """
+    ds = _run_mop(tmp_path, "mop_attrs")
+
+    assert ds.attrs["niters"] == 1
+    assert "hess_norm" in ds.attrs
+    assert "hess_norm_opts" in ds.attrs
+    assert "rms" in ds.attrs and "rmax" in ds.attrs
+    assert ds.attrs["bandid"] == 0  # the original attrs survive too

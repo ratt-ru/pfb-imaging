@@ -116,6 +116,7 @@ def deconv(
     eta_mode: str | None = None,
     eta_cap: float = 100.0,
     eta_in_grad: bool = False,
+    mop: bool = True,
     gp_length_scale: float | None = None,
     gp_cap: float = 10.0,
     gamma: float = 0.95,
@@ -400,6 +401,9 @@ def deconv(
     if debug:
         _chi2_snapshot(iter0)  # baseline against the starting model
 
+    # what was last written to each band node's attrs; the mop block writes
+    # again afterwards and to_zarr replaces attrs wholesale
+    final_attrs = [dict(a) for a in band_attrs]
     mrange = range(iter0, iter0 + niter)
     for k in mrange:
         log.info("Solving for update")
@@ -509,17 +513,17 @@ def deconv(
             # legacy sara() convention of ds.assign_attrs(**attrs) onto a
             # dataset read from the existing dds, which merges rather than
             # replaces.
-            ds_out = xr.Dataset(
-                data_vars,
-                attrs={
-                    **band_attrs[b],
-                    "rms": best_rms,
-                    "rmax": best_rmax,
-                    "niters": k + 1,
-                    "hess_norm": hess_norm,
-                    "hess_norm_opts": _m_signature(opts_dict),
-                },
-            )
+            # to_zarr REPLACES attrs, so anything written later must start
+            # from these, not from band_attrs (the mop block below does)
+            final_attrs[b] = {
+                **band_attrs[b],
+                "rms": best_rms,
+                "rmax": best_rmax,
+                "niters": k + 1,
+                "hess_norm": hess_norm,
+                "hess_norm_opts": _m_signature(opts_dict),
+            }
+            ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
             ds_out.to_zarr(dt_name, group=n, mode="a")
 
         log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
@@ -536,6 +540,51 @@ def deconv(
             if diverge_count_curr > diverge_count:
                 log.info("Algorithm is diverging. Terminating.")
                 break
+
+    if mop:
+        # Mopped products (#311). A prior necessarily makes the residual look
+        # worse, but m + M^-1 r very nearly cancels it: A(m + M^-1 r) = A m +
+        # A M^-1 r ~= A m + r = data whenever M ~= A. So this is the model whose
+        # residual is near perfect, and the pair is stored so `restore` can
+        # build restored images from it (--model-name/--residual-name).
+        #
+        # The update is solved FRESH here rather than reusing the loop's last
+        # one. That update was computed at the pre-backward model, so
+        # model + update is only the near-perfect point if the prox barely
+        # moved -- true at convergence, false on a maxiter or divergence exit.
+        # bresidual is already the gradient against the final model, so the
+        # extra cost is one CG solve and no extra gridding for the gradient.
+        log.info("Mopping: solving for the final update against the converged model")
+        solver.first(bresidual)
+        update_mop = solver.forward(bresidual)
+        model_mopped = model + update_mop
+        model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
+        save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
+
+        log.info("Mopping: computing the residual against the mopped model")
+        residual_mopped_raw, _ = workers.residual(
+            model_mopped[:, None],
+            cell_rad,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+        )
+        residual_mopped_raw = residual_mopped_raw[:, 0]
+        residual_mopped_mfs = np.sum(residual_mopped_raw / wsum, axis=0)
+        save_fits(residual_mopped_mfs, fits_oname + f"_{suffix}_residual_mopped.fits", hdr_mfs, yx_order=True)
+        log.info(
+            f"Mopped peak residual = {np.abs(residual_mopped_mfs).max():.3e} "
+            f"(deconvolved {np.abs(residual_mfs).max():.3e})"
+        )
+
+        for b, n in enumerate(nodes):
+            xr.Dataset(
+                data_vars={
+                    "MODEL_MOPPED": (("corr", "y", "x"), model_mopped[b][None]),
+                    "RESIDUAL_MOPPED": (("corr", "y", "x"), residual_mopped_raw[b][None]),
+                },
+                attrs=final_attrs[b],
+            ).to_zarr(dt_name, group=n, mode="a")
 
     if fits_per_partition:
         # per-partition misfit localisation (D23 debugging aid): re-gridded
