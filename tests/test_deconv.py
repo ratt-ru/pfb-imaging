@@ -494,3 +494,122 @@ def test_deconv_driver_runs_with_the_frequency_prior(tmp_path):
     ref = xr.open_datatree(f"{out2}_I.dt", engine="zarr", chunks=None)["band0000_time0000"].ds
     rel = np.linalg.norm(band.UPDATE.values - ref.UPDATE.values) / np.linalg.norm(ref.UPDATE.values)
     assert rel > 1e-2, f"the prior left the update unchanged (rel={rel:.3e})"
+
+
+# ---------------------------------------------------------------------------
+# --eta-in-grad (issue #310): the prior enters the objective, not only M
+# ---------------------------------------------------------------------------
+
+
+def _eta_grad_opts(**over):
+    """Driver opts for the --eta-in-grad tests.
+
+    eta is 0.1, not the 1e-3 default: the synthetic tree has a unit PSF, so at
+    the default the data term swamps the prior and the correction is lost in
+    the CG tolerance (same reason as the frequency-prior driver test).
+    """
+    opts = dict(
+        product="I",
+        minor_cycle="sara",
+        opt_backend="primal-dual",
+        niter=1,
+        hess_norm=1.0,
+        pd_maxit=20,
+        cg_maxit=20,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=2,
+        nworkers=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+        eta=0.1,
+    )
+    opts.update(over)
+    return opts
+
+
+def _run_two_cycles(tmp_path, tag, eta_in_grad):
+    """Two major cycles on a fresh synthetic tree; returns the final UPDATE."""
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    output_filename = str(tmp_path / tag)
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(51))
+    deconv_core(output_filename, eta_in_grad=eta_in_grad, **_eta_grad_opts(niter=2))
+    ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+    return ds.UPDATE.values.copy()
+
+
+@pytest.mark.slow
+def test_eta_in_grad_changes_the_update_once_the_model_is_nonzero(tmp_path):
+    """The prior term is -K^-1 m, so it bites from the second cycle on.
+
+    Cycle 1 starts from a zero model and is identical either way; cycle 2 sees
+    a gradient that differs by K^-1 m, so its update must differ too.
+    """
+    off = _run_two_cycles(tmp_path, "eig0", False)
+    on = _run_two_cycles(tmp_path, "eig1", True)
+
+    assert not np.allclose(off, on, rtol=1e-6, atol=1e-12)
+
+
+@pytest.mark.slow
+def test_eta_in_grad_is_a_no_op_on_the_first_step_from_a_zero_model(tmp_path):
+    """K^-1 * 0 == 0: a fresh tree's first update cannot move, bit for bit.
+
+    Also guards the scale. Applying the correction to the raw residual instead
+    of the wsum-normalised one, or dropping the model factor, would perturb
+    this even at a zero model.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    updates = {}
+    for flag in (False, True):
+        output_filename = str(tmp_path / f"eigz{int(flag)}")
+        dt_name = f"{output_filename}_I.dt"
+        _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(52))
+        deconv_core(output_filename, eta_in_grad=flag, **_eta_grad_opts())
+        ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+        updates[flag] = ds.UPDATE.values.copy()
+
+    np.testing.assert_allclose(updates[False], updates[True], rtol=0, atol=0)
+
+
+def test_grad_with_prior_subtracts_the_prior_term_on_the_normalised_scale():
+    """The scale decision, isolated.
+
+    ``residual``/``bresidual`` reaching the solver are already divided by the
+    total wsum, and ``prior_dot`` is defined on that same normalised operator
+    (--eta is a fraction of the total wsum), so the correction is subtracted
+    with no further scaling. It must not touch the caller's arrays: the raw
+    ones are what get stored, and storing an eta-inclusive gradient would
+    double-count it on every resume.
+    """
+    from pfb_imaging.core.deconv import _grad_with_prior
+
+    class _Prior:
+        def __init__(self, eta):
+            self.eta = eta
+
+        def prior_dot(self, x):
+            return self.eta * x
+
+    rng = np.random.default_rng(54)
+    nband, ny, nx = 2, 4, 4
+    residual = rng.standard_normal((nband, ny, nx))
+    bresidual = rng.standard_normal((nband, ny, nx))
+    model = rng.standard_normal((nband, ny, nx))
+    r0, b0 = residual.copy(), bresidual.copy()
+
+    r, b = _grad_with_prior(residual, bresidual, model, _Prior(0.25))
+
+    np.testing.assert_allclose(r, r0 - 0.25 * model, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(b, b0 - 0.25 * model, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(residual, r0, rtol=0, atol=0)
+    np.testing.assert_allclose(bresidual, b0, rtol=0, atol=0)

@@ -60,6 +60,40 @@ def _cached_hess_norm(attrs, opts):
     return float(attrs["hess_norm"])
 
 
+def _grad_with_prior(residual, bresidual, model, hess):
+    """Add the preconditioner's prior term to the data gradient (issue #310).
+
+    Without ``--eta-in-grad`` the prior lives in ``M`` only, so it reshapes
+    each update without entering the objective: the fixed point is the
+    unregularised one and the reported residual is the pure data misfit. With
+    the flag, the objective gains ``0.5 m^T K^-1 m``, whose gradient is
+    ``K^-1 m``, and in pfb's sign convention (residual = -grad) both gradients
+    lose it.
+
+    No scaling: ``residual``/``bresidual`` are already divided by the total
+    wsum and ``prior_dot`` is defined on that same normalised operator (--eta
+    is a fraction of the total wsum, wiki D4).
+
+    The beam is deliberately absent from the correction. ``bresidual`` carries
+    the outer per-partition beam because the data Hessian is ``B G^T W G B``
+    (D23), but the prior acts on the intrinsic model, so ``K^-1`` has no beam
+    on either side and the same term is subtracted from both.
+
+    Args:
+        residual: ``(nband, ny, nx)`` apparent data gradient, wsum-normalised.
+        bresidual: ``(nband, ny, nx)`` beam-attenuated data gradient.
+        model: ``(nband, ny, nx)`` current model.
+        hess: The preconditioner, supplying ``prior_dot``.
+
+    Returns:
+        ``(residual, bresidual)``, both new arrays. The inputs are untouched --
+        the raw versions of these are what get stored, and storing an
+        eta-inclusive gradient would double-count it on the next resume.
+    """
+    kinv_m = hess.prior_dot(model)
+    return residual - kinv_m, bresidual - kinv_m
+
+
 def deconv(
     output_filename: str,
     suffix: str = "main",
@@ -81,6 +115,7 @@ def deconv(
     eta: float = 0.001,
     eta_mode: str | None = None,
     eta_cap: float = 100.0,
+    eta_in_grad: bool = False,
     gp_length_scale: float | None = None,
     gp_cap: float = 10.0,
     gamma: float = 0.95,
@@ -322,6 +357,13 @@ def deconv(
             f"{stats['lam_min']:.3e} to {stats['lam_max']:.3e}"
         )
 
+    # the initial gradient came from the tree (or is BDIRTY on a fresh one),
+    # so it is the data term; correct it before the first forward solve
+    if eta_in_grad:
+        log.info("Including the eta term in the gradient (--eta-in-grad)")
+        residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
+        residual_mfs = np.sum(residual, axis=0)
+
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
     else:
@@ -420,6 +462,8 @@ def deconv(
         bresidual_raw = bresidual_raw[:, 0]
         residual = residual_raw / wsum
         bresidual = bresidual_raw / wsum
+        if eta_in_grad:
+            residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 

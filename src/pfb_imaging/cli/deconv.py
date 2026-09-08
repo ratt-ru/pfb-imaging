@@ -206,6 +206,16 @@ def deconv(
             rich_help_panel="PFB",
         ),
     ] = 100.0,
+    eta_in_grad: Annotated[
+        bool,
+        typer.Option(
+            help="Include the eta term in the gradient, not only in the preconditioner. "
+            "By default the prior shapes each update without entering the objective. "
+            "It therefore cannot move the fixed point. "
+            "With this set the reported residual is the gradient of the regularised objective.",
+            rich_help_panel="PFB",
+        ),
+    ] = False,
     gp_length_scale: Annotated[
         float | None,
         typer.Option(
@@ -535,6 +545,7 @@ def deconv(
                     eta=eta,
                     eta_mode=eta_mode,
                     eta_cap=eta_cap,
+                    eta_in_grad=eta_in_grad,
                     gp_length_scale=gp_length_scale,
                     gp_cap=gp_cap,
                     gamma=gamma,
@@ -597,6 +608,7 @@ def deconv(
                 eta=eta,
                 eta_mode=eta_mode,
                 eta_cap=eta_cap,
+                eta_in_grad=eta_in_grad,
                 gp_length_scale=gp_length_scale,
                 gp_cap=gp_cap,
                 gamma=gamma,
@@ -668,6 +680,7 @@ def deconv(
             eta=eta,
             eta_mode=eta_mode,
             eta_cap=eta_cap,
+            eta_in_grad=eta_in_grad,
             gp_length_scale=gp_length_scale,
             gp_cap=gp_cap,
             gamma=gamma,
