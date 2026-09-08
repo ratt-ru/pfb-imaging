@@ -734,6 +734,9 @@ def stokes_image(
     # set corr coords (removing duplicates and sorting)
     corr = list(sorted(set(product)))
 
+    # Quantise to 1e-12 deg so these agree bitwise with the scaffold hci wrote:
+    # the region="auto" write below looks these values up in the stored coords and
+    # raises KeyError on a 1-ulp difference. See wiki design-decisions D36 (#155).
     out_ras = ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
     out_decs = dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
     out_ras = np.round(out_ras, decimals=12)

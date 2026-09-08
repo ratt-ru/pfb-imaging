@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-08T10:00:00Z
-last_verified_commit: 64bae7c
+timestamp: 2026-09-08T12:00:00Z
+last_verified_commit: af344c5
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1228,6 +1228,50 @@ update it (and this page's `last_verified_commit`) in the same session.
   `…test_mop_writes_mopped_products_by_default`, `…test_no_mop_writes_neither_product`,
   `…test_mop_leaves_the_deconvolved_model_alone`, `…test_mop_preserves_the_run_attrs`,
   `tests/test_restore.py::test_restore_consumes_the_mopped_products`.
+
+### D36 — hci's zarr coords are quantised to 1e-12 deg because `region="auto"` demands bitwise equality
+
+- **Context:** `hci --output-format zarr` writes a full-cube scaffold from the driver
+  (`make_dummy_dataset` → `to_zarr(mode="w", compute=False)`), then each Ray worker writes its
+  own `(TIME, FREQ)` slab back with `to_zarr(region="auto")` (`batch_stokes_image`). Both sides
+  compute the `X`/`Y` pixel-centre coordinates *independently*, from the same formula
+  `ref_deg + arange(...) * cell_deg`. `region="auto"` resolves the target slice by **looking
+  the incoming coordinate values up in the stored coordinate arrays**, so it needs exact
+  float64 equality — a 1-ulp difference is `KeyError: Not all values of coordinate 'Y' in the
+  new array were found in the original store`. Issue #155 recorded the rounding needed to make
+  them match and asked why it was ever necessary.
+- **Decision:** both sides quantise with `np.round(..., decimals=12)` before building the
+  coords (`core/hci.py`, `utils/stokes2im.py`), **and** the driver mirrors the worker's
+  conversion arithmetic exactly — `np.rad2deg(np.deg2rad(coord.ra.value))`, not
+  `coord.ra.value` (`core/hci.py`, the `phase_dir is not None` branch).
+- **Rationale:** the divergence was an arithmetic asymmetry in how the reference coordinate
+  reached degrees. The driver took astropy's degrees directly; the worker went
+  degrees → radians (`np.deg2rad`) → degrees (`np.rad2deg`), because everything between
+  (rephasing, `synthesize_uvw`, `radec_to_lm`, the wgridder) works in radians. That round trip
+  is `fl(fl(x·π/180)·180/π)`: the two constants multiply to exactly 1.0 in float64, but the
+  intermediate rounds, so the composition is **not** the identity for all `x` — it is off by
+  1–2 ulp for whichever mantissas do not cancel. Measured over 4000 random phase centres, the
+  pre-fix driver path disagreed with the worker for **13%** of them, worst case 1.42e-14 deg at
+  |dec| ≈ 64°. That is the "sometimes" in the original TODO: it is a property of the
+  coordinate's bit pattern, not of the observation, so it reproduces perfectly on one field and
+  never appears on another. `decimals=12` is a quantum of 1e-12 deg — ~70× the float64 ulp at
+  |coord| ~ 100 deg, so it absorbs the divergence, and 3.6e-9 pixel at 1 arcsec cells, so it
+  costs nothing astrometrically. (`decimals=13` is already too fine to absorb it.)
+- **Consequences:** the rounding is now **belt-and-braces**, not load-bearing: with the
+  `deg2rad`/`rad2deg` symmetry in place, and with the `phase_dir is None` branch passing the
+  driver and the worker the *same* `radecs[ms][idt]` float64, the two sides agree bitwise by
+  construction, and `tests/test_hci.py` passes in full with both `np.round` calls deleted.
+  Keep it anyway — it is two array ops per image against a silent-to-write, loud-to-debug
+  failure mode, and it re-arms automatically if a future path reintroduces an asymmetry.
+  **Do not "fix" the driver's redundant-looking `rad2deg(deg2rad(...))` back to
+  `coord.ra.value`** — that is the bug, restored. Any new consumer that computes these coords
+  a third way must round the same way. Note also that quantisation alone cannot save a path
+  whose reference is *genuinely* different: `--target` makes the worker's `ra_deg`/`dec_deg`
+  the **target** position while the driver's scaffold stays on the phase centre, which is a
+  whole-degree mismatch and a separate open bug on the `--target` + zarr path.
+- **Source:** issue #155; `src/pfb_imaging/core/hci.py` (`make_dummy_dataset`);
+  `src/pfb_imaging/utils/stokes2im.py` (`batch_stokes_image`'s `region="auto"` write and
+  `stokes_image`'s coord construction); xarray `to_zarr` region resolution.
 
 ## Known debt
 

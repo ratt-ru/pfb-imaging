@@ -794,3 +794,81 @@ def test_beam_for_band_stokes_order():
     assert [kw["i"] for _, kw in bw.get_rotation_averaged_beam.call_args_list] == ["I", "Q", "U", "V"]
     for index, prod in enumerate("IQUV"):
         assert_allclose(pbeam[index], levels[prod], rtol=1e-6)
+
+
+def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, tmp_path):
+    """The driver's scaffold coords must match what the workers compute, bitwise.
+
+    Workers write their slabs back with ``to_zarr(region="auto")``, which resolves
+    the target slice by looking their X/Y values up in the stored coords, so a
+    1-ulp disagreement is a hard KeyError rather than a small astrometric error.
+    The two sides reach degrees differently -- the worker via
+    ``rad2deg(deg2rad(...))``, because everything between works in radians -- and
+    that round trip is not the float64 identity for every mantissa. This test
+    picks a phase centre where it demonstrably is not, so the failure lands here
+    instead of on a user's field.
+
+    Two guards keep this working and they are redundant with each other: the
+    driver mirroring the worker's conversion, and the 1e-12 deg quantisation on
+    both sides. Removing either one alone still passes; removing both raises
+    ``KeyError: Not all values of coordinate 'Y' ... were found in the original
+    store`` from inside the Ray task. So this guards the contract, not one
+    mechanism -- see wiki design-decisions D36 (#155) before deleting either.
+    """
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
+
+    def hostile(coord):
+        """True if this centre's degrees do not survive the deg->rad->deg trip."""
+        return coord.ra.value != np.rad2deg(np.deg2rad(coord.ra.value)) or coord.dec.value != np.rad2deg(
+            np.deg2rad(coord.dec.value)
+        )
+
+    # walk small dec offsets until we land on a centre that actually diverges;
+    # staying within ~0.05 deg keeps the field centre inside the image
+    phase_dir = None
+    for k in range(1, 2001):
+        cand = SkyCoord(ra0 * u.rad, (dec0 + np.deg2rad(2.5e-5 * k)) * u.rad, frame="fk5")
+        as_parsed = SkyCoord(
+            f"{cand.ra.to_string(unit=u.hourangle, sep=':')}",
+            f"{cand.dec.to_string(unit=u.deg, sep=':')}",
+            frame="fk5",
+            unit=(u.hourangle, u.deg),
+        )
+        if hostile(as_parsed):
+            phase_dir = f"{cand.ra.to_string(unit=u.hourangle, sep=':')},{cand.dec.to_string(unit=u.deg, sep=':')}"
+            break
+
+    assert phase_dir is not None, "found no ulp-hostile phase centre near the test MS -- test would be vacuous"
+
+    out = str(tmp_path / "hci_ulp.zarr")
+    hci_core(
+        [ms_name],
+        out,
+        product="I",
+        phase_dir=phase_dir,
+        channels_per_image=-1,
+        integrations_per_image=20,
+        images_per_chunk=3,
+        max_simul_chunks=1,
+        field_of_view=0.5,
+        super_resolution_factor=2.0,
+        nworkers=1,
+        nthreads=1,
+        beam_model=None,
+        robustness=0.0,
+        epsilon=1e-7,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    # the region="auto" write is the assertion: if the coords disagreed we never
+    # get here. Confirm the slabs actually landed rather than staying empty.
+    ds = xr.open_zarr(out)
+    assert ds.cube.dims == ("STOKES", "FREQ", "TIME", "Y", "X")
+    assert ds.sizes["TIME"] == 3
+    assert np.any(ds.nonzero.values), "no time bin recorded data -- slabs did not land"

@@ -951,7 +951,12 @@ def make_dummy_dataset(
         "fits_dims": (("X", ra_dim), ("Y", dec_dim), ("TIME", "TIME"), ("FREQ", "FREQ"), ("STOKES", "STOKES")),
     }
 
-    # TODO - why do we sometimes need to round here?
+    # Quantise to 1e-12 deg (3.6 nano-pixel) so the workers' independently computed
+    # X/Y coords agree bitwise with this scaffold: they write back with
+    # to_zarr(region="auto"), which looks the values up in the stored coords and
+    # raises KeyError on a 1-ulp difference. Redundant with the deg->rad->deg
+    # symmetry above -- either alone suffices; keep both.
+    # See wiki design-decisions D36 (#155).
     out_ras = out_ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
     out_decs = out_dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
     out_ras = np.round(out_ras, decimals=12)
