@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue310-311
     inputs:
       output-filename:
         info:
@@ -44,6 +44,24 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Fits
+      fits-per-partition:
+        info:
+          Write per-partition dirty, residual and apparent model FITS at the end of the run.
+          Headers carry the vis-space chi squared per partition.
+          Useful to localise mosaic misfits to specific data partitions.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Fits
+      debug:
+        info:
+          Collect extra per-partition diagnostics.
+          Logs the vis-space chi squared per partition at every major iteration.
+          Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Reporting
       minor-cycle:
         info:
           Which minor cycle algorithm to use.
@@ -112,9 +130,66 @@ cabs:
           rich_help_panel: PFB
       eta:
         info:
-          Will use eta*wsum to regularise the inversion of the Hessian approximation.
+          Tikhonov regularisation for the inversion of the Hessian approximation.
+          Interpreted as a fraction of the total sum of imaging weights.
+          The effective damping is eta times the total wsum regardless of band count.
         dtype: float
-        default: 1.0
+        default: 0.001
+        metadata:
+          rich_help_panel: PFB
+      eta-mode:
+        info:
+          Shape of a spatially varying eta over the image.
+          By default eta is uniform.
+          Choices are invbeam, invbeam2, radial and radial-invbeam.
+          Each rises from eta where the PSF approximation is trusted to eta times eta-cap where it is worst.
+          This damps the forward update without moving the fixed point, so the flux scale is unchanged.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: PFB
+      eta-cap:
+        info:
+          Dynamic range of the eta-mode profile.
+          Ignored when eta-mode is unset.
+        dtype: float
+        default: 100.0
+        metadata:
+          rich_help_panel: PFB
+      mop:
+        info:
+          Compute the mopped model and residual at the end of the run.
+          The final forward update is added to the model, which very nearly cancels the residual.
+          Stored as MODEL_MOPPED and RESIDUAL_MOPPED for restore to consume.
+          Costs one extra forward solve and one gridding sweep.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: PFB
+      eta-in-grad:
+        info:
+          Include the eta term in the gradient, not only in the preconditioner.
+          By default the prior shapes each update without entering the objective.
+          It therefore cannot move the fixed point.
+          With this set the reported residual is the gradient of the regularised objective.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: PFB
+      gp-length-scale:
+        info:
+          Correlation length of the frequency prior in the preconditioner.
+          Given as a fraction of the imaged band span.
+          By default the prior is uncorrelated and eta damps every band independently.
+          This reshapes the forward update without moving the fixed point, so the flux scale is unchanged.
+        dtype: Optional[float]
+        metadata:
+          rich_help_panel: PFB
+      gp-cap:
+        info:
+          Dynamic range of the frequency prior.
+          Ignored when gp-length-scale is unset.
+        dtype: float
+        default: 10.0
         metadata:
           rich_help_panel: PFB
       gamma:

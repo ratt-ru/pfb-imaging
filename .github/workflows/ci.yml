@@ -6,11 +6,18 @@ permissions:
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     tags:
       - 'v*'
+  # dev-* are long-lived integration branches (e.g. dev-0.1.0). They are
+  # deliberately absent from push above: each carries an open PR into main, so
+  # a push trigger would duplicate every run. The PR trigger also tests the
+  # merge with main rather than the branch tip alone.
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'dev-*'
 
 jobs:
   quality:
@@ -160,12 +167,28 @@ jobs:
 
       - name: Install pfb-imaging
         if: env.SKIP_CHECKS != 'true'
-        run: uv sync --extra full --group dev --group test --frozen
+        run: uv sync --extra full --group dev --frozen
 
       - name: Run pfb-imaging
         if: env.SKIP_CHECKS != 'true'
         run: uv run pfb --help
 
+      # pyproject's addopts deselect `slow` so the local dev loop stays fast.
+      # CI is the only place the end-to-end pipeline tests run, so guard against
+      # that override silently collecting nothing.
+      - name: Check slow tests are collectable
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          # pytest exits 5 when a selection collects nothing. Checking the exit
+          # code rather than parsing output keeps this independent of the
+          # collection format, which addopts' --verbose alters.
+          if ! uv run --frozen pytest -m slow --collect-only tests/ > /dev/null; then
+            echo "::error::No slow tests collected - the 'slow' marker or the -m override is broken."
+            exit 1
+          fi
+
+      # -m "" overrides the `-m "not slow"` in pyproject's addopts, so CI runs
+      # the whole suite (fast + slow).
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
-        run: uv run --frozen pytest -v tests/
+        run: uv run --frozen pytest -v -m "" tests/

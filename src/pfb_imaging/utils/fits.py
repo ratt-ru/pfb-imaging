@@ -39,9 +39,15 @@ def load_fits(name, dtype=np.float32):
     return np.require(data, dtype=dtype, requirements="C")
 
 
-def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None):
+def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None, yx_order=False):
     hdu = fits.PrimaryHDU(header=hdr)
-    data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
+    if yx_order:
+        # data is already (..., ny, nx) = FITS row-major layout (wiki D19);
+        # only move band/corr onto the FITS STOKES/FREQ axis order
+        data = np.transpose(to4d(data), axes=(1, 0, 2, 3))
+    else:
+        # legacy x-major (..., nx, ny) input
+        data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements="F")
     if beams_hdu is not None:
         hdul = fits.HDUList([hdu, beams_hdu])
@@ -66,6 +72,8 @@ def set_wcs(
     header=True,
     casambm=True,
     ncorr=1,
+    l0=0.0,
+    m0=0.0,
 ):
     """
     cell_x/y - cell sizes in degrees
@@ -79,6 +87,9 @@ def set_wcs(
         convention); otherwise it is MSv2 MJD seconds and is shifted to unix
     header - if True, return a header, otherwise return a WCS object
     casambm - if True, add the CASAMBM keyword to the header
+    l0/m0 - image-centre offset from the tangent point in radians (--target).
+        CRVAL stays the tangent point; CRPIX shifts so the centre pixel lands
+        on the target direction (facets share CRVAL and differ in CRPIX).
     """
 
     w = WCS(naxis=4)
@@ -104,7 +115,13 @@ def set_wcs(
         nchan = 1
         crpix3 = 1
     w.wcs.crval = [radec[0] * 180.0 / np.pi, radec[1] * 180.0 / np.pi, ref_freq, 1]
-    w.wcs.crpix = [1 + nx // 2, 1 + ny // 2, crpix3, 1]
+    # CRVAL stays the gridding tangent point; a --target offset shifts CRPIX
+    # so the image-centre pixel lands on the target. RA axis: cdelt = -cell_x,
+    # so l(p) = -cell*(p - crpix) and centre-at-l0 gives crpix = 1 + nx//2 +
+    # l0/cell; Dec axis has +cdelt, hence the opposite sign.
+    crpix_x = 1 + nx // 2 + np.rad2deg(l0) / cell_x
+    crpix_y = 1 + ny // 2 - np.rad2deg(m0) / cell_y
+    w.wcs.crpix = [crpix_x, crpix_y, crpix3, 1]
     w.wcs.equinox = 2000.0
 
     if header:
@@ -414,6 +431,9 @@ def dt2fits(
     do_cube=True,
     psfpars_mfs=None,
     force_unit=None,
+    extra_hdr=None,
+    drop_bands=None,
+    psfpars_var="PSFPARSN",
 ):
     """Render a band-node variable from the imager ``.dt`` DataTree to FITS.
 
@@ -431,12 +451,22 @@ def dt2fits(
         do_mfs, do_cube: which products to write.
         psfpars_mfs: optional ``{timeid: (ncorr, 3)}`` MFS beam params.
         force_unit: override the BUNIT header.
+        extra_hdr: optional dict of extra FITS header cards stamped into every
+            written header.
+        drop_bands: optional list of ``bandid`` values to exclude from the cube
+            and from every MFS reduction (image sum, wsum, ``freq_mfs``). Bands
+            are omitted, not zeroed, so a non-edge drop leaves a non-uniform
+            FITS frequency axis -- see issue #302.
+        psfpars_var: band variable supplying the cube BEAMS table and
+            ``BMAJ{i}`` cards. ``"PSFPARSF"`` publishes a restored image's final
+            resolution instead of the native ``"PSFPARSN"``.
 
     Returns:
         The rendered ``column`` name.
     """
     basename = outname + "_" + column.lower()
-    unit = force_unit or ("Jy/beam" if norm_wsum else "Jy/pixel")
+    # explicit None check: force_unit="" (dimensionless, e.g. BEAM) is a valid override
+    unit = force_unit if force_unit is not None else ("Jy/beam" if norm_wsum else "Jy/pixel")
     bpar = ["BMAJ", "BMIN", "BPA"]
 
     dt = xr.open_datatree(store_url, engine="zarr", chunks=None)
@@ -447,16 +477,27 @@ def dt2fits(
 
     timeids = np.unique([int(ds.attrs["timeid"]) for ds in nodes])
     for timeid in timeids:
-        # bands for this time chunk, ordered by frequency
-        dst = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == timeid), key=lambda d: d.attrs["freq_out"])
+        # bands for this time chunk, ordered by bandid, not freq_out: effective
+        # frequencies are data-dependent
+        # (issue #296) and severe asymmetric flagging could invert two bands,
+        # silently reordering cube planes. bandid is monotonic in frequency by
+        # construction (the band_edges grid in core.imager).
+        dst = sorted((ds for ds in nodes if int(ds.attrs["timeid"]) == timeid), key=lambda d: int(d.attrs["bandid"]))
+        if drop_bands:
+            dst = [ds for ds in dst if int(ds.attrs["bandid"]) not in set(drop_bands)]
+            if not dst:
+                continue
+        drop_card = {"DROPBAND": ",".join(str(b) for b in sorted(drop_bands))} if drop_bands else {}
         ref = dst[0]
         nband = len(dst)
         freqs = np.array([ds.attrs["freq_out"] for ds in dst])
-        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, nx, ny)
+        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, ny, nx)
         wsums = np.stack([ds.WSUM.values for ds in dst], axis=0)  # (band, corr)
         wsum = wsums.sum(axis=0)  # (corr,)
-        _, ncorr, nx, ny = cube.shape
+        _, ncorr, ny, nx = cube.shape
         radec = (ref.attrs["ra"], ref.attrs["dec"])
+        l0 = float(ref.attrs.get("l0", 0.0))
+        m0 = float(ref.attrs.get("m0", 0.0))
         cell_deg = np.rad2deg(ref.attrs["cell_rad"])
         time_out = ref.attrs["time_out"]
 
@@ -484,21 +525,34 @@ def dt2fits(
                 ms_time=time_out,
                 time_is_unix=True,
                 gausspar=psfpars_mfs_timeid,
+                l0=l0,
+                m0=m0,
             )
+            if extra_hdr:
+                for k, v in extra_hdr.items():
+                    hdr[k] = v
+            for k, v in drop_card.items():
+                hdr[k] = v
             hdr["WSUM"] = float(wsum[0])
             if norm_wsum:
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
             else:
                 cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
             save_fits(
-                cube_mfs, basename + f"_time{timeid}_mfs.fits", hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu
+                cube_mfs,
+                basename + f"_time{timeid}_mfs.fits",
+                hdr,
+                overwrite=True,
+                dtype=otype,
+                beams_hdu=beams_hdu,
+                yx_order=True,
             )
 
         if do_cube:
             cube_beams = None
             psfparsf_timeid = None
-            if all("PSFPARSN" in ds for ds in dst):
-                pp = np.stack([ds.PSFPARSN.values for ds in dst], axis=0)  # (band, corr, 3)
+            if all(psfpars_var in ds for ds in dst):
+                pp = np.stack([ds[psfpars_var].values for ds in dst], axis=0)  # (band, corr, 3)
                 da = xr.DataArray(
                     pp,
                     dims=("band", "corr", "bpar"),
@@ -518,12 +572,25 @@ def dt2fits(
                 time_is_unix=True,
                 gausspar=psfpars_mfs_timeid,
                 gausspars=psfparsf_timeid,
+                l0=l0,
+                m0=m0,
             )
+            if extra_hdr:
+                for k, v in extra_hdr.items():
+                    hdr[k] = v
+            for k, v in drop_card.items():
+                hdr[k] = v
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
             cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube
             save_fits(
-                cube_out, basename + f"_time{timeid}.fits", hdr, overwrite=True, dtype=otype, beams_hdu=cube_beams
+                cube_out,
+                basename + f"_time{timeid}.fits",
+                hdr,
+                overwrite=True,
+                dtype=otype,
+                beams_hdu=cube_beams,
+                yx_order=True,
             )
 
     return column

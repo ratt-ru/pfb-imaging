@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-07-27T15:40:00Z
-last_verified_commit: 4ab429b
+timestamp: 2026-07-28T00:00:00Z
+last_verified_commit: bc879f0
 ---
 
 # Image and beam orientation conventions (hci)
@@ -166,6 +166,10 @@ always emits I, Q, U, V) and the sorted `corr` coordinate of the output dataset.
 beam_weight are written without transposition — the only x-major seams are the
 `vis2dirty` calls (zero-copy `dirty=buf.T` views) and the `fitcleanbeam` call
 (`yx_order=True`); see §1 and design-decisions.md D19. Non-square images work.
+The `.dt` imager+deconv path now follows the same discipline (D20): `.dt` dims
+are `("corr", "y", "x")`, the scratch beam is `(m_beam, l_beam)`-ordered, and
+its x-major seams are the same two (ducc `.T` views, `fitcleanbeam
+yx_order=True`) plus `save_fits(yx_order=True)`.
 Pinned by `tests/test_beam_orientation.py` (point-source wgridder orientation,
 elliptical-beam reproject vs analytic with rephasing and non-square output,
 `fitcleanbeam` order-invariance), and the refactor was verified bitwise-
@@ -174,7 +178,7 @@ single-precision threading noise ~1e-7; `psf_pa` exactly). The interim
 no-reprojection state (`a516530`, the jagged-gain sampling experiment for
 breifast#208 — which ruled out coarse sampling as the cause) is gone. So is the
 zarr-beam branch, along with its hack and the pre-D19 reproject bugs: `hci` now
-accepts only `--beam-model meerkat-beams` (design-decisions.md D20), leaving
+accepts only `--beam-model meerkat-beams` (design-decisions.md D25), leaving
 `utils/beam.reproject_and_interp_beam` uncalled.
 
 The transient-injection beam is a separate, point-evaluated path with no

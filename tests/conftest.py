@@ -217,3 +217,121 @@ def manage_ray():
 
     # Shutdown after all tests in the session are done
     ray.shutdown()
+
+
+@pytest.fixture(scope="module")
+def sky_truth(ms_name, ms_meta, image_geometry):
+    """Deterministic point-source sky + flag pattern injected into the test MS.
+
+    Writes DATA (predicted vis, Stokes I into XX/YY), FLAG (~10% random
+    samples plus one fully flagged channel) and FLAG_ROW into the shared MS.
+    Module-scoped: the injection is seeded and idempotent (same DATA/FLAG
+    every time), so re-injecting once per consuming module is cheap and safe
+    now that the mid-session DATA-overwriting legacy tests are gone.
+
+    The truth WCS is built with plain astropy (not pfb's set_wcs) so the
+    coordinate truth is independent of the code under test.
+    """
+    import dask
+    import dask.array as da
+    from astropy.wcs import WCS
+    from daskms import xds_from_table, xds_to_table
+    from ducc0.wgridder import dirty2vis
+
+    from pfb_imaging.operators.gridder import wgridder_conventions
+
+    rng = np.random.default_rng(1234)
+    xds = ms_meta.xds
+    freq = ms_meta.freq
+    freq0 = ms_meta.freq0
+    nchan = ms_meta.nchan
+    ncorr = ms_meta.ncorr
+    uvw = ms_meta.uvw
+    nrow = ms_meta.nrow
+
+    nx = ny = 256
+    cell_rad = image_geometry.cell_rad
+    cell_deg = image_geometry.cell_deg
+    cell_size = image_geometry.cell_size  # arcsec
+
+    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    radec = field.PHASE_DIR.values.squeeze()  # (ra, dec) rad
+    assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
+
+    # sources at exact pixel centres: (lpix, mpix) = pixels east / north of
+    # centre. Asymmetric on purpose (any transpose/flip moves at least one).
+    lpix = np.array([3, 0, 40])
+    mpix = np.array([-2, 55, 12])
+    ref_flux = np.array([1.0, 2.5, 1.7])
+    alpha = np.array([-0.7, -0.4, -1.0])
+
+    l_s = lpix * cell_rad
+    m_s = mpix * cell_rad
+    nvals = np.sqrt(1.0 - l_s**2 - m_s**2)
+
+    # x-major model raster per the pinned wgridder convention
+    # (test_beam_orientation.py): source (l, m) -> raster [nx//2 - lpix, ny//2 + mpix]
+    epsilon = 1e-7
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
+    for c in range(nchan):
+        model = np.zeros((nx, ny))
+        for s in range(lpix.size):
+            model[nx // 2 - lpix[s], ny // 2 + mpix[s]] = ref_flux[s] * (freq[c] / freq0) ** alpha[s]
+        model_vis[:, c : c + 1, 0] = dirty2vis(
+            uvw=uvw,
+            freq=freq[c : c + 1],
+            dirty=model,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            do_wgridding=True,
+            nthreads=2,
+        )
+        model_vis[:, c, -1] = model_vis[:, c, 0]
+
+    # deterministic flags: ~10% of (row, chan) samples plus one fully
+    # flagged channel; FLAG_ROW consistent with fully flagged rows
+    flagged_chan = 3
+    flag_rc = rng.random((nrow, nchan)) < 0.1
+    flag_rc[:, flagged_chan] = True
+    flag = np.broadcast_to(flag_rc[:, :, None], (nrow, nchan, ncorr)).copy()
+    flag_row = flag.all(axis=(1, 2))
+
+    xds_w = xds.assign(
+        DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
+        FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
+        FLAG_ROW=(("row",), da.from_array(flag_row, chunks=-1)),
+    )
+    dask.compute(xds_to_table(xds_w, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
+
+    # truth WCS (plain astropy; 0-based pixel (ix, iy) with crpix 1-based)
+    w = WCS(naxis=2)
+    w.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    w.wcs.cdelt = [-cell_deg, cell_deg]
+    w.wcs.cunit = ["deg", "deg"]
+    w.wcs.crval = [np.rad2deg(radec[0]), np.rad2deg(radec[1])]
+    w.wcs.crpix = [1 + nx // 2, 1 + ny // 2]
+    sky_coords = [w.pixel_to_world(nx // 2 - lpix[s], ny // 2 + mpix[s]) for s in range(lpix.size)]
+
+    return SimpleNamespace(
+        nx=nx,
+        ny=ny,
+        cell_rad=cell_rad,
+        cell_size=cell_size,
+        radec=radec,
+        lpix=lpix,
+        mpix=mpix,
+        ref_flux=ref_flux,
+        alpha=alpha,
+        nvals=nvals,
+        flag=flag,
+        flagged_chan=flagged_chan,
+        wcs=w,
+        sky_coords=sky_coords,
+    )

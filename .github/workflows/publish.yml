@@ -117,7 +117,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: uv sync --extra full --group dev --group test --frozen
+        run: uv sync --extra full --group dev --frozen
 
       - name: Run pfb-imaging
         run: uv run pfb --help
@@ -131,7 +131,9 @@ jobs:
           export OPENBLAS_NUM_THREADS=1
           export NUMEXPR_NUM_THREADS=1
 
-          uv run --frozen pytest -v tests/
+          # -m "" overrides the `-m "not slow"` in pyproject's addopts: a release
+          # must be gated on the whole suite, not just the fast dev loop.
+          uv run --frozen pytest -v -m "" tests/
 
   # Only publish if quality checks and tests pass
   publish:

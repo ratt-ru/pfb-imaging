@@ -28,7 +28,7 @@ commits and issues as sources, never spec/plan paths.
 
 ## MSv4 DataTree imager (`pfb imager`)
 
-`pfb imager` is the MSv4 front-end that combines `init`+`grid` into a two-pass pipeline producing
+`pfb imager` is the MSv4 front-end: a two-pass pipeline producing
 a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,time)` output image with a
 `part####` child per data partition) plus a `.scratch` cache. It uses the **native** DataTree API
 (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
@@ -51,6 +51,9 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 * Minimize external dependencies.
 * The lightweight install provides CLI and cab definitions only (sole dependency: `hip-cargo`).
 * Full scientific stack is optional via `pip install pfb-imaging[full]`.
+* Development uses a single `dev` dependency group; the scientific stack stays behind the
+  `full` extra (`uv sync --extra full --group dev`). Keeping `pfb-imaging[full]` out of `dev`
+  is deliberate — see `.claude/rules/testing-and-ci.md` §1.
 
 ## Mandatory Development Workflow
 
@@ -59,6 +62,15 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 ```bash
 uv run ruff format . && uv run ruff check . --fix
 ```
+
+**Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
+`uv run pytest tests/` runs 616 tests in ~122 s. The 27 deselected tests are the end-to-end
+pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci drivers) plus a few whose cost is
+Ray actor startup or a dense operator build (the `_build_hess` preset-wiring pair, the
+frequency-prior fixed-point guard and the frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
+`-m ""` locally before finishing a branch — not per-task during development. A test earns the
+`slow` marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
+for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.
 
 ## Working Effectively (notes for agents)
 
@@ -83,6 +95,17 @@ rediscovery:
   stats `R GB` column shows ~0); only compare wall times at matching cache state.
 * **One mechanism per commit,** with the measured before/after in the commit message. It keeps
   cluster-run bisection possible when a change must be re-litigated.
+* **`gh issue view` and `gh pr edit` are broken on this machine — use `gh api` instead.** The
+  system `gh` is Ubuntu's 2.46.0, which asks GraphQL for the Projects-classic `projectCards`
+  field; the API has hard-errored on that since the May 2024 sunset, so both commands die with
+  `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+  Upstream feature-detects v1 projects from **2.71.0** (`issue view`) and **2.73.0** (`pr edit`),
+  but the machine deliberately stays on the distro package, so treat this as permanent. It is
+  the client, not the repo — it reproduces against `cli/cli`. Reach for REST:
+  `gh api repos/ratt-ru/pfb-imaging/issues/<n> --jq '{title,state,body}'` to read an issue, and
+  `gh api -X PATCH repos/ratt-ru/pfb-imaging/pulls/<n> --input body.json` (a `{"body": …}` file,
+  so markdown survives shell quoting) to edit a PR. `gh pr view`/`list`/`checks`/`create`/`merge`
+  and every `gh api` call are unaffected, as is CI — both workflow uses are already `gh api`.
 
 ## Project Structure
 
@@ -95,7 +118,7 @@ pfb-imaging/
 │   ├── cli/                  # Lightweight CLI wrappers
 │   │   └── __init__.py       # Main Typer app, registers commands
 │   ├── core/                 # Core implementations (lazy-loaded)
-│   ├── deconv/               # Deconvolution algorithms (SARA, Hogbom, Clark)
+│   ├── deconv/               # Composable deconvolution (PFBSolver + presets registry)
 │   ├── operators/            # Mathematical operators (gridding, PSF, Psi)
 │   ├── opt/                  # Optimization algorithms (PCG, FISTA, primal-dual)
 │   ├── prox/                 # Proximal operators

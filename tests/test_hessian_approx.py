@@ -185,6 +185,7 @@ def test_wgridder_conventions(center_offset):
     np.testing.assert_allclose(vis.imag, vis_explicit.imag, atol=1e-4)
 
 
+@pytest.mark.slow
 def test_inject_transient_fringe_wterm():
     """The transient-injection fringe in utils/stokes2im.stokes_image must be the
     wgridder forward model, so injected sources land at their true position.

@@ -102,6 +102,24 @@ def deconv(
             rich_help_panel="Fits",
         ),
     ] = True,
+    fits_per_partition: Annotated[
+        bool,
+        typer.Option(
+            help="Write per-partition dirty, residual and apparent model FITS at the end of the run. "
+            "Headers carry the vis-space chi squared per partition. "
+            "Useful to localise mosaic misfits to specific data partitions.",
+            rich_help_panel="Fits",
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            help="Collect extra per-partition diagnostics. "
+            "Logs the vis-space chi squared per partition at every major iteration. "
+            "Writes baseline-binned residual profiles and the chi squared trajectories to a debug JSON.",
+            rich_help_panel="Reporting",
+        ),
+    ] = False,
     minor_cycle: Annotated[
         Literal["sara", "ista"],
         typer.Option(
@@ -164,10 +182,67 @@ def deconv(
     eta: Annotated[
         float,
         typer.Option(
-            help="Will use eta*wsum to regularise the inversion of the Hessian approximation.",
+            help="Tikhonov regularisation for the inversion of the Hessian approximation. "
+            "Interpreted as a fraction of the total sum of imaging weights. "
+            "The effective damping is eta times the total wsum regardless of band count.",
             rich_help_panel="PFB",
         ),
-    ] = 1.0,
+    ] = 0.001,
+    eta_mode: Annotated[
+        str | None,
+        typer.Option(
+            help="Shape of a spatially varying eta over the image. "
+            "By default eta is uniform. "
+            "Choices are invbeam, invbeam2, radial and radial-invbeam. "
+            "Each rises from eta where the PSF approximation is trusted to eta times eta-cap where it is worst. "
+            "This damps the forward update without moving the fixed point, so the flux scale is unchanged.",
+            rich_help_panel="PFB",
+        ),
+    ] = None,
+    eta_cap: Annotated[
+        float,
+        typer.Option(
+            help="Dynamic range of the eta-mode profile. Ignored when eta-mode is unset.",
+            rich_help_panel="PFB",
+        ),
+    ] = 100.0,
+    mop: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the mopped model and residual at the end of the run. "
+            "The final forward update is added to the model, which very nearly cancels the residual. "
+            "Stored as MODEL_MOPPED and RESIDUAL_MOPPED for restore to consume. "
+            "Costs one extra forward solve and one gridding sweep.",
+            rich_help_panel="PFB",
+        ),
+    ] = True,
+    eta_in_grad: Annotated[
+        bool,
+        typer.Option(
+            help="Include the eta term in the gradient, not only in the preconditioner. "
+            "By default the prior shapes each update without entering the objective. "
+            "It therefore cannot move the fixed point. "
+            "With this set the reported residual is the gradient of the regularised objective.",
+            rich_help_panel="PFB",
+        ),
+    ] = False,
+    gp_length_scale: Annotated[
+        float | None,
+        typer.Option(
+            help="Correlation length of the frequency prior in the preconditioner. "
+            "Given as a fraction of the imaged band span. "
+            "By default the prior is uncorrelated and eta damps every band independently. "
+            "This reshapes the forward update without moving the fixed point, so the flux scale is unchanged.",
+            rich_help_panel="PFB",
+        ),
+    ] = None,
+    gp_cap: Annotated[
+        float,
+        typer.Option(
+            help="Dynamic range of the frequency prior. Ignored when gp-length-scale is unset.",
+            rich_help_panel="PFB",
+        ),
+    ] = 10.0,
     gamma: Annotated[
         float,
         typer.Option(
@@ -467,6 +542,8 @@ def deconv(
                     product=product,
                     fits_mfs=fits_mfs,
                     fits_cubes=fits_cubes,
+                    fits_per_partition=fits_per_partition,
+                    debug=debug,
                     minor_cycle=minor_cycle,
                     opt_backend=opt_backend,
                     bases=bases,
@@ -476,6 +553,12 @@ def deconv(
                     hess_norm=hess_norm,
                     rmsfactor=rmsfactor,
                     eta=eta,
+                    eta_mode=eta_mode,
+                    eta_cap=eta_cap,
+                    mop=mop,
+                    eta_in_grad=eta_in_grad,
+                    gp_length_scale=gp_length_scale,
+                    gp_cap=gp_cap,
                     gamma=gamma,
                     nbasisf=nbasisf,
                     positivity=positivity,
@@ -523,6 +606,8 @@ def deconv(
                 product=product,
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
+                fits_per_partition=fits_per_partition,
+                debug=debug,
                 minor_cycle=minor_cycle,
                 opt_backend=opt_backend,
                 bases=bases,
@@ -532,6 +617,12 @@ def deconv(
                 hess_norm=hess_norm,
                 rmsfactor=rmsfactor,
                 eta=eta,
+                eta_mode=eta_mode,
+                eta_cap=eta_cap,
+                mop=mop,
+                eta_in_grad=eta_in_grad,
+                gp_length_scale=gp_length_scale,
+                gp_cap=gp_cap,
                 gamma=gamma,
                 nbasisf=nbasisf,
                 positivity=positivity,
@@ -588,6 +679,8 @@ def deconv(
             product=product,
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
+            fits_per_partition=fits_per_partition,
+            debug=debug,
             minor_cycle=minor_cycle,
             opt_backend=opt_backend,
             bases=bases,
@@ -597,6 +690,12 @@ def deconv(
             hess_norm=hess_norm,
             rmsfactor=rmsfactor,
             eta=eta,
+            eta_mode=eta_mode,
+            eta_cap=eta_cap,
+            mop=mop,
+            eta_in_grad=eta_in_grad,
+            gp_length_scale=gp_length_scale,
+            gp_cap=gp_cap,
             gamma=gamma,
             nbasisf=nbasisf,
             positivity=positivity,

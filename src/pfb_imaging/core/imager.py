@@ -14,6 +14,7 @@ import xarray as xr
 import zarr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
+from meerkat_beams.utils import BeamWizard
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from xarray_ms.errors import (
@@ -26,8 +27,15 @@ from xarray_ms.errors import (
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import rdt2fits
-from pfb_imaging.utils.misc import fitcleanbeam, set_image_size
+from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
+from pfb_imaging.utils.misc import (
+    fitcleanbeam,
+    parse_sky_coords,
+    radec_barycentre,
+    radec_to_lm,
+    set_image_size,
+    to_mjd_time,
+)
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
@@ -39,6 +47,111 @@ warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
 
 
 log = pfb_logging.get_logger("IMAGER")
+
+
+def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, cell_rad, do_psf, do_beam):
+    """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
+
+    Runs inside the pass-2 worker while the partition products are in memory;
+    per-partition DIRTY/PSF are wsum-normalised, the beam is written as stored
+    (effective response B/n, wiki D22).
+    """
+    field = str(field_name).replace(" ", "_").replace("/", "-")
+    cell_deg = np.rad2deg(cell_rad)
+    ncorr = prod["DIRTY"].shape[0]
+
+    def mk_hdr(nx_, ny_, unit):
+        return set_wcs(
+            cell_deg,
+            cell_deg,
+            nx_,
+            ny_,
+            (meta["ra"], meta["dec"]),
+            np.atleast_1d(freq_out),
+            unit=unit,
+            ms_time=meta["time_out"],
+            time_is_unix=True,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
+            ncorr=ncorr,
+        )
+
+    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}.fits"
+    wsum = prod["WSUM"][:, None, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
+    ny_im, nx_im = prod["DIRTY"].shape[1:]
+    save_fits(dirty, stem.format(var="dirty"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
+    if do_psf:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            psf = np.where(wsum > 0, prod["PSF"] / wsum, 0.0)
+        ny_psf_, nx_psf_ = prod["PSF"].shape[1:]
+        save_fits(psf, stem.format(var="psf"), mk_hdr(nx_psf_, ny_psf_, "Jy/beam"), yx_order=True)
+    if do_beam:
+        hdr = mk_hdr(nx_im, ny_im, "")
+        hdr["BEAMINCN"] = (True, "beam includes the wgridder n-term (D22)")
+        save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
+
+
+def _concat_pieces(plist):
+    """Reduce a partition's scratch pieces to a single Dataset.
+
+    Rows are concatenated; BEAM and the effective frequency are combined as
+    ``wsum_nat``-weighted means. Pieces of a partition can differ in both --
+    BeamWizard evaluates the beam at the piece's own timestamps, and post-#296
+    at its own effective frequency -- so taking piece 0's beam, as this used
+    to, silently discarded every other piece (wiki D28).
+
+    The weights are the *natural* wsum because this runs before gridding, where
+    the robust imaging weights do not yet exist. Getting them would mean
+    passing row offsets into grid_partition and holding every piece's BEAM
+    resident through gridding instead of freeing it at the caller's ``del
+    plist`` -- ~67 MB per piece at 4096 squared float32 -- against the memory
+    discipline in docs/wiki/memory-and-ray.md, for a correction to a beam that
+    varies slowly with frequency. The band-level reduction in _grid_image does
+    use the imaging weights; see wiki D28 for why the mixed basis is correct.
+
+    Args:
+        plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
+
+    Returns:
+        The merged partition Dataset, carrying the weighted ``freq_out`` and
+        the summed ``wsum_nat`` in its attrs. A single-piece list is returned
+        unchanged.
+    """
+    if len(plist) == 1:
+        return plist[0]
+
+    # rows are only concatenatable when they share the freq axis (same
+    # spw + band channel-chunk); guard the invariant before concat
+    f0 = plist[0].FREQ.values
+    for p in plist[1:]:
+        assert np.array_equal(p.FREQ.values, f0), "concat group has mismatched FREQ; cannot concatenate rows"
+
+    w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
+    wsum_nat = float(w.sum())
+    if wsum_nat > 0:
+        freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
+        freq_out = float((w * freqs).sum() / wsum_nat)
+        # accumulate rather than stack: one buffer, not npiece of them
+        beam = np.zeros(plist[0].BEAM.shape, dtype=np.float64)
+        for wi, p in zip(w, plist):
+            beam += wi * p.BEAM.values
+        beam /= wsum_nat
+    else:
+        freq_out = float(plist[0].attrs["freq_out"])
+        beam = plist[0].BEAM.values
+
+    rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
+    cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
+    part = plist[0].drop_vars(rowvars)
+    for v in rowvars:
+        part[v] = cat[v]
+    del cat
+    part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
+    part.attrs["freq_out"] = freq_out
+    part.attrs["wsum_nat"] = wsum_nat
+    return part
 
 
 @ray.remote
@@ -53,7 +166,7 @@ def _grid_image(
     nx_psf,
     ny_psf,
     cell_rad,
-    freq_out,
+    freq_nominal,
     meta,
     robustness=None,
     nx_pad=None,
@@ -64,6 +177,9 @@ def _grid_image(
     epsilon=1e-7,
     do_wgridding=True,
     double_accum=True,
+    do_psf=True,
+    part_fits_dir=None,
+    part_fits_beam=True,
 ):
     """Pass-2 worker for one output image.
 
@@ -78,8 +194,8 @@ def _grid_image(
     groups = {}
     for sn in src_names:
         for _, child in dt[sn].children.items():
-            # COUNTS is only consumed by the driver's weight reduction and is
-            # by far the largest piece variable; don't read it here
+            # COUNTS is only consumed by the driver's weight reduction; happened already (counts passed in)
+            # it is by far the largest piece variable; don't read it here
             ds = child.ds.drop_vars("COUNTS", errors="ignore").load()
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
@@ -89,32 +205,27 @@ def _grid_image(
         counts = filter_extreme_counts(counts.copy(), level=filter_counts_level)
         counts = box_sum_counts(counts, npix_super)
 
-    corr = next(iter(groups.values()))[0].corr.values
+    first = next(iter(groups.values()))[0]
+    corr = first.corr.values
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
-    dirty_sum = np.zeros((ncorr, nx, ny))
-    psf_sum = np.zeros((ncorr, nx_psf, ny_psf))
-    wsum_sum = np.zeros(ncorr)
+    # The whole tree carries the requested --precision: pass 1 stamped it on the
+    # scratch pieces, grid_partition's ducc buffers follow the vis dtype (ducc
+    # templates every array on one type), and the accumulation below must not
+    # upcast it back to f8 (--double-accum is a wgridder-internal control only).
+    real_type = first.VIS.values.real.dtype
+    dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
+    beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # float64 regardless of --precision: the tree may be single-precision
+    # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
+    freq_sum = np.zeros(ncorr, dtype=np.float64)
 
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
-        # concat scans of the same partition along row (beam/freq identical across scans)
-        if len(plist) == 1:
-            part = plist[0]
-        else:
-            # rows are only concatenatable when they share the freq axis (same
-            # spw + band channel-chunk); guard the invariant before concat
-            f0 = plist[0].FREQ.values
-            for p in plist[1:]:
-                assert np.array_equal(p.FREQ.values, f0), (
-                    f"concat group {key} has mismatched FREQ; cannot concatenate rows"
-                )
-            rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
-            cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
-            part = plist[0].drop_vars(rowvars)
-            for v in rowvars:
-                part[v] = cat[v]
-            del cat
+        part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
 
@@ -129,34 +240,46 @@ def _grid_image(
             robustness=robustness,
             nx_pad=nx_pad,
             ny_pad=ny_pad,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            do_psf=do_psf,
         )
 
+        part_vars = {
+            "VIS": (("corr", "row", "chan"), part.VIS.values),
+            "WEIGHT": (("corr", "row", "chan"), prod["WEIGHT"]),
+            "MASK": (("row", "chan"), part.MASK.values),
+            "UVW": (("row", "three"), part.UVW.values),
+            "FREQ": (("chan",), part.FREQ.values),
+            "BEAM": (("corr", "y", "x"), prod["BEAM"]),
+        }
+        part_coords = {"corr": corr}
+        if do_psf:
+            part_vars["PSF"] = (("corr", "y_psf", "x_psf"), prod["PSF"])
+            part_vars["PSFHAT"] = (("corr", "y_psf", "xo2"), prod["PSFHAT"])
+            part_vars["PSFPARSN"] = (("corr", "bpar"), prod["PSFPARSN"])
+            part_coords["bpar"] = bpar
         part_out = xr.Dataset(
-            {
-                "VIS": (("corr", "row", "chan"), part.VIS.values),
-                "WEIGHT": (("corr", "row", "chan"), prod["WEIGHT"]),
-                "MASK": (("row", "chan"), part.MASK.values),
-                "UVW": (("row", "three"), part.UVW.values),
-                "FREQ": (("chan",), part.FREQ.values),
-                "PSF": (("corr", "x_psf", "y_psf"), prod["PSF"]),
-                "PSFHAT": (("corr", "x_psf", "yo2"), prod["PSFHAT"]),
-                "BEAM": (("corr", "x", "y"), prod["BEAM"]),
-                "PSFPARSN": (("corr", "bpar"), prod["PSFPARSN"]),
-            },
-            coords={"corr": corr, "bpar": bpar},
+            part_vars,
+            coords=part_coords,
             attrs={
                 "msid": int(key[0]),
                 "field_name": key[1],
                 "spw_name": key[2],
                 "baseline_group": key[3],
+                "freq_out": float(part.attrs["freq_out"]),
                 "ra": meta["ra"],
                 "dec": meta["dec"],
-                "l0": 0.0,
-                "m0": 0.0,
+                "ra0": float(part.attrs.get("ra0", meta["ra"])),
+                "dec0": float(part.attrs.get("dec0", meta["dec"])),
+                "l0": meta.get("l0", 0.0),
+                "m0": meta.get("m0", 0.0),
+                # stored BEAM = effective image-plane response B/n (D22)
+                "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
                 "wsum": prod["WSUM"].tolist(),
             },
         )
@@ -164,31 +287,81 @@ def _grid_image(
         # but they share the store root; the driver consolidates once at the end
         part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
 
-        dirty_sum += prod["DIRTY"]
-        psf_sum += prod["PSF"]
-        wsum_sum += prod["WSUM"]
+        if part_fits_dir is not None:
+            _partition_fits(
+                part_fits_dir,
+                out_name,
+                pid,
+                key[1],
+                prod,
+                meta,
+                float(part.attrs["freq_out"]),
+                cell_rad,
+                do_psf=do_psf,
+                do_beam=part_fits_beam,
+            )
 
+        dirty_sum += prod["DIRTY"]
+        beam_sum += prod["WSUM"][:, None, None] * prod["BEAM"]
+        # exact beam-attenuated dirty sum_p B_p * dirty_p: the model-free term
+        # of the deconv gradient (D23), not derivable from the summed DIRTY
+        # when partitions carry distinct beams
+        bdirty_sum += prod["BEAM"] * prod["DIRTY"]
+        if do_psf:
+            psf_sum += prod["PSF"]
+        wsum_sum += prod["WSUM"]
+        freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
+
+    # Level-2 reduction: the band product is the wsum-weighted sum of its
+    # partitions, so its effective frequency is the wsum-weighted mean of the
+    # partition frequencies -- the identical reduction beam_sum uses below.
+    # That is why these weights must be the imaging prod["WSUM"] and not the
+    # natural wsum_nat used inside _concat_pieces: they are what actually
+    # determines each partition's contribution to the summed image, and BEAM
+    # and freq_out must not be weighted by different quantities at the same
+    # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
+    # dt2fits already does for freq_mfs.
+    wsum_tot = float(wsum_sum.astype(np.float64).sum())
+    freq_eff = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
     band_attrs = {
         "bandid": meta["bandid"],
         "timeid": meta["timeid"],
-        "freq_out": float(freq_out),
+        "freq_out": freq_eff,
+        "freq_nominal": float(freq_nominal),
         "time_out": meta["time_out"],
         "ra": meta["ra"],
         "dec": meta["dec"],
+        "l0": meta.get("l0", 0.0),
+        "m0": meta.get("m0", 0.0),
         "cell_rad": cell_rad,
         "robustness": robustness,
         "niters": 0,
     }
     band_attrs = {k: v for k, v in band_attrs.items() if v is not None}
+    # band-level BEAM: wsum-weighted mean of the partition beams -- the
+    # linear-mosaic response (still the effective B/n of wiki D22).
+    # RESIDUAL is only computed once a model input exists (deconv falls back
+    # to DIRTY when it is absent).
+    with np.errstate(invalid="ignore", divide="ignore"):
+        beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
+    band_vars = {
+        "DIRTY": (("corr", "y", "x"), dirty_sum),
+        "BDIRTY": (("corr", "y", "x"), bdirty_sum),
+        "BEAM": (("corr", "y", "x"), beam_avg),
+        "WSUM": (("corr",), wsum_sum),
+    }
+    band_coords = {"corr": corr}
+    if do_psf:
+        band_vars["PSF"] = (("corr", "y_psf", "x_psf"), psf_sum)
+        band_vars["PSFPARSN"] = (
+            ("corr", "bpar"),
+            # fitcleanbeam returns python floats; keep the tree at --precision
+            np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
+        )
+        band_coords["bpar"] = bpar
     band_ds = xr.Dataset(
-        {
-            "DIRTY": (("corr", "x", "y"), dirty_sum),
-            "RESIDUAL": (("corr", "x", "y"), dirty_sum.copy()),  # no model yet
-            "PSF": (("corr", "x_psf", "y_psf"), psf_sum),
-            "PSFPARSN": (("corr", "bpar"), np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None]))),
-            "WSUM": (("corr",), wsum_sum),
-        },
-        coords={"corr": corr, "bpar": bpar},
+        band_vars,
+        coords=band_coords,
         attrs=band_attrs,
     )
     band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
@@ -229,6 +402,8 @@ def imager(
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
     beam_model: str | None = None,
+    phase_dir: str | None = None,
+    target: str | None = None,
     chan_average: int = 1,
     progressbar: bool = True,
     log_directory: str | None = None,
@@ -250,6 +425,9 @@ def imager(
     do_wgridding: bool = True,
     double_accum: bool = True,
     keep_scratch: bool = True,
+    psf: bool = True,
+    beam: bool = True,
+    fits_per_partition: bool = False,
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
@@ -261,7 +439,7 @@ def imager(
     """
     # for logging options
     opts_dict = locals().copy()
-
+    time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -326,8 +504,6 @@ def imager(
         log=log,
     )
 
-    time_start = time.time()
-
     basename = f"{output_filename}"
 
     # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
@@ -385,6 +561,8 @@ def imager(
     # than a hardcoded name; resolved from the first visibility node below.
     # (sjperkins, PR #252 review.)
     vis_col = None
+    # same for the weight column: "WEIGHT_SPECTRUM" is exposed as "WEIGHT" in the datatree
+    wgt_col = None
 
     # figure out where band edges are
     # note mapping currently maps partitions to the band it has most overlap with
@@ -406,6 +584,8 @@ def imager(
                 continue
             if vis_col is None:
                 vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
+            if wgt_col is None:
+                wgt_col = node.ds.attrs["data_groups"][data_group]["weight"]
             ds = node.ds.sel(frequency=slice(freq_min, freq_max))
             if ds.frequency.size == 0:
                 continue
@@ -438,7 +618,50 @@ def imager(
             # indices: the dispatch loop applies isel to the unsliced node, so
             # slices built on the trimmed axis must be shifted by it.
             chan0 = int(np.searchsorted(node.ds.frequency.load().values, freqs_node[0]))
-            selected.append((ims, node, freqs_node, ds.time.load().values, chan0))
+            # field pointing centre for phase-centre resolution / rephasing
+            grp = node.ds.attrs["data_groups"][data_group]
+            fns = node[grp["field_and_source"].rsplit("/", 1)[-1]].ds
+            field_radec = np.asarray(fns.FIELD_PHASE_CENTER_DIRECTION.sel(field_name=field_name).values).squeeze()
+            selected.append((ims, node, freqs_node, ds.time.load().values, chan0, field_radec))
+
+    if not selected:
+        log.error_and_raise("Selection matched no data", ValueError)
+
+    # resolve the common phase centre (mosaic tangent point): explicit
+    # phase_dir wins; multiple distinct field centres default to their
+    # barycentre; a single field keeps its own centre (no rephasing)
+    field_centres = np.unique(np.array([np.round(fc, 12) for *_, fc in selected]), axis=0)
+    if phase_dir is not None:
+        radec_new = parse_sky_coords(phase_dir)
+        log.info(
+            f"Rephasing all data to phase_dir "
+            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
+        )
+    elif field_centres.shape[0] > 1:
+        radec_new = radec_barycentre(field_centres)
+        log.info(
+            f"Multiple fields selected; rephasing to their barycentre "
+            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
+        )
+    else:
+        radec_new = None
+    # tangent point of the output image grid
+    grid_radec = radec_new if radec_new is not None else field_centres[0]
+
+    def target_offset(time_out):
+        """(l0, m0) of --target w.r.t. the tangent point, at time_out (unix s)."""
+        if target is None:
+            return 0.0, 0.0
+        tmp = target.split(",")
+        if len(tmp) == 2:
+            tradec = parse_sky_coords(target)
+        else:
+            # named body known to astropy; get_coordinates expects MJD seconds
+            from pfb_imaging.utils.astrometry import get_coordinates
+
+            tradec = np.array(get_coordinates(to_mjd_time(time_out), target=target))
+        ell, emm = radec_to_lm(tradec, grid_radec)
+        return float(ell), float(emm)
 
     # map the "DATA" sentinel to the data group's correlated_data variable
     if vis_col is not None:
@@ -446,6 +669,10 @@ def imager(
             dc1 = vis_col
         if dc2 == "DATA":
             dc2 = vis_col
+
+    # map the "WEIGHT_SPECTRUM" sentinel to the data group's weight variable
+    if weight_column is not None and weight_column == "WEIGHT_SPECTRUM":
+        weight_column = wgt_col
 
     # guard against irregular channel widths
     cw = np.asarray(all_chan_widths)
@@ -463,19 +690,32 @@ def imager(
     log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
     half_band_width = (band_edges[1] - band_edges[0]) / 2
-    freq_out = band_edges[0:-1] + half_band_width
+    # Band-edge midpoints. These define which channels belong to which band and
+    # nothing else -- the band's reported frequency is the effective (weighted)
+    # one reduced in pass 2 (issue #296, wiki D28).
+    band_centres = band_edges[0:-1] + half_band_width
 
     # shared imaging geometry (also fixes the padded uv-grid used for COUNTS)
     max_freq = float(all_freqs.max())
     nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
         max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
     )
+    # TODO - this is currently hard-coded to 1.7 because we don't know what padding the
+    # wgridder will choose. It could be exposed as a parameter but ideally should be
+    # determined by the gridder (consider adding functionality to radiomesh)
     min_padding = 1.7
     nx_pad = int(np.ceil(min_padding * nx))
     nx_pad += nx_pad % 2
     ny_pad = int(np.ceil(min_padding * ny))
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+
+    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        log.info("Assuming MeerKAT data and initialising BeamWizard")
+        # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
+        beam_model = BeamWizard(band=beam_model)
 
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
@@ -488,7 +728,7 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_store.url, mode="a")
     created_parents = set()
-    for ims, node, freqs_node, times_node, chan0 in selected:
+    for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
         ntimes_node = times_node.size
@@ -513,7 +753,7 @@ def imager(
                 # flow/fhigh index the freq-range-trimmed axis; isel below acts
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
-                bandid = int(np.argmin(np.abs(freq_out - freqs_node[flow:fhigh].mean())))
+                bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -534,7 +774,7 @@ def imager(
                     bandid=bandid,
                     timeid=timeid,
                     msid=ims,
-                    freq_out=freq_out[bandid],
+                    freq_nominal=band_centres[bandid],
                     precision=precision,
                     sigma_column=sigma_column,
                     weight_column=weight_column,
@@ -551,6 +791,10 @@ def imager(
                     cell_rad=cell_rad,
                     baseline_group="all",
                     data_group=data_group,
+                    radec_new=radec_new,
+                    target=target,
+                    nx=nx,
+                    ny=ny,
                     nthreads=nthreads,
                 )
                 tasks.append(fut)
@@ -664,11 +908,10 @@ def imager(
             src_names = [name for name, _ in items]
             infos = [info for _, info in items]
             out_name = f"band{bandid:04d}_time0000"
-            # assumes one pointing per band: ra/dec are taken from the first node
-            # and time_out is the (unweighted) mean of the collapsed nodes' times.
-            # Rows are only concatenated within a partition key (same field), so a
-            # multi-field band would still grid its fields separately, but this
-            # band-node metadata would label them with a single pointing.
+            # ra/dec: the common tangent point (all nodes agree after phase-centre
+            # resolution above); time_out is the mean of the collapsed nodes' times
+            time_out = float(np.mean([info["time_out"] for info in infos]))
+            l0, m0 = target_offset(time_out)
             work.append(
                 (
                     out_name,
@@ -676,21 +919,20 @@ def imager(
                     {
                         "bandid": bandid,
                         "timeid": 0,
-                        "ra": infos[0]["ra"],
-                        "dec": infos[0]["dec"],
-                        "time_out": float(np.mean([info["time_out"] for info in infos])),
+                        "ra": float(grid_radec[0]),
+                        "dec": float(grid_radec[1]),
+                        "l0": l0,
+                        "m0": m0,
+                        "time_out": time_out,
                     },
                 )
             )
     else:
         for name, info in node_info.items():
-            work.append(
-                (
-                    name,
-                    [name],
-                    {k: info[k] for k in ("bandid", "timeid", "ra", "dec", "time_out")},
-                )
-            )
+            l0, m0 = target_offset(info["time_out"])
+            meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
+            meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
+            work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
     log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")
@@ -719,6 +961,14 @@ def imager(
     xr.Dataset(attrs=root_attrs).to_zarr(dt_store.url, mode="w")
     log.info(f"Imaging products will be written to {dt_store.url}")
 
+    # per-partition sanity FITS (field/beam orientation checks); the driver
+    # creates the directory single-threaded so workers never race on mkdir
+    part_fits_dir = None
+    if fits_per_partition:
+        part_fits_dir = f"{fits_output_folder}/{oname}_partitions"
+        os.makedirs(part_fits_dir, exist_ok=True)
+        log.info(f"Per-partition FITS will be written to {part_fits_dir}")
+
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
     tasks = []
     for out_name, src_names, meta in work:
@@ -735,7 +985,7 @@ def imager(
             nx_psf,
             ny_psf,
             cell_rad,
-            freq_out[meta["bandid"]],
+            band_centres[meta["bandid"]],
             meta,
             robustness=robustness,
             nx_pad=nx_pad,
@@ -746,6 +996,9 @@ def imager(
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            do_psf=psf,
+            part_fits_dir=part_fits_dir,
+            part_fits_beam=beam,
         )
         tasks.append(fut)
 
@@ -759,10 +1012,12 @@ def imager(
         for task in ready:
             res = ray.get(task)
             tid = res["timeid"]
-            psf_mfs.setdefault(tid, np.zeros((ncorr, nx_psf, ny_psf)))
-            psf_mfs[tid] += res["psf"]
-            wsum_mfs.setdefault(tid, np.zeros(ncorr))
-            wsum_mfs[tid] += res["wsum"]
+            if res["psf"] is not None:
+                # accumulate at the precision the workers gridded in (see _grid_image)
+                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf), dtype=res["psf"].dtype))
+                psf_mfs[tid] += res["psf"]
+                wsum_mfs.setdefault(tid, np.zeros(ncorr, dtype=res["wsum"].dtype))
+                wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
@@ -780,24 +1035,33 @@ def imager(
     # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
     psfparsn = {}
     for tid in psf_mfs:
-        psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None]))
+        psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:
         fits_oname = f"{fits_output_folder}/{oname}"
         log.info(f"Writing fits files to {fits_oname}")
-        fits_tasks = [
-            rdt2fits.remote(
-                dt_store.url,
-                column,
-                fits_oname,
-                norm_wsum=True,
-                nthreads=nthreads,
-                do_mfs=fits_mfs,
-                do_cube=fits_cubes,
-                psfpars_mfs=psfparsn,
+        base_kwargs = dict(
+            norm_wsum=True,
+            nthreads=nthreads,
+            do_mfs=fits_mfs,
+            do_cube=fits_cubes,
+            psfpars_mfs=psfparsn if psf else None,
+        )
+        columns = {"DIRTY": {}}
+        if psf:
+            columns["PSF"] = {}
+        if beam:
+            # stored beam is the effective response B/n (wiki D22)
+            columns["BEAM"] = dict(
+                norm_wsum=False,
+                force_unit="",
+                psfpars_mfs=None,
+                extra_hdr={"BEAMINCN": (True, "beam includes the wgridder n-term (D22)")},
             )
-            for column in ("DIRTY", "PSF", "RESIDUAL")
+        fits_tasks = [
+            rdt2fits.remote(dt_store.url, column, fits_oname, **{**base_kwargs, **overrides})
+            for column, overrides in columns.items()
         ]
         for task in fits_tasks:
             ray.get(task)

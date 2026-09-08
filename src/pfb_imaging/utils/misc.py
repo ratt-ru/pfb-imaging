@@ -30,6 +30,74 @@ def to_unix_time(times):
     return times - 3506716800.0
 
 
+def to_mjd_time(times):
+    """Inverse of :func:`to_unix_time`: unix seconds -> MJD seconds.
+
+    The MSv4 ``time`` coordinate is unix seconds; casacore measures and
+    :func:`pfb_imaging.utils.astrometry.get_coordinates` expect MJD seconds.
+    """
+    return times + 3506716800.0
+
+
+def radec_to_lm(radec, radec0):
+    """Direction cosines of ``radec`` w.r.t. the tangent point ``radec0``.
+
+    Pure-numpy equivalent of ``africanus.coordinates.radec_to_lm``. ``l``
+    increases towards increasing RA (East), ``m`` towards increasing Dec
+    (North).
+
+    Args:
+        radec: (ra, dec) of the direction, radians.
+        radec0: (ra, dec) of the tangent point, radians.
+
+    Returns:
+        ``np.ndarray`` (2,) with (l, m) in radians.
+    """
+    ra, dec = radec
+    ra0, dec0 = radec0
+    dra = ra - ra0
+    ell = np.cos(dec) * np.sin(dra)
+    emm = np.sin(dec) * np.cos(dec0) - np.cos(dec) * np.sin(dec0) * np.cos(dra)
+    return np.array([ell, emm])
+
+
+def radec_barycentre(radecs):
+    """Spherical mean of pointing directions (the mosaic default centre).
+
+    Args:
+        radecs: (n, 2) array of (ra, dec) in radians.
+
+    Returns:
+        ``np.ndarray`` (2,) with (ra, dec) in radians, RA wrapped to [0, 2pi).
+    """
+    radecs = np.atleast_2d(radecs)
+    x = np.cos(radecs[:, 1]) * np.cos(radecs[:, 0])
+    y = np.cos(radecs[:, 1]) * np.sin(radecs[:, 0])
+    z = np.sin(radecs[:, 1])
+    xm, ym, zm = x.mean(), y.mean(), z.mean()
+    ra = np.arctan2(ym, xm) % (2 * np.pi)
+    # (-eps) % (2*pi) rounds to exactly 2*pi in float64, violating [0, 2pi); snap the seam
+    if ra >= 2 * np.pi - 1e-10:
+        ra = 0.0
+    dec = np.arctan2(zm, np.hypot(xm, ym))
+    return np.array([ra, dec])
+
+
+def parse_sky_coords(coord_str):
+    """Parse ``'HH:MM:SS,DD:MM:SS'`` (fk5) into (ra, dec) radians.
+
+    The format used by the ``--phase-dir``/``--target`` CLI options
+    (matching hci/stokes2im).
+    """
+    # deferred: heavy astropy.coordinates import on a rarely-taken parse path
+    from astropy import units
+    from astropy.coordinates import SkyCoord
+
+    ra_str, dec_str = coord_str.split(",")
+    c = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
+    return np.array([np.deg2rad(c.ra.value), np.deg2rad(c.dec.value)])
+
+
 def kron_matvec(op, b):
     dim = len(op)
     npix = b.size
@@ -108,28 +176,128 @@ def get_padding_info(nx, ny, pfrac):
     return padding, unpad_x, unpad_y
 
 
-def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfrac=0.5, norm_kernel=False):
-    """
-    Convolves the image to a specified resolution.
+def gauss_cov(gausspar):
+    """Real-space covariance of a Gaussian given as (emaj, emin, pa).
 
-    Parameters
-    ----------
-    Image       - (nband, nx, ny) array to convolve
-    xx/yy       - coordinates on the grid in the same units as gaussparf.
-    gaussparf   - tuple containing Gaussian parameters of desired resolution
-                  (emaj, emin, pa).
-    gausspari   - initial resolution . By default it is assumed that the image
-                  is a clean component image with no associated resolution.
-                  If beampari is specified, it must be a tuple containing
-                  gausspars for each imaging band in the same format.
-    nthreads    - number of threads to use for the FFT's.
-    pfrac       - padding used for the FFT based convolution.
-                  Will pad by pfrac/2 on both sides of image
-    norm_kernel - Normalise the Gaussian kernel to have volume 1.
+    Args:
+        gausspar: (emaj, emin, pa) with the axes as FWHM in grid units and pa
+            in radians, using gaussian2d's rotation convention.
+
+    Returns:
+        (2, 2) covariance in squared grid units, i.e. the inverse of the
+        quadratic form gaussian2d exponentiates.
     """
+    smaj, smin, pa = gausspar
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
+    sigmas = np.diag([(smaj / fwhm_conv) ** 2, (smin / fwhm_conv) ** 2])
+    return rmat @ sigmas @ rmat.T
+
+
+def gauss_ratio_hat(gausspari, gaussparf, shape, dx=1.0, dy=1.0, normalise=False):
+    """Transform of the kernel taking resolution gausspari to gaussparf.
+
+    The ratio of two Gaussian transforms is itself a Gaussian, so it is written
+    down rather than obtained by dividing two sampled kernels' FFTs:
+
+        Kf(k) / Ki(k) = sqrt(|Sf| / |Si|) exp(-2 pi^2 k^T (Sf - Si) k)
+
+    That division is the failure mode of issue #312. A sampled Gaussian's DFT
+    sinks into round-off well before Nyquist, so beyond some |k| the quotient is
+    noise over noise -- unbounded, since nothing masks it -- and the resulting
+    ringing displaces sources. Widening gaussian2d's support fixes the
+    truncation half of that, but not the round-off half, which grows with
+    --super-resolution-factor. Evaluating the ratio directly has neither
+    problem, conserves flux exactly, and costs two FFTs less per plane.
+
+    Args:
+        gausspari: (emaj, emin, pa) initial resolution, FWHM in grid units.
+        gaussparf: (emaj, emin, pa) target resolution, FWHM in grid units.
+        shape: (nx, ny) real-space shape of the padded grid.
+        dx: Grid spacing along the first axis, in the units of gausspar.
+        dy: Grid spacing along the second axis, in the units of gausspar.
+        normalise: Match norm_kernel=True, where both kernels carry unit volume
+            and the ratio therefore has unit DC gain.
+
+    Returns:
+        (nx, ny // 2 + 1) real array matching the layout of an r2c transform of
+        the padded grid.
+
+    Raises:
+        ValueError: If gaussparf is not at least as wide as gausspari in every
+            direction. The operation is then a deconvolution, which this
+            amplifies without bound rather than performing.
+    """
+    covi = gauss_cov(gausspari)
+    covf = gauss_cov(gaussparf)
+    dcov = covf - covi
+    # a positive semi-definite difference is exactly the condition for the
+    # ratio to be a convolution rather than a deconvolution. A rotation between
+    # the two position angles can make it indefinite even when both axes grow.
+    evals = np.linalg.eigvalsh(dcov)
+    tol = 1e-8 * max(np.trace(covi), np.trace(covf))
+    if evals.min() < -tol:
+        raise ValueError(
+            f"Cannot convolve from {tuple(np.asarray(gausspari, dtype=float))} to "
+            f"{tuple(np.asarray(gaussparf, dtype=float))}: the target resolution is sharper than the "
+            f"initial one along some direction (smallest eigenvalue of the covariance difference is "
+            f"{evals.min():.3e}). This is a deconvolution, not a convolution."
+        )
+    nx, ny = shape
+    kx = np.fft.fftfreq(nx, d=dx)[:, None]
+    ky = np.fft.rfftfreq(ny, d=dy)[None, :]
+    quad = dcov[0, 0] * kx**2 + 2 * dcov[0, 1] * kx * ky + dcov[1, 1] * ky**2
+    amp = 1.0 if normalise else np.sqrt(np.linalg.det(covf) / np.linalg.det(covi))
+    return amp * np.exp(-2 * np.pi**2 * quad)
+
+
+def convolve2gaussres(
+    image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfrac=0.5, norm_kernel=False, yx_order=False
+):
+    """Convolves the image to a specified resolution.
+
+    Args:
+        image: (nplane, nx, ny) array to convolve, or (nplane, ny, nx) with
+            yx_order=True.
+        xx: Grid coordinates in the same units as gaussparf. ALWAYS in the
+            wgridder (X, Y) convention -- built from nx then ny -- regardless
+            of yx_order.
+        yy: Grid coordinates in the same units as gaussparf. ALWAYS in the
+            wgridder (X, Y) convention -- built from nx then ny -- regardless
+            of yx_order.
+        gaussparf: (3,) Gaussian parameters (emaj, emin, pa) shared by every
+            plane, or (nplane, 3) per plane.
+        nthreads: Number of threads to use for the FFT's.
+        gausspari: Initial resolution, same shapes as gaussparf. By default
+            the image is assumed to be a clean component image with no
+            associated resolution. When given, the resolution change is applied
+            with the closed-form transform ratio (see gauss_ratio_hat), so
+            gaussparf must be at least as wide as gausspari.
+        pfrac: Padding used for the FFT based convolution. Will pad by
+            pfrac/2 on both sides of image.
+        norm_kernel: Normalise the Gaussian kernel to have volume 1.
+        yx_order: Set True for cube/FITS (Y, X)-ordered input (see
+            docs/wiki/image-and-beam-orientation.md). The convolution is
+            defined in wgridder (X, Y) order; this adapts via a zero-copy
+            view and transposes the result back, so gaussian2d's position
+            angle keeps its meaning.
+
+    Returns:
+        The convolved image, same shape and axis order as the input image
+        (nplane, nx, ny), or (nplane, ny, nx) with yx_order=True.
+
+    Raises:
+        ValueError: If gausspari is per-plane (ndim > 1) and its length does
+            not match the number of planes in image, or if gaussparf is sharper
+            than gausspari along some direction (see gauss_ratio_hat).
+        AssertionError: If gaussparf is per-plane (ndim > 1) and its length
+            does not match the number of planes in image.
+    """
+    if yx_order:
+        image = image.transpose(0, 2, 1)
     nband, nx, ny = image.shape
-    if gausspari is not None and len(gausspari) != nband:
-        raise ValueError("gausspari must be on length nband")
+    if gausspari is not None and np.ndim(gausspari) > 1 and np.shape(gausspari)[0] != nband:
+        raise ValueError("gausspari must be of length nband")
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
@@ -138,44 +306,53 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfra
     image = np.pad(image, padding, mode="constant")
     imhat = r2c(ifftshift(image, axes=ax), axes=ax, forward=True, nthreads=nthreads, inorm=0)
 
-    if len(gaussparf) == 3:  # single final resolution
-        gausskern = gaussian2d(xx, yy, gaussparf, normalise=norm_kernel)
-        gausskern = np.pad(gausskern, padding[1:], mode="constant")
-        gausskernhat = r2c(ifftshift(gausskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0)
-        gausskernhat = np.broadcast_to(gausskernhat[None], imhat.shape)
-    else:
-        assert len(gaussparf) == nband
-        gausskernhat = np.zeros_like(imhat)
-        for b in range(nband):
-            gausskern = gaussian2d(xx, yy, gaussparf[b], normalise=norm_kernel)
-            gausskern = np.pad(gausskern, padding[1:], mode="constant")
-            r2c(
-                ifftshift(gausskern, axes=(0, 1)),
-                out=gausskernhat[b],
-                axes=(0, 1),
-                forward=True,
-                nthreads=nthreads,
-                inorm=0,
-            )
+    if np.ndim(gaussparf) > 1:
+        assert np.shape(gaussparf)[0] == nband
 
-    # convolve to desired resolution
     if gausspari is None:
-        imhat *= gausskernhat
+        # no initial resolution: a plain convolution by the sampled kernel
+        if np.ndim(gaussparf) == 1:  # single final resolution shared by all planes
+            gausskern = gaussian2d(xx, yy, gaussparf, normalise=norm_kernel)
+            gausskern = np.pad(gausskern, padding[1:], mode="constant")
+            gausskernhat = r2c(ifftshift(gausskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0)
+            imhat *= gausskernhat[None]
+        else:
+            for b in range(nband):
+                gausskern = gaussian2d(xx, yy, gaussparf[b], normalise=norm_kernel)
+                gausskern = np.pad(gausskern, padding[1:], mode="constant")
+                gausskernhat = r2c(
+                    ifftshift(gausskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0
+                )
+                imhat[b] *= gausskernhat
     else:
+        # resolution change: use the closed-form ratio of the two transforms
+        # rather than dividing sampled kernels (issue #312, gauss_ratio_hat)
+        gausspari = np.asarray(gausspari)
+        shape = (nx + np.sum(padding[1]), ny + np.sum(padding[2]))
+        # gausspar is in the units of the grids, so the frequency axes need
+        # their spacing; every caller passes pixels, but do not assume it
+        xs, ys = np.squeeze(xx), np.squeeze(yy)
+        dx = float(xs[1, 0] - xs[0, 0]) if xs.ndim == 2 and nx > 1 else 1.0
+        dy = float(ys[0, 1] - ys[0, 0]) if ys.ndim == 2 and ny > 1 else 1.0
+        if dx == 0.0 or dy == 0.0:
+            # np.meshgrid's default indexing="xy" transposes the grids, which
+            # makes both differences zero and every frequency infinite. Say so:
+            # the resulting all-NaN image is otherwise silent.
+            raise ValueError(
+                f"xx/yy must be (X, Y)-ordered grids, i.e. np.meshgrid(x, y, indexing='ij'); "
+                f"the inferred grid spacing is ({dx}, {dy})"
+            )
         for b in range(nband):
-            thiskern = gaussian2d(xx, yy, gausspari[b], normalise=norm_kernel)
-            thiskern = np.pad(thiskern, padding[1:], mode="constant")
-            thiskernhat = r2c(ifftshift(thiskern, axes=(0, 1)), axes=(0, 1), forward=True, nthreads=nthreads, inorm=0)
-
-            convkernhat = np.zeros_like(thiskernhat)
-            msk = np.abs(thiskernhat) > 0.0
-            convkernhat[msk] = gausskernhat[b, msk] / thiskernhat[msk]
-
-            imhat[b] *= convkernhat
+            gpi = gausspari if gausspari.ndim == 1 else gausspari[b]
+            gpf = gaussparf if np.ndim(gaussparf) == 1 else gaussparf[b]
+            imhat[b] *= gauss_ratio_hat(gpi, gpf, shape, dx=dx, dy=dy, normalise=norm_kernel)
 
     image = fftshift(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=nthreads), axes=ax)[
         :, unpad_x, unpad_y
     ]
+
+    if yx_order:
+        image = image.transpose(0, 2, 1)
 
     return image
 
@@ -471,13 +648,19 @@ def construct_mappings(
     )
 
 
-def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
+def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nfwhm=5):
     """
     xin         - grid of x coordinates
     yin         - grid of y coordinates
     gausspar    - (emaj, emin, pa) with emaj/emin as FWHM in units of xin/yin and pa in radians.
     normalise   - normalise kernel to have volume 1
-    nsigma      - compute kernel out to this many standard deviations of the major axis
+    nfwhm       - compute kernel out to this many major-axis FWHMs
+
+    The support is deliberately far outside the core, and the parameter counts
+    FWHMs rather than standard deviations to say so (issue #312): 5 sigma
+    truncates at 3.7e-6 of peak, whose spectral ripple swamps the transform's
+    own ~1e-14 floor near Nyquist, while 5 FWHM (11.8 sigma) truncates at
+    ~1e-30 and the transform is clean everywhere.
     """
     smaj, smin, pa = gausspar
     fwhm_conv = 2 * np.sqrt(2 * np.log(2))
@@ -490,9 +673,8 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     rmat = np.array([[-np.sin(pa), -np.cos(pa)], [np.cos(pa), -np.sin(pa)]])
     amat = np.dot(np.dot(rmat, amat), rmat.T)
     sout = xin.shape
-    # only compute the result out to nsigma standard deviations
-    sigma_maj = smaj / fwhm_conv
-    extent = (nsigma * sigma_maj) ** 2
+    # only compute the result out to nfwhm major-axis FWHMs (see the docstring)
+    extent = (nfwhm * smaj) ** 2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
     idx, idy = np.where(xflat**2 + yflat**2 <= extent)

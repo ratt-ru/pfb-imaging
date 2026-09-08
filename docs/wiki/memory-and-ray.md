@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-07-16T13:40:00Z
-last_verified_commit: 6bf4a32
+timestamp: 2026-07-17T20:00:00Z
+last_verified_commit: 4b571e9
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -112,7 +112,7 @@ and exact-residual inputs. Its memory/scheduling rules:
   (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`/`DIRTY`) straight from the
   `.dt` store (`load_bands`), layer-2 style (selective load → extract →
   release → gc). Vis-scale data never enters the driver or the Ray object
-  store; the driver holds only `(nband, nx, ny)` cubes and attrs. (Exception:
+  store; the driver holds only `(nband, ny, nx)` cubes and attrs. (Exception:
   for `nband == 1` the pool runs in-process, so the one band's data lives in
   the driver by construction.)
 - **Deliberate pinning.** The loaded inputs are held for the life of the run

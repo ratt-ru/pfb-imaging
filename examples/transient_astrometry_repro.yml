@@ -1,0 +1,147 @@
+# Reproduce the injected-transient localisation error (ratt-ru/breifast#263).
+#
+# Injects transients into an MS with `pfb hci` and writes a cube + FITS, with NO
+# rephasing (--phase-dir) and NO beam (--beam-model) — isolating the plain
+# injection/imaging path, which is what those results used. The injected sources'
+# peak positions in the cube can then be compared to the injected (ra, dec):
+#
+#   stimela run examples/transient_astrometry_repro.yml gorepro \
+#       ms=<MS> base-dir=output/repro image-name=cube.raw \
+#       inject-transients=diagonal_test5.yaml \
+#       cell-size=2.4 field-of-view=1.0 integrations-per-image=<N> channels-per-image=<M>
+#
+#   python scripts/check_injected_transients.py \
+#       diagonal_test5.yaml output/repro/cube.raw \
+#       <unified-detections.ecsv> output/repro/fits/cube.band0000.fits
+#
+# `place"` in that tool's output is the pfb placement error (injected vs where the
+# source peaks in the cube). To match the raw breifast cube, set cell-size,
+# field-of-view, integrations-per-image and channels-per-image to the values that
+# produced it (cell-size 2.4", ~1 deg field for the 47Tuc example). Use a boosted
+# injection (higher peak_flux) if you want to separate a real placement error from
+# faint-source peak-finding scatter in the noisy raw dirty cube.
+
+_include:
+  - (pfb_imaging.cabs)hci.yml
+
+opts:
+  log:
+    dir: logs/log-{config.run.datetime}
+    name: log-{info.fqname}
+    nest: 2
+  backend:
+    select: native
+
+gorepro:
+  name: transient-astrometry-repro
+  info:
+    Inject transients with pfb hci (no rephasing, no beam) to reproduce the
+    injected-transient localisation error for analysis with
+    scripts/check_injected_transients.py.
+
+  inputs:
+    ms:
+      dtype: List[URI]
+      required: true
+    base-dir:
+      dtype: Directory
+      required: true
+      mkdir: true
+      info:
+        Base output directory in which to place all output data products.
+    image-name:
+      dtype: str
+      required: true
+      info:
+        A descriptive name for the outputs to be placed in base-dir.
+    inject-transients:
+      dtype: str
+      required: true
+      info:
+        YAML file of transients to inject (positions in degrees).
+    data-column:
+      dtype: str
+      default: DATA-DATA
+      info:
+        Column to image. The default DATA-DATA zeroes the real visibilities so the
+        cube contains only the injected sources.
+    field-of-view:
+      dtype: float
+      default: 2.0
+    nx:
+      dtype: int
+    ny:
+      dtype: int
+    cell-size:
+      dtype: float
+      info:
+        Cell size in arcseconds. Preferred over fov/srf if set; match the cube
+        under investigation (e.g. 2.4 for the 47Tuc raw cube).
+    super-resolution-factor:
+      dtype: float
+      default: 1.0
+    integrations-per-image:
+      dtype: int
+      default: 1
+      info:
+        Time integrations per image. Set to match the breifast timescale being
+        reproduced; -1 makes a single image over all times.
+    channels-per-image:
+      dtype: int
+      default: -1
+      info:
+        Channels per imaging band; -1 makes a single band.
+    robustness:
+      dtype: float
+      info:
+        Briggs robustness. Unset (or > 2) gives natural weighting.
+    wgt-mode:
+      dtype: str
+      default: l2
+    product:
+      default: I
+      aliases: ['*.product']
+    nworkers:
+      dtype: int
+      default: 32
+    nthreads:
+      dtype: int
+      default: 2
+    epsilon:
+      dtype: float
+      default: 1.0e-08
+    precision:
+      dtype: str
+      default: double
+    overwrite:
+      default: true
+      aliases: ['*.overwrite']
+
+  steps:
+    image:
+      cab: hci
+      info: Image the injected transients (no rephasing, no beam)
+      params:
+        ms: =recipe.ms
+        output-dataset: '{recipe.base-dir}/{recipe.image-name}'
+        data-column: =recipe.data-column
+        inject-transients: =recipe.inject-transients
+        nworkers: =recipe.nworkers
+        nthreads: =recipe.nthreads
+        product: =recipe.product
+        wgt-mode: =recipe.wgt-mode
+        field-of-view: =recipe.field-of-view
+        cell-size: =IFSET(recipe.cell-size)
+        super-resolution-factor: =recipe.super-resolution-factor
+        integrations-per-image: =recipe.integrations-per-image
+        nx: =IFSET(recipe.nx)
+        ny: =IFSET(recipe.ny)
+        channels-per-image: =recipe.channels-per-image
+        robustness: =IFSET(recipe.robustness)
+        epsilon: =recipe.epsilon
+        overwrite: =recipe.overwrite
+        fits-vars: [cube]
+        precision: =recipe.precision
+        # phase-dir and beam-model are intentionally left unset — this recipe
+        # reproduces the plain injection path (no rephasing, no beam).
+      skip_if_outputs: exist

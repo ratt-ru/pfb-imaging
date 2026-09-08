@@ -20,6 +20,33 @@ historical local fallback.
 import numpy as np
 
 
+def _uv_profile(uvw, freq, wgt, mask, rvis, nbins=20):
+    """Weighted residual power binned by baseline length in wavelengths.
+
+    Returns ``(edges (nbins+1,), power (nbins,), weight (nbins,), count (nbins,))``
+    with ``power = sum(w |rvis|^2) / sum(w)`` per bin over the unflagged samples
+    of correlation 0 — flat for noise-like residuals, structured when the misfit
+    lives at specific baseline lengths.
+    """
+    c_ms = 299792458.0
+    uvdist = np.hypot(uvw[:, 0], uvw[:, 1])[:, None] * (freq[None, :] / c_ms)
+    m = mask.astype(bool)
+    d = uvdist[m]
+    z = np.zeros(nbins)
+    if d.size == 0:
+        return np.linspace(0.0, 1.0, nbins + 1), z, z.copy(), z.copy()
+    edges = np.linspace(0.0, float(d.max()) * (1 + 1e-9), nbins + 1)
+    idx = np.clip(np.digitize(d, edges) - 1, 0, nbins - 1)
+    w = wgt[0][m]
+    power, weight, count = z, np.zeros(nbins), np.zeros(nbins)
+    np.add.at(power, idx, w * np.abs(rvis[0][m]) ** 2)
+    np.add.at(weight, idx, w)
+    np.add.at(count, idx, 1.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        power = np.where(weight > 0, power / weight, 0.0)
+    return edges, power, weight, count
+
+
 class _BandWorkerImpl:
     """One band's co-located deconv state; roles initialised on demand.
 
@@ -55,6 +82,7 @@ class _BandWorkerImpl:
         self._psib = None
         self._parts = None
         self._dirty = None
+        self._bdirty = None
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
@@ -76,11 +104,17 @@ class _BandWorkerImpl:
         import xarray as xr
 
         try:
+            # kept for lazy re-reads (partition_debug loads VIS on demand)
+            self._store_url = store_url
+            self._node_name = node_name
             band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
-            self._dirty = band.ds.DIRTY.values  # (corr, nx, ny)
+            self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
+            # beam-attenuated dirty: the model-free term of the exact gradient (D23)
+            self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
             parts = []
             hess_parts = []
-            for cname in sorted(band.children):
+            self._part_names = sorted(band.children)
+            for cname in self._part_names:
                 child = band[cname].ds
                 pds = child[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
                 pds.attrs.update(child.attrs)
@@ -107,7 +141,7 @@ class _BandWorkerImpl:
 
     # --- Hessian role ---
 
-    def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum):
+    def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum, eta_mode=None, eta_cap=1e2):
         # deferred: import cycle with operators.hessian
         from pfb_imaging.operators.hessian import HessianTree
 
@@ -115,11 +149,30 @@ class _BandWorkerImpl:
             partitions = getattr(self, "_hess_parts", None)
             if partitions is None:
                 raise RuntimeError("no partitions passed and none loaded; call load_band first")
-        self._hess = HessianTree(partitions, nx, ny, nx_psf, ny_psf, eta=eta, nthreads=self._nthreads, wsum=wsum)
-        self._hess.dot(np.zeros((nx, ny)))  # warm up the FFT plans
+        self._hess = HessianTree(
+            partitions,
+            nx,
+            ny,
+            nx_psf,
+            ny_psf,
+            eta=eta,
+            nthreads=self._nthreads,
+            wsum=wsum,
+            eta_mode=eta_mode,
+            eta_cap=eta_cap,
+        )
+        self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
 
     def hess_dot(self, x):
         return self._hess.dot(x)
+
+    def get_eta(self):
+        """This band's Tikhonov coefficient: a float, or the ``eta_mode`` profile.
+
+        Image-scale, so returning it to the driver costs nothing (unlike this
+        band's vis-scale inputs, which never leave the worker -- D10).
+        """
+        return self._hess.eta
 
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
         # deferred: worker-side only; keeps driver-side import light
@@ -145,12 +198,13 @@ class _BandWorkerImpl:
         # deferred: import cycle with operators.psi
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
-        self._psib = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
+        # rasters are (Y, X)-ordered end to end (wiki D19): axis 0 = ny
+        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel)
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
-        self._xo = np.empty((nx, ny))
-        self._psib.dot(np.zeros((nx, ny)), self._alphao)
+        self._xo = np.empty((ny, nx))
+        self._psib.dot(np.zeros((ny, nx)), self._alphao)
         self._psib.hdot(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 
@@ -168,6 +222,7 @@ class _BandWorkerImpl:
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.operators.gridder import residual_from_partitions
 
+        # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
             self._dirty,
             self._parts,
@@ -177,7 +232,142 @@ class _BandWorkerImpl:
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            bdirty=self._bdirty,
         )
+
+    def _iter_partition_rvis(self, model, cell_rad, epsilon, do_wgridding):
+        """Yield ``(cname, pds, vis, rvis, common)`` per partition.
+
+        ``rvis = VIS - G(B_p * model)``; ``common`` carries the shared wgridder
+        kwargs for follow-up gridding of either vis set. ``VIS`` is not pinned
+        by :meth:`load_band`, so it is read from the store one partition at a
+        time (debug paths only; the hot path never calls this).
+        """
+        # deferred: worker-side only; keeps driver-side import light
+        import xarray as xr
+        from ducc0.wgridder.experimental import dirty2vis
+
+        from pfb_imaging.operators.gridder import wgridder_conventions
+
+        band = xr.open_datatree(self._store_url, engine="zarr", chunks=None)[self._node_name]
+        for cname, pds in zip(self._part_names, self._parts):
+            vis = band[cname].ds.VIS.load().values
+            beam = pds.BEAM.values
+            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(pds.attrs.get("l0", 0.0), pds.attrs.get("m0", 0.0))
+            common = dict(
+                uvw=pds.UVW.values,
+                freq=pds.FREQ.values,
+                # shared by the degrid and grid directions. Load-bearing for
+                # dirty2vis: xarray-ms pads absent (time, baseline) rows with
+                # NaN UVW, and an unmasked degrid derives its w range from
+                # them -> ducc "too many w planes" (see gridder.py).
+                mask=pds.MASK.values,
+                pixsize_x=cell_rad,
+                pixsize_y=cell_rad,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,
+                nthreads=self._nthreads,
+            )
+            rvis = np.empty_like(vis)
+            for c in range(model.shape[0]):
+                rvis[c] = vis[c] - dirty2vis(dirty=(beam[c] * model[c]).T, **common)
+            yield cname, pds, vis, rvis, common
+
+    def partition_debug(self, model, cell_rad, epsilon, do_wgridding, double_accum):
+        """Per-partition debug products for mosaic misfit analysis (D23 aid).
+
+        For each of this band's partitions: re-grid the stored ``VIS`` into a
+        per-partition dirty, grid the residual visibilities
+        ``VIS - G(B_p * model)``, and accumulate the vis-space misfit
+        ``chi2 = sum(w |V - Vmodel|^2)`` over unflagged samples. Output size
+        scales with npart * image size.
+        """
+        # deferred: worker-side only; keeps driver-side import light
+        from ducc0.wgridder.experimental import vis2dirty
+
+        out = []
+        for cname, pds, vis, rvis, common in self._iter_partition_rvis(model, cell_rad, epsilon, do_wgridding):
+            wgt = pds.WEIGHT.values
+            mask = pds.MASK.values
+            ncorr, ny, nx = model.shape
+            dirty_p = np.zeros((ncorr, ny, nx))
+            resid_p = np.zeros((ncorr, ny, nx))
+            chi2 = np.zeros(ncorr)
+            for c in range(ncorr):
+                chi2[c] = float(np.sum(wgt[c] * np.abs(rvis[c]) ** 2 * mask))
+                for v, im in ((vis[c], dirty_p), (rvis[c], resid_p)):
+                    vis2dirty(
+                        vis=v,
+                        wgt=wgt[c],
+                        # mask comes from `common`
+                        npix_x=nx,
+                        npix_y=ny,
+                        double_precision_accumulation=double_accum,
+                        dirty=im[c].T,
+                        **common,
+                    )
+            out.append(
+                {
+                    "name": cname,
+                    "field": pds.attrs.get("field_name", ""),
+                    "wsum": np.asarray(pds.attrs["wsum"], dtype=float),
+                    "chi2": chi2,
+                    "ndata": float(mask.sum()),
+                    "dirty": dirty_p,
+                    "residual": resid_p,
+                    "amodel": pds.BEAM.values * model,
+                }
+            )
+        return out
+
+    def partition_chi2(self, model, cell_rad, epsilon, do_wgridding):
+        """Per-partition vis-space chi2 against the current model (per-iteration debug).
+
+        Degrid-only (no image outputs): cheap enough to run every major cycle.
+        Returns plain JSON-serialisable dicts.
+        """
+        out = []
+        for cname, pds, _vis, rvis, _common in self._iter_partition_rvis(model, cell_rad, epsilon, do_wgridding):
+            wgt = pds.WEIGHT.values
+            mask = pds.MASK.values
+            out.append(
+                {
+                    "name": cname,
+                    "field": str(pds.attrs.get("field_name", "")),
+                    "chi2": [float(np.sum(wgt[c] * np.abs(rvis[c]) ** 2 * mask)) for c in range(model.shape[0])],
+                    "ndata": float(mask.sum()),
+                    "wsum": [float(x) for x in np.atleast_1d(pds.attrs["wsum"])],
+                }
+            )
+        return out
+
+    def partition_uvprofile(self, model, cell_rad, epsilon, do_wgridding, nbins):
+        """Baseline-length-binned weighted residual power per partition (debug).
+
+        Returns plain JSON-serialisable dicts (see :func:`_uv_profile`).
+        """
+        out = []
+        for cname, pds, _vis, rvis, _common in self._iter_partition_rvis(model, cell_rad, epsilon, do_wgridding):
+            edges, power, weight, count = _uv_profile(
+                pds.UVW.values, pds.FREQ.values, pds.WEIGHT.values, pds.MASK.values, rvis, nbins
+            )
+            out.append(
+                {
+                    "name": cname,
+                    "field": str(pds.attrs.get("field_name", "")),
+                    "uvdist_edges_lambda": edges.tolist(),
+                    "resid_power": power.tolist(),
+                    "weight": weight.tolist(),
+                    "count": count.tolist(),
+                }
+            )
+        return out
 
     # --- telemetry ---
 
@@ -255,7 +445,7 @@ class BandWorkerPool:
 
     # --- Hessian role ---
 
-    def init_hess(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums):
+    def init_hess(self, partitions_per_band, nx, ny, nx_psf, ny_psf, etas, wsums, eta_mode=None, eta_cap=1e2):
         """Build per-band HessianTrees; ``partitions_per_band=None`` uses load_bands data."""
         self._map(
             "init_hess",
@@ -268,15 +458,43 @@ class BandWorkerPool:
                     ny_psf,
                     etas[b],
                     wsums[b],
+                    eta_mode,
+                    eta_cap,
                 )
                 for b in range(self.nband)
             ],
         )
 
     def hess_dot(self, x):
-        out = np.zeros_like(x)
+        # empty, not zeros: every band is overwritten below, and zeroing costs a
+        # full pass over the cube -- 1.07 s at 8 bands x 8000^2, paid once per
+        # CG iteration on the band-coupled forward path. That makes "every band
+        # is overwritten" load-bearing rather than merely true, so check it:
+        # _map's local branch returns ONE result whatever nband is (it exists
+        # only for nband == 1) and its Ray branch zips against self.actors, so
+        # either mismatch would leave uninitialised rows instead of the zeros
+        # the old allocation happened to supply.
+        if x.shape[0] != self.nband:
+            raise ValueError(f"got {x.shape[0]} bands for {self.nband} workers")
+        out = np.empty_like(x)
+        nwritten = 0
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
             out[b] = res[0]
+            nwritten += 1
+        if nwritten != self.nband:
+            raise ValueError(f"{nwritten} band results for {self.nband} workers")
+        return out
+
+    def get_eta(self, ny, nx):
+        """Per-band Tikhonov coefficient as an ``(nband, ny, nx)`` cube.
+
+        Scalar etas are broadcast so the caller (the FITS dump) does not have to
+        branch on whether a profile is in use.
+        """
+        out = np.zeros((self.nband, ny, nx))
+        for b, e in enumerate(self._map("get_eta", [()] * self.nband)):
+            # a profile carries a leading correlation axis; deconv is single-corr
+            out[b] = np.asarray(e).reshape(-1, ny, nx)[0] if np.ndim(e) else e
         return out
 
     def hess_cg(self, rhs, x0, tol, maxit, minit, verbosity):
@@ -303,9 +521,31 @@ class BandWorkerPool:
     # --- exact residual role ---
 
     def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
-        """Exact per-band residual for a ``(nband, corr, nx, ny)`` model cube."""
+        """Exact per-band ``(residual, bresidual)`` for a ``(nband, corr, nx, ny)`` model cube.
+
+        ``residual`` is the apparent (once-attenuated) image; ``bresidual`` the
+        beam-attenuated gradient the forward solver consumes (D23).
+        """
         args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
-        return np.stack(self._map("residual", args), axis=0)
+        out = self._map("residual", args)
+        res = np.stack([r for r, _ in out], axis=0)
+        bres = np.stack([g for _, g in out], axis=0)
+        return res, bres
+
+    def partition_debug(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
+        """Per-band lists of per-partition debug products (see the worker impl)."""
+        args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
+        return self._map("partition_debug", args)
+
+    def partition_chi2(self, model, cell_rad, epsilon=1e-7, do_wgridding=True):
+        """Per-band lists of per-partition vis-space chi2 stats (see the worker impl)."""
+        args = [(model[b], cell_rad, epsilon, do_wgridding) for b in range(self.nband)]
+        return self._map("partition_chi2", args)
+
+    def partition_uvprofile(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, nbins=20):
+        """Per-band lists of baseline-binned residual profiles (see the worker impl)."""
+        args = [(model[b], cell_rad, epsilon, do_wgridding, nbins) for b in range(self.nband)]
+        return self._map("partition_uvprofile", args)
 
     # --- telemetry ---
 

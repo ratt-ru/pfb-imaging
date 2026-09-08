@@ -182,6 +182,8 @@ def reproject_and_interp_scat_beam(
     nxo,
     nyo,
     product,
+    l0=0.0,
+    m0=0.0,
 ):
     """Reproject rotation-averaged beam maps onto the output image grid.
 
@@ -205,6 +207,10 @@ def reproject_and_interp_scat_beam(
         nxo: number of output X pixels.
         nyo: number of output Y pixels.
         product: Stokes product string.
+        l0/m0: image-centre offset from the tangent point in radians
+            (--target). Same facet convention as ``utils.fits.set_wcs``:
+            CRVAL stays the tangent point and CRPIX shifts so the centre
+            pixel lands on the target direction.
 
     Returns:
         (nstokes, nyo, nxo) beam maps in cube (Y, X) order, zeroed where the
@@ -232,7 +238,12 @@ def reproject_and_interp_scat_beam(
     wcs_target.wcs.cdelt = np.array((-cell_deg_out, cell_deg_out))
     wcs_target.wcs.cunit = ["deg", "deg"]
     wcs_target.wcs.crval = np.array((np.rad2deg(radecf[0]), np.rad2deg(radecf[1])))
-    wcs_target.wcs.crpix = [1 + nxo // 2, 1 + nyo // 2]
+    # facet convention (see utils.fits.set_wcs): RA axis has cdelt = -cell, so
+    # centring the image on the target shifts crpix by +l0/cell; Dec by -m0/cell
+    wcs_target.wcs.crpix = [
+        1 + nxo // 2 + np.rad2deg(l0) / cell_deg_out,
+        1 + nyo // 2 - np.rad2deg(m0) / cell_deg_out,
+    ]
 
     pbeam = np.zeros((nstokes, nyo, nxo), dtype=beam.dtype)
     for i in range(nstokes):
