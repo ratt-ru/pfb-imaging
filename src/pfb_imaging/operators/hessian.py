@@ -760,12 +760,18 @@ class HessTreeRay:
             A new ``(nband, ny, nx)`` cube.
         """
         s = self._prior_s()
+        x = np.ascontiguousarray(x)
         # D x is the whole term without a prior; with one, the identity
         # D^half Cinv D^half = D + D^half (Cinv - I) D^half applies, exactly as
         # in dot -- the workers supply the D there, and it is written out here.
-        out = np.ascontiguousarray((s**2) * x)
+        #
+        # s twice into the output buffer rather than (s**2) * x: under
+        # --eta-mode s is a full (nband, ny, nx) cube, so s**2 would be a whole
+        # extra temporary alongside out -- ~1 GB of f8 at 4096^2 x 8 bands.
+        out = s * x
+        out *= s
         if self._dC is not None:
-            eta_freq_mul(out, self._dC, s, np.ascontiguousarray(x), nchunk=self._nchunk)
+            eta_freq_mul(out, self._dC, s, x, nchunk=self._nchunk)
         return out
 
     def _prior_s(self):
@@ -783,7 +789,10 @@ class HessTreeRay:
                 # is ~1 GB of f8 at 4096^2 x 8 bands.
                 self._s = np.sqrt(np.asarray(self._etas, dtype=float)).reshape(self.nband, 1, 1)
             else:
-                self._s = np.sqrt(self._pool.get_eta(self.ny, self.nx))
+                # in place: get_eta returns a fresh cube, so this avoids a
+                # second (nband, ny, nx) allocation on the way to sqrt(D)
+                self._s = self._pool.get_eta(self.ny, self.nx)
+                np.sqrt(self._s, out=self._s)
         return self._s
 
     def cg(self, rhs, x0=None, tol=None, maxit=None, minit=None):

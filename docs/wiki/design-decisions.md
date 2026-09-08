@@ -1206,7 +1206,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   band coupling directly.
 - **Consequences:** `MODEL` is untouched — the mopped model is `MODEL` plus a least-squares
   update, so it is neither sparse nor a component model, and it does **not** go through
-  `model_to_ds`; there is no `.mds`/`degrid` path for it. The mop write goes to the band nodes
+  `model_to_ds`; there is no `.mds`/`degrid` path for it.
+  **The mop right-hand side is the pure data gradient, never the `--eta-in-grad`-corrected
+  one.** "Near perfect residual" means the *data* residual is near zero, so the direction
+  wanted is `M⁻¹r_data`. Solving against `r_data − K⁻¹m` instead collapses the mop to nothing
+  exactly where it is wanted: at a regularised fixed point that gradient is ~0, so
+  `MODEL_MOPPED → MODEL`. It also keeps `MODEL_MOPPED` meaning the same thing with and
+  without D34, which is what makes the two comparable
+  (`test_mop_uses_the_data_gradient_not_the_eta_corrected_one`). The mop write goes to the band nodes
   *after* the major-cycle write, and `to_zarr(mode="a")` replaces attrs wholesale, so it
   extends the attrs the loop last wrote (`final_attrs`) rather than the band's original ones —
   building it from `band_attrs` silently dropped `niters`/`rms`/`hess_norm`/`hess_norm_opts`,

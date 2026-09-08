@@ -705,3 +705,55 @@ def test_mop_preserves_the_run_attrs(tmp_path):
     assert "hess_norm_opts" in ds.attrs
     assert "rms" in ds.attrs and "rmax" in ds.attrs
     assert ds.attrs["bandid"] == 0  # the original attrs survive too
+
+
+def _seed_model(store, rng, nband=2, nx=32, ny=32):
+    """Put a nonzero MODEL and its matching BRESIDUAL into a synthetic tree.
+
+    Lets a run start from a model without spending a major cycle to build one,
+    which is what makes a niter=0 comparison possible.
+    """
+    import xarray as xr
+
+    for b in range(nband):
+        n = f"band{b:04d}_time0000"
+        ds = xr.open_datatree(store, engine="zarr", chunks=None)[n].ds
+        model = rng.standard_normal((1, ny, nx))
+        xr.Dataset(
+            {
+                "MODEL": (("corr", "y", "x"), model),
+                "BRESIDUAL": (("corr", "y", "x"), ds.BDIRTY.values.copy()),
+            },
+            attrs=dict(ds.attrs),
+        ).to_zarr(store, group=n, mode="a")
+
+
+@pytest.mark.slow
+def test_mop_uses_the_data_gradient_not_the_eta_corrected_one(tmp_path):
+    """The mop must solve against r_data, whatever --eta-in-grad is doing.
+
+    "Near perfect residual" means the *data* residual is near zero, so the mop
+    direction is M^-1 r_data. Solving against the eta-corrected gradient
+    r_data - K^-1 m instead makes the mop collapse to nothing exactly where it
+    is wanted: at a regularised fixed point that gradient is ~0, so
+    MODEL_MOPPED -> MODEL and the residual is not mopped at all.
+
+    Pinned by holding the model fixed (niter=0, seeded MODEL) so the only thing
+    the flag can change is the mop right-hand side. The two must agree exactly.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    mopped = {}
+    for flag in (False, True):
+        output_filename = str(tmp_path / f"moprhs{int(flag)}")
+        dt_name = f"{output_filename}_I.dt"
+        _write_synthetic_dt(dt_name, 32, 32, 64, 1, np.random.default_rng(71))
+        _seed_model(dt_name, np.random.default_rng(72))
+        deconv_core(output_filename, eta_in_grad=flag, **_eta_grad_opts(niter=0))
+        ds = xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
+        mopped[flag] = ds.MODEL_MOPPED.values.copy()
+        assert not np.allclose(ds.MODEL_MOPPED.values, ds.MODEL.values), "mop was a no-op"
+
+    np.testing.assert_allclose(mopped[False], mopped[True], rtol=0, atol=0)

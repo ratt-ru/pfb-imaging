@@ -347,6 +347,10 @@ def deconv(
             f"eta_mode '{eta_mode}': {etas.min():.3e} to {etas.max():.3e} "
             f"({etas.max() / etas.min():.1f}x), band-to-band spread {100 * spread:.2f}% -> {name}"
         )
+        # nothing reads it again, but a local outlives the whole run: ~1 GB of
+        # f8 at 4096^2 x 8 bands, and HessTreeRay._prior_s keeps its own copy
+        # of sqrt(D) when --eta-in-grad is on
+        del etas
 
     # the prior is the only band-coupling channel in M besides the prox, so its
     # spectrum is what to read when a GP run converges differently (issue #307)
@@ -554,9 +558,18 @@ def deconv(
         # moved -- true at convergence, false on a maxiter or divergence exit.
         # bresidual is already the gradient against the final model, so the
         # extra cost is one CG solve and no extra gridding for the gradient.
+        # The right-hand side is the pure DATA gradient, never the
+        # eta-corrected one. "Near perfect residual" means the *data* residual
+        # is near zero, so the direction wanted is M^-1 r_data. Solving against
+        # r_data - K^-1 m instead would make the mop collapse to nothing
+        # exactly where it is wanted: at a regularised fixed point that
+        # gradient is ~0, so MODEL_MOPPED -> MODEL and nothing is mopped.
+        # It also keeps MODEL_MOPPED meaning the same thing with and without
+        # --eta-in-grad, which is what makes the two comparable.
         log.info("Mopping: solving for the final update against the converged model")
-        solver.first(bresidual)
-        update_mop = solver.forward(bresidual)
+        bresidual_data = bresidual_raw / wsum
+        solver.first(bresidual_data)
+        update_mop = solver.forward(bresidual_data)
         model_mopped = model + update_mop
         model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
         save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
