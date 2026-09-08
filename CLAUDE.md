@@ -118,7 +118,7 @@ pfb-imaging/
 │   ├── cli/                  # Lightweight CLI wrappers
 │   │   └── __init__.py       # Main Typer app, registers commands
 │   ├── core/                 # Core implementations (lazy-loaded)
-│   ├── deconv/               # Deconvolution algorithms (SARA, Hogbom, Clark)
+│   ├── deconv/               # Composable deconvolution (PFBSolver + presets registry)
 │   ├── operators/            # Mathematical operators (gridding, PSF, Psi)
 │   ├── opt/                  # Optimization algorithms (PCG, FISTA, primal-dual)
 │   ├── prox/                 # Proximal operators
