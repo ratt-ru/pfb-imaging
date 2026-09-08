@@ -1,4 +1,11 @@
 version: 2
+
+# A `groups` entry only applies to version updates unless it says otherwise
+# (`applies-to` defaults to `version-updates`), so security advisories used to
+# arrive as one PR per package regardless of the grouping below. Since every
+# dependabot PR touching uv.lock conflicts with every other one, and each needs a
+# full ~25 min test matrix, seven security PRs meant seven serial rebase-and-wait
+# cycles. The `*-security` groups below batch them the same way.
 updates:
   # Monitor Python dependencies (uses uv under the hood; updates pyproject.toml + uv.lock)
   - package-ecosystem: "uv"
@@ -12,13 +19,20 @@ updates:
       prefix: "deps"
       prefix-development: "deps-dev"
     groups:
+      # All security advisories in one PR — these bypass the update-type groups
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       # Batch all minor/patch bumps (direct + transitive) into a single weekly PR
       python-minor-patch:
+        applies-to: version-updates
         update-types:
           - "minor"
           - "patch"
       # Major bumps stay individual so each can be reviewed on its own
       python-major:
+        applies-to: version-updates
         update-types:
           - "major"
 
@@ -33,6 +47,11 @@ updates:
     commit-message:
       prefix: "ci"
     groups:
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       github-actions:
+        applies-to: version-updates
         patterns:
           - "*"
