@@ -33,7 +33,7 @@ full = [
     "pfb-model-spec[full]>=0.0.2",
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
-    "distributed>=2026.3.0",  # still need this for degrid command
+    "distributed>=2024.11.0",  # still need this for degrid command
     "reproject",
     "ray[default]>=2.55.0",
     "radiomesh>=0.1.2 ; python_version >= '3.11'",
