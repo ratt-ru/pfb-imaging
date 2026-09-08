@@ -1,20 +1,44 @@
 version: 2
 
+# Policy: upgrade Python packages only when it is actually necessary.
+#
+# `open-pull-requests-limit: 0` disables *version* updates for an ecosystem.
+# Security updates are unaffected by it — they come from the repository's
+# "Dependabot security updates" setting and fire when an advisory is published,
+# so they ignore both the limit and the `schedule`. The net effect is silence
+# until something we depend on is found vulnerable.
+#
+# Do NOT express this with `allow: dependency-type: "direct"` instead. That
+# looks like the right way to suppress transitive churn (most of the noise here
+# is transitive — aiohttp, pyasn1, tornado arrive via ray/stimela) but `allow`
+# filters security updates too, and transitive packages are exactly where the
+# real advisories land: the September 2026 batch was cryptography and aiohttp,
+# neither of them direct. The limit is the clean lever.
+#
+# Consequence to stay aware of: uv.lock drifts while this is 0, and it conflicts
+# with itself, so each deliberate refresh gets more painful the longer it waits.
+# `[tool.uv] prerelease = "allow"` means a blanket `uv lock --upgrade` after a
+# long quiet period will select prereleases (it offered bokeh 4.0.0.dev4,
+# pydantic 2.14.0b1, omegaconf 2.4.0.dev15 and wrapt 2.4.1rc1 in #322) — refresh
+# with targeted `uv lock --upgrade-package <name>` and check the resulting
+# prerelease set, as #322 did.
+#
 # A `groups` entry only applies to version updates unless it says otherwise
-# (`applies-to` defaults to `version-updates`), so security advisories used to
-# arrive as one PR per package regardless of the grouping below. Since every
-# dependabot PR touching uv.lock conflicts with every other one, and each needs a
-# full ~25 min test matrix, seven security PRs meant seven serial rebase-and-wait
-# cycles. The `*-security` groups below batch them the same way.
+# (`applies-to` defaults to `version-updates`), which is why security advisories
+# used to arrive one PR per package despite the grouping below. The
+# `*-security` groups batch them, so a multi-advisory week is a single PR
+# against a single ~25 min test matrix rather than N serial rebase-and-wait
+# cycles (#284, #289, #290, #292, #293, #299, #300, #315, #316 -> #322).
 updates:
   # Monitor Python dependencies (uses uv under the hood; updates pyproject.toml + uv.lock)
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "weekly" # unused while the limit is 0; kept for when it isn't
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 5
+    # 0 = no routine version-update PRs. Security advisories still come through.
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
@@ -24,26 +48,28 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-      # Batch all minor/patch bumps (direct + transitive) into a single weekly PR
+      # Retained so that raising the limit above restores grouped version
+      # updates without having to rebuild this config
       python-minor-patch:
         applies-to: version-updates
         update-types:
           - "minor"
           - "patch"
-      # Major bumps stay individual so each can be reviewed on its own
       python-major:
         applies-to: version-updates
         update-types:
           - "major"
 
-  # Monitor GitHub Actions
+  # Monitor GitHub Actions. Left on version updates, unlike the uv ecosystem
+  # above: actions almost never carry security advisories, so a limit of 0 here
+  # would freeze them permanently, and GitHub retires action major versions and
+  # runner images on its own schedule — a stale pin eventually breaks CI with no
+  # warning PR. Moved weekly -> monthly to cut the noise instead.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-    open-pull-requests-limit: 3
+      interval: "monthly"
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "ci"
     groups:
