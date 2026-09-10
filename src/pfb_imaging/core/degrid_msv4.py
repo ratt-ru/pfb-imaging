@@ -449,13 +449,15 @@ def degrid_msv4(
         do_wgridding=do_wgridding,
         nthreads=nthreads,
     )
-    # route_prefix=None: a batch job must not bind an HTTP route
-    handle = serve.run(app, name="degrid-msv4", route_prefix=None)
-
+    # build the work list before standing the app up, so a bad chunk spec
+    # cannot leave a Serve deployment running with nothing to shut it down
     items = [
         item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, channels_per_chunk)
     ]
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
+
+    # route_prefix=None: a batch job must not bind an HTTP route
+    handle = serve.run(app, name="degrid-msv4", route_prefix=None)
 
     try:
         # bounded in-flight queue: drain the oldest response once more than
