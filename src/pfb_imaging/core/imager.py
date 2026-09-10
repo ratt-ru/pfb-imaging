@@ -4,7 +4,6 @@ import resource
 import time
 import warnings
 from pathlib import Path
-from typing import Any
 
 import fsspec
 import numpy as np
@@ -15,7 +14,6 @@ import zarr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard
-from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
@@ -36,6 +34,7 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
+from pfb_imaging.utils.msv4 import get_engine
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
@@ -1076,38 +1075,3 @@ def imager(
         ray.shutdown()
 
     return
-
-
-def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict[str, Any]:
-    if "file://" in ms_path:
-        ms_path = ms_path.replace("file://", "")
-    backend = infer_backend(ms_path)
-    if backend == MSv4Backend.CASA_TABLE:
-        # deferred: registers the xarray-ms engine; only needed for this backend
-        import xarray_ms  # noqa: F401
-
-        # default schema suits mv4toms.py-style MSs; other instruments may need
-        # extra columns (e.g. SOURCE_ID) -- override via partition_columns.
-        # (sjperkins, PR #252 review; see xarray-ms partitioning docs.)
-        return {
-            "engine": "xarray-ms:msv2",
-            "partition_schema": partition_columns or ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
-        }
-    elif backend == MSv4Backend.ZARR:
-        return {
-            "engine": "zarr",
-            "chunks": None,
-        }
-    elif backend == MSv4Backend.MEERKAT:
-        # deferred: optional dependency; registers the xarray-kat engine
-        import xarray_kat  # noqa: F401
-
-        return {
-            "engine": "xarray-kat",
-            "applycal": "all",
-            "chunked_array_type": "xarray-kat",
-            "chunks": {},
-            "uvw_sign_convention": "casa",
-        }
-    else:
-        raise ValueError(f"Unhandled MSv4 backend {backend!r} for {ms_path}")

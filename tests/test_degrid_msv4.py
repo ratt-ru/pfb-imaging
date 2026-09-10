@@ -58,3 +58,58 @@ def test_ducc_mask_must_be_uint8():
     dirty2vis(uvw=uvw, freq=freq, dirty=dirty, mask=good, **kw)
     with pytest.raises(RuntimeError):
         dirty2vis(uvw=uvw, freq=freq, dirty=dirty, mask=good.astype(bool), **kw)
+
+
+def test_wrapped_angle_diff_handles_the_ra_zero_straddle():
+    """RA differences must be compared as wrapped magnitudes.
+
+    A naive `abs(a - b)` reads two angles either side of RA=0 as ~2*pi apart
+    and would refuse a perfectly matched tangent point; a naive signed
+    difference silently accepts half of all genuine mismatches.
+    """
+    from pfb_imaging.utils.msv4 import wrapped_angle_diff
+
+    eps = 1e-9
+    assert wrapped_angle_diff(2 * np.pi - eps, eps) == pytest.approx(2 * eps, abs=1e-12)
+    assert wrapped_angle_diff(0.0, np.pi) == pytest.approx(np.pi)
+    assert wrapped_angle_diff(0.1, 0.1) == pytest.approx(0.0)
+    # elementwise over an (ra, dec) pair
+    got = wrapped_angle_diff(np.array([2 * np.pi - eps, -0.5]), np.array([eps, -0.5]))
+    assert got.shape == (2,)
+    assert np.all(got < 1e-8)
+
+
+def test_select_vis_nodes_filters_and_reports_geometry(ms_name):
+    """Selection is by name, and chan0 is a full-node channel offset.
+
+    `--freq-range` trims the frequency axis for compute, but the write region
+    must be expressed in unsliced-node channel indices, so `chan0` is the
+    offset the caller adds. Verified against the shipped test MS, which has a
+    single partition of 60 times x 351 baselines x 8 channels x 4 correlations.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    try:
+        nodes = select_vis_nodes(dt)
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node.ntime == 60
+        assert node.nchan == 8
+        assert node.chan0 == 0
+        assert node.corr_types == ("XX", "XY", "YX", "YY")
+        assert node.field_radec.shape == (2,)
+
+        # a selection that matches nothing yields nothing
+        assert select_vis_nodes(dt, field_names=["definitely-not-a-field"]) == []
+
+        # a frequency range trims the axis and shifts chan0
+        freqs = dt[node.path].ds.frequency.values
+        trimmed = select_vis_nodes(dt, freq_min=float(freqs[2]), freq_max=float(freqs[5]))
+        assert len(trimmed) == 1
+        assert trimmed[0].chan0 == 2
+        assert trimmed[0].nchan == 4
+    finally:
+        dt.close()
