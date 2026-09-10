@@ -113,3 +113,106 @@ def test_select_vis_nodes_filters_and_reports_geometry(ms_name):
         assert trimmed[0].nchan == 4
     finally:
         dt.close()
+
+
+def test_ensure_model_columns_creates_a_canonical_column(degrid_ms):
+    """MODEL_DATA must be created even though `sync_msv2` declines to.
+
+    `MODEL_DATA` is in casacore's canonical MAIN descriptor, so xarray-ms's
+    `generate_column_descriptor` validates the name and then emits no
+    descriptor for it -- `addcols` is never asked. Without the fallback the
+    default `--model-column MODEL_DATA` silently fails on any MS lacking it.
+    """
+    import arcae
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.msv4 import get_engine
+    from tests.conftest import drop_column
+
+    drop_column(degrid_ms, "MODEL_DATA")
+    with arcae.table(degrid_ms) as tab:
+        assert "MODEL_DATA" not in tab.columns()
+
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        ensure_model_columns(degrid_ms, dt, ["MODEL_DATA"])
+    finally:
+        dt.close()
+
+    with arcae.table(degrid_ms) as tab:
+        assert "MODEL_DATA" in tab.columns()
+        col = np.asarray(tab.getcol("MODEL_DATA"))
+    assert col.shape == (21060, 8, 4)
+    assert col.dtype == np.complex64
+    assert np.all(col == 0)
+
+
+def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
+    """`--region-file` names columns MODEL_DATA1, MODEL_DATA2, ...
+
+    Those are not canonical, so `sync_msv2` creates them itself; this asserts
+    the wrapper does not get in its way.
+    """
+    import arcae
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.msv4 import get_engine
+
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        ensure_model_columns(degrid_ms, dt, ["MODEL_DATA1"])
+    finally:
+        dt.close()
+
+    with arcae.table(degrid_ms) as tab:
+        assert "MODEL_DATA1" in tab.columns()
+        assert np.asarray(tab.getcol("MODEL_DATA1")).shape == (21060, 8, 4)
+
+
+def test_ensure_model_columns_is_idempotent(degrid_ms):
+    """The common case is an MS that already has MODEL_DATA. Must be a no-op."""
+    import arcae
+    import xarray as xr
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.msv4 import get_engine
+
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.full((21060, 8, 4), 7 + 3j, np.complex64))
+
+    for _ in range(2):
+        dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+        try:
+            ensure_model_columns(degrid_ms, dt, ["MODEL_DATA"])
+        finally:
+            dt.close()
+
+    with arcae.table(degrid_ms) as tab:
+        assert np.all(np.asarray(tab.getcol("MODEL_DATA")) == 7 + 3j)
+
+
+def test_ensure_model_columns_does_not_read_the_visibility_column():
+    """Declaring a column must not materialise one.
+
+    `sync_msv2` reads only dims/shape/dtype. The obvious placeholder --
+    `xr.zeros_like(node.VISIBILITY)`, which the upstream test uses -- forces a
+    full read of the correlated-data column purely to declare a name. The
+    implementation uses a zero-strided `np.broadcast_to` view instead; this
+    asserts the placeholder really is one.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid_msv4 import MODEL_DIMS, make_column_placeholder
+
+    ph = make_column_placeholder((60, 351, 8, 4))
+    assert ph.shape == (60, 351, 8, 4)
+    assert ph.dtype == np.complex64
+    assert ph.strides == (0, 0, 0, 0)
+    assert ph.base.nbytes <= 8
+
+    ds = xr.Dataset().assign({"X": (MODEL_DIMS, ph)})
+    assert ds.X.shape == (60, 351, 8, 4)
+    assert ds.X.dtype == np.complex64

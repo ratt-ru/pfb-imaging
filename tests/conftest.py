@@ -335,3 +335,76 @@ def sky_truth(ms_name, ms_meta, image_geometry):
         wcs=w,
         sky_coords=sky_coords,
     )
+
+
+@pytest.fixture
+def degrid_ms(ms_name, tmp_path):
+    """A private copy of the shared test MS, safe to add columns to and write.
+
+    The session MS is read by many other modules; adding columns to it would
+    leak across tests, and writing to it would corrupt the `sky_truth` DATA.
+    """
+    import shutil
+
+    dest = tmp_path / "degrid.ms"
+    shutil.copytree(ms_name, dest)
+    return str(dest)
+
+
+def drop_column(ms_path, column):
+    """Remove a column with python-casacore (arcae has no removecols)."""
+    from casacore.tables import table as pctable
+
+    with pctable(ms_path, readonly=False, ack=False) as tab:
+        if column in tab.colnames():
+            tab.removecols(column)
+
+
+@pytest.fixture
+def simple_mds(tmp_path):
+    """A minimal, deliberately non-square `.mds` with a spectral slope.
+
+    64 x 32 in (nx, ny): a wrongly oriented mask or image is invisible on a
+    square grid, so nothing here is square. One component at (x=40, y=9),
+    1.0 Jy at 1.0 GHz and 2.0 Jy at 1.1 GHz, so a render at 1.05 GHz must give
+    exactly 1.5 -- which is the frequency-upsampling assertion.
+    """
+    from pfb_model_spec.utils.io import build_mds_dataset
+    from pfb_model_spec.utils.modelspec import fit_image_cube
+
+    nx, ny = 64, 32
+    cell_rad = 1.0e-5
+    image = np.zeros((1, 2, nx, ny))
+    image[0, 0, 40, 9] = 1.0
+    image[0, 1, 40, 9] = 2.0
+    times = np.array([1.62393461e9])  # unix seconds, as the .dt uses
+    freqs = np.array([1.0e9, 1.1e9])
+
+    coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
+        times, freqs, image, wgt=np.ones((1, 2)), method="Legendre"
+    )
+    ds = build_mds_dataset(
+        coeffs,
+        x_index,
+        y_index,
+        expr,
+        params,
+        texpr,
+        fexpr,
+        times,
+        freqs,
+        cell_rad,
+        nx,
+        ny,
+        0.0,
+        0.0,  # center_x, center_y
+        False,
+        True,
+        False,  # flip_u, flip_v, flip_w
+        (0.0, -0.5),  # radec, radians
+        "I",
+        "test",
+    )
+    path = tmp_path / "simple.mds"
+    ds.to_zarr(str(path), mode="w")
+    return str(path), ds
