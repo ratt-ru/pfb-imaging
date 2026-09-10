@@ -616,11 +616,247 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
             corr_types=("XX", "XY", "YX", "YY"),
         )
 
-    _, ds = simple_mds  # ra = 0.0, dec = -0.5
-    check_tangent_point(ds, [node(0.0, -0.5)])
-    check_tangent_point(ds, [node(2 * np.pi - 1e-12, -0.5)])
+    _, ds = simple_mds
+    ra, dec = float(ds.ra), float(ds.dec)
+    check_tangent_point(ds, [node(ra, dec)])
+    # the same direction expressed on the far side of the RA=0 wrap
+    check_tangent_point(ds, [node(ra + 2 * np.pi - 1e-12, dec)])
 
     with pytest.raises(ValueError, match="[Tt]angent"):
-        check_tangent_point(ds, [node(0.1, -0.5)])
+        check_tangent_point(ds, [node(ra + 0.1, dec)])
     with pytest.raises(ValueError, match="[Tt]angent"):
-        check_tangent_point(ds, [node(0.0, -0.4)])
+        check_tangent_point(ds, [node(ra, dec + 0.1)])
+
+
+@pytest.mark.slow
+def test_degrid_msv4_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
+    """A full driver run must fill MODEL_DATA with what `degrid_region` computes.
+
+    This is the region-write test: the driver chunks the node into several
+    (time, frequency) regions and each replica writes its own, so if `region`
+    were ever dropped or mis-offset the chunks would land on top of each other
+    at the start of the array. Comparing against a chunk-matched
+    `degrid_region` over the whole node catches exactly that.
+    """
+    import xarray as xr
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    mds_path, mds_ds = simple_mds
+
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+
+    degrid_msv4(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=20,
+        channels_per_chunk=4,
+        nworkers=2,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        node = select_vis_nodes(dt)[0]
+        node_ds = dt[node.path].ds
+        got = node_ds.MODEL_DATA.values
+        # the reference is deliberately chunked the same way: the model is
+        # re-rendered per chunk, so a single whole-node call would evaluate it
+        # at a different frequency and legitimately disagree
+        expected = np.zeros_like(got)
+        for t0 in range(0, 60, 20):
+            for f0 in range(0, 8, 4):
+                region = {"time": slice(t0, t0 + 20), "frequency": slice(f0, f0 + 4)}
+                expected[t0 : t0 + 20, :, f0 : f0 + 4, :] = degrid_region(
+                    node_ds,
+                    region=region,
+                    model_ds=mds_ds,
+                    masks=build_region_masks(mds_ds, None),
+                    columns=["MODEL_DATA"],
+                    corr_types=node.corr_types,
+                ).MODEL_DATA.values
+        np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-8)
+        assert np.any(got != 0), "nothing was written"
+    finally:
+        dt.close()
+
+
+@pytest.mark.slow
+def test_degrid_msv4_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path):
+    """The default --model-column on an MS that has no MODEL_DATA."""
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from tests.conftest import drop_column
+
+    drop_column(degrid_ms, "MODEL_DATA")
+    mds_path, _ = simple_mds
+
+    degrid_msv4(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=-1,
+        channels_per_chunk=8,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    with pctable(degrid_ms, ack=False) as tab:
+        assert "MODEL_DATA" in tab.colnames()
+        col = np.asarray(tab.getcol("MODEL_DATA"))
+    assert col.shape == (21060, 8, 4)
+    assert np.any(col != 0)
+
+
+@pytest.mark.slow
+def test_degrid_msv4_honours_freq_range(degrid_ms, simple_mds, tmp_path):
+    """`--freq-range` must write to the selected channels and no others.
+
+    The highest-risk arithmetic in the driver: the frequency axis is trimmed
+    for compute but write regions index the *unsliced* node, so every slice is
+    shifted by `SelectedNode.chan0`. Drop the shift and the right numbers land
+    on the wrong channels -- which looks entirely plausible in a FITS image.
+    """
+    import xarray as xr
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.utils.msv4 import get_engine
+
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        freqs = dt[next(iter(dt.children))].ds.frequency.values
+    finally:
+        dt.close()
+    # channels 3, 4 and 5 only
+    lo = float(freqs[3]) - 1.0
+    hi = float(freqs[5]) + 1.0
+
+    mds_path, _ = simple_mds
+    degrid_msv4(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        freq_range=f"{lo}:{hi}",
+        integrations_per_chunk=-1,
+        channels_per_chunk=1,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    with pctable(degrid_ms, ack=False) as tab:
+        col = np.asarray(tab.getcol("MODEL_DATA"))
+    written = np.abs(col).sum(axis=(0, 2)) > 0
+    np.testing.assert_array_equal(written, np.array([False, False, False, True, True, True, False, False]))
+
+
+@pytest.mark.slow
+def test_degrid_msv4_handles_multiple_measurement_sets(degrid_ms, simple_mds, tmp_path):
+    """`WorkItem.ms_index` must route each region to the MS it came from."""
+    import shutil
+
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+
+    second = str(tmp_path / "second.ms")
+    shutil.copytree(degrid_ms, second)
+    for path in (degrid_ms, second):
+        with pctable(path, readonly=False, ack=False) as tab:
+            tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+
+    mds_path, _ = simple_mds
+    degrid_msv4(
+        [degrid_ms, second],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=30,
+        channels_per_chunk=8,
+        nworkers=2,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    with pctable(degrid_ms, ack=False) as tab:
+        first_col = np.asarray(tab.getcol("MODEL_DATA"))
+    with pctable(second, ack=False) as tab:
+        second_col = np.asarray(tab.getcol("MODEL_DATA"))
+
+    assert np.any(first_col != 0) and np.any(second_col != 0)
+    # identical inputs, so identical outputs -- a routing bug leaves one empty
+    np.testing.assert_array_equal(first_col, second_col)
+
+
+def test_degrid_msv4_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
+    """The guard must fire before Ray starts and before a column is created."""
+    from pfb_model_spec.utils.io import build_mds_dataset
+    from pfb_model_spec.utils.modelspec import fit_image_cube
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+
+    image = np.zeros((1, 2, 32, 32))
+    image[:, :, 20, 5] = 1.0
+    times = np.array([1.62393461e9])
+    freqs = np.array([1.0e9, 1.1e9])
+    coeffs, xi, yi, expr, params, texpr, fexpr = fit_image_cube(
+        times, freqs, image, wgt=np.ones((1, 2)), method="Legendre"
+    )
+    # a tangent point nowhere near the test MS's field
+    ds = build_mds_dataset(
+        coeffs,
+        xi,
+        yi,
+        expr,
+        params,
+        texpr,
+        fexpr,
+        times,
+        freqs,
+        1e-5,
+        32,
+        32,
+        0.0,
+        0.0,
+        False,
+        True,
+        False,
+        (1.234, 0.567),
+        "I",
+        "test",
+    )
+    mds_path = tmp_path / "wrong.mds"
+    ds.to_zarr(str(mds_path), mode="w")
+
+    with pytest.raises(ValueError, match="[Tt]angent point mismatch"):
+        degrid_msv4(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=str(mds_path),
+            product="I",
+            integrations_per_chunk=-1,
+            channels_per_chunk=8,
+            nworkers=1,
+            nthreads=1,
+            progressbar=False,
+            log_directory=str(tmp_path / "logs"),
+        )

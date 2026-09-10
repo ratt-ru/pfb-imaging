@@ -361,16 +361,27 @@ def drop_column(ms_path, column):
 
 
 @pytest.fixture
-def simple_mds(tmp_path):
+def simple_mds(ms_name, tmp_path):
     """A minimal, deliberately non-square `.mds` with a spectral slope.
 
     64 x 32 in (nx, ny): a wrongly oriented mask or image is invisible on a
     square grid, so nothing here is square. One component at (x=40, y=9),
     1.0 Jy at 1.0 GHz and 2.0 Jy at 1.1 GHz, so a render at 1.05 GHz must give
     exactly 1.5 -- which is the frequency-upsampling assertion.
+
+    The tangent point is read from the test MS's own FIELD.PHASE_DIR rather
+    than invented: `degrid-msv4` refuses to degrid a model whose tangent point
+    differs from the field's (wiki D21, mosaics are not supported in v1), so a
+    made-up radec makes every driver test fail the guard rather than exercise
+    the code under test.
     """
+    from casacore.tables import table as pctable
     from pfb_model_spec.utils.io import build_mds_dataset
     from pfb_model_spec.utils.modelspec import fit_image_cube
+
+    with pctable(f"{ms_name}::FIELD", ack=False) as tab:
+        radec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
+    assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
 
     nx, ny = 64, 32
     cell_rad = 1.0e-5
@@ -401,7 +412,7 @@ def simple_mds(tmp_path):
         False,
         True,
         False,  # flip_u, flip_v, flip_w
-        (0.0, -0.5),  # radec, radians
+        (float(radec[0]), float(radec[1])),  # tangent point, from the MS
         "I",
         "test",
     )
