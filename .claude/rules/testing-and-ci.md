@@ -38,8 +38,8 @@ wiki design-decisions D14).
 
 ```bash
 uv run pytest tests/          # fast loop: 681 tests, ~167 s
-uv run pytest -m slow tests/  # only the deselected 41, ~490 s
-uv run pytest -m "" tests/    # everything, ~660 s (what CI runs)
+uv run pytest -m slow tests/  # only the deselected 41, ~540 s
+uv run pytest -m "" tests/    # everything, 722 tests, ~710 s (what CI runs)
 ```
 
 A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
