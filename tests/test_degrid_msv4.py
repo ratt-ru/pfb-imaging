@@ -528,3 +528,99 @@ def test_assert_writable_rejects_a_dataset_without_store_encoding():
 
     ds.encoding = {"common_store_args": {}, "partition_key": ()}
     assert_writable(ds)  # must not raise
+
+
+def test_check_model_accepts_a_well_formed_mds(simple_mds):
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    geom = check_model(ds, "I")
+    assert geom["nx"] == 64 and geom["ny"] == 32
+    assert geom["stokes"] == "I"
+    assert geom["cell_rad"] == pytest.approx(1e-5)
+
+
+def test_check_model_refuses_a_product_outside_iquv(simple_mds):
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    with pytest.raises(ValueError, match="not yet supported"):
+        check_model(ds, "XX")
+
+
+def test_check_model_refuses_a_product_the_model_is_not(simple_mds):
+    """The .mds records what it was made from; degridding it as something else
+    would produce confidently wrong correlations."""
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    with pytest.raises(ValueError, match="stokes"):
+        check_model(ds, "Q")
+
+
+def test_check_model_refuses_a_multi_stokes_product(simple_mds):
+    """The `genesis` spec carries one Stokes plane.
+
+    The old `degrid` set `nstokes_out = len(product)` and degridded the same
+    single plane into every slot, so `--product IQ` produced XX = 2I, YY = 0 --
+    silently wrong. Refuse instead.
+    """
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    with pytest.raises(ValueError, match="single Stokes"):
+        check_model(ds, "IQ")
+
+
+def test_check_model_refuses_an_unknown_spec(simple_mds):
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    bad = ds.copy()
+    bad.attrs["spec"] = "exodus"
+    with pytest.raises(ValueError, match="[Ss]pec"):
+        check_model(bad, "I")
+
+
+def test_check_model_refuses_non_square_pixels(simple_mds):
+    from pfb_imaging.core.degrid_msv4 import check_model
+
+    _, ds = simple_mds
+    bad = ds.copy()
+    bad.attrs["cell_rad_y"] = 2.0 * bad.attrs["cell_rad_x"]
+    with pytest.raises(ValueError, match="[Nn]on-square"):
+        check_model(bad, "I")
+
+
+def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
+    """A model made for one field must not be degridded against another.
+
+    Mosaics need a per-row inverse w-phase (wiki D21) which v1 does not do, so
+    a tangent-point mismatch is a refusal, not a warning. The comparison is a
+    wrapped magnitude: a field at RA=2*pi-eps and a model at RA=+eps are the
+    same direction and must pass.
+    """
+    from pfb_imaging.core.degrid_msv4 import check_tangent_point
+    from pfb_imaging.utils.msv4 import SelectedNode
+
+    def node(ra, dec):
+        return SelectedNode(
+            path="/p",
+            chan0=0,
+            nchan=8,
+            ntime=60,
+            field_name="f",
+            spw_name="s",
+            scan_name="0",
+            field_radec=np.array([ra, dec]),
+            corr_types=("XX", "XY", "YX", "YY"),
+        )
+
+    _, ds = simple_mds  # ra = 0.0, dec = -0.5
+    check_tangent_point(ds, [node(0.0, -0.5)])
+    check_tangent_point(ds, [node(2 * np.pi - 1e-12, -0.5)])
+
+    with pytest.raises(ValueError, match="[Tt]angent"):
+        check_tangent_point(ds, [node(0.1, -0.5)])
+    with pytest.raises(ValueError, match="[Tt]angent"):
+        check_tangent_point(ds, [node(0.0, -0.4)])
