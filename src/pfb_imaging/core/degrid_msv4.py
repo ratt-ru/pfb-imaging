@@ -4,6 +4,14 @@ The MSv4 <-> pfb-model-spec seam lives in `utils/degrid_msv4.py` and is pure;
 this module owns the guards, the Ray Serve deployment and the driver. It is
 the MSv4 replacement for `core/degrid.py`, which is the codebase's last
 consumer of `distributed`.
+
+Naming: the user-facing sub-command is `degrid-msv4` (registered in
+`cli/__init__.py`), but the stimela cab is `degrid_msv4`. hip-cargo defines a
+cab's name to be the CLI function's `__name__` (`hip_cargo/utils/spec.py`) and
+`tests/test_roundtrip.py` regenerates each CLI module from its cab to check it,
+so a hyphen there cannot round-trip. Container execution is unaffected:
+`run_in_container` replays `sys.argv`, so `--backend docker` invokes
+`pfb degrid-msv4` exactly as typed.
 """
 
 import gc
@@ -254,18 +262,18 @@ def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_c
 def degrid_msv4(
     ms: list[Path],
     output_filename: str,
-    mds: str | None = None,
+    channels_per_chunk: int,
     suffix: str = "main",
+    mds: str | None = None,
     model_column: str = "MODEL_DATA",
     product: str = "I",
-    field_names: list[str] | None = None,
-    spw_names: list[str] | None = None,
     scan_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    field_names: list[str] | None = None,
     freq_range: str | None = None,
     data_group: str = "base",
     partition_columns: list[str] | None = None,
     integrations_per_chunk: int = -1,
-    channels_per_chunk: int = 0,
     accumulate: bool = False,
     region_file: str | None = None,
     epsilon: float = 1e-7,
@@ -282,6 +290,10 @@ def degrid_msv4(
         ms: Measurement sets to write to.
         output_filename: Output basename; only used for naming and the default
             `.mds` location -- nothing image-space is written.
+        channels_per_chunk: Channels per degridding chunk. Required, and must
+            be positive: it also sets how finely the model's spectrum is
+            sampled, so there is no defensible default while the `.mds` does
+            not record the imaging run's channelisation (#327).
         mds: Path to the component model. Defaults to
             `{output_filename}_{suffix}_model.mds`.
         suffix: Product suffix used to build the default `.mds` path.
@@ -295,7 +307,6 @@ def degrid_msv4(
         data_group: MSv4 data group used to resolve the field_and_source subtable.
         partition_columns: xarray-ms partition schema override.
         integrations_per_chunk: Times per chunk; `-1` means the whole node.
-        channels_per_chunk: Channels per chunk. Required -- see #327.
         accumulate: Add to the existing column rather than replacing it.
         region_file: Region file splitting the model across columns (#115).
         epsilon: Gridder accuracy.
@@ -314,9 +325,9 @@ def degrid_msv4(
     opts_dict = locals().copy()
     time_start = time.time()
 
-    if not channels_per_chunk or int(channels_per_chunk) <= 0:
+    if int(channels_per_chunk) <= 0:
         raise ValueError(
-            "channels-per-chunk is required and must be positive. There is no "
+            "channels-per-chunk must be positive. There is no "
             "defensible default while the .mds does not record the imaging "
             "run's channelisation (see issue #327); it also sets how finely "
             "the model's spectrum is sampled, so it is a science choice."
