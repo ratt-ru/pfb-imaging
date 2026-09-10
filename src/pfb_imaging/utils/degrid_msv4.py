@@ -162,3 +162,70 @@ def _create_missing_columns(ms_path, columns, *, nchan, ncorr, dtype):
         still_missing = [c for c in missing if c not in tab.columns()]
         if still_missing:
             raise ValueError(f"Failed to create column(s) {still_missing} in {ms_path}")
+
+
+def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np.ndarray]:
+    """Split the model grid into a remainder plus one mask per region (#115).
+
+    Each region's flux is degridded into its own MS column, so the masks must
+    partition the grid exactly: mask `i` pairs with column `model_column` for
+    `i == 0` (the remainder, i.e. everything outside every region) and
+    `f"{model_column}{i}"` thereafter.
+
+    **Orientation.** `pixel_region.to_mask().to_image((ny, nx))` returns a
+    `(Y, X)` raster, which is astropy's convention and pfb-imaging's own for
+    images; the `.mds` and every pfb-model-spec array are x-major `(nx, ny)`.
+    The transpose below converts between them and is load-bearing -- it is the
+    one place in this module where an image orientation changes. Delete it
+    when the `.mds` spec flips (pfb-model-spec#20), not before.
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        region_file: Path to a region file in any format astropy `regions`
+            detects, or `None` for a single all-ones mask.
+
+    Returns:
+        `(nx, ny)` float64 masks: the remainder first, then one per region.
+
+    Raises:
+        ValueError: If two regions overlap.
+    """
+    nx = int(model_ds.npix_x)
+    ny = int(model_ds.npix_y)
+    if region_file is None:
+        return [np.ones((nx, ny), dtype=np.float64)]
+
+    # deferred: import cycle with utils.fits (load_fits <-> utils.misc)
+    from regions import Regions
+
+    from pfb_imaging.utils.fits import set_wcs
+
+    rfile = Regions.read(region_file)  # format auto-detected
+    wcs = set_wcs(
+        np.rad2deg(model_ds.cell_rad_x),
+        np.rad2deg(model_ds.cell_rad_y),
+        nx,
+        ny,
+        (model_ds.ra, model_ds.dec),
+        model_ds.freqs.values,
+        header=False,
+    )
+    wcs = wcs.dropaxis(-1).dropaxis(-1)  # drop the freq and stokes axes
+
+    total = np.zeros((nx, ny), dtype=np.float64)
+    masks = []
+    for region in rfile:
+        # a file in `image`/`physical` coordinates parses straight to a pixel
+        # region, which has no to_pixel; only sky regions need converting.
+        # The old degrid assumed sky and raised AttributeError on the rest.
+        pixel_region = region.to_pixel(wcs) if hasattr(region, "to_pixel") else region
+        # (Y, X) from astropy -> x-major to match the model; see the docstring
+        region_mask = pixel_region.to_mask().to_image((ny, nx)).T
+        total += region_mask
+        masks.append(region_mask)
+
+    if (total > 1).any():
+        raise ValueError("Overlapping regions are not supported")
+
+    # the remainder (direction-independent component) goes first
+    return [1.0 - total] + masks

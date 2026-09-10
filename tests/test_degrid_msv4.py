@@ -216,3 +216,58 @@ def test_ensure_model_columns_does_not_read_the_visibility_column():
     ds = xr.Dataset().assign({"X": (MODEL_DIMS, ph)})
     assert ds.X.shape == (60, 351, 8, 4)
     assert ds.X.dtype == np.complex64
+
+
+def test_build_region_masks_without_a_region_file(simple_mds):
+    """No region file means one all-ones mask on the model's own grid."""
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+
+    _, ds = simple_mds
+    masks = build_region_masks(ds, None)
+    assert len(masks) == 1
+    assert masks[0].shape == (64, 32)
+    assert np.all(masks[0] == 1.0)
+
+
+def test_build_region_masks_is_x_major_on_a_non_square_grid(simple_mds, tmp_path):
+    """The mask must come back (nx, ny), matching the x-major model.
+
+    astropy `regions` renders to `(Y, X)`; the model is x-major. On a square
+    grid a missing transpose is invisible, which is why this grid is 64 x 32:
+    a `(Y, X)` mask would not even have the right shape, and a mask that had
+    the right shape but the wrong orientation would select the wrong pixel.
+    The region is placed on the component at (x=40, y=9).
+    """
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+
+    _, ds = simple_mds
+    nx, ny = 64, 32
+    # ds9 image coordinates are 1-based and (x, y) ordered
+    region_file = tmp_path / "one.reg"
+    region_file.write_text("image\nbox(41,10,3,3,0)\n")
+
+    masks = build_region_masks(ds, str(region_file))
+    assert len(masks) == 2, "remainder first, then one mask per region"
+    remainder, region = masks
+    assert remainder.shape == (nx, ny)
+    assert region.shape == (nx, ny)
+
+    # the region covers the component's pixel and the remainder does not
+    assert region[40, 9] == 1.0
+    assert remainder[40, 9] == 0.0
+    # and they partition the grid
+    np.testing.assert_array_equal(remainder + region, np.ones((nx, ny)))
+    # a 3x3 box, so exactly 9 pixels
+    assert region.sum() == 9.0
+
+
+def test_build_region_masks_refuses_overlapping_regions(simple_mds, tmp_path):
+    """Overlaps would double-count flux across columns; refuse, as today."""
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+
+    _, ds = simple_mds
+    region_file = tmp_path / "two.reg"
+    region_file.write_text("image\nbox(41,10,5,5,0)\nbox(42,11,5,5,0)\n")
+
+    with pytest.raises(ValueError, match="[Oo]verlapping"):
+        build_region_masks(ds, str(region_file))
