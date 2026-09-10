@@ -13,11 +13,12 @@ The single exception is `build_region_masks`, which converts an astropy
 `regions` mask from `(Y, X)` -- see its docstring.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import xarray as xr
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
+from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
@@ -229,3 +230,125 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
 
     # the remainder (direction-independent component) goes first
     return [1.0 - total] + masks
+
+
+def assert_writable(ds: xr.Dataset) -> None:
+    """Fail early if a dataset has lost the encoding `to_msv2` needs.
+
+    `msv2_store_from_dataset` recovers the table handle from
+    `ds.encoding["common_store_args"]` and `["partition_key"]`. Those survive
+    `isel`, `drop_vars` and `assign`, but not a dataset rebuilt from scratch --
+    and the failure would otherwise surface as a `MissingEncodingError` after
+    the degridding work is already done.
+
+    Args:
+        ds: The dataset about to be written.
+
+    Raises:
+        ValueError: If either encoding key is missing.
+    """
+    missing = [k for k in ("common_store_args", "partition_key") if k not in ds.encoding]
+    if missing:
+        raise ValueError(
+            f"Dataset encoding is missing {missing}; it cannot be written back to "
+            "the measurement set. Build the write dataset by dropping and "
+            "assigning variables on the opened node, never from scratch."
+        )
+
+
+def degrid_region(
+    node_ds: xr.Dataset,
+    *,
+    region: Mapping[str, slice],
+    model_ds: xr.Dataset,
+    masks: Sequence[np.ndarray],
+    columns: Sequence[str],
+    corr_types: Sequence[str],
+    accumulate: bool = False,
+    epsilon: float = 1e-7,
+    do_wgridding: bool = True,
+    nthreads: int = 1,
+) -> xr.Dataset:
+    """Degrid the model into one `(time, frequency)` region of a node.
+
+    Args:
+        node_ds: The **unsliced** visibility node dataset. Regions index this,
+            so a `--freq-range` selection must already be folded into `region`
+            (see `SelectedNode.chan0`).
+        region: `{"time": slice, "frequency": slice}`. Slices only -- integer
+            indexing makes the matching write raise `MismatchedWriteRegion`.
+        model_ds: An opened `.mds` dataset.
+        masks: `(nx, ny)` region masks from `build_region_masks`, one per entry
+            of `columns` and in the same order.
+        columns: Output column names, aligned with `masks`.
+        corr_types: Correlation names, i.e. the node's `polarization` values.
+        accumulate: Add to what the column already holds in this region.
+        epsilon: Gridder accuracy.
+        do_wgridding: Perform w-correction via improved w-stacking.
+        nthreads: ducc threads.
+
+    Returns:
+        A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
+        encoding intact -- ready for `to_msv2(compute=True, region=region)`.
+
+    Raises:
+        ValueError: If `masks` and `columns` differ in length.
+    """
+    if len(masks) != len(columns):
+        raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
+
+    ds = node_ds.isel(**region)
+    ntime = int(ds.sizes["time"])
+    nbl = int(ds.sizes["baseline_id"])
+    freq = ds.frequency.values
+    nchan = freq.size
+    ncorr = len(corr_types)
+
+    # (time, baseline_id, uvw_label) -> (nrow, 3); nrow == ntime * nbl and the
+    # inverse reshape below restores the MSv4 layout the write region expects
+    uvw = ds.UVW.values.reshape(-1, 3)
+    valid = ~np.isnan(uvw).any(axis=-1)
+    # xarray-ms lays data on a regular (time, baseline) grid and pads absent
+    # cells with NaN UVW. ducc derives its w range from EVERY row it is handed,
+    # so an unmasked padded row gives a NaN w extent -- issue #287, guarded by
+    # tests/test_nan_padded_rows.py. The mask must be uint8: a bool mask of
+    # identical layout raises "incorrect data type" from ducc's pybind layer.
+    mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], nchan)).astype(np.uint8))
+    # belt and braces: masked rows are already inert, but zeroing them means
+    # correctness does not rest on ducc's undocumented mask ordering
+    uvw = np.nan_to_num(uvw, copy=True)
+
+    # Representative time and frequency for the chunk: UNWEIGHTED means, and
+    # deliberately not the imager's weight-weighted effective frequency (D28).
+    # Degrid reads no weights, and an unweighted mean is reproducible across
+    # tools regardless of their flagging, so two consumers cannot disagree
+    # about where the model was evaluated. Both axes are unix seconds / Hz,
+    # matching the .mds's own coords -- do not convert to MJD (D13).
+    time_out = float(ds.time.values.mean())
+    freq_out = float(freq.mean())
+
+    assigned = {}
+    for column, region_mask in zip(columns, masks, strict=True):
+        vis = model_to_apparent_vis_for_region(
+            model_ds,
+            uvw=uvw,
+            freq=freq,
+            corr_types=tuple(corr_types),
+            time=time_out,
+            freq_out=freq_out,
+            mask=mask,
+            region_mask=region_mask,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            # the .mds records no beam, so nothing folds 1/n in (wiki D22)
+            divide_by_n=False,
+            nthreads=nthreads,
+        )
+        vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
+        if accumulate:
+            vis += ds[column].values.astype(np.complex64)
+        assigned[column] = (MODEL_DIMS, vis)
+
+    # to_msv2 writes every data variable it is handed, so hand it only ours.
+    # drop_vars/assign preserve ds.encoding, which the MSv2 store needs.
+    return ds.drop_vars(set(ds.data_vars)).assign(assigned)

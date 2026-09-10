@@ -271,3 +271,260 @@ def test_build_region_masks_refuses_overlapping_regions(simple_mds, tmp_path):
 
     with pytest.raises(ValueError, match="[Oo]verlapping"):
         build_region_masks(ds, str(region_file))
+
+
+def _node_and_mds(ms_path, mds_tuple):
+    """Open the MS's single visibility node and the model dataset."""
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    dt = xr.open_datatree(ms_path, **get_engine(ms_path))
+    nodes = select_vis_nodes(dt)
+    assert len(nodes) == 1
+    return dt, dt[nodes[0].path].ds, nodes[0], mds_tuple[1]
+
+
+def test_degrid_region_returns_only_the_model_columns(degrid_ms, simple_mds):
+    """`to_msv2` writes every data variable it is given.
+
+    Returning the isel'd node would rewrite UVW, DATA, FLAG and WEIGHT along
+    with the model, so the returned dataset must carry the model column and
+    nothing else -- while keeping `ds.encoding`, which the MSv2 store needs to
+    find the table it came from.
+    """
+    from pfb_imaging.utils.degrid_msv4 import MODEL_DIMS, build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        region = {"time": slice(0, 10), "frequency": slice(0, 4)}
+        out = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=build_region_masks(mds_ds, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        )
+        assert list(out.data_vars) == ["MODEL_DATA"]
+        assert out.MODEL_DATA.dims == MODEL_DIMS
+        assert out.MODEL_DATA.dtype == np.complex64
+        assert out.MODEL_DATA.shape == (10, 351, 4, 4)
+        assert out.encoding == node_ds.encoding
+    finally:
+        dt.close()
+
+
+def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
+    """The MSv4 wrapper must be faithful: same answer as calling the kernel.
+
+    Numerical correctness of the kernel is pfb-model-spec's business (it has
+    analytic point-source tests). What is this repo's business is the
+    `(time, baseline_id, uvw_label)` -> `(nrow, 3)` reshape, the mask, the
+    dtype cast and the reshape back -- so compare against the kernel driven
+    with independently constructed arguments.
+    """
+    from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
+
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        region = {"time": slice(5, 15), "frequency": slice(2, 6)}
+        sub = node_ds.isel(**region)
+        uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
+        freq = sub.frequency.values
+        valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
+        mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
+        expected = model_to_apparent_vis_for_region(
+            mds_ds,
+            uvw=uvw,
+            freq=freq,
+            corr_types=node.corr_types,
+            time=float(sub.time.values.mean()),
+            freq_out=float(freq.mean()),
+            mask=mask,
+            region_mask=None,
+            divide_by_n=False,
+        ).astype(np.complex64)
+
+        out = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=build_region_masks(mds_ds, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        )
+        got = out.MODEL_DATA.values.reshape(-1, freq.size, len(node.corr_types))
+        np.testing.assert_array_equal(got, expected)
+    finally:
+        dt.close()
+
+
+def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_mds):
+    """Narrower frequency chunks sample the model's spectrum more finely.
+
+    The model is a continuous function of frequency, re-rendered once per
+    chunk, so this is the feature `--channels-per-chunk` exists for. A single
+    point source degrids to a visibility of constant magnitude equal to its
+    flux (`divide_by_n=False`, so no n-term scaling), which makes the assertion
+    direct: |vis| per chunk == the model's flux at that chunk's mean frequency.
+    """
+    from pfb_model_spec.utils.degrid import render_model_region
+
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        masks = build_region_masks(mds_ds, None)
+        amplitudes = []
+        for chan in (slice(0, 4), slice(4, 8)):
+            region = {"time": slice(0, 5), "frequency": chan}
+            out = degrid_region(
+                node_ds,
+                region=region,
+                model_ds=mds_ds,
+                masks=masks,
+                columns=["MODEL_DATA"],
+                corr_types=node.corr_types,
+            )
+            freq_out = float(node_ds.frequency.values[chan].mean())
+            expected_flux = float(
+                render_model_region(mds_ds, time=float(node_ds.time.values[0:5].mean()), freq_out=freq_out).max()
+            )
+            # XX == I for a Stokes-I model with no beam
+            got = np.abs(out.MODEL_DATA.values[..., 0])
+            np.testing.assert_allclose(got, expected_flux, rtol=1e-5)
+            amplitudes.append(expected_flux)
+
+        assert amplitudes[0] != amplitudes[1], (
+            "the two chunks must see different model fluxes, otherwise this "
+            "test would pass with the frequency axis ignored"
+        )
+    finally:
+        dt.close()
+
+
+def test_degrid_region_tolerates_nan_padded_rows(degrid_ms, simple_mds):
+    """Absent (time, baseline) cells arrive as NaN UVW and must stay inert.
+
+    ducc derives its w range from every row it is handed, so an unmasked NaN
+    row gives a NaN w extent and either a `too many w planes` assertion or
+    heap corruption (issue #287). Padded rows must come back exactly zero and
+    must not perturb the rest.
+    """
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        masks = build_region_masks(mds_ds, None)
+        clean = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=masks,
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        ).MODEL_DATA.values
+
+        uvw = node_ds.UVW.values.copy()
+        uvw[2, ::5, :] = np.nan  # pad a scattered set of cells
+        padded_ds = node_ds.assign(UVW=(node_ds.UVW.dims, uvw))
+        padded = degrid_region(
+            padded_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=masks,
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        ).MODEL_DATA.values
+
+        assert np.isfinite(padded).all(), "NaN UVW leaked into the model column"
+        assert np.all(padded[2, ::5] == 0), "padded cells must degrid to zero"
+        untouched = np.ones(padded.shape[1], bool)
+        untouched[::5] = False
+        np.testing.assert_array_equal(padded[2, untouched], clean[2, untouched])
+    finally:
+        dt.close()
+
+
+def test_degrid_region_accumulates_onto_the_existing_column(degrid_ms, simple_mds):
+    """`--accumulate` adds to what is already in the column, within the region."""
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.full((21060, 8, 4), 1 + 1j, np.complex64))
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        region = {"time": slice(0, 4), "frequency": slice(0, 2)}
+        masks = build_region_masks(mds_ds, None)
+        kw = dict(
+            region=region,
+            model_ds=mds_ds,
+            masks=masks,
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        )
+        plain = degrid_region(node_ds, **kw).MODEL_DATA.values
+        acc = degrid_region(node_ds, accumulate=True, **kw).MODEL_DATA.values
+        np.testing.assert_allclose(acc, plain + np.complex64(1 + 1j), rtol=1e-6)
+    finally:
+        dt.close()
+
+
+def test_degrid_region_masks_split_flux_across_columns(degrid_ms, simple_mds, tmp_path):
+    """Region masks partition the model, so the columns must sum to the whole."""
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+
+    region_file = tmp_path / "one.reg"
+    region_file.write_text("image\nbox(41,10,3,3,0)\n")
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        region = {"time": slice(0, 4), "frequency": slice(0, 4)}
+        whole = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=build_region_masks(mds_ds, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+        ).MODEL_DATA.values
+        split = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=mds_ds,
+            masks=build_region_masks(mds_ds, str(region_file)),
+            columns=["MODEL_DATA", "MODEL_DATA1"],
+            corr_types=node.corr_types,
+        )
+        assert set(split.data_vars) == {"MODEL_DATA", "MODEL_DATA1"}
+        np.testing.assert_allclose(split.MODEL_DATA.values + split.MODEL_DATA1.values, whole, atol=1e-6)
+        # the only component lives inside the region, so the remainder is empty
+        assert np.all(split.MODEL_DATA.values == 0)
+    finally:
+        dt.close()
+
+
+def test_assert_writable_rejects_a_dataset_without_store_encoding():
+    """A dataset that lost its encoding cannot be written back to the MS.
+
+    `msv2_store_from_dataset` needs `common_store_args` and `partition_key`;
+    without them `to_msv2` raises `MissingEncodingError` at write time, after
+    the work is done. Fail earlier and say what happened.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid_msv4 import assert_writable
+
+    ds = xr.Dataset({"MODEL_DATA": (("time",), np.zeros(4, np.complex64))})
+    with pytest.raises(ValueError, match="encoding"):
+        assert_writable(ds)
+
+    ds.encoding = {"common_store_args": {}, "partition_key": ()}
+    assert_writable(ds)  # must not raise
