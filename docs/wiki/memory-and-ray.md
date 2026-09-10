@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-07-17T20:00:00Z
-last_verified_commit: 4b571e9
+timestamp: 2026-09-10T15:04:42Z
+last_verified_commit: 4bb6825
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -13,7 +13,8 @@ How `pfb imager`'s footprint went from a 932 GB OOM to 87 GB (and 23m36s to
 2m24s) on an 8-worker, 80-task MeerKAT 1024-channel run, and the reusable
 diagnostics that got it there. Kept for posterity: each of these mechanisms
 will bite again in any Ray + xarray + arcae pipeline. The final section covers
-the deconv band workers, which inherit this discipline.
+the deconv band workers, which inherit this discipline, and `degrid-msv4`,
+which is the first Ray **Serve** consumer in the repo.
 
 ## The core fact
 
@@ -132,6 +133,32 @@ and exact-residual inputs. Its memory/scheduling rules:
   test images this dwarfs the data and dominates stimela's memory stats.
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
+
+## The degrid-msv4 replicas
+
+`pfb degrid-msv4` (#278) is the repo's first Ray **Serve** deployment: one
+`Degridder` replica per worker, each degridding a `(time, frequency)` region
+and writing that region straight back to the MS (wiki D38). It inherits the
+same two rules as pass 1 and for the same reasons — `Degridder.degrid` calls
+`_release_ms_caches()` and `gc.collect()` in a `finally`, and returns the same
+`{pid, rss_gb, peak_gb}` telemetry the imager prints.
+
+Two Serve-specific notes:
+
+- **Replicas claim a nominal `num_cpus=1e-2`**, exactly as `BandWorkerPool`
+  does and for the same reason: they are ducc thread-pool bound, and a real
+  per-replica claim deadlocks scheduling on a small cluster. `max_replicas`
+  is what actually caps concurrency. The driver asks `init_ray` for
+  `nworkers + 1` CPUs so the Serve controller is not competing for the last
+  slot.
+- **Measured (2 replicas, 80 chunks, 6-time x 351-baseline x 1-channel):**
+  post-gc RSS rose 0.63 -> 0.89 GB over ~40 items per pid, i.e. ~6.5 MB/task.
+  That is three orders of magnitude below the pass-1 pathology this page was
+  written about, but it is a ratchet rather than a flat line. The most likely
+  source is *not* in this repo: `eval_coeffs_to_slice` runs `parse_expr` and
+  `lambdify` on **every** render, so a run pays sympy once per chunk and
+  sympy's caches are global. Caching the compiled model expression belongs in
+  pfb-model-spec.
 
 ## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
 

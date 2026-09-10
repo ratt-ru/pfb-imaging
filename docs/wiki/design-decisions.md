@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-09T00:00:00Z
-last_verified_commit: 0b9999d
+timestamp: 2026-09-10T15:04:42Z
+last_verified_commit: 4bb6825
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1332,6 +1332,95 @@ update it (and this page's `last_verified_commit`) in the same session.
   `…::test_hci_rejects_a_moving_target_across_multiple_time_bins`,
   `…::test_hci_accepts_a_moving_target_in_a_single_time_bin`.
 
+### D38 — degrid writes its own regions; no load/compute/write split
+
+- **Context:** ratt-ru/tricolour#106 is the reference implementation of MSv4 + Ray region
+  writes, by the xarray-ms author, and it separates loading, computing and writing into
+  three Ray Serve deployments. `degrid-msv4` (#278) had to decide whether to copy that.
+- **Decision:** adopt tricolour's *vocabulary* — `WorkItem(ms_index, node_path, region)`,
+  a `region` dict driving both `isel` and the write, `Multiton` so each replica rebuilds
+  its own `DataTree` rather than receiving a pickled one, a bounded in-flight queue — and
+  fuse the write into the `Degridder` replica.
+- **Rationale:** tricolour is read-heavy and write-light; degrid is the exact inverse. It
+  reads only `UVW`, and its *output* is the whole data volume (~413 MB of `complex64` for a
+  100-time × 2016-baseline × 64-channel × 4-correlation chunk). Routing that through a
+  separate writer costs an object-store copy per item and forces a low in-flight cap, and
+  buys nothing: concurrent multi-process region writes are verified correct and
+  `xarray_ms.multithreaded_writes()` is True.
+- **Consequences:** degrid does **not** demonstrate the IO/compute isolation #279 wants for
+  `hci`; that goal is better served on the `hci` path, where the read is the expensive side.
+  The driver is also an ordinary synchronous function rather than a deployment of its own —
+  with the write fused there is one hop, so a `deque` of responses drained oldest-first
+  gives the same backpressure without asyncio.
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278.
+
+### D39 — the degrid chunk's representative time and frequency are unweighted means
+
+- **Context:** D28 defines the imager's band frequency as a wsum-weighted effective
+  frequency. A degrid chunk also needs one `(time, freq)` at which to evaluate the model.
+- **Decision:** use plain unweighted means of the chunk's `time` and `frequency` axes.
+- **Rationale:** degrid reads no weights at all — it loads only `UVW` — so D28's rule is not
+  even computable here without a second pass. An unweighted mean is also the better quantity:
+  it is reproducible across tools regardless of their flagging, so two consumers cannot
+  disagree about where the model was evaluated. The per-channel phase is exact either way,
+  since `dirty2vis` receives the full `freq` array; the only approximation is the model's
+  spectral variation *across* a chunk, which is what `--channels-per-chunk` controls.
+- **Consequences:** D28 is an imager rule, not a repo-wide one. Do not "unify" them.
+- **Source:** `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+
+### D40 — the model is evaluated at unix-second times, and the legacy `degrid` was wrong here
+
+- **Context:** a `.mds`'s `texpr` is fitted against whatever time axis it was given. For a
+  model written by `deconv` that axis is the `.dt`'s `time_out`, i.e. **unix seconds** (D13).
+- **Decision:** `degrid-msv4` passes the MSv4 `time` coordinate — also unix seconds —
+  straight through to `render_model_region`, with no conversion.
+- **Rationale / Consequences:** the old `degrid` passed MSv2 `TIME`, i.e. **MJD seconds**,
+  into the same expression: wrong by ~111 years of offset. It never bit because `deconv`
+  writes a single-time `.mds` and `fit_image_cube` sets `tfunc = t` with one time basis
+  function when `ntime == 1`, making the model constant in time so the value is discarded.
+  The moment a multi-time `.mds` exists the old behaviour is wrong and the new one is right.
+  Do not "restore parity" here.
+- **Source:** `pfb_model_spec.utils.modelspec.fit_image_cube`,
+  `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+
+### D41 — `--product` must match the model's `stokes` attr, and may name only one product
+
+- **Context:** the `genesis` `.mds` spec stores a single Stokes plane, but `--product` is a
+  free-form string.
+- **Decision:** refuse `len(product) > 1`, and refuse a product that disagrees with the
+  `.mds`'s own `stokes` attr. Derive the Stokes label from the `.mds`, using `--product`
+  only for output naming and this cross-check.
+- **Rationale:** the old `degrid` set `nstokes_out = len(product)` and degridded the *same*
+  single-plane image into every Stokes slot, so `--product IQ` emitted `XX = 2I, YY = 0` —
+  silently wrong output rather than an error.
+- **Consequences:** a deliberate, documented behaviour change from `degrid`. Revisit when
+  pfb-model-spec#19/#20 add a Stokes axis to the spec.
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py::check_model`,
+  `tests/test_degrid_msv4.py::test_check_model_refuses_a_multi_stokes_product`, issue #278.
+
+### D42 — no beams in `degrid-msv4` v1: upsampling and a per-band beam are in tension
+
+- **Context:** beam application was the headline addition proposed in #278, and the `.dt`
+  stores one beam per `(band, partition)`.
+- **Decision:** v1 ships no beam support at all — no `--beam`, no Mueller, no
+  `--project-missing-corrs`.
+- **Rationale:** a degrid chunk is defined by `--channels-per-chunk` on the MS frequency
+  axis and need not align with imaging band edges. Every resolution is unsatisfying: nearest
+  band puts a discontinuity at every band edge in a quantity that *multiplies* the model;
+  interpolating two bands invents a beam that was never the gauge calibration solved
+  against; forcing chunk boundaries onto band edges couples the upsampling knob to the
+  imaging channelisation and defeats the point of having it. Upsampling *within* a band is
+  already inconsistent, since the model varies with frequency and the band's single stored
+  beam does not — at exactly the level of detail upsampling exists to capture.
+- **Consequences:** the resolution is a **frequency-resolved** pinned beam, which is #324's
+  job, not something degrid can paper over. Two findings worth keeping for whoever picks it
+  up: (1) the `.dt` holds only **diagonal** Mueller elements — `stokes2vis_msv4` evaluates
+  `get_rotation_averaged_beam(var="nstokes", i=p, j=p)` — so a pinned `.dt` beam can never
+  predict leakage, which needs `M[Q,I]`, `M[U,I]`, `M[V,I]`; (2) the `.dt` and meerkat-beams
+  sources are fidelity levels, not competitors — gauge-exact but diagonal and per-band,
+  versus full-Mueller and frequency-resolved but not gauge-exact.
+- **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278.
+
 ## Known debt
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing, and the caller only
@@ -1394,6 +1483,46 @@ update it (and this page's `last_verified_commit`) in the same session.
   (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas
+
+- **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
+  to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
+  rather than where it came from. Always pass `region` explicitly, and only slices — an
+  integer index raises `MismatchedWriteRegion`.
+- **`to_msv2` writes every data variable it is handed.** Handing it an `isel`'d node rewrites
+  `UVW`, `DATA`, `FLAG` and `WEIGHT` along with your column. Build the write dataset as
+  `ds.drop_vars(set(ds.data_vars)).assign(...)`, which also preserves the `ds.encoding` the
+  MSv2 store needs (`common_store_args`, `partition_key`).
+- **`sync_msv2` will not create a canonical MAIN column that is absent.** `MODEL_DATA`,
+  `CORRECTED_DATA` and `DATA` are all in `ms_descriptor("MAIN", complete=True)`, and
+  `generate_column_descriptor` validates such a name then emits nothing, so `addcols` is
+  never asked for it; non-canonical names (`MODEL_DATA1`) are created normally. No warning,
+  no error. `utils/degrid_msv4._create_missing_columns` is the workaround — delete it when
+  upstream closes the gap.
+- **`sync_msv2` silently drops a variable that is not on every correlated node.** It compares
+  each variable's node count against the number of nodes it visited in `dt.subtree` and warns
+  rather than raising. Declare new columns tree-wide — which is also correct, since a CASA
+  column belongs to the whole MAIN table, not a partition.
+- **A newly created column is invisible to other processes until the tree is closed.** Close
+  the `DataTree` between `sync_msv2` and dispatching any Ray work. A CTDS property, not an
+  xarray-ms quirk.
+- **ducc's `mask` must be `uint8`.** A `bool` mask has identical memory layout and raises
+  `RuntimeError: incorrect data type` from the pybind layer. `~np.isnan(...)` gives bool.
+- **Declaring a column must not materialise one.** `xr.zeros_like(node.VISIBILITY)` — the
+  obvious placeholder, and the one xarray-ms's own test uses — reads the entire
+  correlated-data column purely to declare a name. `sync_msv2` reads only dims, shape and
+  dtype, so a zero-strided `np.broadcast_to(np.array(0, dtype), shape)` works and costs
+  8 bytes.
+- **A casacore column descriptor's `shape` is FORTRAN ordered**, the reverse of the numpy
+  trailing shape, and getting it wrong does not raise — casacore SIGABRTs and takes the
+  interpreter with it. A variable-shape (`ndim: -1`) descriptor is also unusable for region
+  writes: its cells have no array until written whole, so a partial write fails with
+  `SSMIndColumn::getShape: no array in row 0`. Use fixed-shape `TiledColumnStMan`.
+- **`fit_image_cube` cannot fit a single (time, band), and `deconv` hides it.** With
+  `ntime == 1 and nband == 1` it takes an early branch that never assigns `xfit`, raising
+  `UnboundLocalError`; `core/deconv.py` wraps the `model_to_ds` call in a bare
+  `except Exception` that only logs, so a single-band `deconv` run writes **no `.mds` at
+  all**, silently, and the next `degrid` fails with "No mds at …". Use ≥ 2 bands when a
+  component model is wanted.
 
 - **arcae and xarray-ms version numbers do not order by capability.** Both run a parallel
   `0.4.0-alpha.*` write-support line cut from commits *later* than their 0.5.x releases,
