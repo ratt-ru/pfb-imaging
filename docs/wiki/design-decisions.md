@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-08T12:22:55Z
-last_verified_commit: af344c5
+timestamp: 2026-09-09T00:00:00Z
+last_verified_commit: 0b9999d
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -200,11 +200,21 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D14 — (Retired 2026-07-15) The MSv4 imaging path stayed casacore-free by choice
 
-- **Context:** Before arcae 0.5.2, arcae and python-casacore could not coexist in one
-  process (hard segfault constraint), so the MSv4 imaging path deferred every
-  `africanus`/`daskms`/`casacore` import into functions. After the coexistence fix
-  (ratt-ru/arcae#211, #212) the deferrals were kept for a while as a
-  lightweight-startup preference.
+- **Context:** Until the coexistence fix (ska-sa/arcae#211, #212, merged 2026-06-12),
+  arcae and python-casacore could not coexist in one process (hard segfault constraint), so
+  the MSv4 imaging path deferred every `africanus`/`daskms`/`casacore` import into
+  functions. After the fix the deferrals were kept for a while as a lightweight-startup
+  preference.
+- **Version caveat (2026-09-09):** the real constraint is *"contains #211/#212"*, **not**
+  *"arcae >= 0.5.2"*. arcae ships a parallel `0.4.0-alpha.*` write-support line whose tags
+  are cut from **later** commits than the 0.5.x line despite the lower version numbers
+  (`0.4.0-alpha.8` is 2026-07-23, after `0.5.4` on 2026-07-22), and it contains both PRs.
+  Verified two ways: `gh api repos/ska-sa/arcae/compare/<merge-sha>...0.4.0-alpha.8` reports
+  `status=ahead, behind_by=0` for both, and python-casacore + arcae 0.4.0-alpha.8 read and
+  write each other's tables in one process. `xarray-ms` releases its write support on that
+  line deliberately (`0.4.0 <= xarray-ms < 0.5.0`) so read-only consumers resolving
+  `>= 0.5.0` never pick up the write prerelease. A degrid/`pfb`-side dependency on write
+  support therefore pins **down** into the 0.4.0 range rather than up.
 - **Decision (retired):** The preference was dropped once coexistence had soaked: the
   deferred casacore-pulling imports moved to module scope (`construct_mappings`'s
   daskms imports in `utils/misc.py`, `interp_beam`'s `africanus.rime` imports in
@@ -213,7 +223,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   optional runtime, serialisation, rare heavy path), each stated in an inline comment.
 - **Consequences:** No import-placement restriction remains on the imaging path. The
   lightweight CLI install is unaffected (CLI modules still lazy-import the core).
-- **Source:** ratt-ru/arcae#211/#212; architecture.md §3/§8; branch `issue270`.
+- **Source:** ska-sa/arcae#211/#212; architecture.md §3/§8; branch `issue270`; version
+  caveat from sjperkins on ratt-ru/xarray-ms#170.
 
 ### D15 — Imager driver accumulates counts at `weight_grouping` granularity
 
@@ -1384,6 +1395,13 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Recurring gotchas
 
+- **arcae and xarray-ms version numbers do not order by capability.** Both run a parallel
+  `0.4.0-alpha.*` write-support line cut from commits *later* than their 0.5.x releases,
+  precisely so that consumers resolving `>= 0.5.0` stay on read-only. `0.4.0-alpha.8` is
+  newer than `0.5.4`. Never infer "lower version, therefore lacks feature X" here — compare
+  ancestry (`gh api repos/<repo>/compare/<merge-sha>...<tag>` → `behind_by: 0` means the tag
+  contains it). This cost a wrong conclusion on ratt-ru/xarray-ms#170: D14's "arcae >= 0.5.2"
+  was read as excluding the 0.4.0-alpha line, which in fact has the coexistence fix.
 - **psi/psih naming is inverted between the two legacy PD implementations** —
   `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
   psi=analysis)`. Read call sites, not names.
