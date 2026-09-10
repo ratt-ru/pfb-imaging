@@ -35,9 +35,10 @@ full = [
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "distributed>=2026.3.0",  # still need this for degrid command
     "reproject",
-    "ray[default]>=2.55.0",
+    "ray[default,serve]>=2.55.0",
     "radiomesh>=0.1.2 ; python_version >= '3.11'",
     "rarg-numba-patterns>=0.0.1",
+    "rarg-python-patterns>=0.0.4 ; python_version >= '3.11'",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -55,10 +56,23 @@ full = [
     "omegaconf>=2.3",
     "pillow>=12.2.0",
     "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
-    "xarray-ms>=0.5.5 ; python_version >= '3.11'",
+    # write support lives on the 0.4.0-alpha line, which is cut from commits
+    # LATER than 0.5.x -- these version numbers do not order by capability.
+    # Never raise these pins. See wiki design-decisions D14 and ratt-ru/xarray-ms#170.
+    "xarray-ms>=0.4.0a7,<0.5.0 ; python_version >= '3.11'",
+    "arcae>=0.4.0a8,<0.5.0 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
+
+# TEMPORARY -- degrid-msv4 (#278) tracks pfb-model-spec main because the degrid
+# kernel (landmanbester/pfb-model-spec#24) is merged but deliberately unreleased
+# until this application validates the seam. `tool.uv.sources` is honoured by
+# `uv sync`/`uv lock`/`uv pip install` and ignored by plain pip, which is the
+# right blast radius for a branch dependency. Replaced by a version pin once
+# the release is cut -- see plan Task 11.
+[tool.uv.sources]
+pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec.git", branch = "main" }
 
 [project.scripts]
 pfb = "pfb_imaging.cli:app"
