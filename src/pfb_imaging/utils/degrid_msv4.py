@@ -75,8 +75,9 @@ def ensure_model_columns(
         dtype: Column dtype; `complex64` is the MS visibility dtype.
 
     Raises:
-        ValueError: If `dt` holds no visibility datasets, or if a column is
-            still absent after both creation attempts.
+        ValueError: If `dt` holds no visibility datasets, if its partitions
+            have differing `(nchan, ncorr)` shapes, or if a column is still
+            absent after both creation attempts.
     """
     # deferred: monkeypatches sync_msv2/to_msv2 onto xarray's Dataset/DataTree
     import xarray_ms  # noqa: F401
@@ -84,6 +85,23 @@ def ensure_model_columns(
     vis_nodes = [n for n in dt.subtree if n.attrs.get("type") in VISIBILITY_XDS_TYPES]
     if not vis_nodes:
         raise ValueError(f"No visibility datasets in {ms_path}")
+
+    # Check this BEFORE touching the table. A CASA column spans the whole MAIN
+    # table, so every partition must fit one cell shape. Heterogeneous SPWs
+    # would need variably-shaped cells -- which cannot take a partial region
+    # write at all (their cells have no array until written whole:
+    # `SSMIndColumn::getShape: no array in row 0`). Refuse rather than leave a
+    # column behind that half the MS cannot be written into.
+    shapes = {(int(n.sizes["frequency"]), int(n.sizes["polarization"])) for n in vis_nodes}
+    if len(shapes) > 1:
+        raise ValueError(
+            f"{ms_path} has visibility partitions with differing "
+            f"(nchan, ncorr) shapes {sorted(shapes)}. degrid-msv4 writes one "
+            "fixed-shape column across the whole MAIN table and cannot span "
+            "heterogeneous spectral windows; select a single spectral window "
+            "with --spw-names, or degrid each one into its own measurement set."
+        )
+    nchan, ncorr = next(iter(shapes))
 
     for node in vis_nodes:
         shape = tuple(node.sizes[d] for d in MODEL_DIMS)
@@ -95,14 +113,7 @@ def ensure_model_columns(
     # column a user happened to name VISIBILITY is not redirected to DATA
     dt.sync_msv2(write_map={c: c for c in columns})
 
-    node = vis_nodes[0]
-    _create_missing_columns(
-        ms_path,
-        columns,
-        nchan=int(node.sizes["frequency"]),
-        ncorr=int(node.sizes["polarization"]),
-        dtype=dtype,
-    )
+    _create_missing_columns(ms_path, columns, nchan=nchan, ncorr=ncorr, dtype=dtype)
 
 
 def _create_missing_columns(ms_path, columns, *, nchan, ncorr, dtype):

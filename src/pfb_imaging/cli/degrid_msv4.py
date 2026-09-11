@@ -84,7 +84,9 @@ def degrid_msv4(
     mds: Annotated[
         str | None,
         typer.Option(
-            help="Optional path to mds to use for degridding. By default mds is inferred from output-filename.",
+            help="Optional path to mds to use for degridding. "
+            "By default it is inferred from output-filename and suffix. "
+            "Both the deconv name and the model2comps name are tried.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -98,7 +100,9 @@ def degrid_msv4(
     product: Annotated[
         str,
         typer.Option(
-            help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            help="Stokes product to degrid. "
+            "Must name exactly one product and must match the model's own stokes attribute. "
+            "The genesis mds spec stores a single Stokes plane.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",
@@ -106,9 +110,10 @@ def degrid_msv4(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of SCAN_NUMBERS to image. "
+            help="List of scan names to degrid. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            "These are MSv4 scan_name values, not SCAN_NUMBER integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -116,9 +121,10 @@ def degrid_msv4(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of DATA_DESC_ID's to images. "
+            help="List of spectral window names to degrid. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            "These are MSv4 spectral_window_name values, not DATA_DESC_ID integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -126,7 +132,10 @@ def degrid_msv4(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
+            help="List of field names to degrid. "
+            "Defaults to all. "
+            "These are MSv4 field_name values, not FIELD_ID integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,

@@ -49,7 +49,8 @@ cabs:
       mds:
         info:
           Optional path to mds to use for degridding.
-          By default mds is inferred from output-filename.
+          By default it is inferred from output-filename and suffix.
+          Both the deconv name and the model2comps name are tried.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
@@ -61,32 +62,36 @@ cabs:
           rich_help_panel: Output
       product:
         info:
-          String specifying which Stokes products to produce.
-          Outputs are always be alphabetically ordered.
+          Stokes product to degrid.
+          Must name exactly one product and must match the model's own stokes attribute.
+          The genesis mds spec stores a single Stokes plane.
         default: I
         metadata:
           rich_help_panel: Data Selection
       scan-names:
         info:
-          List of SCAN_NUMBERS to image.
+          List of scan names to degrid.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 scan_name values, not SCAN_NUMBER integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       spw-names:
         info:
-          List of DATA_DESC_ID's to images.
+          List of spectral window names to degrid.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 spectral_window_name values, not DATA_DESC_ID integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       field-names:
         info:
-          List of FIELD_ID's to image.
+          List of field names to degrid.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 field_name values, not FIELD_ID integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection

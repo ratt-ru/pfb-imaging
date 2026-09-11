@@ -1,5 +1,7 @@
 """Unit tests for the MSv4 degrid front end (`pfb degrid-msv4`, issue #278)."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -855,6 +857,141 @@ def test_degrid_msv4_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
             product="I",
             integrations_per_chunk=-1,
             channels_per_chunk=8,
+            nworkers=1,
+            nthreads=1,
+            progressbar=False,
+            log_directory=str(tmp_path / "logs"),
+        )
+
+
+def _vis_node(nchan, ncorr=4, *, name="spw0", freqs=None):
+    """A minimal correlated-data node: just what the code under test reads."""
+    import xarray as xr
+
+    if freqs is None:
+        freqs = np.linspace(1.0e9, 1.1e9, nchan)
+    ds = xr.Dataset(
+        {
+            "VISIBILITY": (
+                ("time", "baseline_id", "frequency", "polarization"),
+                np.zeros((2, 3, nchan, ncorr), np.complex64),
+            ),
+            "field_name": (("time",), np.array(["f0", "f0"])),
+            "scan_name": (("time",), np.array(["0", "0"])),
+        },
+        coords={
+            "time": np.array([1.62e9, 1.62e9 + 8.0]),
+            "baseline_id": np.arange(3),
+            "frequency": ("frequency", np.asarray(freqs), {"spectral_window_name": name}),
+            "polarization": np.array(["XX", "XY", "YX", "YY"][:ncorr]),
+        },
+        attrs={
+            "type": "visibility",
+            "data_groups": {"base": {"correlated_data": "VISIBILITY", "field_and_source": "x/field_and_source"}},
+        },
+    )
+    fns = xr.Dataset(
+        {"FIELD_PHASE_CENTER_DIRECTION": (("field_name", "sky_dir_label"), np.array([[0.0, 0.5]]))},
+        coords={"field_name": np.array(["f0"]), "sky_dir_label": np.array(["ra", "dec"])},
+    )
+    return xr.DataTree(dataset=ds, children={"field_and_source": xr.DataTree(fns)})
+
+
+def test_ensure_model_columns_refuses_heterogeneous_partition_shapes(tmp_path):
+    """A CASA column spans the whole MAIN table, so one cell shape must fit all.
+
+    Heterogeneous spectral windows would need variably-shaped cells, and those
+    cannot take a partial region write at all. The refusal must land *before*
+    `sync_msv2`, so this passes a path that does not exist: if the guard ever
+    moved below the write, the failure would be about the missing table
+    instead of the shapes.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+
+    dt = xr.DataTree(children={"p0": _vis_node(8), "p1": _vis_node(4, name="spw1")})
+    with pytest.raises(ValueError, match="differing"):
+        ensure_model_columns(str(tmp_path / "does-not-exist.ms"), dt, ["MODEL_DATA"])
+
+
+def test_select_vis_nodes_handles_a_descending_spectral_window():
+    """Channel selection must not assume ascending frequency.
+
+    `sel(frequency=slice(lo, hi))` returns nothing for a descending spectral
+    window, and `searchsorted` carries the same assumption. Selection is by
+    matching index instead, so both orderings work and `chan0` stays a
+    full-node index.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import select_vis_nodes
+
+    freqs = np.linspace(1.0e9, 1.1e9, 8)
+    dt = xr.DataTree(children={"down": _vis_node(8, freqs=freqs[::-1])})
+
+    got = select_vis_nodes(dt)
+    assert len(got) == 1, "a descending SPW was dropped entirely"
+    assert got[0].nchan == 8
+    assert got[0].chan0 == 0
+
+    # the three highest frequencies. On a descending axis those are channels
+    # 0..2, so chan0 must be 0 -- searchsorted would have said 5.
+    trimmed = select_vis_nodes(dt, freq_min=float(freqs[-3]) - 1.0, freq_max=float(freqs[-1]) + 1.0)
+    assert len(trimmed) == 1
+    assert trimmed[0].chan0 == 0
+    assert trimmed[0].nchan == 3
+
+    # and the ascending case still behaves
+    up = xr.DataTree(children={"up": _vis_node(8, freqs=freqs)})
+    asc = select_vis_nodes(up, freq_min=float(freqs[5]) - 1.0, freq_max=float(freqs[7]) + 1.0)
+    assert asc[0].chan0 == 5
+    assert asc[0].nchan == 3
+
+
+def test_default_mds_prefers_deconv_then_model2comps(tmp_path):
+    """Two producers write a `.mds` under different names; both are valid input.
+
+    `deconv` writes `{base}_{suffix}.mds`; `pfbspec model2comps` writes
+    `{base}_{suffix}_model.mds`. The legacy `degrid` only ever looked for the
+    second, so `imager -> deconv -> degrid` never worked without `--mds`.
+    """
+    from pfb_imaging.core.degrid_msv4 import _default_mds
+
+    base = str(tmp_path / "out_I")
+    deconv_name = f"{base}_main.mds"
+    m2c_name = f"{base}_main_model.mds"
+
+    with pytest.raises(ValueError) as excinfo:
+        _default_mds(base, "main")
+    # the error names both candidates, so the user knows what to pass
+    assert deconv_name in str(excinfo.value)
+    assert m2c_name in str(excinfo.value)
+
+    Path(m2c_name).mkdir()
+    assert _default_mds(base, "main") == m2c_name  # model2comps alone
+
+    Path(deconv_name).mkdir()
+    assert _default_mds(base, "main") == deconv_name  # deconv wins when both exist
+
+
+def test_degrid_msv4_refuses_a_negative_integrations_per_chunk(degrid_ms, simple_mds, tmp_path):
+    """A negative step other than -1 silently produces zero work items.
+
+    `range(0, ntime, -2)` is empty, so the command would start Serve, write
+    nothing, and exit successfully.
+    """
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+
+    mds_path, _ = simple_mds
+    with pytest.raises(ValueError, match="integrations-per-chunk"):
+        degrid_msv4(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            8,
+            mds=mds_path,
+            product="I",
+            integrations_per_chunk=-2,
             nworkers=1,
             nthreads=1,
             progressbar=False,

@@ -79,6 +79,8 @@ class SelectedNode:
         chan0: Offset of the frequency selection in **full-node** channel
             indices. Write regions are expressed against the unsliced node, so
             every frequency slice this node produces is shifted by `chan0`.
+            Derived from matching channel indices, not a label slice, so it is
+            correct for a descending spectral window.
         nchan: Number of selected channels.
         ntime: Number of times on the node (never trimmed).
         field_name: The node's single field name.
@@ -131,9 +133,22 @@ def select_vis_nodes(
     for node in dt.subtree:
         if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
             continue
-        ds = node.ds.sel(frequency=slice(freq_min, freq_max))
-        if ds.frequency.size == 0:
+        # Select by index, not by label slice. `sel(frequency=slice(lo, hi))`
+        # silently returns nothing for a descending spectral window, and
+        # `searchsorted` below would carry the same assumption. MS spectral
+        # windows can be descending, so find the matching channels explicitly.
+        full_freqs = node.ds.frequency.load().values
+        keep = np.nonzero((full_freqs >= freq_min) & (full_freqs <= freq_max))[0]
+        if keep.size == 0:
             continue
+        if keep.size != keep[-1] - keep[0] + 1:
+            raise ValueError(
+                f"Frequency selection on {node.path} is not contiguous in channel "
+                f"index (channels {keep.tolist()}); a write region must be a slice. "
+                "This means the spectral window is not monotonic in frequency."
+            )
+        chan0 = int(keep[0])
+        ds = node.ds.isel(frequency=slice(chan0, int(keep[-1]) + 1))
         # partitioned by FIELD_ID / SCAN_NUMBER, so each is a single value
         field_name = np.unique(ds.field_name.load().values).item()
         scan_name = np.unique(ds.scan_name.load().values).item()
@@ -144,11 +159,6 @@ def select_vis_nodes(
             continue
         if (scan_names is not None) and (scan_name not in scan_names):
             continue
-
-        # write regions index the *unsliced* node, so record where the
-        # frequency selection starts in full-node channel indices
-        full_freqs = node.ds.frequency.load().values
-        chan0 = int(np.searchsorted(full_freqs, ds.frequency.values[0]))
 
         grp = node.ds.attrs["data_groups"][data_group]
         fns = node[grp["field_and_source"].rsplit("/", 1)[-1]].ds

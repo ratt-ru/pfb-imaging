@@ -30,7 +30,7 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 # Full scientific stack
 full = [
     "katbeam>=0.1",
-    "pfb-model-spec[full]>=0.0.2",
+    "pfb-model-spec[full]>=0.0.3",  # >=0.0.3 has utils.degrid (the degrid-msv4 kernel)
     "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
     "distributed>=2026.3.0",  # still need this for degrid command
@@ -65,14 +65,6 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# TEMPORARY -- degrid-msv4 (#278) tracks pfb-model-spec main because the degrid
-# kernel (landmanbester/pfb-model-spec#24) is merged but deliberately unreleased
-# until this application validates the seam. `tool.uv.sources` is honoured by
-# `uv sync`/`uv lock`/`uv pip install` and ignored by plain pip, which is the
-# right blast radius for a branch dependency. Replaced by a version pin once
-# the release is cut -- see plan Task 11.
-[tool.uv.sources]
-pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec.git", branch = "main" }
 
 [project.scripts]
 pfb = "pfb_imaging.cli:app"

@@ -47,6 +47,42 @@ from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
 log = pfb_logging.get_logger("DEGRID_MSV4")
 
+# Ray Serve application name. Used for both serve.run and the targeted
+# serve.delete that replaces a cluster-wide serve.shutdown.
+_SERVE_APP_NAME = "degrid-msv4"
+
+
+def _default_mds(output_filename: str, suffix: str) -> str:
+    """Locate the component model when `--mds` was not given.
+
+    Two producers write a `.mds` with different names, and both are legitimate
+    inputs here:
+
+    * `pfb deconv` writes `{basename}_{suffix}.mds` (`core/deconv.py`).
+    * `pfbspec model2comps` writes `{basename}_{suffix}_{model_name}.mds`,
+      defaulting to `..._model.mds`.
+
+    The legacy `degrid` only ever looked for the second, so the common
+    `imager -> deconv -> degrid` path never worked without an explicit
+    `--mds`. Prefer `deconv`'s name, fall back to `model2comps`'.
+
+    Args:
+        output_filename: Basename, already carrying the `_PRODUCT` suffix.
+        suffix: The `--suffix` value.
+
+    Returns:
+        The path that exists.
+
+    Raises:
+        ValueError: If neither candidate exists, naming both.
+    """
+    fs = fsspec.filesystem("file")
+    candidates = [f"{output_filename}_{suffix}.mds", f"{output_filename}_{suffix}_model.mds"]
+    for candidate in candidates:
+        if fs.exists(candidate):
+            return candidate
+    raise ValueError(f"No mds found. Looked for {' and '.join(candidates)}. Pass --mds to name one explicitly.")
+
 
 def check_model(model_ds: xr.Dataset, product: str) -> dict:
     """Validate the `.mds` and the requested product before any work starts.
@@ -294,8 +330,10 @@ def degrid_msv4(
             be positive: it also sets how finely the model's spectrum is
             sampled, so there is no defensible default while the `.mds` does
             not record the imaging run's channelisation (#327).
-        mds: Path to the component model. Defaults to
-            `{output_filename}_{suffix}_model.mds`.
+        mds: Path to the component model. Defaults to whichever of
+            `{output_filename}_{suffix}.mds` (what `deconv` writes) or
+            `{output_filename}_{suffix}_model.mds` (what `pfbspec model2comps`
+            writes) exists -- see `_default_mds`.
         suffix: Product suffix used to build the default `.mds` path.
         model_column: Column to write. `--region-file` adds
             `{model_column}1`, `{model_column}2`, ... one per region.
@@ -325,6 +363,13 @@ def degrid_msv4(
     opts_dict = locals().copy()
     time_start = time.time()
 
+    # a negative step other than -1 would reach range(0, ntime, step) as a
+    # negative stride, yielding zero work items -- the command would start
+    # Serve, write nothing and exit successfully
+    if integrations_per_chunk is not None and int(integrations_per_chunk) < -1:
+        raise ValueError(
+            f"integrations-per-chunk must be -1 (whole partition), 0 (same) or positive, got {integrations_per_chunk}"
+        )
     if int(channels_per_chunk) <= 0:
         raise ValueError(
             "channels-per-chunk must be positive. There is no "
@@ -358,8 +403,8 @@ def degrid_msv4(
         msnames += [m.replace("file://", "") for m in map(store.fs.unstrip_protocol, matches)]
 
     if mds is None:
-        mds = f"{output_filename}_{suffix}_model.mds"
-    if not fsspec.filesystem("file").exists(mds):
+        mds = _default_mds(output_filename, suffix)
+    elif not fsspec.filesystem("file").exists(mds):
         raise ValueError(f"No mds at {mds}")
     # small enough to hold in memory, and every region needs all of it
     model_ds = xr.open_zarr(mds).load()
@@ -457,7 +502,7 @@ def degrid_msv4(
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 
     # route_prefix=None: a batch job must not bind an HTTP route
-    handle = serve.run(app, name="degrid-msv4", route_prefix=None)
+    handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
 
     try:
         # bounded in-flight queue: drain the oldest response once more than
@@ -487,6 +532,9 @@ def degrid_msv4(
             inflight.append(handle.degrid.remote(item))
         drain(0)
     finally:
-        serve.shutdown()
+        # delete only this application. serve.shutdown() is cluster-wide --
+        # it deletes every app and tears down the Serve system actors -- so on
+        # a shared --ray-address cluster it would kill unrelated workloads.
+        serve.delete(_SERVE_APP_NAME)
 
     log.info(f"All done after {time.time() - time_start}s.")
