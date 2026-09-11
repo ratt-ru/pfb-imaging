@@ -37,9 +37,9 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 685 tests, ~170 s
-uv run pytest -m slow tests/  # only the deselected 41, ~540 s
-uv run pytest -m "" tests/    # everything, 726 tests, ~730 s (what CI runs)
+uv run pytest tests/          # fast loop: 686 tests, ~172 s
+uv run pytest -m slow tests/  # only the deselected 42, ~550 s
+uv run pytest -m "" tests/    # everything, 728 tests, ~745 s (what CI runs)
 ```
 
 A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).

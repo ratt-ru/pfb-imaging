@@ -997,3 +997,94 @@ def test_degrid_msv4_refuses_a_negative_integrations_per_chunk(degrid_ms, simple
             progressbar=False,
             log_directory=str(tmp_path / "logs"),
         )
+
+
+def test_select_vis_nodes_handles_multiple_spectral_windows(multi_spw_ms):
+    """Each SPW is its own node with its own channel axis, so chan0 is per-node.
+
+    A frequency window that clips both bands must give each node an offset
+    measured on its own axis -- a single global offset, or a label slice
+    resolved against the wrong axis, silently writes the right numbers to the
+    wrong channels.
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    dt = xr.open_datatree(multi_spw_ms, **get_engine(multi_spw_ms))
+    try:
+        nodes = select_vis_nodes(dt)
+        assert len(nodes) == 2, f"expected one node per SPW, got {[n.path for n in nodes]}"
+        assert {n.spw_name for n in nodes} == {"00", "spw-upper"}
+        assert all(n.chan0 == 0 and n.nchan == 8 for n in nodes)
+
+        lower, upper = (
+            dt[nodes[0].path].ds.frequency.values,
+            dt[nodes[1].path].ds.frequency.values,
+        )
+        assert lower[0] != upper[0], "the two SPWs should occupy different bands"
+
+        # A window both bands overlap, landing at a DIFFERENT channel index in
+        # each: that is the whole point. The upper SPW is offset by 2e8 with a
+        # 1e8 channel width, so the same frequencies sit two channels lower in
+        # it than in the lower SPW.
+        lo, hi = float(lower[5]), float(lower[7])
+        clipped = select_vis_nodes(dt, freq_min=lo, freq_max=hi)
+        assert len(clipped) == 2
+        by_spw = {n.spw_name: n for n in clipped}
+        expected = {
+            spw: (int(np.searchsorted(f, lo)), int(((f >= lo) & (f <= hi)).sum()))
+            for spw, f in (("00", lower), ("spw-upper", upper))
+        }
+        assert expected["00"][0] != expected["spw-upper"][0], "test window is not discriminating"
+        for spw, (chan0, nchan) in expected.items():
+            assert (by_spw[spw].chan0, by_spw[spw].nchan) == (chan0, nchan), spw
+
+        # --spw-names addresses one of them
+        only_upper = select_vis_nodes(dt, spw_names=["spw-upper"])
+        assert [n.spw_name for n in only_upper] == ["spw-upper"]
+    finally:
+        dt.close()
+
+
+@pytest.mark.slow
+def test_degrid_msv4_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path):
+    """A full run over two SPWs must fill both, each on its own channel axis."""
+    import xarray as xr
+    from casacore.tables import table as pctable
+
+    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    with pctable(multi_spw_ms, readonly=False, ack=False) as tab:
+        nrow = tab.nrows()
+        tab.putcol("MODEL_DATA", np.zeros((nrow, 8, 4), np.complex64))
+
+    mds_path, _ = simple_mds
+    degrid_msv4(
+        [multi_spw_ms],
+        str(tmp_path / "out"),
+        4,
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=-1,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    dt = xr.open_datatree(multi_spw_ms, **get_engine(multi_spw_ms))
+    try:
+        nodes = select_vis_nodes(dt)
+        assert len(nodes) == 2
+        for node in nodes:
+            written = dt[node.path].ds.MODEL_DATA.values
+            assert np.any(written != 0), f"{node.spw_name} was never written"
+            assert np.isfinite(written).all()
+        # the two SPWs sit in different bands, so the model differs between them
+        a = dt[nodes[0].path].ds.MODEL_DATA.values
+        b = dt[nodes[1].path].ds.MODEL_DATA.values
+        assert not np.allclose(a, b), "both SPWs got identical visibilities"
+    finally:
+        dt.close()
