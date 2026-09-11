@@ -63,7 +63,8 @@ def ensure_model_columns(
        `CORRECTED_DATA` and `DATA` all are. `generate_column_descriptor`
        validates such a name against the canonical descriptor and then falls
        through without emitting one, so `addcols` is never asked for it. We
-       therefore verify afterwards and create what is still missing.
+       therefore verify afterwards and create what is still missing
+       (ratt-ru/xarray-ms#171).
 
     The caller must **close `dt` afterwards** before any other process reads
     the MS: new columns are invisible to other processes until close.
@@ -122,7 +123,7 @@ def _create_missing_columns(ms_path, columns, *, nchan, ncorr, dtype):
     The descriptor is deliberately assembled from xarray-ms's own pieces
     (`fit_tile_shape`, `NUMPY_TO_CASA_MAP`) so the column we create is
     indistinguishable from one it created. Delete this whole function when
-    upstream closes the canonical-name gap.
+    upstream closes the canonical-name gap (ratt-ru/xarray-ms#171).
 
     A fixed-shape `TiledColumnStMan` column is required, not the canonical
     variable-shape `StandardStMan` descriptor: the latter creates cells with no
