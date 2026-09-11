@@ -4,7 +4,6 @@ import resource
 import time
 import warnings
 from pathlib import Path
-from typing import Any
 
 import fsspec
 import numpy as np
@@ -15,8 +14,6 @@ import zarr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard
-from msv4_utils import MSv4Backend, infer_backend
-from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
     FrameConversionWarning,
@@ -36,6 +33,7 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
+from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
@@ -579,26 +577,28 @@ def imager(
             ms_name,
             **dt_kwargs,
         )
-        for node in dt.children.values():
-            if node.attrs.get("type") not in VISIBILITY_XDS_TYPES:
-                continue
+        # Name-based selection, the frequency window and the chan0 offset all
+        # come from utils/msv4.select_vis_nodes, shared with degrid-msv4 so the
+        # two front ends cannot drift. It selects channels by matching index
+        # rather than by label slice, which is correct for a descending
+        # spectral window and gives each node a chan0 on its own axis.
+        for sel in select_vis_nodes(
+            dt,
+            data_group=data_group,
+            field_names=field_names,
+            spw_names=spw_names,
+            scan_names=scan_names,
+            freq_min=freq_min,
+            freq_max=freq_max,
+        ):
+            node = dt[sel.path]
             if vis_col is None:
                 vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
             if wgt_col is None:
                 wgt_col = node.ds.attrs["data_groups"][data_group]["weight"]
-            ds = node.ds.sel(frequency=slice(freq_min, freq_max))
-            if ds.frequency.size == 0:
-                continue
-            field_name = np.unique(ds.field_name.load().values).item()  # partitioned by FIELD_ID → single value
-            scan_name = np.unique(ds.scan_name.load().values).item()  # partitioned by SCAN_NUMBER → single value
-            spw_name = ds.frequency.attrs["spectral_window_name"]  # always in partition schema → single value
-            # skip if data not in selection
-            if (field_names is not None) and (field_name not in field_names):
-                continue
-            if (spw_names is not None) and (spw_name not in spw_names):
-                continue
-            if (scan_names is not None) and (scan_name not in scan_names):
-                continue
+            # chan0 indexes the *unsliced* node, which is also what the dispatch
+            # loop below applies its isel to
+            ds = node.ds.isel(frequency=slice(sel.chan0, sel.chan0 + sel.nchan))
             freqs_node = ds.frequency.load().values
             all_freqs.append(freqs_node)
             all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
@@ -613,16 +613,8 @@ def imager(
             if uvw.size:
                 max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
             # cache the selected node and its loaded coords so the dispatch loop
-            # below does not have to re-open and re-filter the datatree. chan0 is
-            # the offset of the freq-range selection in *full-node* channel
-            # indices: the dispatch loop applies isel to the unsliced node, so
-            # slices built on the trimmed axis must be shifted by it.
-            chan0 = int(np.searchsorted(node.ds.frequency.load().values, freqs_node[0]))
-            # field pointing centre for phase-centre resolution / rephasing
-            grp = node.ds.attrs["data_groups"][data_group]
-            fns = node[grp["field_and_source"].rsplit("/", 1)[-1]].ds
-            field_radec = np.asarray(fns.FIELD_PHASE_CENTER_DIRECTION.sel(field_name=field_name).values).squeeze()
-            selected.append((ims, node, freqs_node, ds.time.load().values, chan0, field_radec))
+            # below does not have to re-open and re-filter the datatree
+            selected.append((ims, node, freqs_node, ds.time.load().values, sel.chan0, sel.field_radec))
 
     if not selected:
         log.error_and_raise("Selection matched no data", ValueError)
@@ -1076,38 +1068,3 @@ def imager(
         ray.shutdown()
 
     return
-
-
-def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict[str, Any]:
-    if "file://" in ms_path:
-        ms_path = ms_path.replace("file://", "")
-    backend = infer_backend(ms_path)
-    if backend == MSv4Backend.CASA_TABLE:
-        # deferred: registers the xarray-ms engine; only needed for this backend
-        import xarray_ms  # noqa: F401
-
-        # default schema suits mv4toms.py-style MSs; other instruments may need
-        # extra columns (e.g. SOURCE_ID) -- override via partition_columns.
-        # (sjperkins, PR #252 review; see xarray-ms partitioning docs.)
-        return {
-            "engine": "xarray-ms:msv2",
-            "partition_schema": partition_columns or ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
-        }
-    elif backend == MSv4Backend.ZARR:
-        return {
-            "engine": "zarr",
-            "chunks": None,
-        }
-    elif backend == MSv4Backend.MEERKAT:
-        # deferred: optional dependency; registers the xarray-kat engine
-        import xarray_kat  # noqa: F401
-
-        return {
-            "engine": "xarray-kat",
-            "applycal": "all",
-            "chunked_array_type": "xarray-kat",
-            "chunks": {},
-            "uvw_sign_convention": "casa",
-        }
-    else:
-        raise ValueError(f"Unhandled MSv4 backend {backend!r} for {ms_path}")

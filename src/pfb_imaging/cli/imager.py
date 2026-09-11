@@ -78,9 +78,10 @@ def imager(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of SCAN_NUMBERS to image. "
+            help="List of scan names to image. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            "These are MSv4 scan_name values, not SCAN_NUMBER integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -88,9 +89,10 @@ def imager(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of DATA_DESC_ID's to images. "
+            help="List of spectral window names to image. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            "These are MSv4 spectral_window_name values, not DATA_DESC_ID integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -98,7 +100,10 @@ def imager(
         ListStr | None,
         typer.Option(
             parser=parse_list_str,
-            help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
+            help="List of field names to image. "
+            "Defaults to all. "
+            "These are MSv4 field_name values, not FIELD_ID integers. "
+            "Input as a comma separated list if running from CLI.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -262,7 +267,7 @@ def imager(
     product: Annotated[
         str,
         typer.Option(
-            help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            help="String specifying which Stokes products to produce. Outputs are always alphabetically ordered.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",

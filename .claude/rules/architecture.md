@@ -70,7 +70,15 @@ One MSv4 front-end produces the intermediary products consumed by deconvolution:
 
 1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree` (`.dt`) plus a `.scratch` cache. See §8.
 2. `pfb deconv` — composable deconvolution of the `.dt` (see §5).
-3. `pfb degrid` — subtract model from visibilities.
+3. `pfb degrid-msv4` — degrid a `.mds` component model into MSv4 measurement sets so it can
+   be subtracted from the visibilities (#278). Guards, the Ray Serve `Degridder` deployment
+   and the driver live in `core/degrid_msv4.py`; the pure MSv4<->kernel seam
+   (column creation, region masks, per-chunk degridding) is `utils/degrid_msv4.py`. All the
+   numerics go through `pfb_model_spec.utils.degrid`, **not** the inline `comps2vis`
+   evaluation the legacy `pfb degrid` used. Load-bearing decisions: wiki D38 (write fused
+   into the replica), D39 (unweighted chunk time/freq), D40 (unix-second epochs), D41
+   (single Stokes product), D42 (no beams in v1). `pfb degrid` still exists and is the
+   parity oracle until it is retired.
 
 `pfb hci` is the separate high-cadence-imaging front-end. The legacy MSv2 subcommands
 (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) were retired in 0.1.0 (#277); their

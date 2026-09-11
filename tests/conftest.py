@@ -335,3 +335,175 @@ def sky_truth(ms_name, ms_meta, image_geometry):
         wcs=w,
         sky_coords=sky_coords,
     )
+
+
+@pytest.fixture
+def degrid_ms(ms_name, tmp_path):
+    """A private copy of the shared test MS, safe to add columns to and write.
+
+    The session MS is read by many other modules; adding columns to it would
+    leak across tests, and writing to it would corrupt the `sky_truth` DATA.
+    """
+    import shutil
+
+    dest = tmp_path / "degrid.ms"
+    shutil.copytree(ms_name, dest)
+    return str(dest)
+
+
+def drop_column(ms_path, column):
+    """Remove a column with python-casacore (arcae has no removecols)."""
+    from casacore.tables import table as pctable
+
+    with pctable(ms_path, readonly=False, ack=False) as tab:
+        if column in tab.colnames():
+            tab.removecols(column)
+
+
+@pytest.fixture
+def simple_mds(ms_name, tmp_path):
+    """A minimal, deliberately non-square `.mds` with a spectral slope.
+
+    64 x 32 in (nx, ny): a wrongly oriented mask or image is invisible on a
+    square grid, so nothing here is square. One component at (x=40, y=9),
+    1.0 Jy at 1.0 GHz and 2.0 Jy at 1.1 GHz, so a render at 1.05 GHz must give
+    exactly 1.5 -- which is the frequency-upsampling assertion.
+
+    The tangent point is read from the test MS's own FIELD.PHASE_DIR rather
+    than invented: `degrid-msv4` refuses to degrid a model whose tangent point
+    differs from the field's (wiki D21, mosaics are not supported in v1), so a
+    made-up radec makes every driver test fail the guard rather than exercise
+    the code under test.
+    """
+    from casacore.tables import table as pctable
+    from pfb_model_spec.utils.io import build_mds_dataset
+    from pfb_model_spec.utils.modelspec import fit_image_cube
+
+    with pctable(f"{ms_name}::FIELD", ack=False) as tab:
+        radec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
+    assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
+
+    nx, ny = 64, 32
+    cell_rad = 1.0e-5
+    image = np.zeros((1, 2, nx, ny))
+    image[0, 0, 40, 9] = 1.0
+    image[0, 1, 40, 9] = 2.0
+    times = np.array([1.62393461e9])  # unix seconds, as the .dt uses
+    freqs = np.array([1.0e9, 1.1e9])
+
+    coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
+        times, freqs, image, wgt=np.ones((1, 2)), method="Legendre"
+    )
+    ds = build_mds_dataset(
+        coeffs,
+        x_index,
+        y_index,
+        expr,
+        params,
+        texpr,
+        fexpr,
+        times,
+        freqs,
+        cell_rad,
+        nx,
+        ny,
+        0.0,
+        0.0,  # center_x, center_y
+        False,
+        True,
+        False,  # flip_u, flip_v, flip_w
+        (float(radec[0]), float(radec[1])),  # tangent point, from the MS
+        "I",
+        "test",
+    )
+    path = tmp_path / "simple.mds"
+    ds.to_zarr(str(path), mode="w")
+    return str(path), ds
+
+
+def make_multi_spw_ms(src, dest, nchan2, freq_offset=2.0e8, name2="spw-upper"):
+    """Copy an MS and graft on a second spectral window.
+
+    Real multi-SPW data is not in `tests/data`, but the selection and
+    column-creation paths both branch on having more than one, so the tests
+    build one. The new SPW is a distinct DDID with its own NAME, so
+    `--spw-names` can address it.
+
+    Args:
+        src: Measurement set to copy.
+        dest: Destination path.
+        nchan2: Channels in the second SPW. Must equal the first: the MAIN
+            data columns copied here are fixed-shape, so a different count
+            leaves the table internally inconsistent and xarray-ms refuses to
+            open it. A genuinely ragged MS needs variably-shaped DATA columns
+            and has to be built from scratch, which is why the heterogeneous
+            branch of `ensure_model_columns` is tested against a synthetic
+            DataTree instead.
+        freq_offset: Hz to shift the second SPW's band by.
+        name2: NAME for the second SPW.
+
+    Returns:
+        `dest` as a string.
+    """
+    import shutil
+
+    from casacore.tables import table as pctable
+
+    shutil.copytree(src, dest)
+    dest = str(dest)
+
+    with pctable(f"{dest}::SPECTRAL_WINDOW", readonly=False, ack=False) as spw:
+        s0 = spw.nrows()
+        chan_freq = np.asarray(spw.getcell("CHAN_FREQ", 0))
+        chan_width = np.asarray(spw.getcell("CHAN_WIDTH", 0))
+        spw.addrows(1)
+        for col in spw.colnames():
+            try:
+                spw.putcell(col, s0, spw.getcell(col, 0))
+            except Exception:  # noqa: S110 - unset optional columns
+                pass
+        step = float(chan_width.ravel()[0])
+        spw.putcell("CHAN_FREQ", s0, chan_freq[0] + freq_offset + step * np.arange(nchan2))
+        spw.putcell("CHAN_WIDTH", s0, np.full(nchan2, step))
+        spw.putcell("EFFECTIVE_BW", s0, np.full(nchan2, step))
+        spw.putcell("RESOLUTION", s0, np.full(nchan2, step))
+        spw.putcell("NUM_CHAN", s0, nchan2)
+        spw.putcell("NAME", s0, name2)
+
+    with pctable(f"{dest}::DATA_DESCRIPTION", readonly=False, ack=False) as dd:
+        d0 = dd.nrows()
+        dd.addrows(1)
+        for col in dd.colnames():
+            dd.putcell(col, d0, dd.getcell(col, 0))
+        dd.putcell("SPECTRAL_WINDOW_ID", d0, s0)
+
+    with pctable(dest, readonly=False, ack=False) as tab:
+        nrow = tab.nrows()
+        ncorr = np.asarray(tab.getcell("DATA", 0)).shape[-1]
+        tab.addrows(nrow)
+        for col in tab.colnames():
+            try:
+                tab.putcol(col, tab.getcol(col, 0, nrow), nrow, nrow)
+            except Exception:  # noqa: S110 - FLAG_CATEGORY and friends are unset
+                pass
+        tab.putcol("DATA_DESC_ID", np.full(nrow, d0, np.int32), nrow, nrow)
+        # the new rows must carry the second SPW's channel count
+        for col in ("DATA", "MODEL_DATA", "CORRECTED_DATA", "FLAG", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"):
+            if col not in tab.colnames():
+                continue
+            try:
+                sample = np.asarray(tab.getcell(col, 0))
+            except Exception:
+                continue
+            fill = np.zeros((nrow, nchan2, ncorr), sample.dtype)
+            try:
+                tab.putcol(col, fill, nrow, nrow)
+            except Exception:  # noqa: S110 - fixed-shape columns cannot be reshaped
+                pass
+    return dest
+
+
+@pytest.fixture
+def multi_spw_ms(ms_name, tmp_path):
+    """Two spectral windows of equal width: the normal multi-SPW case."""
+    return make_multi_spw_ms(ms_name, tmp_path / "mspw.ms", nchan2=8)
