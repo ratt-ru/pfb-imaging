@@ -27,13 +27,21 @@ dependencies = [
 Homepage = "https://github.com/ratt-ru/pfb-imaging"
 
 [project.optional-dependencies]
-# Full scientific stack
+# Cross-platform scientific stack. Everything here installs from wheels, or
+# from a source build that needs nothing beyond a C/C++ compiler and cmake, on
+# both linux-x86_64 and linux-aarch64. This is what `deconv`, `restore` and the
+# MSv4/xarray-ms path need.
+#
+# Deliberately NOT here (see the casacore/distributed/x86 extras below):
+#   * anything that drags in python-casacore -- no aarch64 wheel has ever been
+#     published, and casacore is on its way out of this project anyway;
+#   * distributed -- only `degrid` still needs it, and it is likewise on the
+#     way out;
+#   * tbb -- Intel ships x86_64/win_amd64 wheels only, and no sdist at all.
 full = [
     "katbeam>=0.1",
     "pfb-model-spec[full]>=0.0.2",
-    "codex-africanus[dask,scipy,astropy,python-casacore] >= 0.4.4",
-    "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
-    "distributed>=2026.3.0",  # still need this for degrid command
+    "codex-africanus[dask,scipy,astropy] >= 0.4.4",
     "reproject",
     "ray[default]>=2.55.0",
     "radiomesh>=0.1.2 ; python_version >= '3.11'",
@@ -43,21 +51,88 @@ full = [
     "numexpr>=2.10.1",
     "ducc0>=0.35.0",
     "sympy>=1.9",
-    "tbb>=2021.13.1",
     "jax[cpu]>=0.4.31",
     "lz4>=4.3.3",
-    "bokeh>=3.1.0",
-    "regions>=0.9",
+    # pfb_imaging.utils.naming imports s3fs at module scope. It used to arrive
+    # incidentally via dask-ms[s3]; now that dask-ms is behind [casacore] it has
+    # to be requested directly. Pure-python, so it costs nothing on any arch.
+    "s3fs",
+    # regions 0.12 is the first release with a manylinux aarch64 wheel, but it
+    # requires python>=3.11. Keep the floor low on 3.10, which is x86-only in
+    # practice anyway (arcae publishes no cp310 aarch64 wheel either).
+    "regions>=0.9 ; python_version < '3.11'",
+    "regions>=0.12 ; python_version >= '3.11'",
     "psutil>=5.9.8",
     "matplotlib>=3.9.2",
-    "distributed>=2024.11.0",
     "pydantic>=2",
     "omegaconf>=2.3",
     "pillow>=12.2.0",
-    "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
+    # meerkat-beams WITHOUT its [full] extra, plus the deps its BeamWizard
+    # actually needs. meerkat_beams.utils.BeamWizard -- the only thing pfb
+    # imports from it -- uses astropy/numpy/scipy/xarray/numcodecs/zarr. The
+    # [full] extra additionally pulls dask-ms (and therefore python-casacore),
+    # which no module in the meerkat-beams source imports, and which would drag
+    # casacore straight back onto the cross-platform path. Revert to
+    # meerkat-beams[<extra>] once dask-ms is split out upstream.
+    #
+    # zarr<3 mirrors meerkat-beams[full]'s own pin rather than relaxing a third
+    # party's constraint. It costs a numcodecs source build on aarch64
+    # (numcodecs only gained aarch64 wheels at 0.16.0, and zarr 2.18 pins
+    # numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
+    "meerkat-beams>=0.0.1 ; python_version >= '3.11'",
+    "xarray",
+    "xarray-fits",
+    "zarr<3",
+    "numcodecs",
+    "astropy",
+    "scipy",
     "xarray-ms>=0.5.5 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
+]
+
+# MSv2 access through casacore. Needed by `imager` (MSv2 input), `hci` and
+# `degrid`; not needed by `deconv` or `restore`, nor by the MSv4/xarray-ms
+# path, which reaches tables through arcae (aarch64 wheels, casacore vendored).
+#
+# python-casacore has never published an aarch64 wheel, so on arm this extra
+# compiles from sdist and needs, on Ubuntu/DGX OS:
+#   apt install casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev cmake
+# dask-ms additionally pins numcodecs<0.16 and zarr<3, and numcodecs only
+# gained aarch64 wheels at 0.16.0 -- so this extra also costs a numcodecs
+# source build on arm until dask-ms moves to zarr 3.x.
+casacore = [
+    "codex-africanus[python-casacore] >= 0.4.4",
+    "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
+]
+
+# dask.distributed scheduler. Only `degrid` still requires it; everything else
+# runs on Ray.
+distributed = [
+    "distributed>=2026.3.0",
+    "bokeh>=3.1.0",
+]
+
+# x86_64-only accelerators. The marker is deliberate and not redundant with the
+# extra name: it makes `[x86]` a harmless no-op on other architectures, so the
+# `all` aggregate below and any copy-pasted install command stay valid on arm.
+#
+# tbb: Intel publishes manylinux_2_28_x86_64 + win_amd64 wheels and no sdist,
+# for every version ever released. numba falls back to its OpenMP layer
+# elsewhere -- see pfb_imaging.__init__._default_threading_layer().
+x86 = [
+    "tbb>=2021.13.1 ; platform_machine == 'x86_64'",
+]
+
+# Everything, i.e. the pre-split `full`. Safe on every architecture: the x86
+# extra resolves to nothing off x86_64.
+all = [
+    "pfb-imaging[full]",
+    # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
+    "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
+    "pfb-imaging[casacore]",
+    "pfb-imaging[distributed]",
+    "pfb-imaging[x86]",
 ]
 
 [project.scripts]
