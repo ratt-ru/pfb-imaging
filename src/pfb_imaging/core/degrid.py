@@ -8,11 +8,19 @@ import psutil
 import sympy as sm
 import xarray as xr
 from africanus.model.coherency.dask import convert
-from dask.distributed import get_client, wait
 from dask.graph_manipulation import clone
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms import xds_to_storage_table as xds_to_table
-from daskms.fsspec_store import DaskMSStore
+
+from pfb_imaging.utils.optional import optional_dependency
+
+# dask-ms and distributed are both optional extras ([casacore] and
+# [distributed]); degrid is the only command that still needs either. Guarded
+# here rather than in cli/degrid.py because hip-cargo round-trips the CLI
+# module against its cab definition byte for byte.
+with optional_dependency("The degrid command"):
+    from dask.distributed import get_client, wait
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_to_storage_table as xds_to_table
+    from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from regions import Regions
 from sympy.parsing.sympy_parser import parse_expr
