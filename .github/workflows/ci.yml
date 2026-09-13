@@ -71,15 +71,85 @@ jobs:
         run: uv run ruff check .
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.arch }}, py${{ matrix.python-version }}, ${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    # The aarch64 casacore leg is informational: python-casacore has never
+    # published an aarch64 wheel, so it compiles from sdist against the
+    # runner's casacore-dev and can break for reasons outside this repo. It
+    # reports arm casacore health without gating the merge.
+    continue-on-error: ${{ matrix.experimental }}
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
+      # ducc0 has no manylinux aarch64 wheel and is compiled from sdist on the
+      # arm legs. Its CMakeLists defaults DUCC0_ARCH_FLAGS to -march=native,
+      # which is not reproducible across runner revisions; pin a baseline.
+      CMAKE_ARGS: ${{ matrix.cmake_args }}
 
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          # ---- x86_64: full coverage, everything installed (was `--extra full`)
+          - runner: ubuntu-latest
+            arch: x86_64
+            python-version: "3.11"
+            extras: "--extra all"
+            label: all
+            apt_casacore: false
+            experimental: false
+            cmake_args: ""
+          - runner: ubuntu-latest
+            arch: x86_64
+            python-version: "3.12"
+            extras: "--extra all"
+            label: all
+            apt_casacore: false
+            experimental: false
+            cmake_args: ""
+          - runner: ubuntu-latest
+            arch: x86_64
+            python-version: "3.13"
+            extras: "--extra all"
+            label: all
+            apt_casacore: false
+            experimental: false
+            cmake_args: ""
+
+          # ---- x86_64: prove the cross-platform extra really is self-contained.
+          # Without this, a stray top-level `from daskms import ...` would only
+          # be caught on the (slower, arm) legs.
+          - runner: ubuntu-latest
+            arch: x86_64
+            python-version: "3.12"
+            extras: "--extra full"
+            label: full-only
+            apt_casacore: false
+            experimental: false
+            cmake_args: ""
+
+          # ---- aarch64 on GitHub's free ubuntu-24.04-arm runners.
+          # This is the DGX Spark target. [full] needs only a ducc0 source
+          # build, so the leg stays fast enough to gate on.
+          # 3.10 is deliberately absent: arcae ships no cp310 aarch64 wheel.
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            python-version: "3.12"
+            extras: "--extra full"
+            label: full-only
+            apt_casacore: false
+            experimental: false
+            cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
+
+          # ---- aarch64 + casacore: informational (see continue-on-error above).
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            python-version: "3.12"
+            extras: "--extra all"
+            label: all
+            apt_casacore: true
+            experimental: true
+            cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
 
     steps:
       - name: Check for skip checks
@@ -105,6 +175,25 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Native build dependencies for the closure members with no aarch64
+      # wheel. ducc0 needs only cmake + a C++17 compiler; python-casacore
+      # (behind the [casacore] extra) additionally needs the casacore C++
+      # stack, and dask-ms's numcodecs<0.16 pin means a numcodecs source
+      # build too.
+      - name: Install aarch64 build dependencies
+        if: env.SKIP_CHECKS != 'true' && matrix.arch == 'aarch64'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config
+          if [ "${{ matrix.apt_casacore }}" = "true" ]; then
+            # Surface a missing arm64 casacore-dev here, with a readable
+            # message, rather than halfway through the python-casacore compile.
+            apt-cache policy casacore-dev
+            sudo apt-get install -y --no-install-recommends \
+              casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev
+          fi
+
       - name: Set up uv
         if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v7
@@ -128,15 +217,15 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         uses: actions/cache@v6
         with:
-          key: numba-cache-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
-          restore-keys: numba-cache-${{ matrix.python-version }}-
+          key: numba-cache-${{ matrix.arch }}-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
+          restore-keys: numba-cache-${{ matrix.arch }}-${{ matrix.python-version }}-
           path: ${{ env.NUMBA_CACHE_DIR }}
 
       # Bump the version suffix to refresh the measures data. The key is a
       # constant so no third-party request is made on a cache hit -- the
       # previous etag fingerprint contacted astron.nl on every matrix leg.
       - name: Load cached CASA Measures Data
-        if: env.SKIP_CHECKS != 'true'
+        if: env.SKIP_CHECKS != 'true' && contains(matrix.extras, 'all')
         id: load-cached-casa-measures
         uses: actions/cache@v6
         with:
@@ -146,7 +235,7 @@ jobs:
             ~/.casarc
 
       - name: Download and install CASA Measures Data
-        if: env.SKIP_CHECKS != 'true' && steps.load-cached-casa-measures.outputs.cache-hit != 'true'
+        if: env.SKIP_CHECKS != 'true' && contains(matrix.extras, 'all') && steps.load-cached-casa-measures.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p ~/measures
@@ -165,13 +254,56 @@ jobs:
           tar xzf WSRT_Measures.ztar -C ~/measures
           echo "measures.directory: ~/measures" > ~/.casarc
 
+      # Source-build cache. Without it every arm run repays the full ducc0
+      # (and, on the casacore leg, python-casacore + numcodecs) compile.
+      # Keyed on uv.lock so it invalidates exactly when a pinned version moves.
+      - name: Cache source builds (aarch64)
+        if: env.SKIP_CHECKS != 'true' && matrix.arch == 'aarch64'
+        uses: actions/cache@v6
+        with:
+          key: aarch64-builds-${{ matrix.python-version }}-${{ matrix.label }}-${{ hashFiles('uv.lock') }}
+          restore-keys: aarch64-builds-${{ matrix.python-version }}-${{ matrix.label }}-
+          path: ~/.cache/uv
+
       - name: Install pfb-imaging
         if: env.SKIP_CHECKS != 'true'
-        run: uv sync --extra full --group dev --frozen
+        run: uv sync ${{ matrix.extras }} --group dev --frozen
 
       - name: Run pfb-imaging
         if: env.SKIP_CHECKS != 'true'
         run: uv run pfb --help
+
+      # Guards the silent failure mode: a build that installs and imports
+      # cleanly but has no working numba threading layer (TBB requested where
+      # no TBB exists), or a ducc0 compiled without its NEON paths. Both give a
+      # correct-but-slow pipeline that no functional test would catch.
+      - name: Report build configuration
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          uv run --frozen python - <<'PY'
+          import os
+          import platform
+
+          import ducc0
+          import numba
+          import numpy as np
+          from numba import njit, prange
+
+          @njit(parallel=True, cache=False)
+          def _touch(a):
+              total = 0.0
+              for i in prange(a.size):
+                  total += a[i]
+              return total
+
+          assert _touch(np.ones(1024)) == 1024.0
+          print("machine        :", platform.machine())
+          print("ducc0          :", ducc0.__version__)
+          print("numba          :", numba.__version__)
+          print("requested layer:", os.environ.get("NUMBA_THREADING_LAYER"))
+          print("actual layer   :", numba.threading_layer())
+          assert numba.threading_layer() in ("tbb", "omp", "workqueue")
+          PY
 
       # pyproject's addopts deselect `slow` so the local dev loop stays fast.
       # CI is the only place the end-to-end pipeline tests run, so guard against
