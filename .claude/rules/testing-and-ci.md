@@ -16,13 +16,13 @@ The distinction that *is* load-bearing is the `full` extra:
 
 ```bash
 uv sync --group dev                 # lint/cab tooling only — the Code Quality job
-uv sync --extra full --group dev    # + the scientific stack — tests, and local work
+uv sync --extra all --group dev    # + the scientific stack — tests, and local work
 ```
 
 **Never put `pfb-imaging[full]` into the `dev` group.** `dev` is a uv default group, so
 doing so drags ray/ducc0/jax/dask-ms/africanus into `uv sync --group dev` — i.e. into the
 Code Quality job, whose entire body is `ruff format --check .` and `ruff check .`, and into
-`update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra full`
+`update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra all`
 explicitly.
 
 ### arcae / python-casacore coexistence

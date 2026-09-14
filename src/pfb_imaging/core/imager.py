@@ -12,7 +12,6 @@ import psutil
 import ray
 import xarray as xr
 import zarr
-from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard
 from msv4_utils import MSv4Backend, infer_backend
@@ -44,6 +43,21 @@ warnings.filterwarnings("ignore", category=IrregularGridWarning)
 warnings.filterwarnings("ignore", category=MissingMetadataWarning)
 warnings.filterwarnings("ignore", category=FrameConversionWarning)
 warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
+
+
+def DaskMSStore(path):  # noqa: N802 -- drop-in for the dask-ms class of the same name
+    """Lazily-imported daskms.fsspec_store.DaskMSStore.
+
+    dask-ms is behind the optional [casacore] extra: it depends on
+    python-casacore unconditionally, and python-casacore has never published a
+    linux-aarch64 wheel. Only the store wrapper is needed here, and only inside
+    functions that touch an MS or an on-disk dataset -- importing it at module
+    scope would make this module (and the casacore-free pass-2 helpers in it)
+    unimportable on a [full]-only install.
+    """
+    from daskms.fsspec_store import DaskMSStore as _DaskMSStore
+
+    return _DaskMSStore(path)
 
 
 log = pfb_logging.get_logger("IMAGER")

@@ -16,8 +16,17 @@ from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms.fsspec_store import DaskMSStore
+
+from pfb_imaging.utils.optional import optional_dependency
+
+# dask-ms (and therefore python-casacore, which has no linux-aarch64 wheel)
+# lives behind the optional [casacore] extra. Guard the import here rather than
+# in cli/hci.py: hip-cargo round-trips the CLI module against the cab
+# definition and requires it to match the generated form byte for byte, so the
+# command body cannot carry extra statements.
+with optional_dependency("The hci command"):
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms.fsspec_store import DaskMSStore
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard

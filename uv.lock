@@ -2610,7 +2610,7 @@ full = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "wget", marker = "python_full_version >= '3.11'" },
     { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "xarray-fits", marker = "python_full_version >= '3.11'" },
+    { name = "xarray-fits", version = "0.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
@@ -3500,7 +3500,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-full = [
+all = [
+    { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "bokeh" },
     { name = "codex-africanus", extra = ["astropy", "dask", "python-casacore", "scipy"] },
     { name = "dask-ms", extra = ["katdal", "s3", "xarray", "zarr"] },
@@ -3513,6 +3515,8 @@ full = [
     { name = "matplotlib" },
     { name = "meerkat-beams", extra = ["full"], marker = "python_full_version >= '3.11'" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11'" },
+    { name = "numcodecs", version = "0.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numcodecs", version = "0.15.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numexpr" },
     { name = "omegaconf" },
     { name = "pfb-model-spec", extra = ["full"] },
@@ -3525,15 +3529,79 @@ full = [
     { name = "rarg-numba-patterns" },
     { name = "ray", extra = ["default"] },
     { name = "regions", version = "0.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "regions", version = "0.11", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "regions", version = "0.12", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "reproject", version = "0.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "reproject", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "s3fs" },
     { name = "scikit-image", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-image", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sympy" },
-    { name = "tbb" },
+    { name = "tbb", marker = "platform_machine == 'x86_64'" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "xarray-fits", version = "0.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray-fits", version = "0.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "xarray-kat", marker = "python_full_version >= '3.11'" },
     { name = "xarray-ms", marker = "python_full_version >= '3.11'" },
+    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+casacore = [
+    { name = "codex-africanus", extra = ["python-casacore"] },
+    { name = "dask-ms", extra = ["katdal", "s3", "xarray", "zarr"] },
+]
+distributed = [
+    { name = "bokeh" },
+    { name = "distributed" },
+]
+full = [
+    { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "codex-africanus", extra = ["astropy", "dask", "scipy"] },
+    { name = "ducc0" },
+    { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "jax", version = "0.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "katbeam" },
+    { name = "lz4" },
+    { name = "matplotlib" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11'" },
+    { name = "msv4-utils", marker = "python_full_version >= '3.11'" },
+    { name = "numcodecs", version = "0.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numcodecs", version = "0.15.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numexpr" },
+    { name = "omegaconf" },
+    { name = "pfb-model-spec", extra = ["full"] },
+    { name = "pillow" },
+    { name = "psutil" },
+    { name = "pydantic" },
+    { name = "pywavelets", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pywavelets", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "radiomesh", marker = "python_full_version >= '3.11'" },
+    { name = "rarg-numba-patterns" },
+    { name = "ray", extra = ["default"] },
+    { name = "regions", version = "0.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "regions", version = "0.12", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "reproject", version = "0.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "reproject", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "s3fs" },
+    { name = "scikit-image", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-image", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "sympy" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "xarray-fits", version = "0.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray-fits", version = "0.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "xarray-kat", marker = "python_full_version >= '3.11'" },
+    { name = "xarray-ms", marker = "python_full_version >= '3.11'" },
+    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+x86 = [
+    { name = "tbb", marker = "platform_machine == 'x86_64'" },
 ]
 
 [package.dev-dependencies]
@@ -3552,21 +3620,28 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
-    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
-    { name = "dask-ms", extras = ["s3", "xarray", "zarr", "katdal"], marker = "extra == 'full'", specifier = ">=0.2.31" },
-    { name = "distributed", marker = "extra == 'full'", specifier = ">=2024.11.0" },
-    { name = "distributed", marker = "extra == 'full'", specifier = ">=2026.3.0" },
+    { name = "astropy", marker = "extra == 'full'" },
+    { name = "bokeh", marker = "extra == 'distributed'", specifier = ">=3.1.0" },
+    { name = "codex-africanus", extras = ["dask", "scipy", "astropy"], marker = "extra == 'full'", specifier = ">=0.4.4" },
+    { name = "codex-africanus", extras = ["python-casacore"], marker = "extra == 'casacore'", specifier = ">=0.4.4" },
+    { name = "dask-ms", extras = ["s3", "xarray", "zarr", "katdal"], marker = "extra == 'casacore'", specifier = ">=0.2.31" },
+    { name = "distributed", marker = "extra == 'distributed'", specifier = ">=2026.3.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", specifier = ">=0.3.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.1" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.1" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.0.1" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
+    { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "omegaconf", marker = "extra == 'full'", specifier = ">=2.3" },
+    { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
+    { name = "pfb-imaging", extras = ["distributed"], marker = "extra == 'all'" },
+    { name = "pfb-imaging", extras = ["full"], marker = "extra == 'all'" },
+    { name = "pfb-imaging", extras = ["x86"], marker = "extra == 'all'" },
     { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", specifier = ">=0.0.2" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
@@ -3575,15 +3650,21 @@ requires-dist = [
     { name = "radiomesh", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.1.2" },
     { name = "rarg-numba-patterns", marker = "extra == 'full'", specifier = ">=0.0.1" },
     { name = "ray", extras = ["default"], marker = "extra == 'full'", specifier = ">=2.55.0" },
-    { name = "regions", marker = "extra == 'full'", specifier = ">=0.9" },
+    { name = "regions", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.12" },
+    { name = "regions", marker = "python_full_version < '3.11' and extra == 'full'", specifier = ">=0.9" },
     { name = "reproject", marker = "extra == 'full'" },
+    { name = "s3fs", marker = "extra == 'full'" },
     { name = "scikit-image", marker = "extra == 'full'", specifier = ">=0.24.0" },
+    { name = "scipy", marker = "extra == 'full'" },
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
-    { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
+    { name = "tbb", marker = "platform_machine == 'x86_64' and extra == 'x86'", specifier = ">=2021.13.1" },
+    { name = "xarray", marker = "extra == 'full'" },
+    { name = "xarray-fits", marker = "extra == 'full'" },
     { name = "xarray-kat", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.6" },
     { name = "xarray-ms", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.5.5" },
+    { name = "zarr", marker = "extra == 'full'", specifier = "<3" },
 ]
-provides-extras = ["full"]
+provides-extras = ["full", "casacore", "distributed", "x86", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4668,7 +4749,7 @@ wheels = [
 
 [[package]]
 name = "regions"
-version = "0.11"
+version = "0.12"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -4685,12 +4766,14 @@ dependencies = [
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/aa/a2fd8cbf0b2149eeb4adeccfbdc099a88ae45214fe81fb7eab045ac79bd5/regions-0.11.tar.gz", hash = "sha256:000adad78a2de9669a089a1e1fe829ae12ac4e863b5de346ee95723fc6dcae36", size = 672696, upload-time = "2025-11-05T16:32:11.015Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/86/44ff464efa2777247d6addc74416059f1872ab05c88588bbe1aadca27a7c/regions-0.12.tar.gz", hash = "sha256:1c9460770f250ef299e90a9d5c0b35941f7d05bbf879f6ffaa0538250c018ef9", size = 273609, upload-time = "2026-06-24T20:10:17.78Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/32/0b30c98a2c8602ebef0954ad0ee07e152cc0f5ef5bd4b9c0bd5377e458e7/regions-0.11-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:a478206e4af0c824a41d8c1a184bd46304876c08757fb3b6a1064cb0296ae9a3", size = 315637, upload-time = "2025-11-05T16:32:04.812Z" },
-    { url = "https://files.pythonhosted.org/packages/99/50/2f5e1d8cea3cea0dddc5d73c2f259742312f462d46feafcca660f7b5a780/regions-0.11-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:1639e82278deb88c9321f9a4cbc3f2c31dc39d57b18f4c76d51e1a9495a939fc", size = 321951, upload-time = "2025-11-05T16:32:06.427Z" },
-    { url = "https://files.pythonhosted.org/packages/97/ef/dae62c1ab18c7a65ea9dedc392477dd3d401c7363d37cfe0d5e14ccf4201/regions-0.11-cp311-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:9bac79ffc6f655c2a38970235bf183bde4df79bc01ebb099296c13bc1fb2c888", size = 851688, upload-time = "2025-11-05T16:32:08.118Z" },
-    { url = "https://files.pythonhosted.org/packages/64/33/6beef26e2ed17067fc816f7281da19860bf29577c55f67e2b7f3090ea165/regions-0.11-cp311-abi3-win_amd64.whl", hash = "sha256:806337cb3dfed92a5726ba94be09ad0b5d776581a7652c310a77655f80407082", size = 336955, upload-time = "2025-11-05T16:32:09.463Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/54/522c22134112a40a115841fb2363b2b482ea113cd1e6c4f629bd6b279b2c/regions-0.12-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:2727ff09d09b8fed96dc5978885b9ef6e11486ac0c3fff6ce57356bd02509e20", size = 614271, upload-time = "2026-06-24T20:10:08.275Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/bc/ca856338a2b7254fac5a0259bf7f5cbe7568324e4ea7a66844a8206f1d93/regions-0.12-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:6ca104c94d26483849f6691b816157b445782fa635e918104a97696de6609e46", size = 615432, upload-time = "2026-06-24T20:10:09.738Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/a2/fe550b219404e98f2afc742ebb1d1bcd27888a6ad48ce60baf5fa96bde97/regions-0.12-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:bf5a6d8f1060607eab07f131cf12709ef7c4e9b1918d4aa269572e6c49e68b12", size = 2410524, upload-time = "2026-06-24T20:10:11.56Z" },
+    { url = "https://files.pythonhosted.org/packages/92/4c/21bed50e1f86aa9fc5148318057f23d68d81f9ce0c1b31038e6c5c0e9547/regions-0.12-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e3b74d83fc4042430e8f11a0f1a3939ec6f95a7244a7103caeb6ad115d845acf", size = 2426898, upload-time = "2026-06-24T20:10:13.042Z" },
+    { url = "https://files.pythonhosted.org/packages/04/13/ae59129e3dd9728b797affd48fc7e5e80db6f88197bf93a4a9950da43094/regions-0.12-cp311-abi3-win_amd64.whl", hash = "sha256:62c05e65f13bf11c70a8ec0c13110e3a8a510bfa00f18ebf4d804d8c1aa08ea4", size = 587014, upload-time = "2026-06-24T20:10:14.619Z" },
+    { url = "https://files.pythonhosted.org/packages/25/08/c4442159e8a18e3cf30f26e7ac4fa139aa1fae23748a52c083d9a44ddaa8/regions-0.12-cp311-abi3-win_arm64.whl", hash = "sha256:200fda5616a2e07e8e1b1778da92b29c46c5fbfbc781f26321c4fd2780dd312a", size = 542963, upload-time = "2026-06-24T20:10:16.106Z" },
 ]
 
 [[package]]
@@ -5874,8 +5957,35 @@ wheels = [
 
 [[package]]
 name = "xarray-fits"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "dask", marker = "python_full_version < '3.11'" },
+    { name = "six", marker = "python_full_version < '3.11'" },
+    { name = "toolz", marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/62/ae/89d9b09ddbbb86ce300e29a1e995b5c6029155badbcfd95ee2bc625a34b9/xarray-fits-0.1.2.tar.gz", hash = "sha256:bb0ddc9700ad8262cdc497db9995a54a2100a2a68a775a7d60bc3e52829ce292", size = 18085, upload-time = "2018-03-27T10:26:21.547Z" }
+
+[[package]]
+name = "xarray-fits"
 version = "0.2.6"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform == 'win32'",
+    "python_full_version >= '3.13' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
 dependencies = [
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "dask", extra = ["array"], marker = "python_full_version >= '3.11'" },

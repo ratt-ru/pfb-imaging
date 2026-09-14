@@ -25,7 +25,7 @@ _include:
 To run the code natively you need to install the full stack using
 
 ```bash
-pip install "pfb-imaging[full]"
+pip install "pfb-imaging[all]"
 ```
 
 For maximum performance install `ducc0` in no-binary mode:
@@ -33,6 +33,44 @@ For maximum performance install `ducc0` in no-binary mode:
 ```bash
 pip install ducc0 --no-binary ducc0
 ```
+
+**Extras:**
+
+The dependencies are split so the cross-platform stack installs cleanly on
+`linux-aarch64` (NVIDIA DGX Spark / GB10, Grace, Graviton) as well as
+`linux-x86_64`:
+
+| extra | contents | notes |
+|---|---|---|
+| `full` | the cross-platform scientific stack | everything `deconv`, `restore` and the MSv4/`xarray-ms` path need |
+| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | MSv2 access for `imager`, `hci`, `degrid`. No aarch64 wheel — see below |
+| `distributed` | `distributed`, `bokeh` | only `degrid` still needs it |
+| `x86` | `tbb` | x86_64-only; a no-op elsewhere |
+| `all` | all of the above | safe on every architecture |
+
+`pip install "pfb-imaging[full]"` is enough for deconvolution and restoration.
+Add `casacore` only if you need to read MSv2 tables through `dask-ms`.
+
+**On linux-aarch64:**
+
+```bash
+# ducc0 has no aarch64 wheel and is compiled from sdist; pin the arch flags
+# rather than letting its default -march=native guess on a big.LITTLE CPU
+sudo apt install build-essential cmake ninja-build
+export CMAKE_ARGS="-DDUCC0_ARCH_FLAGS=-mcpu=cortex-x925"   # GB10; or -march=armv8.2-a
+pip install "pfb-imaging[full]"
+```
+
+Adding `[casacore]` on aarch64 additionally compiles `python-casacore` (no
+aarch64 wheel has ever been published) and `numcodecs`, and needs:
+
+```bash
+sudo apt install casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev
+```
+
+Numba's threading layer follows the architecture: TBB on x86_64, OpenMP
+elsewhere (Intel ships no aarch64 TBB). Override with
+`PFB_NUMBA_THREADING_LAYER`.
 
 See the [Development](#development) section for instructions on how to set the package up in development mode and make contributions.
 
@@ -225,7 +263,7 @@ git clone https://github.com/ratt-ru/pfb-imaging.git
 cd pfb-imaging
 
 # Install dependencies with development tools
-uv sync --extra full --group dev
+uv sync --extra all --group dev
 
 # Install pre-commit hooks (recommended)
 uv run pre-commit install --hook-type commit-msg

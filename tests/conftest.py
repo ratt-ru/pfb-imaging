@@ -20,6 +20,7 @@ os.environ.setdefault("RAY_NUM_CPUS", "2")
 # come before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
+import importlib.util  # noqa: E402
 import shutil  # noqa: E402
 import tarfile  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -70,8 +71,16 @@ gdrive_id = "1rfGXGjjJ2XtF26LImlyJzCJMCNQZgEFT"
 url = "https://drive.google.com/uc?id={id}".format(id=gdrive_id)
 
 
+def _have_daskms():
+    return importlib.util.find_spec("daskms") is not None
+
+
 def pytest_sessionstart(session):
     """Called after Session object has been created, before run test loop."""
+
+    if not _have_daskms():
+        print("dask-ms not installed ([casacore] extra) - skipping MS test data download.")
+        return
 
     if ms_path.exists():
         print("Test data already present - not downloading.")
@@ -88,6 +97,15 @@ def pytest_sessionstart(session):
 
 @pytest.fixture(scope="session")
 def ms_name():
+    """Path to the shared MSv2 test set.
+
+    dask-ms and python-casacore live behind the optional [casacore] extra --
+    python-casacore has never published a linux-aarch64 wheel -- and the MS
+    itself is not even downloaded without them (see pytest_sessionstart). Every
+    MSv2-backed test reaches the data through this fixture, so skipping here
+    cascades to all of them instead of erroring one by one.
+    """
+    pytest.importorskip("daskms", reason="MSv2 tests need the [casacore] extra")
     return str(ms_path)
 
 
@@ -97,6 +115,8 @@ def ms_meta(ms_name):
 
     Reading the MS and extracting uvw/freq/times once per session avoids
     re-doing the same I/O and reductions in every test.
+
+    Skipped without the [casacore] extra by way of the ms_name fixture.
     """
     from daskms import xds_from_ms, xds_from_table
 
@@ -335,3 +355,9 @@ def sky_truth(ms_name, ms_meta, image_geometry):
         wcs=w,
         sky_coords=sky_coords,
     )
+
+
+# Modules that import dask-ms at module scope. pytest reports a collection-time
+# ImportError as an error rather than a skip, so these have to be excluded
+# before collection when the [casacore] extra is not installed.
+collect_ignore = [] if _have_daskms() else ["test_hci.py", "test_imager_pol.py"]
