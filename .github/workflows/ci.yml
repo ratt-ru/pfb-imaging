@@ -190,8 +190,15 @@ jobs:
             # Surface a missing arm64 casacore-dev here, with a readable
             # message, rather than halfway through the python-casacore compile.
             apt-cache policy casacore-dev
+            # libopenblas-dev is not optional: casacore's FindCasacore.cmake does
+            # casacore_find_package(BLAS REQUIRED) and (LAPACK REQUIRED) for the
+            # scimath_f component. x86_64 never hits it because python-casacore has
+            # a manylinux wheel there and nothing compiles. OpenBLAS bundles LAPACK,
+            # so one package satisfies both; add liblapack-dev if FindLAPACK ever
+            # fails independently.
             sudo apt-get install -y --no-install-recommends \
-              casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev
+              casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev \
+              libopenblas-dev
           fi
 
       - name: Set up uv
@@ -284,6 +291,17 @@ jobs:
           import os
           import platform
 
+          # pfb_imaging FIRST, and then set_envs(), which is what every pfb
+          # command does. Importing runs _default_threading_layer() and sets
+          # NUMBA_THREADING_LAYER before numba loads; set_envs() additionally
+          # ctypes-loads the libtbb.so bundled in the tbb wheel, which the
+          # dynamic linker does not find on its own. Without both, this step
+          # measures numba's bare default and says nothing about the selection
+          # logic this port turns on.
+          import pfb_imaging
+
+          pfb_imaging.set_envs(2, 2)
+
           import ducc0
           import numba
           import numpy as np
@@ -300,9 +318,21 @@ jobs:
           print("machine        :", platform.machine())
           print("ducc0          :", ducc0.__version__)
           print("numba          :", numba.__version__)
-          print("requested layer:", os.environ.get("NUMBA_THREADING_LAYER"))
-          print("actual layer   :", numba.threading_layer())
-          assert numba.threading_layer() in ("tbb", "omp", "workqueue")
+          requested = os.environ["NUMBA_THREADING_LAYER"]
+          actual = numba.threading_layer()
+          print("tbb installed  :", pfb_imaging._tbb_available())
+          print("requested layer:", requested)
+          print("actual layer   :", actual)
+
+          # "default" is numba's tbb -> omp -> workqueue chain; anything else is a
+          # specific demand and must be honoured exactly.
+          if requested != "default":
+              assert actual == requested, f"asked for {requested}, got {actual}"
+
+          # Landing on workqueue means neither TBB nor libgomp loaded: the build
+          # works but has lost real threading, which no functional test notices.
+          # Every runner image here has libgomp, so treat it as a failure.
+          assert actual in ("tbb", "omp"), f"no real threading layer: {actual}"
           PY
 
       # pyproject's addopts deselect `slow` so the local dev loop stays fast.

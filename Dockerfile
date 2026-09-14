@@ -25,7 +25,8 @@ COPY src/ src/
 # compiled from sdist during the install below:
 #   ducc0            scikit-build-core + nanobind/pybind11 -> cmake, C++17
 #   python-casacore  scikit-build-core -> cmake, casacore-dev, boost-python,
-#                    cfitsio, wcslib                        ([casacore] extra)
+#                    cfitsio, wcslib, and BLAS+LAPACK -- casacore's
+#                    FindCasacore.cmake marks both REQUIRED ([casacore] extra)
 #   numcodecs        setuptools + Cython -> C compiler      ([casacore] extra,
 #                    via dask-ms's numcodecs<0.16 pin)
 #   python-lzf       tiny C extension -> C compiler         ([casacore] extra)
@@ -36,7 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && if [ "$TARGETARCH" = "arm64" ]; then \
          apt-get install -y --no-install-recommends \
            cmake ninja-build pkg-config python3-dev \
-           casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev ; \
+           casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev \
+           libopenblas-dev ; \
        fi \
     && rm -rf /var/lib/apt/lists/*
 
