@@ -166,6 +166,22 @@ def check_tangent_point(
             )
 
 
+def _load_model(mds: str) -> xr.Dataset:
+    """Load a `.mds` into memory. Module level so a `Multiton` can pickle it."""
+    return xr.open_zarr(mds).load()
+
+
+def _load_masks(mds: str, region_file: str | None) -> list[np.ndarray]:
+    """Rebuild the region masks in a replica from the paths alone.
+
+    Goes through `Multiton(_load_model, mds)` rather than loading the `.mds`
+    again: the key is the one the `model` Multiton uses, so in a replica this
+    is a cache hit on the dataset that replica has already loaded, and on the
+    driver (which never touches either) it costs nothing.
+    """
+    return build_region_masks(Multiton(_load_model, mds).instance, region_file)
+
+
 @dataclass(frozen=True)
 class WorkItem:
     """One `(time, frequency)` region of one node of one MS.
@@ -199,8 +215,8 @@ class Degridder:
     def __init__(
         self,
         datatrees: Sequence[Multiton],
-        model_ds: xr.Dataset,
-        masks: Sequence[np.ndarray],
+        model: Multiton,
+        masks: Multiton,
         columns: Sequence[str],
         accumulate: bool = False,
         epsilon: float = 1e-7,
@@ -212,10 +228,16 @@ class Degridder:
         # `.instance` before the model columns exist, or replicas inherit a
         # tree that predates them.
         self._datatrees = list(datatrees)
-        # the .mds is small (coefficients at component locations) and every
-        # region needs all of it, so it travels as a plain loaded Dataset
-        self._model_ds = model_ds
-        self._masks = list(masks)
+        # The .mds and the masks are Multitons for the same reason, and here it
+        # is load bearing rather than tidy: Serve cloudpickles these init args
+        # and checkpoints them into the GCS internal KV store, whose gRPC
+        # message cap is 512 MiB (RAY_max_grpc_message_size). A .mds is only
+        # "small" relative to visibilities -- a real deconvolution of a crowded
+        # field runs to millions of components (633 MB for 8.8M of them), and
+        # an all-ones 6720^2 mask adds another 361 MB, so binding the loaded
+        # objects blows the cap before a single region is degridded (#278).
+        self._model = model
+        self._masks = masks
         self._columns = list(columns)
         self._accumulate = accumulate
         self._epsilon = epsilon
@@ -231,8 +253,8 @@ class Degridder:
             write_ds = degrid_region(
                 node_ds,
                 region=item.region,
-                model_ds=self._model_ds,
-                masks=self._masks,
+                model_ds=self._model.instance,
+                masks=self._masks.instance,
                 columns=self._columns,
                 corr_types=tuple(str(p) for p in node_ds.polarization.values),
                 accumulate=self._accumulate,
@@ -406,8 +428,13 @@ def degrid_msv4(
         mds = _default_mds(output_filename, suffix)
     elif not fsspec.filesystem("file").exists(mds):
         raise ValueError(f"No mds at {mds}")
-    # small enough to hold in memory, and every region needs all of it
-    model_ds = xr.open_zarr(mds).load()
+    # absolute, because these two paths are now reopened by the replicas rather
+    # than shipped to them, and a Ray worker's cwd is its own session directory
+    mds = str(Path(mds).resolve())
+    if region_file is not None:
+        region_file = str(Path(region_file).resolve())
+    # the driver loads it for the guards below; replicas reopen it themselves
+    model_ds = _load_model(mds)
 
     geom = check_model(model_ds, product)
     log.info(
@@ -421,6 +448,8 @@ def degrid_msv4(
         freq_min = float(fmin) if fmin else -np.inf
         freq_max = float(fmax) if fmax else np.inf
 
+    # built here only to count the columns and to fire the overlapping-region
+    # guard before a Ray cluster exists; the replicas build their own
     masks = build_region_masks(model_ds, region_file)
     columns = [model_column] + [f"{model_column}{i}" for i in range(1, len(masks))]
     log.info(f"Writing {len(columns)} column(s): {', '.join(columns)}")
@@ -486,8 +515,8 @@ def degrid_msv4(
         },
     ).bind(
         datatrees=datatrees,
-        model_ds=model_ds,
-        masks=masks,
+        model=Multiton(_load_model, mds),
+        masks=Multiton(_load_masks, mds, region_file),
         columns=columns,
         accumulate=accumulate,
         epsilon=epsilon,
