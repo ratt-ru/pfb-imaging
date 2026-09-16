@@ -83,7 +83,7 @@ def degrid(
         mslist = msstore.fs.glob(str(ms_name).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_name}", ValueError)
     ms = msnames

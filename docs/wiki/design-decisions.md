@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-10T15:04:42Z
-last_verified_commit: 4bb6825
+timestamp: 2026-09-16T08:30:00Z
+last_verified_commit: 05ff79b
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1352,7 +1352,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   The driver is also an ordinary synchronous function rather than a deployment of its own —
   with the write fused there is one hop, so a `deque` of responses drained oldest-first
   gives the same backpressure without asyncio.
-- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278.
+- **Amendment (#331):** the `.mds` and the region masks are bound as `Multiton`s too, not
+  just the `DataTree`. Serve cloudpickles a deployment's init args into the GCS internal KV
+  store, whose gRPC cap is 512 MiB; a real model (8.8M components = 633 MB) plus an
+  all-ones 6720² mask (361 MB) exceeds it and the run dies before degridding anything.
+  Binding paths and reconstructing per replica is the only shape that scales. Two
+  consequences follow: the paths must be made absolute before binding (a Ray worker's cwd
+  is its own session directory), and `Degridder.degrid` must **not** call
+  `_release_ms_caches()` — that clears the entire class-level Multiton cache and would
+  reload the `.mds` on every work item (wiki memory-and-ray, layer 3).
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278, PR #331.
 
 ### D39 — the degrid chunk's representative time and frequency are unweighted means
 

@@ -43,7 +43,6 @@ from pfb_imaging.utils.degrid_msv4 import (
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import set_output_names
-from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
 log = pfb_logging.get_logger("DEGRID_MSV4")
 
@@ -238,6 +237,11 @@ class Degridder:
         # objects blows the cap before a single region is degridded (#278).
         self._model = model
         self._masks = masks
+        # Dereferenced once per replica on the first work item and held. The
+        # Multiton cache has a 300 s *inactivity* TTL, so leaving a 633 MB .mds
+        # behind it would let a quiet replica drop and reload it mid-run.
+        self._model_ds: xr.Dataset | None = None
+        self._mask_list: list[np.ndarray] | None = None
         self._columns = list(columns)
         self._accumulate = accumulate
         self._epsilon = epsilon
@@ -248,13 +252,16 @@ class Degridder:
     def degrid(self, item: WorkItem) -> dict:
         """Degrid and write one region. Returns post-gc memory telemetry."""
         try:
+            if self._model_ds is None:
+                self._model_ds = self._model.instance
+                self._mask_list = self._masks.instance
             dt = self._datatrees[item.ms_index].instance
             node_ds = dt[item.node_path].ds
             write_ds = degrid_region(
                 node_ds,
                 region=item.region,
-                model_ds=self._model.instance,
-                masks=self._masks.instance,
+                model_ds=self._model_ds,
+                masks=self._mask_list,
                 columns=self._columns,
                 corr_types=tuple(str(p) for p in node_ds.polarization.values),
                 accumulate=self._accumulate,
@@ -273,11 +280,15 @@ class Degridder:
                 write_map={c: c for c in self._columns},
             )
         finally:
-            # xarray-ms's process-level table cache has a 300 s *inactivity*
-            # TTL and per-partition keys, so a busy replica never lets it
-            # expire; deserialised xarray objects sit in reference cycles.
-            # Both must go at every task boundary (wiki memory-and-ray).
-            _release_ms_caches()
+            # No _release_ms_caches() here. That helper clears the *whole*
+            # class-level Multiton cache, which since this deployment began
+            # keying its model and masks on Multitons would evict them too and
+            # reload a 633 MB .mds on every work item. It is also no longer
+            # buying anything: xarray-ms >= 0.5.8 (its PR #169) bounds both the
+            # tiled storage-manager caches and the table caches via
+            # driver_kwargs={"cache_size": 256}, and clearing measurably does
+            # not change post-gc RSS growth (wiki memory-and-ray). Reference
+            # cycles in deserialised xarray objects still need the collect.
             gc.collect()
 
         return {
@@ -433,6 +444,11 @@ def degrid_msv4(
     mds = str(Path(mds).resolve())
     if region_file is not None:
         region_file = str(Path(region_file).resolve())
+    # The options block above was logged before this defaulting and
+    # resolution, so it carries `mds: None` for a defaulted path and the
+    # unresolved string for a relative one. These are the paths every replica
+    # reopens by name, so name them once they are final.
+    log.info(f"Model: {mds}" + (f", regions: {region_file}" if region_file else ""))
     # the driver loads it for the guards below; replicas reopen it themselves
     model_ds = _load_model(mds)
 
@@ -484,6 +500,13 @@ def degrid_msv4(
         raise ValueError("Selection matched no data")
 
     # --- distribute -----------------------------------------------------
+    # model_ds and masks are dead once the guards above have run, and since the
+    # bind site now passes Multitons rather than the objects themselves they
+    # are no longer needed to build the app. Drop them before Serve starts: at
+    # 6720^2 that is 633 MB plus 361 MB per mask the driver would otherwise
+    # hold for the whole run while replicas compete for the same node's memory.
+    del model_ds, masks
+
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
     # +1 CPU for the Serve controller, which would otherwise contend with the
