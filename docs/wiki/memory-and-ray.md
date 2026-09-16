@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-09-16T08:30:00Z
-last_verified_commit: 05ff79b
+last_verified_commit: f8c6aa6
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
