@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-10T15:04:42Z
-last_verified_commit: 4bb6825
+timestamp: 2026-09-16T08:30:00Z
+last_verified_commit: f8c6aa6
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -59,12 +59,40 @@ end of the run. Telemetry showed post-gc RSS ratcheting **+3.55 GB/task,
 perfectly linearly, identically on all 8 workers** to ~39.5 GB each — the
 349 GB machine peak. Strong references: `gc.collect()` cannot touch them.
 
-**Fix:** `_release_ms_caches()` in `utils/stokes2vis_msv4.py` clears
-`Multiton._INSTANCE_CACHE` between tasks (safe: Ray runs one task at a time
-per worker; measured cost ~7 MB/task of subtable re-open churn vs ~3.5
-GB/task retained). This is private API by necessity — worth an upstream
-xarray-ms issue asking for a TTL/cache-off knob or public eviction hook, and
-this helper should be deleted when one exists.
+**Fix (pass 1):** `_release_ms_caches()` in `utils/stokes2vis_msv4.py` clears
+`Multiton._INSTANCE_CACHE` between tasks (measured cost ~7 MB/task of subtable
+re-open churn vs ~3.5 GB/task retained). Private API by necessity.
+
+**This helper is on its way out, and `degrid-msv4` no longer calls it.** Two
+things changed:
+
+1. **Upstream bounded the caches.** xarray-ms 0.5.8 (its PR #169) upgraded to
+   arcae 0.5.4, which bounds the previously unbounded tiled storage-manager
+   caches, and added `driver_kwargs`, defaulting to `{"cache_size": 256}`,
+   which bounds the main-table and subtable caches. Both are already in the
+   `0.4.0a7` alpha the repo pins. xarray-ms 0.5.9 (#172) additionally closes
+   subtable handles. Measured on `tests/data/test_ascii_1h60.0s.MS`, 120
+   open/read/close iterations, post-gc RSS: **clearing 971.9 MB vs keeping
+   965.9 MB** (slopes +5.24 vs +4.83 MB/iter) — i.e. the clear buys nothing
+   distinguishable from noise. Caveat: that MS has a *single* small partition,
+   so it does not reproduce the per-partition-key accumulation that motivated
+   the helper. **Removing it from pass 1 needs a cluster-scale imager run
+   first**; this page's +3.55 GB/task figure has not been re-measured against
+   the bounded caches.
+2. **It is not a keyed eviction.** `Multiton._INSTANCE_CACHE.clear()` wipes the
+   **whole class-level cache**, every key, every consumer — so any Multiton the
+   *caller* owns is collateral damage. `degrid-msv4` keys its `.mds` and region
+   masks on Multitons so replicas rebuild rather than receive them, and the
+   clear was evicting those too, reloading a 633 MB `.mds` on **every work
+   item** (measured: 6 work items produced 7 `_load_model` calls; 2 after the
+   fix). `Multiton.release()` is a clean per-key eviction, but xarray-ms
+   creates its Multitons internally and exposes no hook to release them, which
+   is why the wholesale clear was the only lever. That gap is the upstream ask.
+
+The independent residual: even with no clearing at all, repeated
+open/read/close of a datatree ratchets ~5-8 MB/iter with no plateau over 120
+iterations, and **~4.5 MB/iter of that is open/close alone** with no data read.
+Not yet reported upstream.
 
 ## The diagnostic that separates the layers
 
@@ -139,9 +167,13 @@ and exact-residual inputs. Its memory/scheduling rules:
 `pfb degrid-msv4` (#278) is the repo's first Ray **Serve** deployment: one
 `Degridder` replica per worker, each degridding a `(time, frequency)` region
 and writing that region straight back to the MS (wiki D38). It inherits the
-same two rules as pass 1 and for the same reasons — `Degridder.degrid` calls
-`_release_ms_caches()` and `gc.collect()` in a `finally`, and returns the same
-`{pid, rss_gb, peak_gb}` telemetry the imager prints.
+same rules as pass 1, with one deliberate exception — `Degridder.degrid` calls
+`gc.collect()` in a `finally` but **not** `_release_ms_caches()` (see layer 3:
+the wholesale clear would evict the deployment's own model/mask Multitons), and
+returns the same `{pid, rss_gb, peak_gb}` telemetry the imager prints. The
+replica dereferences its model and masks once, on the first work item, and
+holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
+otherwise drop and reload a 633 MB `.mds` mid-run.
 
 Two Serve-specific notes:
 

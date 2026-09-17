@@ -199,6 +199,7 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
 
     Returns:
         `(nx, ny)` float64 masks: the remainder first, then one per region.
+        The no-region mask is zero-strided -- see below.
 
     Raises:
         ValueError: If two regions overlap.
@@ -206,7 +207,11 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
     nx = int(model_ds.npix_x)
     ny = int(model_ds.npix_y)
     if region_file is None:
-        return [np.ones((nx, ny), dtype=np.float64)]
+        # zero-strided, as make_column_placeholder is: the common case has no
+        # regions, and a materialised all-ones grid costs nx*ny*8 bytes (361 MB
+        # at 6720^2) per holder to multiply the model by 1. Consumers only read
+        # .shape and broadcast against it.
+        return [np.broadcast_to(np.float64(1.0), (nx, ny))]
 
     # deferred: import cycle with utils.fits (load_fits <-> utils.misc)
     from regions import Regions
