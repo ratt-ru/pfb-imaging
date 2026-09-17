@@ -16,7 +16,7 @@ from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 
 
-def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict[str, Any]:
+def get_engine(ms_path: str, partition_columns: list[str] | None = None, auto_corrs: bool = False) -> dict[str, Any]:
     if "file://" in ms_path:
         ms_path = ms_path.replace("file://", "")
     backend = infer_backend(ms_path)
@@ -30,6 +30,7 @@ def get_engine(ms_path: str, partition_columns: list[str] | None = None) -> dict
         return {
             "engine": "xarray-ms:msv2",
             "partition_schema": partition_columns or ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
+            "auto_corrs": auto_corrs,
         }
     elif backend == MSv4Backend.ZARR:
         return {

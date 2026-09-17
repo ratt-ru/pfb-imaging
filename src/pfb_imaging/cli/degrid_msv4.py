@@ -164,6 +164,13 @@ def degrid_msv4(
             rich_help_panel="Data Selection",
         ),
     ] = None,
+    auto_corrs: Annotated[
+        bool,
+        typer.Option(
+            help="Include auto-correlations in the degridding process.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = False,
     integrations_per_chunk: Annotated[
         int,
         typer.Option(
@@ -292,6 +299,7 @@ def degrid_msv4(
                     freq_range=freq_range,
                     data_group=data_group,
                     partition_columns=partition_columns,
+                    auto_corrs=auto_corrs,
                     integrations_per_chunk=integrations_per_chunk,
                     accumulate=accumulate,
                     region_file=region_file,
@@ -323,6 +331,7 @@ def degrid_msv4(
                 freq_range=freq_range,
                 data_group=data_group,
                 partition_columns=partition_columns,
+                auto_corrs=auto_corrs,
                 integrations_per_chunk=integrations_per_chunk,
                 accumulate=accumulate,
                 region_file=region_file,
@@ -363,6 +372,7 @@ def degrid_msv4(
             freq_range=freq_range,
             data_group=data_group,
             partition_columns=partition_columns,
+            auto_corrs=auto_corrs,
             integrations_per_chunk=integrations_per_chunk,
             accumulate=accumulate,
             region_file=region_file,

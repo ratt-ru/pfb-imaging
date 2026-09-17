@@ -117,6 +117,13 @@ cabs:
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
+      auto-corrs:
+        info:
+          Include auto-correlations in the degridding process.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Data Selection
       integrations-per-chunk:
         info:
           Number of time integrations per degridding chunk.

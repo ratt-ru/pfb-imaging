@@ -342,6 +342,7 @@ def degrid_msv4(
     freq_range: str | None = None,
     data_group: str = "base",
     partition_columns: list[str] | None = None,
+    auto_corrs: bool = False,
     integrations_per_chunk: int = -1,
     accumulate: bool = False,
     region_file: str | None = None,
@@ -473,7 +474,7 @@ def degrid_msv4(
     # --- guards, then column creation, then close -----------------------
     selected: list[tuple[int, SelectedNode]] = []
     for ims, ms_name in enumerate(msnames):
-        dt_kwargs = get_engine(ms_name, partition_columns)
+        dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs)
         dt = xr.open_datatree(ms_name, **dt_kwargs)
         try:
             nodes = select_vis_nodes(
@@ -520,7 +521,10 @@ def degrid_msv4(
         log=log,
     )
 
-    datatrees = [Multiton(xr.open_datatree, name, **get_engine(name, partition_columns)) for name in msnames]
+    datatrees = [
+        Multiton(xr.open_datatree, name, **get_engine(name, partition_columns, auto_corrs=auto_corrs))
+        for name in msnames
+    ]
 
     app = Degridder.options(
         num_replicas="auto",
