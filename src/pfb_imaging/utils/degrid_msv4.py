@@ -67,11 +67,16 @@ def ensure_model_columns(
        (ratt-ru/xarray-ms#171).
 
     The caller must **close `dt` afterwards** before any other process reads
-    the MS: new columns are invisible to other processes until close.
+    the MS: new columns are invisible to other processes until close. It must
+    also open `dt` with a **single MAIN instance**
+    (`get_engine(..., main_ninstances=1)`): arcae adds the column on instance 0
+    but `sync_msv2`'s follow-up `columns()` goes to the least busy instance,
+    which intermittently throws "another process changed the number of
+    columns" or returns a stale list that trips its own assertion.
 
     Args:
         ms_path: Path to the measurement set (no `file://` prefix).
-        dt: An opened MSv4 DataTree over `ms_path`.
+        dt: An opened MSv4 DataTree over `ms_path`, with one MAIN instance.
         columns: Column names to ensure exist.
         dtype: Column dtype; `complex64` is the MS visibility dtype.
 

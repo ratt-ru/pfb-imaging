@@ -16,7 +16,28 @@ from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 
 
-def get_engine(ms_path: str, partition_columns: list[str] | None = None, auto_corrs: bool = False) -> dict[str, Any]:
+def get_engine(
+    ms_path: str,
+    partition_columns: list[str] | None = None,
+    auto_corrs: bool = False,
+    main_ninstances: int | None = None,
+) -> dict[str, Any]:
+    """Resolve `xr.open_datatree` kwargs for the backend `ms_path` lives on.
+
+    Args:
+        ms_path: Path to the MS, zarr store or MeerKAT dataset.
+        partition_columns: MSv2 partition schema override.
+        auto_corrs: Include autocorrelation baselines (MSv2 only).
+        main_ninstances: MSv2 only. Number of casacore table instances on the
+            MAIN table; `None` keeps xarray-ms's default (8). Pass `1` for a tree
+            that will add columns: arcae adds a column on instance 0 but serves
+            reads from whichever instance is least busy, and any other instance
+            then either fails to resync ("another process changed the number of
+            columns") or returns a stale column list.
+
+    Returns:
+        Keyword arguments for `xr.open_datatree`.
+    """
     if "file://" in ms_path:
         ms_path = ms_path.replace("file://", "")
     backend = infer_backend(ms_path)
@@ -27,11 +48,26 @@ def get_engine(ms_path: str, partition_columns: list[str] | None = None, auto_co
         # default schema suits mv4toms.py-style MSs; other instruments may need
         # extra columns (e.g. SOURCE_ID) -- override via partition_columns.
         # (sjperkins, PR #252 review; see xarray-ms partitioning docs.)
-        return {
+        kwargs = {
             "engine": "xarray-ms:msv2",
             "partition_schema": partition_columns or ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"],
             "auto_corrs": auto_corrs,
         }
+        if main_ninstances is not None:
+            # deferred: xarray-ms internals, only needed for this backend
+            from xarray_ms.backend.msv2.entrypoint_utils import (
+                DEFAULT_DRIVER_KWARGS,
+                MAIN_TABLE,
+                TABLE_OVERRIDES,
+            )
+
+            # start from xarray-ms's defaults: an explicit driver_kwargs replaces
+            # them wholesale, which would silently drop the cache_size bound
+            kwargs["driver_kwargs"] = {
+                **DEFAULT_DRIVER_KWARGS,
+                TABLE_OVERRIDES: {MAIN_TABLE: {"ninstances": main_ninstances}},
+            }
+        return kwargs
     elif backend == MSv4Backend.ZARR:
         return {
             "engine": "zarr",

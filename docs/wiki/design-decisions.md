@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-16T08:30:00Z
+timestamp: 2026-09-22T09:00:00Z
 last_verified_commit: f8c6aa6
 ---
 
@@ -1514,6 +1514,16 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **A newly created column is invisible to other processes until the tree is closed.** Close
   the `DataTree` between `sync_msv2` and dispatching any Ray work. A CTDS property, not an
   xarray-ms quirk.
+- **Create columns through a tree with ONE MAIN instance.** xarray-ms opens MAIN with 8
+  casacore instances by default. arcae adds a column on instance 0 (`SpawnWriter`, upstream
+  comment: adding columns is "non-syncable") but routes reads to the least busy instance, so
+  `sync_msv2`'s own follow-up `columns()` intermittently lands on an instance that has not seen
+  the new column and either throws `Table::lock cannot sync table …; another process changed
+  the number of columns` or returns a stale list that trips its assertion. Timing dependent:
+  0/25 locally in isolation, yet it failed CI on #329 (Python 3.12). Open the column-creation
+  tree with `get_engine(..., main_ninstances=1)`; measured 0 failures in every stressed run
+  against 22-44% of calls with 8. xarray-ms 0.4.0a8 routes canonical columns through the same
+  path, so this matters more once that pin is raised.
 - **ducc's `mask` must be `uint8`.** A `bool` mask has identical memory layout and raises
   `RuntimeError: incorrect data type` from the pybind layer. `~np.isnan(...)` gives bool.
 - **Declaring a column must not materialise one.** `xr.zeros_like(node.VISIBILITY)` — the

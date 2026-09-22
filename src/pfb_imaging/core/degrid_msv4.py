@@ -474,7 +474,11 @@ def degrid_msv4(
     # --- guards, then column creation, then close -----------------------
     selected: list[tuple[int, SelectedNode]] = []
     for ims, ms_name in enumerate(msnames):
-        dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs)
+        # one MAIN instance: this tree adds columns, and with several instances
+        # arcae can answer the follow-up reads from one that has not seen them
+        # (see get_engine). It only reads metadata and is closed before any
+        # replica starts, so there is no parallelism to lose.
+        dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
         dt = xr.open_datatree(ms_name, **dt_kwargs)
         try:
             nodes = select_vis_nodes(

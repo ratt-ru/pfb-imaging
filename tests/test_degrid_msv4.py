@@ -136,7 +136,7 @@ def test_ensure_model_columns_creates_a_canonical_column(degrid_ms):
     with arcae.table(degrid_ms) as tab:
         assert "MODEL_DATA" not in tab.columns()
 
-    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
     try:
         ensure_model_columns(degrid_ms, dt, ["MODEL_DATA"])
     finally:
@@ -162,7 +162,7 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
     from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
 
-    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
     try:
         ensure_model_columns(degrid_ms, dt, ["MODEL_DATA1"])
     finally:
@@ -171,6 +171,31 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
     with arcae.table(degrid_ms) as tab:
         assert "MODEL_DATA1" in tab.columns()
         assert np.asarray(tab.getcol("MODEL_DATA1")).shape == (21060, 8, 4)
+
+
+def test_get_engine_can_pin_a_single_main_instance(degrid_ms):
+    """Column creation needs a tree with one MAIN instance (see get_engine).
+
+    With several, arcae adds the column on instance 0 but answers
+    `sync_msv2`'s follow-up `columns()` from the least busy instance, which
+    intermittently fails to resync or returns a stale list. That race is
+    timing dependent, so pin the plumbing instead: the override must reach
+    xarray-ms and must not drop its default `cache_size` bound.
+    """
+    import xarray as xr
+    from xarray_ms.backend.msv2.entrypoint_utils import DEFAULT_DRIVER_KWARGS
+
+    from pfb_imaging.utils.msv4 import get_engine
+
+    assert "driver_kwargs" not in get_engine(degrid_ms)
+
+    kwargs = get_engine(degrid_ms, main_ninstances=1)
+    assert kwargs["driver_kwargs"]["table_overrides"] == {"MAIN": {"ninstances": 1}}
+    for key, value in DEFAULT_DRIVER_KWARGS.items():
+        assert kwargs["driver_kwargs"][key] == value
+
+    dt = xr.open_datatree(degrid_ms, **kwargs)
+    dt.close()
 
 
 def test_ensure_model_columns_is_idempotent(degrid_ms):
@@ -186,7 +211,7 @@ def test_ensure_model_columns_is_idempotent(degrid_ms):
         tab.putcol("MODEL_DATA", np.full((21060, 8, 4), 7 + 3j, np.complex64))
 
     for _ in range(2):
-        dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+        dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
         try:
             ensure_model_columns(degrid_ms, dt, ["MODEL_DATA"])
         finally:
