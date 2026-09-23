@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """arcae: adding a column leaves other already-open table handles unable to resync.
 
+Filed as ska-sa/arcae#241, with addcols_multi_instance_race.py as the first face
+of the same behaviour.
+
     uv run python scripts/msv4_issues/addcols_poisons_open_handles.py <any.ms> [ninstances]
 
 Handle A opens and reads. Handle B, on the same table in the same process, adds

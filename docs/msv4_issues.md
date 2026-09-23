@@ -30,8 +30,8 @@ test failure, with a known one-line fix that has not been applied.
 | # | Issue | Repo | Filed | Status |
 |---|---|---|---|---|
 | 1 | `sync_msv2` skips a canonical MAIN column that is absent | xarray-ms | [#171](https://github.com/ratt-ru/xarray-ms/issues/171) | **Fixed** in 0.4.0a8; verified on a11 |
-| 2 | `addcols` then read is answered by a stale table instance | arcae | drafted | Present a7 → a11 |
-| 3 | `addcols` poisons table handles already open in the same process | arcae | drafted | Same root cause as 2; blocks our a11 bump |
+| 2 | `addcols` then read is answered by a stale table instance | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Present a7 → a11 |
+| 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Same root cause as 2; blocks our a11 bump |
 | 4 | RSS ratchets across repeated open/read/close | arcae | **no** | Much improved by arcae#235; re-measure before filing |
 | 5 | No public way to evict xarray-ms's own table cache | xarray-ms | **no** | Partly touched by a9; still no hook |
 
@@ -53,11 +53,11 @@ was never asked for it and the following `to_msv2` had nowhere to write. No erro
   and the `ensure_model_columns` docstring paragraph about it. That workaround exists only for
   this gap.
 
-### 2. `addcols` then read is answered by a stale table instance — DRAFTED
+### 2. `addcols` then read is answered by a stale table instance — FILED
 
-Filed together with issue 3 as one arcae issue ("Adding a column leaves other open table
-handles unable to resync"): they are the same behaviour, once between sibling instances of
-one `Table` and once between separate handles.
+Filed together with issue 3 as [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241), "Adding a column leaves other open table handles
+unable to resync": they are the same behaviour, once between sibling instances of one
+`Table` and once between separate handles.
 
 xarray-ms opens MAIN with 8 casacore instances (`DEFAULT_MAIN_NINSTANCES`). arcae runs
 `AddColumns` on instance 0 (`IsolatedTableProxy::SpawnWriter`, whose comment calls adding
@@ -81,7 +81,7 @@ after `addcols` to verify creation, so it can fail against its own write.
 - This matters more from 0.4.0a8 on, because issue 1's fix routes canonical columns
   (i.e. the default `MODEL_DATA`) through the same `addcols` path.
 
-### 3. `addcols` poisons table handles already open in the same process — DRAFTED
+### 3. `addcols` poisons table handles already open in the same process — FILED ([ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241))
 
 The same underlying behaviour as issue 2, but across handles rather than instances: a
 DataTree left open across a column creation cannot be read afterwards, even though both
@@ -195,5 +195,5 @@ Cython 3.2 build failure; `#238`/`#230` add design documentation.
   distinguish an empty selection from an absent one.
 
 Neither issue 2 nor issue 3 appears anywhere upstream: searches for `addcols`, `ninstances`
-and `cannot sync` across both repos return nothing relevant, so both are ours to file. They
-are drafted as a single arcae issue, pending review before filing.
+and `cannot sync` across both repos returned nothing relevant, so both were ours to file.
+They went up as a single arcae issue, [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241).

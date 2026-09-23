@@ -72,7 +72,8 @@ def ensure_model_columns(
     (`get_engine(..., main_ninstances=1)`): arcae adds the column on instance 0
     but `sync_msv2`'s follow-up `columns()` goes to the least busy instance,
     which intermittently throws "another process changed the number of
-    columns" or returns a stale list that trips its own assertion.
+    columns" or returns a stale list that trips its own assertion
+    (ska-sa/arcae#241).
 
     Args:
         ms_path: Path to the measurement set (no `file://` prefix).

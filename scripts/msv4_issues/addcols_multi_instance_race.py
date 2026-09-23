@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """arcae: `columns()` after `addcols()` is answered by a stale table instance.
 
+Filed as ska-sa/arcae#241, with addcols_poisons_open_handles.py as the second face
+of the same behaviour.
+
     uv run python scripts/msv4_issues/addcols_multi_instance_race.py <any.ms> 8
     uv run python scripts/msv4_issues/addcols_multi_instance_race.py <any.ms> 1
 

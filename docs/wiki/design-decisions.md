@@ -1521,7 +1521,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   the new column and either throws `Table::lock cannot sync table …; another process changed
   the number of columns` or returns a stale list that trips its assertion. Timing dependent:
   0/25 locally in isolation, yet it failed CI on #329 (Python 3.12). Open the column-creation
-  tree with `get_engine(..., main_ninstances=1)`; measured 0 failures in every stressed run
+  tree with `get_engine(..., main_ninstances=1)` (ska-sa/arcae#241); measured 0 failures in every stressed run
   against 22-44% of calls with 8. xarray-ms 0.4.0a8 routes canonical columns through the same
   path, so this matters more once that pin is raised.
 - **ducc's `mask` must be `uint8`.** A `bool` mask has identical memory layout and raises

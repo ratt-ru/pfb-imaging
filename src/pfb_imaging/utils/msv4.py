@@ -33,7 +33,7 @@ def get_engine(
             that will add columns: arcae adds a column on instance 0 but serves
             reads from whichever instance is least busy, and any other instance
             then either fails to resync ("another process changed the number of
-            columns") or returns a stale column list.
+            columns") or returns a stale column list (ska-sa/arcae#241).
 
     Returns:
         Keyword arguments for `xr.open_datatree`.
