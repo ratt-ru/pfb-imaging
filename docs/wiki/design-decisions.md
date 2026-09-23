@@ -4,7 +4,7 @@ title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
 timestamp: 2026-09-23T13:30:00Z
-last_verified_commit: 772f216
+last_verified_commit: 8d6540b
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1371,6 +1371,26 @@ update it (and this page's `last_verified_commit`) in the same session.
   inside `autoscaling_config` pydantic drops it silently and five items queue per replica.
   Note this does not disturb the decision above — the *driver* is still an ordinary
   synchronous function draining a `deque`; only the replica-side method is async.
+- **Open question (2026-09-23): does the fused write survive concurrent writers?** The
+  decision above rests on concurrent multi-process region writes being correct, which they
+  are. tricolour#106 has since gone the other way — to a *single* `DataWriter` replica —
+  because "concurrent writers block on the CASA table lock and one will eventually wedge,
+  fail its Serve health check and get force-killed" (`4872aa0c`). That is a throughput and
+  liveness argument, not a correctness one, and it does not apply to us unchanged: tricolour
+  writes flags (cheap, ~160 MB) so serialising costs it little, whereas degrid's *output* is
+  the whole data volume and a single writer reintroduces exactly the object-store round trip
+  this decision avoids. Retesting the sequential write path on a11 found no thread/fd leak
+  and no deadlock over 200 writes (`scripts/msv4_issues/to_msv2_write_loop.py`), but that
+  does **not** cover the concurrent case, which is the one tricolour actually hit. Do not
+  resolve this from first principles — it wants a measurement of concurrent writers under
+  lock contention, and upstream expects arcae deadlock fixes shortly. Revisit then.
+- **Future: per-region evaluation probably belongs in pfb-model-spec.** `degrid_region`
+  currently loops regions in pfb-imaging, calling `model_to_apparent_vis_for_region` once per
+  region and paying a full `dirty2vis` pass each time. QuartiCal consumes all
+  regions/directions *simultaneously*, so the loop wants to live in the shared helper rather
+  than be reimplemented per consumer — which would also let the helper amortise whatever is
+  common across regions instead of repeating it. Not scheduled; noted so the region loop is
+  not entrenched further here in the meantime.
 - **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278, PR #331.
 
 ### D39 — the degrid chunk's representative time and frequency are unweighted means

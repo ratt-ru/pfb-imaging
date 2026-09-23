@@ -189,6 +189,21 @@ wipe that destroys *every* consumer's Multitons as collateral.
 
 ---
 
+## Retested, not reproduced
+
+- **`to_msv2()` leaking threads/fds and then deadlocking.**
+  [ratt-ru/tricolour#106](https://github.com/ratt-ru/tricolour/pull/106) (`4872aa0c`) reports
+  that "`to_msv2()` reopens the MS on every call and leaks OS threads and file descriptors as
+  it goes (reads do not leak). After a few dozen writes the call deadlocks with every thread
+  parked on a futex." That was observed before [ska-sa/arcae#235](https://github.com/ska-sa/arcae/pull/235).
+  - Retested on our a11 pin with [`to_msv2_write_loop.py`](../scripts/msv4_issues/to_msv2_write_loop.py):
+    **200 sequential writes, threads 75 → 75, fds 6 → 6, no deadlock.** RSS grows
+    +1.54 MB/write, which is issue 4's structure-rebuild rate and not something the write adds.
+  - **What this does not test:** the writes are sequential in one process. tricolour's actual
+    failure was *concurrent* writers blocking on the CASA table lock until one wedged — that is
+    why it went to a single writer, and it is untested here. Do not read this result as
+    clearing the concurrent-write path.
+
 ## Considered, not filed
 
 - **`sync_msv2` drops a variable that is not on every correlated node.** It warns rather than
@@ -240,6 +255,19 @@ minutes. Expect more of them on this path, not fewer.
   **Fixed on our side in `772f216`** — it was not cosmetic: combined with a sync `degrid`
   (see below) it killed a real `--regions` run. The setting now lives in `.options()`, at 2
   (one running, one ready), with `max_inflight` derived from it.
+
+- **Making a method async removes Serve's only deadlock backstop.** The flip side of the fix
+  below, and worth knowing before anyone "improves" it. With a sync method, a wedged call
+  blocks the event loop, the watchdog trips and Serve kills and retries the replica —
+  ugly, but it *recovers*. With the work on an executor the loop stays responsive, so a
+  replica whose worker thread is genuinely wedged looks healthy forever and the run hangs
+  silently instead. tricolour#106 depends on exactly that recovery ("Serve's default health
+  check is currently the only thing that recovers from this"). We have not hit a wedge on a11
+  (see "Retested, not reproduced"), so this is a known gap rather than an active problem. If
+  it becomes one, the fix is a user-defined `check_health` that fails when no item has
+  completed for too long — note that defining one *disables* the loop watchdog
+  (`_user_loop_watchdog_enabled` requires `self._user_health_check is None`), so it replaces
+  rather than supplements it.
 
 - **A sync Serve method runs *on* the replica's asyncio loop, and Serve kills the replica for
   it.** `RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`, so a long sync `__call__`/method
