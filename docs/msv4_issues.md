@@ -202,12 +202,44 @@ wipe that destroys *every* consumer's Multitons as collateral.
 
 ## Adjacent, not MSv4
 
+Ray issues, hit on the `degrid-msv4` Serve path. **Nothing here is filed yet** — the Ray-side
+findings want another pair of eyes first, so that we file one coherent story rather than
+several fragments. Reproducers: [`scripts/ray_issues/`](../scripts/ray_issues).
+
+The common thread is worth stating once: Serve's defaults are tuned for sub-second web
+requests, and each of these is a default that only misbehaves when a work item runs for
+minutes. Expect more of them on this path, not fewer.
+
+- **Ray Serve's request router overflows its own backoff after ~510 s of waiting.**
+  `RequestRouter._compute_backoff_s` evaluates
+  `initial_backoff_s * (backoff_multiplier ** attempt)` *before* `min(..., max_backoff_s)`
+  clamps it. `backoff_multiplier` is an `int`, so the power is an exact arbitrary-precision
+  int and the float multiply raises `OverflowError` rather than saturating. The backoff is
+  pinned at its 0.5 s cap from attempt ~5, so attempt 1024 arrives after ~510 s of a request
+  waiting to be routed. `_fulfill_pending_requests` logs "Unexpected error in
+  _fulfill_pending_requests" and drops the routing task, leaving the request unfulfilled; a
+  new request or a replica-set update restarts one and picks it up, so a busy deployment
+  recovers, but nothing restarts one periodically — a request stranded at the tail of a run
+  has nothing to rescue it. Symptom before the error: streams of
+  `Failed to route request after N attempts over Ns. Retrying.` climbing toward 1024.
+  - Reproducer: [`serve_router_backoff_overflow.py`](../scripts/ray_issues/serve_router_backoff_overflow.py).
+    Pure arithmetic on the real router class — no cluster, no MS. Prints
+    `OverflowError at attempt=1024 after ~510s`.
+  - **Our trigger, and our fix:** the driver held `4 * nworkers` requests while the replicas
+    accepted 1 each, so `3 * nworkers` sat in the router spinning for the length of the queue
+    ahead of them — minutes per item, so >510 s was reliable rather than rare. `max_inflight`
+    is now `_MAX_ONGOING_REQUESTS * nworkers`, i.e. exactly what the replicas can accept, so
+    the router never holds a request it cannot place. Ray's arithmetic is still wrong; we
+    just stopped standing on it.
+  - Upstream fix is one line — clamp the exponent, or `min` before multiplying.
+
 - **Ray Serve's `autoscaling_config` silently swallows unknown keys.** `max_ongoing_requests`
   is a plausible thing to put there, is not a field of `AutoscalingConfig`, and pydantic drops
   it without complaint, so a deployment silently runs at the default 5 concurrent requests per
-  replica. Tracked on [pfb-imaging#331](https://github.com/ratt-ru/pfb-imaging/pull/331); not
-  filed against Ray. **Fixed on our side in `772f216`** — it was not cosmetic: combined with a
-  sync `degrid` (see below) it killed a real `--regions` run.
+  replica. Tracked on [pfb-imaging#331](https://github.com/ratt-ru/pfb-imaging/pull/331).
+  **Fixed on our side in `772f216`** — it was not cosmetic: combined with a sync `degrid`
+  (see below) it killed a real `--regions` run. The setting now lives in `.options()`, at 2
+  (one running, one ready), with `max_inflight` derived from it.
 
 - **A sync Serve method runs *on* the replica's asyncio loop, and Serve kills the replica for
   it.** `RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`, so a long sync `__call__`/method

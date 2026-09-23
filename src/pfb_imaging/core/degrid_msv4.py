@@ -53,6 +53,14 @@ log = pfb_logging.get_logger("DEGRID_MSV4")
 # serve.delete that replaces a cluster-wide serve.shutdown.
 _SERVE_APP_NAME = "degrid-msv4"
 
+# Requests a replica will accept at once: one running, one ready. The driver's
+# in-flight bound is derived from it (see `max_inflight`), and the two must
+# stay tied -- a request the replicas cannot accept sits in Serve's router
+# being retried on a 0.5 s backoff, and at attempt 1024 (~510 s of waiting)
+# the router's own backoff arithmetic overflows and kills the routing task
+# that owns it (docs/msv4_issues.md, "Adjacent, not MSv4").
+_MAX_ONGOING_REQUESTS = 2
+
 
 def _default_mds(output_filename: str, suffix: str) -> str:
     """Locate the component model when `--mds` was not given.
@@ -567,12 +575,19 @@ def degrid_msv4(
         # on a small cluster (the test session's is num_cpus=2). max_replicas
         # is what actually caps concurrency.
         ray_actor_options={"num_cpus": 1e-2},
-        # One item per replica at a time. This MUST live here and not in
-        # `autoscaling_config`: that is a pydantic model which silently drops
-        # the key, leaving the default of 5 in force. Five items then queue on
-        # the replica and serialise, so each one's latency is five items deep
-        # and Serve's user-loop watchdog eventually kills the replica.
-        max_ongoing_requests=1,
+        # One running plus one ready per replica. This MUST live here and not
+        # in `autoscaling_config`: that is a pydantic model which silently
+        # drops the key, leaving the default of 5 in force -- five items then
+        # queue on the replica, and back when `degrid` was sync that wedged
+        # the event loop until Serve's watchdog killed the replica.
+        #
+        # 2 rather than 1 so a replica has its next item in hand the moment it
+        # finishes one, without the driver holding requests the router cannot
+        # place. Concurrency is NOT what this bounds: `_executor` has a single
+        # worker, so a replica still degrids strictly one item at a time. The
+        # second request simply awaits that executor, which is harmless now
+        # that `degrid` is async and the event loop stays free.
+        max_ongoing_requests=_MAX_ONGOING_REQUESTS,
         autoscaling_config={
             "upscale_delay_s": 1.0,
             "min_replicas": 1,
@@ -603,10 +618,17 @@ def degrid_msv4(
     handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
 
     try:
-        # bounded in-flight queue: drain the oldest response once more than
+        # Bounded in-flight queue: drain the oldest response once more than
         # `max_inflight` are outstanding, so submission cannot outrun the
-        # replicas and pile up unwritten regions
-        max_inflight = 4 * max(nworkers, 1)
+        # replicas and pile up unwritten regions.
+        #
+        # Sized to exactly what the replicas can accept. Anything beyond that
+        # is not extra throughput -- Serve's router cannot place it, so it
+        # spins on a 0.5 s backoff for as long as the queue ahead of it takes,
+        # and past ~510 s of that the router's backoff overflows (see
+        # `_MAX_ONGOING_REQUESTS`). Items here run for minutes, so a queue
+        # deeper than capacity reaches that reliably rather than rarely.
+        max_inflight = _MAX_ONGOING_REQUESTS * max(nworkers, 1)
         inflight: deque = deque()
         ncomplete = 0
 
