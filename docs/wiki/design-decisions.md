@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-23T10:30:00Z
-last_verified_commit: 9085b71
+timestamp: 2026-09-23T13:30:00Z
+last_verified_commit: 772f216
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1361,6 +1361,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   is its own session directory), and `Degridder.degrid` must **not** call
   `_release_ms_caches()` — that clears the entire class-level Multiton cache and would
   reload the `.mds` on every work item (wiki memory-and-ray, layer 3).
+- **Amendment (772f216):** `Degridder.degrid` is `async def` and defers its body to a
+  `ThreadPoolExecutor(max_workers=1)`. This is not stylistic. Serve runs a *sync* method on
+  the replica's asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`), and its
+  watchdog kills a replica whose loop misses three 300 s probes — which a multi-region item
+  does, reaching the driver as a bare `ActorDiedError`. The one-thread executor keeps the
+  invariant the fused write depends on: one item per replica, and arcae's handles touched
+  from one thread only. Relatedly, `max_ongoing_requests` must be an `.options()` argument;
+  inside `autoscaling_config` pydantic drops it silently and five items queue per replica.
+  Note this does not disturb the decision above — the *driver* is still an ordinary
+  synchronous function draining a `deque`; only the replica-side method is async.
 - **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278, PR #331.
 
 ### D39 — the degrid chunk's representative time and frequency are unweighted means

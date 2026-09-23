@@ -206,7 +206,18 @@ wipe that destroys *every* consumer's Multitons as collateral.
   is a plausible thing to put there, is not a field of `AutoscalingConfig`, and pydantic drops
   it without complaint, so a deployment silently runs at the default 5 concurrent requests per
   replica. Tracked on [pfb-imaging#331](https://github.com/ratt-ru/pfb-imaging/pull/331); not
-  filed against Ray.
+  filed against Ray. **Fixed on our side in `772f216`** — it was not cosmetic: combined with a
+  sync `degrid` (see below) it killed a real `--regions` run.
+
+- **A sync Serve method runs *on* the replica's asyncio loop, and Serve kills the replica for
+  it.** `RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`, so a long sync `__call__`/method
+  wedges the user-code loop. Serve's watchdog probes it every 60 s with a 300 s timeout and
+  `ray.kill`s the replica after 3 consecutive misses (`ray/serve/_private/constants.py:306-317`),
+  which reaches the driver as a bare `ActorDiedError` with no user traceback. Ray *does* warn
+  ("Calling sync method ... directly on the asyncio loop"), but it is one line among the
+  replica's startup noise. Any pfb deployment whose work items can exceed 300 s must be `async
+  def` + `run_in_executor`; `772f216` does this for `Degridder`. Ray's behaviour is documented
+  and intentional, so nothing to file.
 
 ## What landed upstream recently
 

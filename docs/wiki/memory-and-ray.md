@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-16T08:30:00Z
-last_verified_commit: f8c6aa6
+timestamp: 2026-09-23T13:30:00Z
+last_verified_commit: 772f216
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -175,8 +175,24 @@ replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.
 
-Two Serve-specific notes:
+Three Serve-specific notes:
 
+- **`degrid` is `async def` and hands its body to a one-thread executor, and
+  this is load bearing.** Serve runs a *sync* method directly on the replica's
+  asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`), so a
+  long item wedges that loop; Serve's watchdog probes it every 60 s with a
+  300 s timeout and `ray.kill`s the replica after 3 misses. The driver then
+  sees a bare `ActorDiedError` from `drain()` with no user traceback — the
+  only hint is a `UserWarning` buried in replica startup. A real `--regions`
+  run died this way (772f216) because three regions cost three `dirty2vis`
+  passes per item. `max_workers=1` keeps one item per replica and arcae's
+  handles on one thread. `max_ongoing_requests=1` belongs in `.options()`,
+  **never** in `autoscaling_config`, which is a pydantic model that drops the
+  key without complaint and leaves the default of 5 in force; five items then
+  queue per replica and serialise behind the wedged loop, so each item's
+  latency is five items deep (measured: min 70 s, median 363 s, max 633 s).
+  `target_ongoing_requests` must come down to match, or a replica capped at 1
+  can never reach a target of 2 and the deployment never scales out.
 - **Replicas claim a nominal `num_cpus=1e-2`**, exactly as `BandWorkerPool`
   does and for the same reason: they are ducc thread-pool bound, and a real
   per-replica claim deadlocks scheduling on a small cluster. `max_replicas`
