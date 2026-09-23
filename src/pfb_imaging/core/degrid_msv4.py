@@ -648,7 +648,15 @@ def degrid_msv4(
                     )
 
         for item in items:
-            drain(max_inflight)
+            # `- 1` because we are about to add one: draining *to* max_inflight
+            # and then appending peaks at max_inflight + 1, which is one more
+            # than the replicas can accept. That one surplus request is never
+            # routable, so it sits in Serve's router being retried until a slot
+            # frees -- and if it stays there past ~510 s the router's backoff
+            # overflows and kills the routing task holding it. Measured on a
+            # real run: exactly one homeless request at a time, rotating, and
+            # two OverflowErrors by item 36.
+            drain(max_inflight - 1)
             inflight.append(handle.degrid.remote(item))
         drain(0)
     finally:
