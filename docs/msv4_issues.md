@@ -109,7 +109,14 @@ handles are in one process and one of them made the change.
   `.close()` anywhere in that module), so it is our own unclosed handle that gets poisoned in
   an in-process chain. Closing it would remove the need for the eviction below — but it cannot
   simply be closed after selection, because the dispatch loop still reads `node.ds` and slices
-  it for the workers. It would have to be closed after dispatch.
+  it for the workers. It would have to be closed after dispatch. Deliberately **not** fixed in
+  the degrid PR; tracked in ratt-ru/pfb-imaging#325, which already owns the question of
+  retiring `_release_ms_caches`.
+- **Closing is not a complete answer.** A tree dropped *without* closing leaves cache entries
+  that nothing can close: measured, `del dt` plus `gc.collect()` leaves 12 entries held with no
+  Python reference to call `close()` on, persisting until the 300 s inactivity TTL. That is the
+  case upstream's close-and-reopen advice does not reach, and the reason the eviction hook in
+  ratt-ru/xarray-ms#177 is worth asking for.
 - **Fixed on our side:** `core/degrid_msv4.degrid_msv4` calls `_release_ms_caches()` once
   after the column-creation loop — *not* per work item, which is what made it reload the model
   every chunk (see wiki memory-and-ray). The test passes on a11 with it.
