@@ -8,10 +8,16 @@ open/close cost from read retention. Each iteration samples RSS after an
 explicit `gc.collect()`, and reports the second-half slope -- a flat slope is a
 bounded footprint, a positive one is retention gc cannot reach.
 
-Measured on tests/data/test_ascii_1h60.0s.MS, 60 iterations:
+Measured on tests/data/test_ascii_1h60.0s.MS on an idle machine:
 
-    arcae 0.4.0a8  open +4.48 MB/iter   vis +7.45 MB/iter
-    arcae 0.4.0a11 open +1.66 MB/iter   vis +1.78 MB/iter   (after ska-sa/arcae#235)
+    0.4.0a8   800 iters  open +4.53 MB/iter  (fds 27 -> 10886, threads 80 -> 7011)
+    0.4.0a11 2000 iters  open +1.53 MB/iter  (fds and threads flat)
+    0.4.0a11 2000 iters  vis  +1.54 MB/iter
+
+ska-sa/arcae#235 removed the descriptor and thread leak, which was most of the
+0.4.0a8 figure. The remainder is a separate retention, linear with no plateau,
+and `structure_rebuild_rss.py` localises it: reading contributes nothing, and
+rebuilding `MSv2Structure` alone reproduces the whole rate.
 """
 
 import gc

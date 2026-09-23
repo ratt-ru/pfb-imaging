@@ -32,7 +32,7 @@ canonical MAIN columns, which is what allowed the `_create_missing_columns` fall
 | 1 | `sync_msv2` skips a canonical MAIN column that is absent | xarray-ms | [#171](https://github.com/ratt-ru/xarray-ms/issues/171) | **Fixed** in 0.4.0a8; verified on a11 |
 | 2 | `addcols` then read is answered by a stale table instance | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Present a7 → a11 |
 | 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Same root cause as 2; blocks our a11 bump |
-| 4 | RSS ratchets across repeated open/read/close | arcae | **no** | Much improved by arcae#235; re-measure before filing |
+| 4 | Every `MSv2Structure` build retains ~1.5 MB | xarray-ms | **no** | Re-measured; ready to file |
 | 5 | No public way to evict xarray-ms's own table cache | xarray-ms | **no** | Partly touched by a9; still no hook |
 
 ---
@@ -105,23 +105,49 @@ handles are in one process and one of them made the change.
   processes that open after the driver closes. It bites any in-process pipeline that reads
   the MS both before and after degridding.
 
-### 4. RSS ratchets across repeated open/read/close — MEASURE, THEN DECIDE
+### 4. Every `MSv2Structure` build retains ~1.5 MB — READY TO FILE
 
-Repeatedly opening, reading and closing a DataTree grows post-`gc.collect()` RSS with no
-plateau over 120 iterations, and most of it is open/close rather than reading.
+Repeatedly opening, reading and closing a DataTree grows post-`gc.collect()` RSS linearly
+with **no plateau**. Re-measured on an idle machine, 2000 iterations, xarray-ms 0.4.0a11 +
+arcae 0.4.0a11: **+1.53 MB per iteration**, 338 MB → 3.44 GB, with the last-decile slope
+(+1.535) indistinguishable from the overall slope (+1.537). It is not a slow-filling bounded
+cache.
 
-- Reproducer: [`table_open_close_rss.py`](../scripts/msv4_issues/table_open_close_rss.py).
+Note this is **xarray-ms, not arcae** — an earlier version of this page had it under arcae.
 
-| | `open` (no read) | `vis` (full read) |
-|---|---|---|
-| arcae 0.4.0a8 | +4.48 MB/iter | +7.45 MB/iter |
-| arcae 0.4.0a11 | +1.66 MB/iter | +1.78 MB/iter |
+- Reproducers: [`table_open_close_rss.py`](../scripts/msv4_issues/table_open_close_rss.py)
+  for the end-to-end figure, and
+  [`structure_rebuild_rss.py`](../scripts/msv4_issues/structure_rebuild_rss.py), which
+  localises it.
 
-- [ska-sa/arcae#235](https://github.com/ska-sa/arcae/pull/235) ("Release table resources when
-  the last reference is dropped on an isolation thread", in a9) cut it by roughly 3×, but it
-  is still not flat. Before filing, re-measure on a11 on an idle machine over more iterations
-  and confirm it is genuinely unbounded rather than a slow-filling bounded cache — the
-  numbers above were taken while the test suite was running.
+**Localisation.** Reading contributes nothing — `open` (no read at all) leaks +1.533 MB/iter
+against `vis` (full read) at +1.537. Building `MSv2Structure` on its own reproduces the entire
+rate (+1.537). Skipping the `close()` is flat (+0.0002), because the Multiton cache then
+serves every open from one entry; it is the rebuild that costs, and `close()` releases the
+structure factory.
+
+**Ruled out, each by measurement:**
+
+| candidate | evidence |
+|---|---|
+| allocator fragmentation | `malloc_trim(0)` reclaims nothing; `/proc/self/maps` flat at 590 |
+| pyarrow buffers | pool `bytes_allocated()` stays 0; mimalloc and jemalloc give the same slope |
+| fds / threads | both flat on a11 (6, and 73→78) |
+| Python objects | `len(gc.get_objects())` grows ~600 over 2000 builds |
+| arcae | open/close of MAIN at 1 and 8 instances, MAIN reads via `getcol` and `to_arrow`, and all 13 subtables via `to_arrow` are each flat to within 0.003 MB/iter |
+| thread-pool stacks | rate unchanged at `max_workers` 1, 4, 11, 22 |
+
+**What arcae#235 fixed, and what it did not.** On 0.4.0a8 the same loop runs at +4.53 MB/iter
+and takes file descriptors 27 → 10,886 and threads 80 → 7,011 over 800 iterations — the leak
+that [ska-sa/arcae#235](https://github.com/ska-sa/arcae/pull/235) fixed. On a11 both are flat
+and the rate is a third of that. The residual is a different problem, and the earlier "~3×
+better, maybe a bounded cache" reading on this page was taken under load and over too few
+iterations to see that it never flattens.
+
+**Why it matters to us.** `_release_ms_caches()` drops the structure factory, so every Ray
+task that calls it pays a rebuild — and therefore ~1.5 MB — on its next open. Over a long
+imager run that is the same shape as the pass-1 pathology this discipline was built to avoid
+(wiki memory-and-ray).
 
 ### 5. No public way to evict xarray-ms's own table cache — NEEDS FILING
 
