@@ -58,13 +58,10 @@ def ensure_model_columns(
        whose node count differs from the number of nodes it visits, warning
        rather than raising. This is also semantically right: a CASA column
        belongs to the whole MAIN table, not to a partition.
-    2. `sync_msv2` will not create a column whose name is in casacore's
-       canonical MAIN descriptor but absent from the table -- and `MODEL_DATA`,
-       `CORRECTED_DATA` and `DATA` all are. `generate_column_descriptor`
-       validates such a name against the canonical descriptor and then falls
-       through without emitting one, so `addcols` is never asked for it. We
-       therefore verify afterwards and create what is still missing
-       (ratt-ru/xarray-ms#171).
+    2. Creating a column leaves table handles that were already open on this MS
+       unable to resync (ska-sa/arcae#241), so the caller must drop any it holds
+       -- `core/degrid_msv4.degrid_msv4` evicts the process-wide table cache once
+       after this returns.
 
     The caller must **close `dt` afterwards** before any other process reads
     the MS: new columns are invisible to other processes until close. It must
@@ -82,9 +79,12 @@ def ensure_model_columns(
         dtype: Column dtype; `complex64` is the MS visibility dtype.
 
     Raises:
-        ValueError: If `dt` holds no visibility datasets, if its partitions
-            have differing `(nchan, ncorr)` shapes, or if a column is still
-            absent after both creation attempts.
+        ValueError: If `dt` holds no visibility datasets, or if its partitions
+            have differing `(nchan, ncorr)` shapes.
+        ColumnCreationError: From `sync_msv2`, if a column is still absent after
+            creation. Canonical MAIN names (`MODEL_DATA`, `CORRECTED_DATA`,
+            `DATA`) need xarray-ms >= 0.4.0a8, which fixed
+            ratt-ru/xarray-ms#171; before that they were skipped silently.
     """
     # deferred: monkeypatches sync_msv2/to_msv2 onto xarray's Dataset/DataTree
     import xarray_ms  # noqa: F401
@@ -108,7 +108,6 @@ def ensure_model_columns(
             "heterogeneous spectral windows; select a single spectral window "
             "with --spw-names, or degrid each one into its own measurement set."
         )
-    nchan, ncorr = next(iter(shapes))
 
     for node in vis_nodes:
         shape = tuple(node.sizes[d] for d in MODEL_DIMS)
@@ -119,68 +118,6 @@ def ensure_model_columns(
     # identity write_map: promote_write_map overrides MSV4_WRITE_MAP, so a
     # column a user happened to name VISIBILITY is not redirected to DATA
     dt.sync_msv2(write_map={c: c for c in columns})
-
-    _create_missing_columns(ms_path, columns, nchan=nchan, ncorr=ncorr, dtype=dtype)
-
-
-def _create_missing_columns(ms_path, columns, *, nchan, ncorr, dtype):
-    """Create any column `sync_msv2` declined to, matching what it would build.
-
-    The descriptor is deliberately assembled from xarray-ms's own pieces
-    (`fit_tile_shape`, `NUMPY_TO_CASA_MAP`) so the column we create is
-    indistinguishable from one it created. Delete this whole function when
-    upstream closes the canonical-name gap (ratt-ru/xarray-ms#171).
-
-    A fixed-shape `TiledColumnStMan` column is required, not the canonical
-    variable-shape `StandardStMan` descriptor: the latter creates cells with no
-    array shape, and a partial region write into an unshaped cell fails with
-    `SSMIndColumn::getShape: no array in row 0`.
-    """
-    # deferred: arcae is the write path's table handle, xarray-ms internals are
-    # private and pinned by the write-support pin
-    import arcae
-    from xarray_ms.backend.msv2.writes import fit_tile_shape
-    from xarray_ms.casa_types import NUMPY_TO_CASA_MAP
-
-    with arcae.table(ms_path, readonly=False) as tab:
-        missing = [c for c in columns if c not in tab.columns()]
-        if not missing:
-            return
-
-        # casacore descriptor shapes are FORTRAN ordered -- the reverse of the
-        # numpy trailing shape. Getting this backwards does not raise: casacore
-        # SIGABRTs and takes the interpreter down with it.
-        fixed_shape = (ncorr, nchan)
-        value_type = NUMPY_TO_CASA_MAP[np.dtype(dtype).type]
-
-        descs = {}
-        dm_groups = []
-        for col in missing:
-            group = f"{col}_GROUP"
-            descs[col] = {
-                "valueType": value_type,
-                "option": 4,  # FixedShape
-                "shape": list(fixed_shape),
-                "ndim": len(fixed_shape),
-                "dataManagerGroup": group,
-                "dataManagerType": "TiledColumnStMan",
-            }
-            dm_groups.append(
-                {
-                    "COLUMNS": [col],
-                    "NAME": group,
-                    "TYPE": "TiledColumnStMan",
-                    # descriptors are JSON-serialised by arcae: plain ints only
-                    "SPEC": fit_tile_shape(fixed_shape, dtype),
-                }
-            )
-
-        # addcols takes dminfo positionally and it has no default
-        tab.addcols(descs, {f"*{i + 1}": g for i, g in enumerate(dm_groups)})
-
-        still_missing = [c for c in missing if c not in tab.columns()]
-        if still_missing:
-            raise ValueError(f"Failed to create column(s) {still_missing} in {ms_path}")
 
 
 def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np.ndarray]:

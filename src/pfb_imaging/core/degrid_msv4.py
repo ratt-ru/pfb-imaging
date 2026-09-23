@@ -43,6 +43,7 @@ from pfb_imaging.utils.degrid_msv4 import (
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import set_output_names
+from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
 log = pfb_logging.get_logger("DEGRID_MSV4")
 
@@ -503,6 +504,14 @@ def degrid_msv4(
 
     if not selected:
         raise ValueError("Selection matched no data")
+
+    # Creating a column leaves every table handle that was already open on that
+    # MS unable to resync -- any later read through one raises "another process
+    # changed the number of columns" (ska-sa/arcae#241). Handles opened after
+    # the change are fine, so drop the process-wide cache here and let the next
+    # reader rebuild. This is once per run, NOT per work item: the same call in
+    # `Degridder.degrid` reloaded the model every chunk (wiki memory-and-ray).
+    _release_ms_caches()
 
     # --- distribute -----------------------------------------------------
     # model_ds and masks are dead once the guards above have run, and since the

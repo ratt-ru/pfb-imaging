@@ -233,26 +233,26 @@ wheels = [
 
 [[package]]
 name = "arcae"
-version = "0.4.0a8"
+version = "0.4.0a11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyarrow", marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/58/70aa9ebe2a108a05d86aaee43746308e1a708d2f8346cfcbfacdbf57f0d2/arcae-0.4.0a8.tar.gz", hash = "sha256:fdf76ea288a2cceb2f5d3ee9bca371c396a8515641ce61b851b49042015f1490", size = 116650, upload-time = "2026-07-23T09:07:44.425Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/7a/7a00ef94004fd3692eb9b21bf15032a451b96d78067855b8f0f16b40a79f/arcae-0.4.0a11.tar.gz", hash = "sha256:dd75e02d1cb3fde4512054b91835368575f17804c37c730eb42251f08637a713", size = 130298, upload-time = "2026-09-22T14:06:29.048Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/79/f9490b9ce2017a7d6660a9ab22aa81ba49241d88459f78f7b3706f8d4c46/arcae-0.4.0a8-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:a312ba40a775268fbc2575fed9b78b4dad60a080648c6d5921fa77bea780ab16", size = 4135223, upload-time = "2026-07-23T09:06:59.591Z" },
-    { url = "https://files.pythonhosted.org/packages/a3/a9/ed21d4d9dfb4f6ab2ba299ebdaa0bc47ce6bcbb719c86773a0270b5c615d/arcae-0.4.0a8-cp311-cp311-macosx_15_0_x86_64.whl", hash = "sha256:204e5bfc33684ed29707baa2e2f7fa6ab461793b8787482f9fb5f8b9156ef8a8", size = 4348065, upload-time = "2026-07-23T09:07:01.69Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/0d/54c83680aea462183f752712fba2018287207faf4d797d8f5ebde38264ef/arcae-0.4.0a8-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:ab87c8db860f9e59e36704d58cd400f58fe976b56e43f8e8dc146932ff9a9a37", size = 16248325, upload-time = "2026-07-23T09:07:04.326Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/cb/48445858b2a567806acc0a4f82eb08a87f363d09c83bec2a69fa82b94a3a/arcae-0.4.0a8-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:b12377369b338f10ecd07268a37bbf21f13fae5e370229f96263163106e46c31", size = 16954496, upload-time = "2026-07-23T09:07:07.551Z" },
-    { url = "https://files.pythonhosted.org/packages/c6/95/a2dc89b2cdc03f17ad5cf6652e74a5cfd2deec0656db06ff69438ff50a56/arcae-0.4.0a8-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:b12682ca34af03bd518111882280cea12fb0edefd60eaf2d6c67838d2337e1eb", size = 4132057, upload-time = "2026-07-23T09:07:10.217Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/e6/10013def2f3bf2e2086cc415f6d26d3804734a904eef9c4d345a23696ad1/arcae-0.4.0a8-cp312-cp312-macosx_15_0_x86_64.whl", hash = "sha256:01481b881bc2c1d66900e1cd22cd0e12eb3e4869519d419356d5c028a85be3a8", size = 4348817, upload-time = "2026-07-23T09:07:12.119Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/47/715adf7ea2a83d1586ee987820698bfc81adc83ab1d77d39ace38c6f480c/arcae-0.4.0a8-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:7d6c75faf57a31cf5abf8ec5a1b1cb844a59480022741c1d32c68d86effd9a60", size = 16316861, upload-time = "2026-07-23T09:07:15.151Z" },
-    { url = "https://files.pythonhosted.org/packages/96/75/10592c8a713f382335eb6e5e764f5c7f02777a55a37342856e784d7cfe84/arcae-0.4.0a8-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:e9544f27b850daa161867594899a8bddaca29725765f773e870cdd2e7b2d9ed2", size = 17021866, upload-time = "2026-07-23T09:07:18.858Z" },
-    { url = "https://files.pythonhosted.org/packages/ac/88/0bd1cba178767522c1502c4961fc26feb4225c1c1727b1992ca7535ba800/arcae-0.4.0a8-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:8bcf1dd94035e4647d046f0413bb5358912df4e8d895dad690b02b96842f0171", size = 4130721, upload-time = "2026-07-23T09:07:22.338Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/b5/3c3ddf33a7e08c55c875a6c686b2377171011da68e61a0d0702942e398b9/arcae-0.4.0a8-cp313-cp313-macosx_15_0_x86_64.whl", hash = "sha256:4a96077647e8cff184dec791d099156812a88b0c00ba135260d7026c00616954", size = 4348461, upload-time = "2026-07-23T09:07:24.195Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/de/eaeeaa9db5306ed0e8e784c0660d18ff855dca80731bf1788fb7f47ca4d0/arcae-0.4.0a8-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:7651d49ed4334a6234dc1b73b340473fb496944c79649d47371b315831df9545", size = 16310623, upload-time = "2026-07-23T09:07:27.135Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/b5/c8bb0a14d3e83132881658e32faf4426c24f5e9e4eb176554a8a175f391e/arcae-0.4.0a8-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:1a6fa334039c122709300fb93f5f107cef41575ee11f89be026d1121d2f057ba", size = 17014627, upload-time = "2026-07-23T09:07:31.059Z" },
+    { url = "https://files.pythonhosted.org/packages/26/db/d14cb78041b070fea7160cf68c6e2ee90bf4a1a95a68a33705449f98b0c3/arcae-0.4.0a11-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:f6f3e7a17e9906433bd4be20d6fa2d073967066687f6fbf3fb7ac3195e31d5b0", size = 4154744, upload-time = "2026-09-22T14:05:55.8Z" },
+    { url = "https://files.pythonhosted.org/packages/45/98/0a6c597d1744461fb3a86ba96684b05ae290e422cfacee0c9e2523c4ad08/arcae-0.4.0a11-cp311-cp311-macosx_15_0_x86_64.whl", hash = "sha256:ef718e1e13f534f6b5c28824117c85f20c7b70c5a4cb38c0ecf3ccf8afaefe7c", size = 4364872, upload-time = "2026-09-22T14:05:57.534Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/52/b5a90859b62480d7fbd11225a55551c8607cca667d09ef0b3def329e24fa/arcae-0.4.0a11-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:70d24443a0649875760c24fc11d3826a649163f7ef35a2326e97c8d01e3db7c1", size = 16455676, upload-time = "2026-09-22T14:05:59.508Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/5c/36b8174af1fa9137b32265bedbb89a821cd3d302dbfae63c49b4cd062e02/arcae-0.4.0a11-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:7a944bbe55a40fb8710a47b7f4a2bbe94d3ac5b787659ced8af007d0c82fec99", size = 17171365, upload-time = "2026-09-22T14:06:02.192Z" },
+    { url = "https://files.pythonhosted.org/packages/79/c0/ceae3ec18331a29865df5b051408442e703259cd94bf36e022ae0ea2200f/arcae-0.4.0a11-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:5b900ca5089d7e1373381e5753fb0fa80bd3096ee3c6196b4bb713e71856fd6f", size = 4153008, upload-time = "2026-09-22T14:06:04.394Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/80/f4da6cbed2723a574ecc466b4b1bbb1c728ee4653828b868201a076da617/arcae-0.4.0a11-cp312-cp312-macosx_15_0_x86_64.whl", hash = "sha256:b20057a15227a8eeb3274211ec230dad7bea4a888d2cc994c647092e765bc4e6", size = 4367821, upload-time = "2026-09-22T14:06:05.953Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/7c/4ad8cc6d8ce7234239c4df2e6a1544ef4136c828f9498b21e2e2138cbb37/arcae-0.4.0a11-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:005ce9f79e2ddde1c36c4e4468cf846c50d6f4b40099f0ecf9cc192cccc23223", size = 16507497, upload-time = "2026-09-22T14:06:07.647Z" },
+    { url = "https://files.pythonhosted.org/packages/49/39/b0b857faa12226d34261d46f949b2a662853f2678043e24f646f482f586d/arcae-0.4.0a11-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:be27e665a3cd2333c544cfddb4a9be06372abd059bf36271f28555f10a0165cc", size = 17229668, upload-time = "2026-09-22T14:06:10.013Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/ac/bf36c2e2ac0206a5d43e3bd4b75289c3bff36af8c81aa3a9e003b420503b/arcae-0.4.0a11-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:f6aab60264654db710c64a82f208ce4b7732658b6644d0df3bce47b832b1c98c", size = 4152690, upload-time = "2026-09-22T14:06:12.445Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/15/2cfe185c6138119d5dd16bc3825bdcd85eb275fe31088b9b4faff431b6c9/arcae-0.4.0a11-cp313-cp313-macosx_15_0_x86_64.whl", hash = "sha256:c1327010072a2ef861ed16b0af6cc9f53edeaf4c28925fd0958f4746b985ad06", size = 4368162, upload-time = "2026-09-22T14:06:14.07Z" },
+    { url = "https://files.pythonhosted.org/packages/64/08/63f98ef8bc894e8dab60d8e249f964ff5f8e56c7113e7bef07ade8cda3ff/arcae-0.4.0a11-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:4a1b9e8eea4a21db425eee18634278638d91778700d0b8cfc0a5fc03ed83b298", size = 16508086, upload-time = "2026-09-22T14:06:16.31Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/6b/afe6ede8546588fa167ad8bb462a1d2586cd042deb8d72c938221b46ccc1/arcae-0.4.0a11-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:0cde939c34ec602e6aac2a3e172b006f0d6d813d55feb8061174f4179533cb96", size = 17229111, upload-time = "2026-09-22T14:06:18.992Z" },
 ]
 
 [[package]]
@@ -3706,7 +3706,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arcae", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.4.0a8,<0.5.0" },
+    { name = "arcae", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.4.0a11,<0.5.0" },
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr", "katdal"], marker = "extra == 'full'", specifier = ">=0.2.31" },
@@ -3737,7 +3737,7 @@ requires-dist = [
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
     { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
     { name = "xarray-kat", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.6" },
-    { name = "xarray-ms", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.4.0a7,<0.5.0" },
+    { name = "xarray-ms", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.4.0a11,<0.5.0" },
 ]
 provides-extras = ["full"]
 
@@ -6413,7 +6413,7 @@ wheels = [
 
 [[package]]
 name = "xarray-ms"
-version = "0.4.0a7"
+version = "0.4.0a11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arcae", marker = "python_full_version >= '3.11'" },
@@ -6421,9 +6421,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
     { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/52/a9c9ec8fe6a45465f968d9ae79ba1b9b9cbd952ca4b8dfaa7cef6904b8f4/xarray_ms-0.4.0a7.tar.gz", hash = "sha256:5b2b01d8d9c59d1fdc73477c78a5334291820a6362b1a1bd59a2632958992b43", size = 84745, upload-time = "2026-07-23T10:31:05.122Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/19/8b1f2d1070282ba381061a67d8ea8a50a2674b650450953d1873484354aa/xarray_ms-0.4.0a11.tar.gz", hash = "sha256:90d06819174d6362e4ea598d2562e70cf97c5265cab7efa2034b456dc77d2865", size = 90661, upload-time = "2026-09-22T15:18:58.101Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/cc/6f069370fde8af28ad122ef8578b769c68f4a2f7014c3b0b7c06dcf10085/xarray_ms-0.4.0a7-py3-none-any.whl", hash = "sha256:714ab47e2e4ff8c72b2fecbca4d4343f2c7f95a239a3bfc4c7913ce765b8f715", size = 61304, upload-time = "2026-07-23T10:31:03.897Z" },
+    { url = "https://files.pythonhosted.org/packages/58/8e/84a01f29def677f08b1a48744ac642eee92d14bf2e4da5b87ddd5cf15f0f/xarray_ms-0.4.0a11-py3-none-any.whl", hash = "sha256:6ca1726272b54af0c11b6f86846683c89f9e2437bb4e358f2b7c76b3cde04d78", size = 62636, upload-time = "2026-09-22T15:18:56.841Z" },
 ]
 
 [[package]]

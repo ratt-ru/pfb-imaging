@@ -58,9 +58,13 @@ full = [
     "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
     # write support lives on the 0.4.0-alpha line, which is cut from commits
     # LATER than 0.5.x -- these version numbers do not order by capability.
-    # Never raise these pins. See wiki design-decisions D14 and ratt-ru/xarray-ms#170.
-    "xarray-ms>=0.4.0a7,<0.5.0 ; python_version >= '3.11'",
-    "arcae>=0.4.0a8,<0.5.0 ; python_version >= '3.11'",
+    # NEVER raise the <0.5.0 ceilings: 0.5.x has no write support at all.
+    # See wiki design-decisions D14 and ratt-ru/xarray-ms#170.
+    # The a11 floors are load bearing: 0.4.0a8 made sync_msv2 create canonical
+    # MAIN columns (ratt-ru/xarray-ms#171), which is what removed our
+    # _create_missing_columns fallback, and a11 is the combination we test.
+    "xarray-ms>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
+    "arcae>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]

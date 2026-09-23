@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-22T09:00:00Z
+timestamp: 2026-09-23T10:30:00Z
 last_verified_commit: 81f29cc
 ---
 
@@ -1501,12 +1501,21 @@ update it (and this page's `last_verified_commit`) in the same session.
   `UVW`, `DATA`, `FLAG` and `WEIGHT` along with your column. Build the write dataset as
   `ds.drop_vars(set(ds.data_vars)).assign(...)`, which also preserves the `ds.encoding` the
   MSv2 store needs (`common_store_args`, `partition_key`).
-- **`sync_msv2` will not create a canonical MAIN column that is absent.** `MODEL_DATA`,
-  `CORRECTED_DATA` and `DATA` are all in `ms_descriptor("MAIN", complete=True)`, and
-  `generate_column_descriptor` validates such a name then emits nothing, so `addcols` is
-  never asked for it; non-canonical names (`MODEL_DATA1`) are created normally. No warning,
-  no error. `utils/degrid_msv4._create_missing_columns` is the workaround — delete it when
-  upstream closes the gap.
+- **`sync_msv2` would not create a canonical MAIN column that is absent** — fixed in
+  xarray-ms 0.4.0a8 (ratt-ru/xarray-ms#171), which the pins now floor at. Before that,
+  `MODEL_DATA`, `CORRECTED_DATA` and `DATA` were validated against
+  `ms_descriptor("MAIN", complete=True)` and then skipped with no warning and no error,
+  while non-canonical names (`MODEL_DATA1`) were created normally. The
+  `_create_missing_columns` fallback that covered it is gone. Its removal is why the
+  floor is load bearing: on an older xarray-ms, `degrid-msv4` would silently write nothing
+  to `MODEL_DATA`. Note the fix routes canonical columns through `addcols` too, which is
+  what exposed ska-sa/arcae#241 on the default column.
+- **Creating a column poisons table handles already open on that MS** (ska-sa/arcae#241).
+  Any read through one then raises `Table::lock cannot sync table …; another process changed
+  the number of columns`; handles opened afterwards are fine, and `getcol` never recovers on
+  a poisoned one. `degrid_msv4` evicts the process-wide table cache once after column
+  creation. Without it an in-process `imager → degrid-msv4 → imager` chain fails
+  deterministically on xarray-ms >= 0.4.0a8.
 - **`sync_msv2` silently drops a variable that is not on every correlated node.** It compares
   each variable's node count against the number of nodes it visited in `dt.subtree` and warns
   rather than raising. Declare new columns tree-wide — which is also correct, since a CASA

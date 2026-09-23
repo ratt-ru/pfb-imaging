@@ -15,15 +15,15 @@ uv run python scripts/msv4_issues/<script>.py tests/data/test_ascii_1h60.0s.MS [
 
 | | pinned in `pyproject.toml` | installed | latest alpha | latest stable |
 |---|---|---|---|---|
-| xarray-ms | `>=0.4.0a7,<0.5.0` | 0.4.0a7 | **0.4.0a11** | 0.5.11 |
-| arcae | `>=0.4.0a8,<0.5.0` | 0.4.0a8 | **0.4.0a11** | 0.5.5 |
+| xarray-ms | `>=0.4.0a11,<0.5.0` | 0.4.0a11 | 0.4.0a11 | 0.5.11 |
+| arcae | `>=0.4.0a11,<0.5.0` | 0.4.0a11 | 0.4.0a11 | 0.5.5 |
 
 The `<0.5.0` ceiling is deliberate and must stay: write support ships only on the
 `0.4.0-alpha` line, which is cut from *later* commits than the 0.5.x line. Version numbers
 do not order by capability here (wiki D14, ratt-ru/xarray-ms#170).
 
-**We are not yet on a11.** See issue 3 — the bump is currently blocked by a deterministic
-test failure, with a known one-line fix that has not been applied.
+The floors are load bearing, not just currency: 0.4.0a8 is what lets `sync_msv2` create
+canonical MAIN columns, which is what allowed the `_create_missing_columns` fallback to go.
 
 ## Status
 
@@ -49,9 +49,9 @@ was never asked for it and the following `to_msv2` had nowhere to write. No erro
   canonical variable-shape one.
 - Reproducer: [`sync_msv2_canonical_column.py`](../scripts/msv4_issues/sync_msv2_canonical_column.py).
   On a7 `MODEL_DATA created=False`; on a11 `created=True`.
-- **When we bump:** delete `_create_missing_columns` in `src/pfb_imaging/utils/degrid_msv4.py`
-  and the `ensure_model_columns` docstring paragraph about it. That workaround exists only for
-  this gap.
+- **Done:** `_create_missing_columns` is deleted and the pins now floor at a11, so
+  `ensure_model_columns` relies on `sync_msv2` alone (and on its `ColumnCreationError` to
+  verify). Dropping below 0.4.0a8 would make `degrid-msv4` silently write nothing.
 
 ### 2. `addcols` then read is answered by a stale table instance — FILED
 
@@ -98,10 +98,9 @@ handles are in one process and one of them made the change.
   `imager → degrid-msv4 → imager` chain. It appears at a8 because that is when `sync_msv2`
   began creating canonical columns itself (issue 1) rather than leaving `MODEL_DATA` to
   pfb-imaging's own short-lived handle.
-- **Fix on our side (verified, not yet applied):** evict the process-wide table cache after
-  column creation — `_release_ms_caches()` once after `ensure_model_columns` in
-  `core/degrid_msv4.degrid_msv4`, *not* per work item (see wiki memory-and-ray). With that
-  eviction inserted the test passes on a11.
+- **Fixed on our side:** `core/degrid_msv4.degrid_msv4` calls `_release_ms_caches()` once
+  after the column-creation loop — *not* per work item, which is what made it reload the model
+  every chunk (see wiki memory-and-ray). The test passes on a11 with it.
 - Production impact is narrower than the test suggests: degrid's replicas are separate
   processes that open after the driver closes. It bites any in-process pipeline that reads
   the MS both before and after degridding.
