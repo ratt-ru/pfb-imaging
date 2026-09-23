@@ -30,8 +30,8 @@ test failure, with a known one-line fix that has not been applied.
 | # | Issue | Repo | Filed | Status |
 |---|---|---|---|---|
 | 1 | `sync_msv2` skips a canonical MAIN column that is absent | xarray-ms | [#171](https://github.com/ratt-ru/xarray-ms/issues/171) | **Fixed** in 0.4.0a8; verified on a11 |
-| 2 | `addcols` then read is answered by a stale table instance | arcae | **no** | Present a7 → a11 |
-| 3 | `addcols` poisons table handles already open in the same process | arcae | **no** | Appears on xarray-ms ≥ 0.4.0a8; blocks our a11 bump |
+| 2 | `addcols` then read is answered by a stale table instance | arcae | drafted | Present a7 → a11 |
+| 3 | `addcols` poisons table handles already open in the same process | arcae | drafted | Same root cause as 2; blocks our a11 bump |
 | 4 | RSS ratchets across repeated open/read/close | arcae | **no** | Much improved by arcae#235; re-measure before filing |
 | 5 | No public way to evict xarray-ms's own table cache | xarray-ms | **no** | Partly touched by a9; still no hook |
 
@@ -53,7 +53,11 @@ was never asked for it and the following `to_msv2` had nowhere to write. No erro
   and the `ensure_model_columns` docstring paragraph about it. That workaround exists only for
   this gap.
 
-### 2. `addcols` then read is answered by a stale table instance — NEEDS FILING
+### 2. `addcols` then read is answered by a stale table instance — DRAFTED
+
+Filed together with issue 3 as one arcae issue ("Adding a column leaves other open table
+handles unable to resync"): they are the same behaviour, once between sibling instances of
+one `Table` and once between separate handles.
 
 xarray-ms opens MAIN with 8 casacore instances (`DEFAULT_MAIN_NINSTANCES`). arcae runs
 `AddColumns` on instance 0 (`IsolatedTableProxy::SpawnWriter`, whose comment calls adding
@@ -77,15 +81,17 @@ after `addcols` to verify creation, so it can fail against its own write.
 - This matters more from 0.4.0a8 on, because issue 1's fix routes canonical columns
   (i.e. the default `MODEL_DATA`) through the same `addcols` path.
 
-### 3. `addcols` poisons table handles already open in the same process — NEEDS FILING
+### 3. `addcols` poisons table handles already open in the same process — DRAFTED
 
 The same underlying behaviour as issue 2, but across handles rather than instances: a
 DataTree left open across a column creation cannot be read afterwards, even though both
 handles are in one process and one of them made the change.
 
-- Reproducer: [`addcols_poisons_open_handles.py`](../scripts/msv4_issues/addcols_poisons_open_handles.py).
-  Read A (tree left open) ok → create column via a second tree → read B fails → evict the
-  Multiton cache → read C ok.
+- Reproducer: [`addcols_poisons_open_handles.py`](../scripts/msv4_issues/addcols_poisons_open_handles.py),
+  pure arcae. Handle A reads, handle B adds a column, every subsequent read through A fails;
+  a handle opened afterwards is fine. Reproduces at `ninstances=1`, which is what separates it
+  from issue 2. `getcol` never recovers on the poisoned handle; `columns()` fails once then
+  succeeds, so the handle ends up half-recovered rather than resynced.
 - **Blocks the a11 bump.** `tests/test_degrid_parity.py::test_imager_degrid_msv4_nulls_the_residual`
   is `3/3 pass` on a7/a8 and `3/3 fail` on a11, at `CorrelatedFactory.__init__`'s
   `ms.tabledesc()` in the second `imager` call of an in-process
@@ -189,4 +195,5 @@ Cython 3.2 build failure; `#238`/`#230` add design documentation.
   distinguish an empty selection from an absent one.
 
 Neither issue 2 nor issue 3 appears anywhere upstream: searches for `addcols`, `ninstances`
-and `cannot sync` across both repos return nothing relevant, so both are ours to file.
+and `cannot sync` across both repos return nothing relevant, so both are ours to file. They
+are drafted as a single arcae issue, pending review before filing.
