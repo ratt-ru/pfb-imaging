@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """xarray-ms/arcae: post-gc RSS growth across repeated open/read/close cycles.
 
+Filed as ratt-ru/xarray-ms#177.
+
     uv run python scripts/msv4_issues/table_open_close_rss.py <any.ms> [open|uvw|vis] [iters]
 
 `open` opens and closes the DataTree without reading anything, so it isolates

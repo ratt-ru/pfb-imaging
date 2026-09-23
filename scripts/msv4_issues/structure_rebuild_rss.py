@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """xarray-ms: each `MSv2Structure` build retains ~1.5 MB that nothing reclaims.
 
+Filed as ratt-ru/xarray-ms#177.
+
     uv run python scripts/msv4_issues/structure_rebuild_rss.py <any.ms> [iters]
 
 Builds the structure repeatedly, sampling RSS after `gc.collect()` and

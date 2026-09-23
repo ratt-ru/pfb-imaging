@@ -32,8 +32,8 @@ canonical MAIN columns, which is what allowed the `_create_missing_columns` fall
 | 1 | `sync_msv2` skips a canonical MAIN column that is absent | xarray-ms | [#171](https://github.com/ratt-ru/xarray-ms/issues/171) | **Fixed** in 0.4.0a8; verified on a11 |
 | 2 | `addcols` then read is answered by a stale table instance | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Present a7 → a11 |
 | 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Same root cause as 2; blocks our a11 bump |
-| 4 | Every `MSv2Structure` build retains ~1.5 MB | xarray-ms | **no** | Re-measured; ready to file |
-| 5 | No public way to evict xarray-ms's own table cache | xarray-ms | **no** | Partly touched by a9; still no hook |
+| 4 | Every `MSv2Structure` build retains ~1.5 MB | xarray-ms | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | Filed with issue 5 |
+| 5 | No public way to evict xarray-ms's own table cache | xarray-ms | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | Filed with issue 4 |
 
 ---
 
@@ -105,7 +105,7 @@ handles are in one process and one of them made the change.
   processes that open after the driver closes. It bites any in-process pipeline that reads
   the MS both before and after degridding.
 
-### 4. Every `MSv2Structure` build retains ~1.5 MB — READY TO FILE
+### 4. Every `MSv2Structure` build retains ~1.5 MB — FILED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
 
 Repeatedly opening, reading and closing a DataTree grows post-`gc.collect()` RSS linearly
 with **no plateau**. Re-measured on an idle machine, 2000 iterations, xarray-ms 0.4.0a11 +
@@ -149,7 +149,7 @@ task that calls it pays a rebuild — and therefore ~1.5 MB — on its next open
 imager run that is the same shape as the pass-1 pathology this discipline was built to avoid
 (wiki memory-and-ray).
 
-### 5. No public way to evict xarray-ms's own table cache — NEEDS FILING
+### 5. No public way to evict xarray-ms's own table cache — FILED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
 
 xarray-ms creates `Multiton`s internally for its arcae tables and exposes no way to release
 them. `Multiton.release()` is a clean per-key eviction, but only for keys you hold, so the
@@ -165,7 +165,8 @@ wipe that destroys *every* consumer's Multitons as collateral.
   derived factories from the store that owns them") is adjacent — it stops a write store
   evicting factories it borrowed — but adds no consumer-facing hook.
 - Our helper is `utils/stokes2vis_msv4._release_ms_caches`, flagged for deletion once a hook
-  exists.
+  exists. Filed together with issue 4 as [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177): the wholesale wipe is the only eviction
+  available, and it also forces the structure rebuild that issue 4 makes expensive.
 
 ---
 

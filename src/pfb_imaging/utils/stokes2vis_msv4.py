@@ -36,7 +36,10 @@ def _release_ms_caches():
     sit there for the whole of pass 2. The cache holds strong references --
     gc cannot reclaim it -- so evict it explicitly between tasks; the next
     task reconstructs its own tables anyway. Private API by necessity:
-    degrade gracefully if the pattern package changes.
+    degrade gracefully if the pattern package changes. A public, per-MS
+    eviction hook is asked for in ratt-ru/xarray-ms#177, which also covers the
+    ~1.5 MB every structure rebuild this forces costs -- delete this helper
+    when that lands.
     """
     try:
         # deferred: private xarray-ms internals; degrade gracefully if absent
