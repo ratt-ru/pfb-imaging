@@ -14,12 +14,14 @@ so a hyphen there cannot round-trip. Container execution is unaffected:
 `pfb degrid-msv4` exactly as typed.
 """
 
+import asyncio
 import gc
 import os
 import resource
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -248,10 +250,29 @@ class Degridder:
         self._epsilon = epsilon
         self._do_wgridding = do_wgridding
         self._nthreads = nthreads
+        # Process-global, so it covers `_degrid`'s worker thread too (measured:
+        # a ducc FFT at nthreads=8 runs 0.71 s with the pool at 1 and 0.16 s
+        # with it at 8, from the resizing thread and from another thread alike).
         resize_thread_pool(nthreads)
+        # One worker thread, and the reason is Serve's user-loop watchdog.
+        # `degrid` used to be a sync def, which Serve runs *on* the replica's
+        # asyncio loop (RAY_SERVE_RUN_SYNC_IN_THREADPOOL defaults to 0), so a
+        # multi-minute item wedged the loop; the watchdog probes every 60 s
+        # with a 300 s timeout and kills the replica after 3 misses, which
+        # surfaces to the driver as a bare ActorDiedError. max_workers=1 keeps
+        # one item in flight per replica -- and keeps arcae's handles on a
+        # single thread -- no matter what Serve's concurrency ends up being.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="degrid")
 
-    def degrid(self, item: WorkItem) -> dict:
-        """Degrid and write one region. Returns post-gc memory telemetry."""
+    async def degrid(self, item: WorkItem) -> dict:
+        """Degrid and write one region. Returns post-gc memory telemetry.
+
+        Async purely so the replica's event loop stays free to answer health
+        probes; all the work happens on `_executor`'s single thread.
+        """
+        return await asyncio.get_running_loop().run_in_executor(self._executor, self._degrid, item)
+
+    def _degrid(self, item: WorkItem) -> dict:
         try:
             if self._model_ds is None:
                 self._model_ds = self._model.instance
@@ -546,11 +567,19 @@ def degrid_msv4(
         # on a small cluster (the test session's is num_cpus=2). max_replicas
         # is what actually caps concurrency.
         ray_actor_options={"num_cpus": 1e-2},
+        # One item per replica at a time. This MUST live here and not in
+        # `autoscaling_config`: that is a pydantic model which silently drops
+        # the key, leaving the default of 5 in force. Five items then queue on
+        # the replica and serialise, so each one's latency is five items deep
+        # and Serve's user-loop watchdog eventually kills the replica.
+        max_ongoing_requests=1,
         autoscaling_config={
             "upscale_delay_s": 1.0,
             "min_replicas": 1,
             "initial_replicas": 1,
-            "max_ongoing_requests": 1,
+            # must not exceed max_ongoing_requests, or a saturated replica
+            # never reaches the target and the deployment never scales out
+            "target_ongoing_requests": 1,
             "max_replicas": nworkers,
         },
     ).bind(
