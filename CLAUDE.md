@@ -26,6 +26,10 @@ branch, fold any durable knowledge (decisions, rationale, gotchas, layouts) into
 and plan files die with the branch. Wiki pages and rules files cite code, tests, PRs,
 commits and issues as sources, never spec/plan paths.
 
+**Upstream MSv4 issues live in `docs/msv4_issues.md`.** Every arcae / xarray-ms bug we hit
+goes there — filed or not — with a runnable reproducer in `scripts/msv4_issues/`. Check it
+before debugging anything odd on the MSv4 write path, and add to it rather than rediscovering.
+
 ## MSv4 DataTree imager (`pfb imager`)
 
 `pfb imager` is the MSv4 front-end: a two-pass pipeline producing
