@@ -98,6 +98,18 @@ handles are in one process and one of them made the change.
   `imager → degrid-msv4 → imager` chain. It appears at a8 because that is when `sync_msv2`
   began creating canonical columns itself (issue 1) rather than leaving `MODEL_DATA` to
   pfb-imaging's own short-lived handle.
+- **Upstream's recommended workaround** (sjperkins on arcae#241) is `table.close()` followed
+  by reopening, rather than evicting the cache. That is already what we do for the handle we
+  own — the column-creation tree is closed explicitly. It does not reach the handle that
+  actually fails here, which belongs to a `DataTree` opened earlier by another stage and held
+  in xarray-ms's process-wide cache: a consumer cannot close what it does not hold, which is
+  the ask in ratt-ru/xarray-ms#177. Simon also floats making `AddColumns` reopen the other
+  instances as the long-term fix.
+- **Known gap on our side:** `core/imager.py` never closes the MS `DataTree` it opens (no
+  `.close()` anywhere in that module), so it is our own unclosed handle that gets poisoned in
+  an in-process chain. Closing it would remove the need for the eviction below — but it cannot
+  simply be closed after selection, because the dispatch loop still reads `node.ds` and slices
+  it for the workers. It would have to be closed after dispatch.
 - **Fixed on our side:** `core/degrid_msv4.degrid_msv4` calls `_release_ms_caches()` once
   after the column-creation loop — *not* per work item, which is what made it reload the model
   every chunk (see wiki memory-and-ray). The test passes on a11 with it.
