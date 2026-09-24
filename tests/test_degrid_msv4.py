@@ -252,8 +252,9 @@ def test_build_region_masks_without_a_region_file(simple_mds):
     _, ds = simple_mds
     masks = build_region_masks(ds, None)
     assert len(masks) == 1
-    assert masks[0].shape == (64, 32)
-    assert np.all(masks[0] == 1.0)
+    assert masks[0].mask.shape == (64, 32)
+    assert (masks[0].i0, masks[0].j0) == (0, 0)
+    assert np.all(masks[0].mask == 1.0)
 
 
 def test_build_region_masks_is_x_major_on_a_non_square_grid(simple_mds, tmp_path):
@@ -276,16 +277,23 @@ def test_build_region_masks_is_x_major_on_a_non_square_grid(simple_mds, tmp_path
     masks = build_region_masks(ds, str(region_file))
     assert len(masks) == 2, "remainder first, then one mask per region"
     remainder, region = masks
-    assert remainder.shape == (nx, ny)
-    assert region.shape == (nx, ny)
+    # the remainder is everything but a 3x3 box, so its bbox is the full grid
+    assert remainder.mask.shape == (nx, ny)
+    assert (remainder.i0, remainder.j0) == (0, 0)
+    # the region is cropped to its own 3x3 box, centred on (x=40, y=9), then
+    # grown by one pixel per axis because ducc refuses an odd grid
+    assert region.mask.shape == (4, 4)
+    assert (region.i0, region.j0) == (39, 8)
 
     # the region covers the component's pixel and the remainder does not
-    assert region[40, 9] == 1.0
-    assert remainder[40, 9] == 0.0
+    assert region.mask[40 - region.i0, 9 - region.j0] == 1.0
+    assert remainder.mask[40, 9] == 0.0
     # and they partition the grid
-    np.testing.assert_array_equal(remainder + region, np.ones((nx, ny)))
+    full = np.zeros((nx, ny))
+    full[region.i0 : region.i0 + 4, region.j0 : region.j0 + 4] = region.mask
+    np.testing.assert_array_equal(remainder.mask + full, np.ones((nx, ny)))
     # a 3x3 box, so exactly 9 pixels
-    assert region.sum() == 9.0
+    assert region.mask.sum() == 9.0
 
 
 def test_build_region_masks_refuses_overlapping_regions(simple_mds, tmp_path):
@@ -1113,3 +1121,78 @@ def test_degrid_msv4_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_
         assert not np.allclose(a, b), "both SPWs got identical visibilities"
     finally:
         dt.close()
+
+
+@pytest.mark.parametrize("flip_u", [False, True])
+@pytest.mark.parametrize("flip_v", [False, True])
+def test_crop_phase_centre_reproduces_the_full_grid_degrid(flip_u, flip_v):
+    """Degridding a cropped sub-grid must equal degridding the full one.
+
+    This is the guard on `crop_phase_centre`'s arithmetic, and it has to run
+    over every flip combination: each axis's offset sign is set by its flip
+    convention, and a sign error moves the model on the sky rather than
+    changing it slightly, so it would sail past any loose tolerance. The
+    check is that a wrong sign is order-unity wrong, not that the right one
+    is merely close.
+    """
+    from ducc0.wgridder import dirty2vis
+
+    from pfb_imaging.utils.degrid_msv4 import crop_bbox, crop_phase_centre
+
+    rng = np.random.default_rng(42)
+    nx, ny, cell = 64, 48, 1e-5
+    x0, y0 = -3e-4, 2e-4
+
+    uvw = rng.normal(0.0, 3000.0, (500, 3))
+    uvw[:, 2] *= 0.05
+    freq = np.linspace(1.0e9, 1.1e9, 4)
+
+    # flux confined to a box away from the grid centre, so a mis-set centre
+    # cannot be masked by symmetry
+    image = np.zeros((nx, ny))
+    image[10:26, 30:42] = rng.normal(size=(16, 12))
+
+    kw = dict(
+        uvw=uvw,
+        freq=freq,
+        pixsize_x=cell,
+        pixsize_y=cell,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=False,
+        epsilon=1e-9,
+        do_wgridding=True,
+        divide_by_n=False,
+        nthreads=1,
+    )
+    ref = dirty2vis(dirty=image, center_x=x0, center_y=y0, **kw)
+
+    rm = crop_bbox(np.where(image != 0.0, 1.0, 0.0))
+    assert (rm.mask.shape, rm.i0, rm.j0) == ((16, 12), 10, 30)
+    nxc, nyc = rm.mask.shape
+    sub = np.ascontiguousarray(image[rm.i0 : rm.i0 + nxc, rm.j0 : rm.j0 + nyc])
+
+    geom = dict(x0=x0, y0=y0, cell_rad=cell, flip_u=flip_u, flip_v=flip_v, nx=nx, ny=ny)
+    xc, yc = crop_phase_centre(rm=rm, **geom)
+    got = dirty2vis(dirty=sub, center_x=xc, center_y=yc, **kw)
+    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
+
+    # every other sign choice is order-unity wrong
+    for sx, sy in ((1, -1), (-1, 1), (-1, -1)):
+        bad = dirty2vis(
+            dirty=sub,
+            center_x=x0 + sx * (xc - x0),
+            center_y=y0 + sy * (yc - y0),
+            **kw,
+        )
+        assert np.abs(bad - ref).max() > 0.1 * np.abs(ref).max()
+
+
+def test_crop_bbox_of_an_empty_mask_is_degenerate():
+    """An empty region must not crop to a zero-sized grid ducc would reject."""
+    from pfb_imaging.utils.degrid_msv4 import crop_bbox
+
+    rm = crop_bbox(np.zeros((16, 8)))
+    assert rm.mask.shape == (2, 2)
+    assert (rm.i0, rm.j0) == (0, 0)
+    assert not rm.mask.any()

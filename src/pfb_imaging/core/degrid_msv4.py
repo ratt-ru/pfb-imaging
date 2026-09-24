@@ -38,6 +38,7 @@ from ray import serve
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.degrid_msv4 import (
+    RegionMask,
     assert_writable,
     build_region_masks,
     degrid_region,
@@ -181,7 +182,7 @@ def _load_model(mds: str) -> xr.Dataset:
     return xr.open_zarr(mds).load()
 
 
-def _load_masks(mds: str, region_file: str | None) -> list[np.ndarray]:
+def _load_masks(mds: str, region_file: str | None) -> list[RegionMask]:
     """Rebuild the region masks in a replica from the paths alone.
 
     Goes through `Multiton(_load_model, mds)` rather than loading the `.mds`

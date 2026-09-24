@@ -14,11 +14,17 @@ The single exception is `build_region_masks`, which converts an astropy
 """
 
 from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 import numpy as np
 import xarray as xr
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
-from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
+from pfb_model_spec.utils.degrid import (
+    degrid_stokes,
+    model_geometry,
+    render_model_region,
+    stokes_vis_to_corr,
+)
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
@@ -120,7 +126,114 @@ def ensure_model_columns(
     dt.sync_msv2(write_map={c: c for c in columns})
 
 
-def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np.ndarray]:
+class RegionMask(NamedTuple):
+    """A region's weights, cropped to the region's bounding box.
+
+    Cropping is a pure optimisation, and a large one: a region is degridded by
+    its own `dirty2vis` call, whose cost scales with the grid it is handed, not
+    with the flux on it. Measured on a 6720^2 model with three regions, the
+    per-chunk gridder time fell from 3 x 5.29 s to 5.29 + 0.64 + 0.51 s. It
+    also shrinks what the driver ships to each replica -- a full-grid float64
+    mask is 361 MB at 6720^2, and a small region's is under 1 MB.
+
+    Attributes:
+        mask: `(nxc, nyc)` float64 weights, x-major like the model.
+        i0: Index along x of the mask's origin in the full model grid.
+        j0: Index along y of the mask's origin in the full model grid.
+    """
+
+    mask: np.ndarray
+    i0: int
+    j0: int
+
+
+def _even_span(lo: int, hi: int, n: int) -> tuple[int, int]:
+    """Grow `[lo, hi)` to an even length without leaving `[0, n)`.
+
+    ducc's wgridder asserts `nx_dirty must be even`, so a bounding box of odd
+    extent cannot be handed to it. Growing outwards keeps the box a window on
+    real model pixels, which padding with zeros would not.
+    """
+    if (hi - lo) % 2 == 0:
+        return lo, hi
+    if hi < n:
+        return lo, hi + 1
+    if lo > 0:
+        return lo - 1, hi
+    # the full axis is odd, so no even window exists; the uncropped grid would
+    # fail the same assertion, and that is the error worth surfacing
+    return lo, hi
+
+
+def crop_bbox(mask: np.ndarray) -> RegionMask:
+    """Crop a full-grid mask to the bounding box of its non-zero pixels.
+
+    The box is grown by at most one pixel per axis so that both extents are
+    even, which ducc requires (see `_even_span`).
+
+    Args:
+        mask: `(nx, ny)` weights, x-major.
+
+    Returns:
+        The cropped mask and its origin. An all-zero mask crops to a `(2, 2)`
+        zero box at the origin -- `degrid_stokes` skips an empty plane
+        outright, so the degenerate box is never gridded.
+    """
+    nx, ny = mask.shape
+    xs = np.flatnonzero(mask.any(axis=1))
+    ys = np.flatnonzero(mask.any(axis=0))
+    if xs.size == 0 or ys.size == 0:
+        return RegionMask(np.zeros((min(2, nx), min(2, ny)), dtype=mask.dtype), 0, 0)
+    i0, i1 = _even_span(int(xs[0]), int(xs[-1]) + 1, nx)
+    j0, j1 = _even_span(int(ys[0]), int(ys[-1]) + 1, ny)
+    return RegionMask(np.ascontiguousarray(mask[i0:i1, j0:j1]), i0, j0)
+
+
+def crop_phase_centre(
+    *,
+    x0: float,
+    y0: float,
+    cell_rad: float,
+    flip_u: bool,
+    flip_v: bool,
+    nx: int,
+    ny: int,
+    rm: RegionMask,
+) -> tuple[float, float]:
+    """The `center_x`/`center_y` a cropped sub-grid must be degridded with.
+
+    ducc places image pixel `i` at `(i - nx // 2) * cell` from the image
+    centre, so cropping moves the centre by the shift in that origin --
+    `i0 + nxc // 2 - nx // 2` pixels along x, likewise along y. The sign is
+    the axis's flip convention: `flip_u`/`flip_v` negate the direction the
+    offset is measured in. Getting either sign wrong is not a small error --
+    it puts the model in the wrong place on the sky, and the visibilities come
+    back order-unity wrong (`tests/test_degrid_msv4.py`, the crop-parity test,
+    checks all four flip combinations).
+
+    Args:
+        x0: The model's own `center_x`, from `model_geometry`.
+        y0: The model's own `center_y`.
+        cell_rad: Pixel size in radians (square pixels).
+        flip_u: The model's U-axis flip convention.
+        flip_v: The model's V-axis flip convention.
+        nx: Full model grid size along x.
+        ny: Full model grid size along y.
+        rm: The cropped mask whose grid the offsets are wanted for.
+
+    Returns:
+        `(center_x, center_y)` for `degrid_stokes`.
+    """
+    nxc, nyc = rm.mask.shape
+    sx = -1.0 if flip_u else 1.0
+    sy = -1.0 if flip_v else 1.0
+    return (
+        x0 + sx * (rm.i0 + nxc // 2 - nx // 2) * cell_rad,
+        y0 + sy * (rm.j0 + nyc // 2 - ny // 2) * cell_rad,
+    )
+
+
+def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[RegionMask]:
     """Split the model grid into a remainder plus one mask per region (#115).
 
     Each region's flux is degridded into its own MS column, so the masks must
@@ -141,8 +254,9 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
             detects, or `None` for a single all-ones mask.
 
     Returns:
-        `(nx, ny)` float64 masks: the remainder first, then one per region.
-        The no-region mask is zero-strided -- see below.
+        Float64 masks cropped to their own bounding boxes (see `RegionMask`):
+        the remainder first, then one per region. The no-region mask is a
+        full-grid, zero-strided all-ones -- see below.
 
     Raises:
         ValueError: If two regions overlap.
@@ -154,7 +268,8 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
         # regions, and a materialised all-ones grid costs nx*ny*8 bytes (361 MB
         # at 6720^2) per holder to multiply the model by 1. Consumers only read
         # .shape and broadcast against it.
-        return [np.broadcast_to(np.float64(1.0), (nx, ny))]
+        # nothing to crop to: the "region" is the whole grid
+        return [RegionMask(np.broadcast_to(np.float64(1.0), (nx, ny)), 0, 0)]
 
     # deferred: import cycle with utils.fits (load_fits <-> utils.misc)
     from regions import Regions
@@ -188,8 +303,9 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[np
     if (total > 1).any():
         raise ValueError("Overlapping regions are not supported")
 
-    # the remainder (direction-independent component) goes first
-    return [1.0 - total] + masks
+    # the remainder (direction-independent component) goes first. Cropping
+    # happens only now, so the overlap check above sees whole-grid masks.
+    return [crop_bbox(m) for m in [1.0 - total] + masks]
 
 
 def assert_writable(ds: xr.Dataset) -> None:
@@ -221,7 +337,7 @@ def degrid_region(
     *,
     region: Mapping[str, slice],
     model_ds: xr.Dataset,
-    masks: Sequence[np.ndarray],
+    masks: Sequence[RegionMask],
     columns: Sequence[str],
     corr_types: Sequence[str],
     accumulate: bool = False,
@@ -238,7 +354,7 @@ def degrid_region(
         region: `{"time": slice, "frequency": slice}`. Slices only -- integer
             indexing makes the matching write raise `MismatchedWriteRegion`.
         model_ds: An opened `.mds` dataset.
-        masks: `(nx, ny)` region masks from `build_region_masks`, one per entry
+        masks: Cropped region masks from `build_region_masks`, one per entry
             of `columns` and in the same order.
         columns: Output column names, aligned with `masks`.
         corr_types: Correlation names, i.e. the node's `polarization` values.
@@ -287,23 +403,46 @@ def degrid_region(
     time_out = float(ds.time.values.mean())
     freq_out = float(freq.mean())
 
+    # Render once for the whole chunk rather than once per region: the model is
+    # a function of (time, freq) alone, so every region sees the same image.
+    # `model_to_apparent_vis_for_region` renders inside its own per-region call,
+    # which is why this composes its primitives instead (pfb-model-spec#27, which
+    # would move this loop -- and the crop arithmetic -- behind that seam).
+    geom = model_geometry(model_ds)
+    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)
+
     assigned = {}
-    for column, region_mask in zip(columns, masks, strict=True):
-        vis = model_to_apparent_vis_for_region(
-            model_ds,
-            uvw=uvw,
-            freq=freq,
-            corr_types=tuple(corr_types),
-            time=time_out,
-            freq_out=freq_out,
-            mask=mask,
-            region_mask=region_mask,
+    for column, rm in zip(columns, masks, strict=True):
+        nxc, nyc = rm.mask.shape
+        sub = image[:, rm.i0 : rm.i0 + nxc, rm.j0 : rm.j0 + nyc] * rm.mask[None]
+        x0, y0 = crop_phase_centre(
+            x0=geom["x0"],
+            y0=geom["y0"],
+            cell_rad=geom["cell_rad"],
+            flip_u=geom["flip_u"],
+            flip_v=geom["flip_v"],
+            nx=geom["nx"],
+            ny=geom["ny"],
+            rm=rm,
+        )
+        stokes_vis = degrid_stokes(
+            uvw,
+            freq,
+            np.ascontiguousarray(sub),
+            cell_rad=geom["cell_rad"],
+            x0=x0,
+            y0=y0,
+            flip_u=geom["flip_u"],
+            flip_v=geom["flip_v"],
+            flip_w=geom["flip_w"],
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             # the .mds records no beam, so nothing folds 1/n in (wiki D22)
             divide_by_n=False,
             nthreads=nthreads,
+            mask=mask,
         )
+        vis = stokes_vis_to_corr(stokes_vis, geom["stokes"], tuple(corr_types))
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
         if accumulate:
             vis += ds[column].values.astype(np.complex64)
