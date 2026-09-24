@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-23T13:30:00Z
-last_verified_commit: 772f216
+timestamp: 2026-09-24T09:00:00Z
+last_verified_commit: 0f7296f
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -175,7 +175,7 @@ replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.
 
-Three Serve-specific notes:
+Four Serve-specific notes:
 
 - **`degrid` is `async def` and hands its body to a one-thread executor, and
   this is load bearing.** Serve runs a *sync* method directly on the replica's
@@ -199,6 +199,15 @@ Three Serve-specific notes:
   is what actually caps concurrency. The driver asks `init_ray` for
   `nworkers + 1` CPUs so the Serve controller is not competing for the last
   slot.
+- **Region masks are cropped to their bounding boxes before they are shipped**
+  (D38 amendment 0f7296f). This is a memory note as much as a speed one: a
+  full-grid float64 mask is 361 MB at 6720^2, so three regions put 1033 MB
+  through the Multiton rebuild in every replica; cropped, the same three come
+  to 353 MB, nearly all of it the remainder mask, which genuinely does cover
+  the grid. Note `build_region_masks` itself costs ~93 s on that model (astropy
+  `regions` rasterising 6720^2 per region) — it runs once per replica behind a
+  Multiton, but a replica that went quiet long enough to drop the Multiton
+  would pay it again.
 - **Measured (2 replicas, 80 chunks, 6-time x 351-baseline x 1-channel):**
   post-gc RSS rose 0.63 -> 0.89 GB over ~40 items per pid, i.e. ~6.5 MB/task.
   That is three orders of magnitude below the pass-1 pathology this page was

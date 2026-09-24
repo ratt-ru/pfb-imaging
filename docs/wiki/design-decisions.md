@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-23T13:30:00Z
-last_verified_commit: 383cf1f
+timestamp: 2026-09-24T09:00:00Z
+last_verified_commit: 0f7296f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1384,14 +1384,30 @@ update it (and this page's `last_verified_commit`) in the same session.
   does **not** cover the concurrent case, which is the one tricolour actually hit. Do not
   resolve this from first principles — it wants a measurement of concurrent writers under
   lock contention, and upstream expects arcae deadlock fixes shortly. Revisit then.
-- **Future: per-region evaluation probably belongs in pfb-model-spec.** `degrid_region`
-  currently loops regions in pfb-imaging, calling `model_to_apparent_vis_for_region` once per
-  region and paying a full `dirty2vis` pass each time. QuartiCal consumes all
-  regions/directions *simultaneously*, so the loop wants to live in the shared helper rather
-  than be reimplemented per consumer — which would also let the helper amortise whatever is
-  common across regions instead of repeating it. Not scheduled; noted so the region loop is
-  not entrenched further here in the meantime.
-- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, ratt-ru/tricolour#106, issue #278, PR #331.
+- **Amendment (0f7296f): each region is degridded on its own bounding box.** `dirty2vis`
+  costs what the grid it is handed costs, not what the flux on it costs, so masking a 6720²
+  model down to a 344×362 region and degridding the full grid anyway paid full price. Masks
+  are cropped in `build_region_masks` and carry their origin (`RegionMask`); the sub-grid is
+  degridded with a shifted `center_x`/`center_y` (`crop_phase_centre`). Measured on the real
+  GC model (three regions, 20k rows × 128 chan, `nthreads=8`, `epsilon=1e-7`): gridder
+  18.84 s → 6.19 s (3.04×), the two paths agreeing to 2.2e-8 relative; the masks shipped to
+  each replica drop from 1033 MB to 353 MB. **Two traps, both order-unity wrong rather than
+  slightly off when missed:** each axis's offset sign is its own flip convention
+  (`-1 if flip_u else +1`, likewise `flip_v`), and ducc asserts an even grid extent, so an
+  odd bounding box must grow by a pixel *into real model pixels* — zero-padding would
+  misplace the window. `tests/test_degrid_msv4.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`
+  pins both over all four flip combinations, and asserts each wrong sign is order-unity wrong.
+  This also replaced `model_to_apparent_vis_for_region` with its own primitives
+  (`render_model_region`/`degrid_stokes`/`stokes_vis_to_corr`), so the chunk renders once for
+  all regions instead of once per region.
+- **Future: per-region evaluation probably belongs in pfb-model-spec** (pfb-model-spec#27).
+  The region loop, and the crop arithmetic above, live in pfb-imaging only because
+  `model_to_apparent_vis_for_region` renders inside its own per-region call. QuartiCal
+  consumes all regions/directions *simultaneously*, so a multi-region entry point that
+  renders once and degrids N cropped sub-grids serves both consumers and is where the crop
+  test really belongs. Filed, not scheduled.
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, `src/pfb_imaging/utils/degrid_msv4.py`,
+  ratt-ru/tricolour#106, issue #278, PR #331, pfb-model-spec#27.
 
 ### D39 — the degrid chunk's representative time and frequency are unweighted means
 
