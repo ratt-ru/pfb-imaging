@@ -100,12 +100,16 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# MSv2 access through casacore. Needed by `imager` (MSv2 input) and `hci`, and
-# by the rephasing path in `utils/stokes2vis_msv4.py`, which calls africanus'
-# synthesize_uvw/get_coordinates (pyrap). NOT needed by `deconv`, `restore` or
-# `degrid`: those reach tables through arcae, which vendors casacore and does
-# publish aarch64 wheels. `degrid` joined that set in #330, when the MSv2
-# command of the same name was retired.
+# MSv2 access through dask-ms. Needed by `hci`, and by the rephasing path in
+# `utils/stokes2vis_msv4.py`, which calls africanus' synthesize_uvw /
+# get_coordinates (pyrap).
+#
+# NOT needed to read MSv2 data: `imager` and `degrid` open CASA tables through
+# arcae/xarray-ms, which vendors casacore and does publish aarch64 wheels.
+# `degrid` joined the casacore-free set in #330 with the retirement of the MSv2
+# command of the same name, and `imager` joined it in the same PR once its last
+# DaskMSStore call was replaced with plain fsspec. `deconv` and `restore` never
+# touch an MS at all.
 #
 # python-casacore has never published an aarch64 wheel, so on arm this extra
 # compiles from sdist and needs, on Ubuntu/DGX OS:

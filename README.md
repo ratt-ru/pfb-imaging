@@ -43,13 +43,14 @@ The dependencies are split so the cross-platform stack installs cleanly on
 | extra | contents | notes |
 |---|---|---|
 | `full` | the cross-platform scientific stack | everything `deconv`, `restore` and the MSv4/`xarray-ms` path need |
-| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | MSv2 access for `imager` and `hci`, and rephasing. No aarch64 wheel — see below |
+| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | `hci`, and rephasing (`--phase-dir` / multi-field). No aarch64 wheel — see below |
 | `x86` | `tbb` | x86_64-only; a no-op elsewhere |
 | `all` | all of the above | safe on every architecture |
 
-`pip install "pfb-imaging[full]"` is enough for `imager` on MSv4 data, `deconv`,
-`restore` and `degrid` — the whole MSv4 pipeline. Add `casacore` only for MSv2
-input, `hci`, or rephasing (multi-field mosaics / `--phase-dir`).
+`pip install "pfb-imaging[full]"` is enough for `imager`, `deconv`, `restore` and
+`degrid` — the whole main pipeline, on MSv4 *and* MSv2 data, since those read
+CASA tables through arcae. Add `casacore` only for `hci` or for rephasing
+(multi-field mosaics / `--phase-dir`).
 
 **On linux-aarch64:**
 

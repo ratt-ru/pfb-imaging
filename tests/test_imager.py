@@ -91,8 +91,6 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
 @pytest.mark.slow
 def test_scratch_retained_by_default(ms_name, tmp_path):
     """The pass-1 .scratch store is kept by default for re-gridding without re-read."""
-    from daskms.fsspec_store import DaskMSStore  # casacore-free fsspec store
-
     outname = str(tmp_path / "cache")
     imager_core(
         [Path(ms_name)],
@@ -105,8 +103,8 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
         overwrite=True,
         keep_ray_alive=True,
     )
-    assert DaskMSStore(outname + "_I.scratch").exists()
-    assert DaskMSStore(outname + "_I.dt").exists()
+    assert Path(outname + "_I.scratch").exists()
+    assert Path(outname + "_I.dt").exists()
 
 
 @pytest.mark.slow

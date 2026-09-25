@@ -35,6 +35,11 @@ CASACORE_FREE_ENTRY_POINTS = [
     # fsspec does -- exactly the silent re-break this guard exists to catch,
     # and it was invisible while the entry point was unlisted (#330).
     "pfb_imaging.core.degrid",
+    # imager reads MSv2 tables through arcae/xarray-ms (which vendors casacore
+    # and ships aarch64 wheels), never through dask-ms. Its last dask-ms touch
+    # was a DaskMSStore used for globbing and for `.url`/`.exists()`/`.rm()`;
+    # `utils/naming.uri_and_fs` and `glob_uris` do that with plain fsspec.
+    "pfb_imaging.core.imager",
     "pfb_imaging.cli",
 ]
 
@@ -52,12 +57,17 @@ def _module_scope_imports(path):
 
     Deferred imports inside a function are exactly the mechanism this split
     relies on, so they must not count as violations.
+
+    `With` is in the recursed set alongside `If`/`Try` because `core/hci.py`
+    wraps its module-scope dask-ms import in `with optional_dependency(...)`:
+    that import *does* execute on import, and without recursing into `With` the
+    walker would report hci -- or any module copying that pattern -- as clean.
     """
     tree = ast.parse(path.read_text())
     found = []
     for node in tree.body:
         candidates = [node]
-        if isinstance(node, (ast.If, ast.Try)):
+        if isinstance(node, (ast.If, ast.Try, ast.With)):
             candidates = list(ast.walk(node))
         for sub in candidates:
             if isinstance(sub, ast.Import):

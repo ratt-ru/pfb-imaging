@@ -44,7 +44,7 @@ from pfb_imaging.utils.degrid import (
     ensure_model_columns,
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
-from pfb_imaging.utils.naming import set_output_names
+from pfb_imaging.utils.naming import glob_uris, set_output_names
 from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
 log = pfb_logging.get_logger("DEGRID_MSV4")
@@ -469,19 +469,15 @@ def degrid(
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     # --- resolve inputs -------------------------------------------------
-    # fsspec directly rather than daskms.fsspec_store.DaskMSStore: all this
-    # needs is glob-and-unstrip, and dask-ms drags python-casacore, which has
-    # no linux-aarch64 wheel and lives behind the optional [casacore] extra.
-    # This path reaches tables through arcae, so it must stay casacore-free
-    # (tests/test_optional_extras.py pins that).
     msnames = []
     for ms_path in ms:
-        pattern = str(ms_path).rstrip("/")
-        fs, _ = fsspec.core.url_to_fs(pattern)
-        matches = fs.glob(pattern)
+        matches = glob_uris(ms_path)
         if not matches:
             raise ValueError(f"No MS at {ms_path}")
-        msnames += [m.replace("file://", "") for m in map(fs.unstrip_protocol, matches)]
+        # strip file:// -- these go on to arcae/python-casacore, which want a
+        # plain filesystem path. A remote protocol survives and fails later at
+        # the backend check, which is where it should fail.
+        msnames += [m.replace("file://", "") for m in matches]
 
     if mds is None:
         mds = _default_mds(output_filename, suffix)

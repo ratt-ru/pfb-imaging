@@ -26,7 +26,6 @@ from pfb_imaging.utils.optional import optional_dependency
 # command body cannot carry extra statements.
 with optional_dependency("The hci command"):
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms.fsspec_store import DaskMSStore
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard
@@ -36,6 +35,7 @@ from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import resolve_target_radec
 from pfb_imaging.utils.misc import construct_mappings, set_image_size
+from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
 
@@ -171,25 +171,19 @@ def hci(
 
     msnames = []
     for ms_name in map(str, ms):
-        msstore = DaskMSStore(ms_name.rstrip("/"))
-        mslist = msstore.fs.glob(ms_name.rstrip("/"))
-        try:
-            assert len(mslist) > 0
-            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception:
+        matches = glob_uris(ms_name)
+        if not matches:
             log.error_and_raise(f"No MS at {ms_name}", ValueError)
+        msnames += matches
     ms = msnames
     opts_dict["ms"] = ms
     if gain_table is not None:
         gainnames = []
         for gt in map(str, gain_table):
-            gainstore = DaskMSStore(gt.rstrip("/"))
-            gtlist = gainstore.fs.glob(gt.rstrip("/"))
-            try:
-                assert len(gtlist) > 0
-                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
-            except Exception:
-                log.error_and_raise(f"No gain table  at {gt}", ValueError)
+            matches = glob_uris(gt)
+            if not matches:
+                log.error_and_raise(f"No gain table at {gt}", ValueError)
+            gainnames += matches
         gain_table = gainnames
         opts_dict["gain_table"] = gain_table
 
@@ -215,16 +209,15 @@ def hci(
         log=log,
     )
 
-    fds_store = DaskMSStore(f"{output_dataset}")
-    if fds_store.exists():
+    fds_fs, fds_url = uri_and_fs(output_dataset)
+    if fds_fs.exists(fds_url):
         if overwrite:
             log.info(f"Overwriting {output_dataset}")
-            fds_store.rm(recursive=True)
+            fds_fs.rm(fds_url, recursive=True)
         else:
             log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
 
-    fs = fsspec.filesystem(fds_store.url.split(":", 1)[0])
-    fs.makedirs(fds_store.url, exist_ok=True)
+    fds_fs.makedirs(fds_url, exist_ok=True)
 
     if gain_table is not None:
 
@@ -535,7 +528,7 @@ def hci(
                             radec=radecs[ms_name][idt],
                             antpos=antpos[ms_name],
                             poltype=poltype[ms_name],
-                            fds_store=fds_store,
+                            fds_store=fds_url,
                             bandid=b0 + fi,
                             timeid=ti,
                             msid=ims,
@@ -600,7 +593,7 @@ def hci(
     for _, val in channel_width.items():
         cwidths.append(val)
     # reduction over FREQ and TIME so use max chunk sizes
-    ds = xr.open_zarr(fds_store.url, chunks={"FREQ": -1, "TIME": -1})
+    ds = xr.open_zarr(fds_url, chunks={"FREQ": -1, "TIME": -1})
     chunk_sizes = ds.chunks
     x_chunk = chunk_sizes["X"][0]
     y_chunk = chunk_sizes["Y"][0]
@@ -642,12 +635,12 @@ def hci(
     ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
     ds["flag"] = (("STOKES", "FREQ", "TIME"), da.from_array(flag, chunks=(1, 1, images_per_chunk)))
     with dask.config.set(pool=ThreadPoolExecutor(8)):
-        ds.to_zarr(fds_store.url, mode="r+")
+        ds.to_zarr(fds_url, mode="r+")
     log.info("Reduction complete")
 
     if fits_vars is not None:
         # reopen with chunking aligned to zarr layout for efficient streaming
-        cds = xr.open_zarr(fds_store.url, chunks={"TIME": images_per_chunk})
+        cds = xr.open_zarr(fds_url, chunks={"TIME": images_per_chunk})
         stokes_params = list(cds.coords["STOKES"].values)
         # reconstruct the base header from stored attrs
         base_hdr = dict(cds.attrs["fits_header"])
