@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-08T12:22:55Z
-last_verified_commit: af344c5
+timestamp: 2026-09-24T09:00:00Z
+last_verified_commit: 0f7296f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -200,11 +200,21 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D14 — (Retired 2026-07-15) The MSv4 imaging path stayed casacore-free by choice
 
-- **Context:** Before arcae 0.5.2, arcae and python-casacore could not coexist in one
-  process (hard segfault constraint), so the MSv4 imaging path deferred every
-  `africanus`/`daskms`/`casacore` import into functions. After the coexistence fix
-  (ratt-ru/arcae#211, #212) the deferrals were kept for a while as a
-  lightweight-startup preference.
+- **Context:** Until the coexistence fix (ska-sa/arcae#211, #212, merged 2026-06-12),
+  arcae and python-casacore could not coexist in one process (hard segfault constraint), so
+  the MSv4 imaging path deferred every `africanus`/`daskms`/`casacore` import into
+  functions. After the fix the deferrals were kept for a while as a lightweight-startup
+  preference.
+- **Version caveat (2026-09-09):** the real constraint is *"contains #211/#212"*, **not**
+  *"arcae >= 0.5.2"*. arcae ships a parallel `0.4.0-alpha.*` write-support line whose tags
+  are cut from **later** commits than the 0.5.x line despite the lower version numbers
+  (`0.4.0-alpha.8` is 2026-07-23, after `0.5.4` on 2026-07-22), and it contains both PRs.
+  Verified two ways: `gh api repos/ska-sa/arcae/compare/<merge-sha>...0.4.0-alpha.8` reports
+  `status=ahead, behind_by=0` for both, and python-casacore + arcae 0.4.0-alpha.8 read and
+  write each other's tables in one process. `xarray-ms` releases its write support on that
+  line deliberately (`0.4.0 <= xarray-ms < 0.5.0`) so read-only consumers resolving
+  `>= 0.5.0` never pick up the write prerelease. A degrid/`pfb`-side dependency on write
+  support therefore pins **down** into the 0.4.0 range rather than up.
 - **Decision (retired):** The preference was dropped once coexistence had soaked: the
   deferred casacore-pulling imports moved to module scope (`construct_mappings`'s
   daskms imports in `utils/misc.py`, `interp_beam`'s `africanus.rime` imports in
@@ -213,7 +223,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   optional runtime, serialisation, rare heavy path), each stated in an inline comment.
 - **Consequences:** No import-placement restriction remains on the imaging path. The
   lightweight CLI install is unaffected (CLI modules still lazy-import the core).
-- **Source:** ratt-ru/arcae#211/#212; architecture.md §3/§8; branch `issue270`.
+- **Source:** ska-sa/arcae#211/#212; architecture.md §3/§8; branch `issue270`; version
+  caveat from sjperkins on ratt-ru/xarray-ms#170.
 
 ### D15 — Imager driver accumulates counts at `weight_grouping` granularity
 
@@ -1321,6 +1332,150 @@ update it (and this page's `last_verified_commit`) in the same session.
   `…::test_hci_rejects_a_moving_target_across_multiple_time_bins`,
   `…::test_hci_accepts_a_moving_target_in_a_single_time_bin`.
 
+### D38 — degrid writes its own regions; no load/compute/write split
+
+- **Context:** ratt-ru/tricolour#106 is the reference implementation of MSv4 + Ray region
+  writes, by the xarray-ms author, and it separates loading, computing and writing into
+  three Ray Serve deployments. `degrid-msv4` (#278) had to decide whether to copy that.
+- **Decision:** adopt tricolour's *vocabulary* — `WorkItem(ms_index, node_path, region)`,
+  a `region` dict driving both `isel` and the write, `Multiton` so each replica rebuilds
+  its own `DataTree` rather than receiving a pickled one, a bounded in-flight queue — and
+  fuse the write into the `Degridder` replica.
+- **Rationale:** tricolour is read-heavy and write-light; degrid is the exact inverse. It
+  reads only `UVW`, and its *output* is the whole data volume (~413 MB of `complex64` for a
+  100-time × 2016-baseline × 64-channel × 4-correlation chunk). Routing that through a
+  separate writer costs an object-store copy per item and forces a low in-flight cap, and
+  buys nothing: concurrent multi-process region writes are verified correct and
+  `xarray_ms.multithreaded_writes()` is True.
+- **Consequences:** degrid does **not** demonstrate the IO/compute isolation #279 wants for
+  `hci`; that goal is better served on the `hci` path, where the read is the expensive side.
+  The driver is also an ordinary synchronous function rather than a deployment of its own —
+  with the write fused there is one hop, so a `deque` of responses drained oldest-first
+  gives the same backpressure without asyncio.
+- **Amendment (#331):** the `.mds` and the region masks are bound as `Multiton`s too, not
+  just the `DataTree`. Serve cloudpickles a deployment's init args into the GCS internal KV
+  store, whose gRPC cap is 512 MiB; a real model (8.8M components = 633 MB) plus an
+  all-ones 6720² mask (361 MB) exceeds it and the run dies before degridding anything.
+  Binding paths and reconstructing per replica is the only shape that scales. Two
+  consequences follow: the paths must be made absolute before binding (a Ray worker's cwd
+  is its own session directory), and `Degridder.degrid` must **not** call
+  `_release_ms_caches()` — that clears the entire class-level Multiton cache and would
+  reload the `.mds` on every work item (wiki memory-and-ray, layer 3).
+- **Amendment (772f216):** `Degridder.degrid` is `async def` and defers its body to a
+  `ThreadPoolExecutor(max_workers=1)`. This is not stylistic. Serve runs a *sync* method on
+  the replica's asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`), and its
+  watchdog kills a replica whose loop misses three 300 s probes — which a multi-region item
+  does, reaching the driver as a bare `ActorDiedError`. The one-thread executor keeps the
+  invariant the fused write depends on: one item per replica, and arcae's handles touched
+  from one thread only. Relatedly, `max_ongoing_requests` must be an `.options()` argument;
+  inside `autoscaling_config` pydantic drops it silently and five items queue per replica.
+  Note this does not disturb the decision above — the *driver* is still an ordinary
+  synchronous function draining a `deque`; only the replica-side method is async.
+- **Open question (2026-09-23): does the fused write survive concurrent writers?** The
+  decision above rests on concurrent multi-process region writes being correct, which they
+  are. tricolour#106 has since gone the other way — to a *single* `DataWriter` replica —
+  because "concurrent writers block on the CASA table lock and one will eventually wedge,
+  fail its Serve health check and get force-killed" (`4872aa0c`). That is a throughput and
+  liveness argument, not a correctness one, and it does not apply to us unchanged: tricolour
+  writes flags (cheap, ~160 MB) so serialising costs it little, whereas degrid's *output* is
+  the whole data volume and a single writer reintroduces exactly the object-store round trip
+  this decision avoids. Retesting the sequential write path on a11 found no thread/fd leak
+  and no deadlock over 200 writes (`scripts/msv4_issues/to_msv2_write_loop.py`), but that
+  does **not** cover the concurrent case, which is the one tricolour actually hit. Do not
+  resolve this from first principles — it wants a measurement of concurrent writers under
+  lock contention, and upstream expects arcae deadlock fixes shortly. Revisit then.
+- **Amendment (0f7296f): each region is degridded on its own bounding box.** `dirty2vis`
+  costs what the grid it is handed costs, not what the flux on it costs, so masking a 6720²
+  model down to a 344×362 region and degridding the full grid anyway paid full price. Masks
+  are cropped in `build_region_masks` and carry their origin (`RegionMask`); the sub-grid is
+  degridded with a shifted `center_x`/`center_y` (`crop_phase_centre`). Measured on the real
+  GC model (three regions, 20k rows × 128 chan, `nthreads=8`, `epsilon=1e-7`): gridder
+  18.84 s → 6.19 s (3.04×), the two paths agreeing to 2.2e-8 relative; the masks shipped to
+  each replica drop from 1033 MB to 353 MB. **Two traps, both order-unity wrong rather than
+  slightly off when missed:** each axis's offset sign is its own flip convention
+  (`-1 if flip_u else +1`, likewise `flip_v`), and ducc asserts an even grid extent, so an
+  odd bounding box must grow by a pixel *into real model pixels* — zero-padding would
+  misplace the window. `tests/test_degrid_msv4.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`
+  pins both over all four flip combinations, and asserts each wrong sign is order-unity wrong.
+  This also replaced `model_to_apparent_vis_for_region` with its own primitives
+  (`render_model_region`/`degrid_stokes`/`stokes_vis_to_corr`), so the chunk renders once for
+  all regions instead of once per region.
+- **Future: per-region evaluation probably belongs in pfb-model-spec** (pfb-model-spec#27).
+  The region loop, and the crop arithmetic above, live in pfb-imaging only because
+  `model_to_apparent_vis_for_region` renders inside its own per-region call. QuartiCal
+  consumes all regions/directions *simultaneously*, so a multi-region entry point that
+  renders once and degrids N cropped sub-grids serves both consumers and is where the crop
+  test really belongs. Filed, not scheduled.
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, `src/pfb_imaging/utils/degrid_msv4.py`,
+  ratt-ru/tricolour#106, issue #278, PR #331, pfb-model-spec#27.
+
+### D39 — the degrid chunk's representative time and frequency are unweighted means
+
+- **Context:** D28 defines the imager's band frequency as a wsum-weighted effective
+  frequency. A degrid chunk also needs one `(time, freq)` at which to evaluate the model.
+- **Decision:** use plain unweighted means of the chunk's `time` and `frequency` axes.
+- **Rationale:** degrid reads no weights at all — it loads only `UVW` — so D28's rule is not
+  even computable here without a second pass. An unweighted mean is also the better quantity:
+  it is reproducible across tools regardless of their flagging, so two consumers cannot
+  disagree about where the model was evaluated. The per-channel phase is exact either way,
+  since `dirty2vis` receives the full `freq` array; the only approximation is the model's
+  spectral variation *across* a chunk, which is what `--channels-per-chunk` controls.
+- **Consequences:** D28 is an imager rule, not a repo-wide one. Do not "unify" them.
+- **Source:** `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+
+### D40 — the model is evaluated at unix-second times, and the legacy `degrid` was wrong here
+
+- **Context:** a `.mds`'s `texpr` is fitted against whatever time axis it was given. For a
+  model written by `deconv` that axis is the `.dt`'s `time_out`, i.e. **unix seconds** (D13).
+- **Decision:** `degrid-msv4` passes the MSv4 `time` coordinate — also unix seconds —
+  straight through to `render_model_region`, with no conversion.
+- **Rationale / Consequences:** the old `degrid` passed MSv2 `TIME`, i.e. **MJD seconds**,
+  into the same expression: wrong by ~111 years of offset. It never bit because `deconv`
+  writes a single-time `.mds` and `fit_image_cube` sets `tfunc = t` with one time basis
+  function when `ntime == 1`, making the model constant in time so the value is discarded.
+  The moment a multi-time `.mds` exists the old behaviour is wrong and the new one is right.
+  Do not "restore parity" here.
+- **Source:** `pfb_model_spec.utils.modelspec.fit_image_cube`,
+  `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+
+### D41 — `--product` must match the model's `stokes` attr, and may name only one product
+
+- **Context:** the `genesis` `.mds` spec stores a single Stokes plane, but `--product` is a
+  free-form string.
+- **Decision:** refuse `len(product) > 1`, and refuse a product that disagrees with the
+  `.mds`'s own `stokes` attr. Derive the Stokes label from the `.mds`, using `--product`
+  only for output naming and this cross-check.
+- **Rationale:** the old `degrid` set `nstokes_out = len(product)` and degridded the *same*
+  single-plane image into every Stokes slot, so `--product IQ` emitted `XX = 2I, YY = 0` —
+  silently wrong output rather than an error.
+- **Consequences:** a deliberate, documented behaviour change from `degrid`. Revisit when
+  pfb-model-spec#19/#20 add a Stokes axis to the spec.
+- **Source:** `src/pfb_imaging/core/degrid_msv4.py::check_model`,
+  `tests/test_degrid_msv4.py::test_check_model_refuses_a_multi_stokes_product`, issue #278.
+
+### D42 — no beams in `degrid-msv4` v1: upsampling and a per-band beam are in tension
+
+- **Context:** beam application was the headline addition proposed in #278, and the `.dt`
+  stores one beam per `(band, partition)`.
+- **Decision:** v1 ships no beam support at all — no `--beam`, no Mueller, no
+  `--project-missing-corrs`.
+- **Rationale:** a degrid chunk is defined by `--channels-per-chunk` on the MS frequency
+  axis and need not align with imaging band edges. Every resolution is unsatisfying: nearest
+  band puts a discontinuity at every band edge in a quantity that *multiplies* the model;
+  interpolating two bands invents a beam that was never the gauge calibration solved
+  against; forcing chunk boundaries onto band edges couples the upsampling knob to the
+  imaging channelisation and defeats the point of having it. Upsampling *within* a band is
+  already inconsistent, since the model varies with frequency and the band's single stored
+  beam does not — at exactly the level of detail upsampling exists to capture.
+- **Consequences:** the resolution is a **frequency-resolved** pinned beam, which is #324's
+  job, not something degrid can paper over. Two findings worth keeping for whoever picks it
+  up: (1) the `.dt` holds only **diagonal** Mueller elements — `stokes2vis_msv4` evaluates
+  `get_rotation_averaged_beam(var="nstokes", i=p, j=p)` — so a pinned `.dt` beam can never
+  predict leakage, which needs `M[Q,I]`, `M[U,I]`, `M[V,I]`; (2) the `.dt` and meerkat-beams
+  sources are fidelity levels, not competitors — gauge-exact but diagonal and per-band,
+  versus full-Mueller and frequency-resolved but not gauge-exact.
+- **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278.
+
 ## Known debt
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing, and the caller only
@@ -1384,6 +1539,72 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Recurring gotchas
 
+- **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
+  to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
+  rather than where it came from. Always pass `region` explicitly, and only slices — an
+  integer index raises `MismatchedWriteRegion`.
+- **`to_msv2` writes every data variable it is handed.** Handing it an `isel`'d node rewrites
+  `UVW`, `DATA`, `FLAG` and `WEIGHT` along with your column. Build the write dataset as
+  `ds.drop_vars(set(ds.data_vars)).assign(...)`, which also preserves the `ds.encoding` the
+  MSv2 store needs (`common_store_args`, `partition_key`).
+- **`sync_msv2` would not create a canonical MAIN column that is absent** — fixed in
+  xarray-ms 0.4.0a8 (ratt-ru/xarray-ms#171), which the pins now floor at. Before that,
+  `MODEL_DATA`, `CORRECTED_DATA` and `DATA` were validated against
+  `ms_descriptor("MAIN", complete=True)` and then skipped with no warning and no error,
+  while non-canonical names (`MODEL_DATA1`) were created normally. The
+  `_create_missing_columns` fallback that covered it is gone. Its removal is why the
+  floor is load bearing: on an older xarray-ms, `degrid-msv4` would silently write nothing
+  to `MODEL_DATA`. Note the fix routes canonical columns through `addcols` too, which is
+  what exposed ska-sa/arcae#241 on the default column.
+- **Creating a column poisons table handles already open on that MS** (ska-sa/arcae#241).
+  Any read through one then raises `Table::lock cannot sync table …; another process changed
+  the number of columns`; handles opened afterwards are fine, and `getcol` never recovers on
+  a poisoned one. `degrid_msv4` evicts the process-wide table cache once after column
+  creation. Without it an in-process `imager → degrid-msv4 → imager` chain fails
+  deterministically on xarray-ms >= 0.4.0a8.
+- **`sync_msv2` silently drops a variable that is not on every correlated node.** It compares
+  each variable's node count against the number of nodes it visited in `dt.subtree` and warns
+  rather than raising. Declare new columns tree-wide — which is also correct, since a CASA
+  column belongs to the whole MAIN table, not a partition.
+- **A newly created column is invisible to other processes until the tree is closed.** Close
+  the `DataTree` between `sync_msv2` and dispatching any Ray work. A CTDS property, not an
+  xarray-ms quirk.
+- **Create columns through a tree with ONE MAIN instance.** xarray-ms opens MAIN with 8
+  casacore instances by default. arcae adds a column on instance 0 (`SpawnWriter`, upstream
+  comment: adding columns is "non-syncable") but routes reads to the least busy instance, so
+  `sync_msv2`'s own follow-up `columns()` intermittently lands on an instance that has not seen
+  the new column and either throws `Table::lock cannot sync table …; another process changed
+  the number of columns` or returns a stale list that trips its assertion. Timing dependent:
+  0/25 locally in isolation, yet it failed CI on #329 (Python 3.12). Open the column-creation
+  tree with `get_engine(..., main_ninstances=1)` (ska-sa/arcae#241); measured 0 failures in every stressed run
+  against 22-44% of calls with 8. xarray-ms 0.4.0a8 routes canonical columns through the same
+  path, so this matters more once that pin is raised.
+- **ducc's `mask` must be `uint8`.** A `bool` mask has identical memory layout and raises
+  `RuntimeError: incorrect data type` from the pybind layer. `~np.isnan(...)` gives bool.
+- **Declaring a column must not materialise one.** `xr.zeros_like(node.VISIBILITY)` — the
+  obvious placeholder, and the one xarray-ms's own test uses — reads the entire
+  correlated-data column purely to declare a name. `sync_msv2` reads only dims, shape and
+  dtype, so a zero-strided `np.broadcast_to(np.array(0, dtype), shape)` works and costs
+  8 bytes.
+- **A casacore column descriptor's `shape` is FORTRAN ordered**, the reverse of the numpy
+  trailing shape, and getting it wrong does not raise — casacore SIGABRTs and takes the
+  interpreter with it. A variable-shape (`ndim: -1`) descriptor is also unusable for region
+  writes: its cells have no array until written whole, so a partial write fails with
+  `SSMIndColumn::getShape: no array in row 0`. Use fixed-shape `TiledColumnStMan`.
+- **`fit_image_cube` cannot fit a single (time, band), and `deconv` hides it.** With
+  `ntime == 1 and nband == 1` it takes an early branch that never assigns `xfit`, raising
+  `UnboundLocalError`; `core/deconv.py` wraps the `model_to_ds` call in a bare
+  `except Exception` that only logs, so a single-band `deconv` run writes **no `.mds` at
+  all**, silently, and the next `degrid` fails with "No mds at …". Use ≥ 2 bands when a
+  component model is wanted.
+
+- **arcae and xarray-ms version numbers do not order by capability.** Both run a parallel
+  `0.4.0-alpha.*` write-support line cut from commits *later* than their 0.5.x releases,
+  precisely so that consumers resolving `>= 0.5.0` stay on read-only. `0.4.0-alpha.8` is
+  newer than `0.5.4`. Never infer "lower version, therefore lacks feature X" here — compare
+  ancestry (`gh api repos/<repo>/compare/<merge-sha>...<tag>` → `behind_by: 0` means the tag
+  contains it). This cost a wrong conclusion on ratt-ru/xarray-ms#170: D14's "arcae >= 0.5.2"
+  was read as excluding the 0.4.0-alpha line, which in fact has the coexistence fix.
 - **psi/psih naming is inverted between the two legacy PD implementations** —
   `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
   psi=analysis)`. Read call sites, not names.

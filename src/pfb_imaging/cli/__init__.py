@@ -43,6 +43,10 @@ from pfb_imaging.cli.degrid import degrid  # noqa: E402
 
 app.command(name="degrid")(degrid)
 
+from pfb_imaging.cli.degrid_msv4 import degrid_msv4  # noqa: E402
+
+app.command(name="degrid-msv4")(degrid_msv4)
+
 from pfb_imaging.cli.hci import hci  # noqa: E402
 
 app.command(name="hci")(hci)

@@ -5,7 +5,7 @@ cabs:
     name: imager
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:degrid-msv4
     inputs:
       ms:
         info:
@@ -26,25 +26,28 @@ cabs:
           rich_help_panel: Naming
       scan-names:
         info:
-          List of SCAN_NUMBERS to image.
+          List of scan names to image.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 scan_name values, not SCAN_NUMBER integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       spw-names:
         info:
-          List of DATA_DESC_ID's to images.
+          List of spectral window names to image.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 spectral_window_name values, not DATA_DESC_ID integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       field-names:
         info:
-          List of FIELD_ID's to image.
+          List of field names to image.
           Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
+          These are MSv4 field_name values, not FIELD_ID integers.
+          Input as a comma separated list if running from CLI.
         dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
@@ -204,7 +207,7 @@ cabs:
       product:
         info:
           String specifying which Stokes products to produce.
-          Outputs are always be alphabetically ordered.
+          Outputs are always alphabetically ordered.
         default: I
         metadata:
           rich_help_panel: Data Selection
