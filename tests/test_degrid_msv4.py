@@ -1196,3 +1196,55 @@ def test_crop_bbox_of_an_empty_mask_is_degenerate():
     assert rm.mask.shape == (2, 2)
     assert (rm.i0, rm.j0) == (0, 0)
     assert not rm.mask.any()
+
+
+def test_workitem_is_hashable_with_slice_regions():
+    """`region` holds slices, which are unhashable before Python 3.12.
+
+    `WorkItem` is frozen and defines `__hash__`, so it advertises itself as
+    hashable; a `frozenset` of the region's items made that a lie on 3.11,
+    which is what the container ships and the floor for core code.
+    """
+    from pfb_imaging.core.degrid_msv4 import WorkItem
+
+    a = WorkItem(0, "/node", {"time": slice(0, 4), "frequency": slice(0, 128)})
+    b = WorkItem(0, "/node", {"frequency": slice(0, 128), "time": slice(0, 4)})
+    c = WorkItem(0, "/node", {"time": slice(0, 4), "frequency": slice(128, 256)})
+
+    assert hash(a) == hash(b), "hash must not depend on the mapping's order"
+    assert a == b
+    assert hash(a) != hash(c)
+    assert len({a, b, c}) == 2
+
+
+def test_build_region_masks_names_a_region_that_misses_the_grid(simple_mds, tmp_path):
+    """A region off the grid must say so, not die on `None.T`."""
+    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+
+    _, ds = simple_mds
+    region_file = tmp_path / "off.reg"
+    # the grid is 64 x 32, so this box lies entirely beyond it
+    region_file.write_text("image\nbox(5000,5000,3,3,0)\n")
+
+    with pytest.raises(ValueError, match="does not overlap the model grid"):
+        build_region_masks(ds, str(region_file))
+
+
+def test_check_writable_backend_refuses_a_non_casa_store(tmp_path):
+    """degrid writes; only the CASA backend can be written back to."""
+    from pfb_imaging.utils.degrid_msv4 import check_writable_backend
+
+    store = tmp_path / "some.zarr"
+    store.mkdir()
+    (store / ".zgroup").write_text('{"zarr_format": 2}')
+
+    with pytest.raises(ValueError, match="can only write to a CASA measurement set"):
+        check_writable_backend(str(store))
+
+
+def test_check_writable_backend_accepts_a_measurement_set(ms_name):
+    """The happy path stays open, including through a file:// prefix."""
+    from pfb_imaging.utils.degrid_msv4 import check_writable_backend
+
+    check_writable_backend(ms_name)
+    check_writable_backend(f"file://{ms_name}")

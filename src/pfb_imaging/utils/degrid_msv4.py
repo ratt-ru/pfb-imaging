@@ -18,6 +18,7 @@ from typing import NamedTuple
 
 import numpy as np
 import xarray as xr
+from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from pfb_model_spec.utils.degrid import (
     degrid_stokes,
@@ -46,6 +47,32 @@ def make_column_placeholder(shape: tuple[int, ...], dtype=np.complex64) -> np.nd
         A read-only, zero-strided view of a single zero.
     """
     return np.broadcast_to(np.array(0, dtype=dtype), shape)
+
+
+def check_writable_backend(ms_path: str) -> None:
+    """Refuse a backend degrid cannot write back to.
+
+    `get_engine` resolves zarr and MeerKAT stores happily -- the imager reads
+    both -- but degrid's output is a *write*, and only the MSv2/CASA backend
+    carries the `common_store_args`/`partition_key` encoding `to_msv2` needs.
+    Without this the run degrids a whole chunk first and dies in `sync_msv2`
+    with `MissingEncodingError`, which names neither the MS nor the reason.
+
+    Args:
+        ms_path: Path to the measurement set.
+
+    Raises:
+        ValueError: If `ms_path` is not a CASA measurement set.
+    """
+    path = ms_path.replace("file://", "") if "file://" in ms_path else ms_path
+    backend = infer_backend(path)
+    if backend is not MSv4Backend.CASA_TABLE:
+        raise ValueError(
+            f"{ms_path} is a {backend.name} store; degrid-msv4 writes model "
+            "columns through xarray-ms's MSv2 write support and can only "
+            "write to a CASA measurement set. Read-only front ends such as "
+            "`pfb imager` accept this store, but degrid cannot."
+        )
 
 
 def ensure_model_columns(
@@ -111,8 +138,10 @@ def ensure_model_columns(
             f"{ms_path} has visibility partitions with differing "
             f"(nchan, ncorr) shapes {sorted(shapes)}. degrid-msv4 writes one "
             "fixed-shape column across the whole MAIN table and cannot span "
-            "heterogeneous spectral windows; select a single spectral window "
-            "with --spw-names, or degrid each one into its own measurement set."
+            "heterogeneous spectral windows. Note --spw-names cannot help: a "
+            "CASA column belongs to the whole MAIN table, so this is checked "
+            "over every partition regardless of what is selected. Split the "
+            "measurement set so each spectral window has its own."
         )
 
     for node in vis_nodes:
@@ -290,13 +319,24 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
 
     total = np.zeros((nx, ny), dtype=np.float64)
     masks = []
-    for region in rfile:
+    for i, region in enumerate(rfile):
         # a file in `image`/`physical` coordinates parses straight to a pixel
         # region, which has no to_pixel; only sky regions need converting.
         # The old degrid assumed sky and raised AttributeError on the rest.
         pixel_region = region.to_pixel(wcs) if hasattr(region, "to_pixel") else region
+        image = pixel_region.to_mask().to_image((ny, nx))
+        if image is None:
+            # astropy returns None rather than an empty raster when the region
+            # misses the grid entirely; say which region, since the alternative
+            # is an AttributeError on the chained .T naming nothing
+            raise ValueError(
+                f"Region {i} of {region_file} does not overlap the model grid "
+                f"({nx}x{ny} pixels centred on ra={float(model_ds.ra):.6f}, "
+                f"dec={float(model_ds.dec):.6f} rad). Check the region's "
+                "coordinates and frame against the model."
+            )
         # (Y, X) from astropy -> x-major to match the model; see the docstring
-        region_mask = pixel_region.to_mask().to_image((ny, nx)).T
+        region_mask = image.T
         total += region_mask
         masks.append(region_mask)
 

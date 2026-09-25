@@ -41,6 +41,7 @@ from pfb_imaging.utils.degrid_msv4 import (
     RegionMask,
     assert_writable,
     build_region_masks,
+    check_writable_backend,
     degrid_region,
     ensure_model_columns,
 )
@@ -207,7 +208,18 @@ class WorkItem:
     region: Mapping[str, slice]
 
     def __hash__(self):
-        return hash((self.ms_index, self.node_path, frozenset(self.region.items())))
+        # Slices only became hashable in Python 3.12, and core code runs on
+        # 3.11 (the container is python:3.11-slim; CI covers 3.11-3.13), so a
+        # slice cannot go into the hash as itself -- hash its components.
+        # Sorted rather than a frozenset so the hash does not depend on the
+        # mapping's iteration order.
+        return hash(
+            (
+                self.ms_index,
+                self.node_path,
+                tuple(sorted((k, v.start, v.stop, v.step) for k, v in self.region.items())),
+            )
+        )
 
 
 @serve.deployment
@@ -505,6 +517,9 @@ def degrid_msv4(
     # --- guards, then column creation, then close -----------------------
     selected: list[tuple[int, SelectedNode]] = []
     for ims, ms_name in enumerate(msnames):
+        # before opening anything: degrid writes, and only the CASA backend can
+        # be written back to
+        check_writable_backend(ms_name)
         # one MAIN instance: this tree adds columns, and with several instances
         # arcae can answer the follow-up reads from one that has not seen them
         # (see get_engine). It only reads metadata and is closed before any
