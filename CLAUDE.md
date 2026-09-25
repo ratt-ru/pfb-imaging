@@ -76,13 +76,18 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 uv run ruff format . && uv run ruff check . --fix
 ```
 
-**Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
-`uv run pytest tests/` runs 687 tests in ~172 s. The 42 deselected tests are the end-to-end
-pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci and degrid drivers, and the
-end-to-end degrid null) plus a few whose cost is Ray actor startup or a dense operator build
-(the `_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the
-frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
-`-m ""` locally before finishing a branch — not per-task during development. A test earns the
+**Tests are fast by default, and the fast loop is the *only* loop you run locally.**
+`pyproject.toml`'s `addopts` carries `-m "not slow"`, so `uv run pytest tests/` runs 731
+tests in ~158 s. The 41 deselected tests are the end-to-end pipeline ones
+(`*_groundtruth`, the imager/deconv/restore/hci and degrid drivers, and the end-to-end
+degrid null) plus a few whose cost is Ray actor startup or a dense operator build (the
+`_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the
+frequency-prior spectrum guards).
+
+**Do not run `-m ""` locally — that is CI's job.** The full suite takes ~13 min here and
+CI runs it on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
+`--extra all` and `--extra full`), which is broader coverage than one local run can give.
+Run the fast loop, push, and read the CI result. A test earns the
 `slow` marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
 for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.
 

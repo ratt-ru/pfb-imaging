@@ -23,7 +23,12 @@ import pfb_imaging
 from pfb_imaging.utils.optional import optional_dependency
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-OPTIONAL_ROOTS = {"daskms", "casacore", "distributed"}
+# `pyrap` as well as `casacore`: python-casacore installs both top-level
+# packages, and `utils/astrometry.py` reaches it as `from pyrap.measures import
+# measures`. Every astrometry import on a casacore-free path is deferred today,
+# so this adds no violation -- but without `pyrap` here a module-scope
+# `from pfb_imaging.utils.astrometry import ...` would pass the guard.
+OPTIONAL_ROOTS = {"daskms", "casacore", "pyrap", "distributed"}
 
 # Entry points that must work with only the [full] extra installed.
 CASACORE_FREE_ENTRY_POINTS = [

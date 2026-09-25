@@ -37,10 +37,15 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 687 tests, ~172 s
-uv run pytest -m slow tests/  # only the deselected 42, ~550 s
-uv run pytest -m "" tests/    # everything, 729 tests, ~745 s (what CI runs)
+uv run pytest tests/          # fast loop: 731 tests, ~158 s -- run THIS locally
+uv run pytest -m slow tests/  # only the deselected 41
+uv run pytest -m "" tests/    # everything, 772 tests, ~13 min -- leave this to CI
 ```
+
+**The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the
+whole suite on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
+`--extra all` and `--extra full`). Reproducing one of those locally costs ~13 min and
+still covers less than a push does. Run fast, push, read the result.
 
 A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
 Both `ci.yml` and `publish.yml` therefore pass `-m ""` — a release must be gated on the whole

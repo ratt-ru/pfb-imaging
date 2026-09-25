@@ -100,16 +100,24 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# MSv2 access through dask-ms. Needed by `hci`, and by the rephasing path in
-# `utils/stokes2vis_msv4.py`, which calls africanus' synthesize_uvw /
-# get_coordinates (pyrap).
+# python-casacore (via dask-ms and africanus). EXACTLY three things need it:
 #
-# NOT needed to read MSv2 data: `imager` and `degrid` open CASA tables through
-# arcae/xarray-ms, which vendors casacore and does publish aarch64 wheels.
-# `degrid` joined the casacore-free set in #330 with the retirement of the MSv2
-# command of the same name, and `imager` joined it in the same PR once its last
-# DaskMSStore call was replaced with plain fsspec. `deconv` and `restore` never
-# touch an MS at all.
+#   1. `pfb hci`               -- dask-ms `xds_from_ms`/`construct_mappings`, and
+#                                 QuartiCal gains via `xds_from_zarr`;
+#   2. rephasing               -- `--phase-dir`, and any multi-field selection,
+#                                 which barycentres. `utils/astrometry.py` wraps
+#                                 pyrap measures for `synthesize_uvw`;
+#   3. `--target <body>`       -- `get_coordinates`, same pyrap measures, on both
+#                                 the `imager` and `hci` paths.
+#
+# (2) and (3) are deferred imports inside `imager`/`stokes2vis_msv4`, so `imager`
+# itself installs and runs without this extra -- it is only the two options that
+# need it. Everything else is casacore-free: `imager` and `degrid` open MSv2 CASA
+# tables through arcae/xarray-ms, which vendors casacore and publishes aarch64
+# wheels; `deconv` and `restore` never touch an MS at all. `degrid` joined that
+# set in #330 with the retirement of the MSv2 command of the same name, and
+# `imager` in the same PR once its last DaskMSStore call became plain fsspec.
+# `tests/test_optional_extras.py` pins the boundary.
 #
 # python-casacore has never published an aarch64 wheel, so on arm this extra
 # compiles from sdist and needs, on Ubuntu/DGX OS:

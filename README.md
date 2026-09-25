@@ -42,15 +42,30 @@ The dependencies are split so the cross-platform stack installs cleanly on
 
 | extra | contents | notes |
 |---|---|---|
-| `full` | the cross-platform scientific stack | everything `deconv`, `restore` and the MSv4/`xarray-ms` path need |
-| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | `hci`, and rephasing (`--phase-dir` / multi-field). No aarch64 wheel — see below |
+| `full` | the cross-platform scientific stack | `imager`, `deconv`, `degrid`, `restore` — the whole main pipeline |
+| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | `hci`, rephasing, `--target`. No aarch64 wheel — see below |
 | `x86` | `tbb` | x86_64-only; a no-op elsewhere |
 | `all` | all of the above | safe on every architecture |
 
-`pip install "pfb-imaging[full]"` is enough for `imager`, `deconv`, `restore` and
-`degrid` — the whole main pipeline, on MSv4 *and* MSv2 data, since those read
-CASA tables through arcae. Add `casacore` only for `hci` or for rephasing
-(multi-field mosaics / `--phase-dir`).
+`pip install "pfb-imaging[full]"` is enough for `imager`, `deconv`, `degrid` and
+`restore` — the whole main pipeline, on MSv4 **and** MSv2 data, because those
+read CASA tables through `arcae` (which vendors casacore and ships aarch64
+wheels).
+
+### What still requires python-casacore
+
+Exactly three things need `[casacore]`:
+
+| | needs it for | why |
+|---|---|---|
+| `pfb hci` | the whole command | reads the MS with `dask-ms`, and QuartiCal gains with `xds_from_zarr` |
+| `--phase-dir`, and any multi-field selection | rephasing | `synthesize_uvw` goes through pyrap measures (`utils/astrometry.py`) |
+| `--target <body>` | ephemeris lookup | `get_coordinates`, same pyrap measures; on both `imager` and `hci` |
+
+The last two are *options*, not commands: `pfb imager` installs and runs fine
+without `[casacore]` — their imports are deferred, so you only pay for them if
+you pass the flag. `deconv`, `degrid` and `restore` never touch an MS at all.
+`tests/test_optional_extras.py` pins this boundary so it cannot silently drift.
 
 **On linux-aarch64:**
 
