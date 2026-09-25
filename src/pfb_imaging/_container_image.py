@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:degrid-msv4"
+CONTAINER_IMAGE = "ghcr.io/ratt-ru/pfb-imaging:latest"
