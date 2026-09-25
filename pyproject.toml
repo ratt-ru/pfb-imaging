@@ -122,6 +122,16 @@ full = [
 # python-casacore has never published an aarch64 wheel, so on arm this extra
 # compiles from sdist and needs, on Ubuntu/DGX OS:
 #   apt install casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev cmake
+#         libblas-dev liblapack-dev
+#
+# That is NOT currently enough on Ubuntu 24.04: noble's casacore 3.5.0 ships a
+# libcasa_python3 built against NumPy 1.x, and python-casacore links it rather
+# than compiling against NumPy itself (its CMakeLists has no NumPy component),
+# so it builds and then raises "PycArray: failed to load the numpy API" at the
+# first table open under our NumPy 2. No pip/uv build flag can fix that -- the
+# ABI is in the casacore .so. A NumPy-2 casacore is required; conda-forge has
+# one for linux-aarch64 (casacore 3.8.1). See README's aarch64 section, and the
+# informational arm CI leg, which exists to notice when the distro catches up.
 # dask-ms additionally pins numcodecs<0.16 and zarr<3, and numcodecs only
 # gained aarch64 wheels at 0.16.0 -- so this extra also costs a numcodecs
 # source build on arm until dask-ms moves to zarr 3.x.

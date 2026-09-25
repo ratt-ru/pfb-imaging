@@ -77,12 +77,42 @@ export CMAKE_ARGS="-DDUCC0_ARCH_FLAGS=-mcpu=cortex-x925"   # GB10; or -march=arm
 pip install "pfb-imaging[full]"
 ```
 
-Adding `[casacore]` on aarch64 additionally compiles `python-casacore` (no
-aarch64 wheel has ever been published) and `numcodecs`, and needs:
+#### `[casacore]` on aarch64 needs a NumPy-2 casacore
+
+There has never been an aarch64 wheel for `python-casacore`, so on arm it builds
+from sdist and links the **system** casacore. Ubuntu 24.04 ships casacore 3.5.0,
+whose `libcasa_python3.so.7` was compiled against NumPy 1.x, so it builds
+cleanly and then dies at first use:
+
+```
+RuntimeError: PycArray: failed to load the numpy API
+A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x
+```
+
+This is not arm-specific — it reproduces on x86_64 with `--no-binary
+python-casacore`. x86_64 escapes it only because the PyPI wheel bundles its own
+casacore 3.8 (`libcasa_*.so.8`), built against NumPy 2.
+
+`python-casacore` does not compile against NumPy at all (its CMakeLists has no
+`NumPy` component), so no pip/uv build flag can fix this: the ABI comes from the
+casacore shared library, not from the build. You need a casacore built against
+NumPy 2. Either:
 
 ```bash
-sudo apt install casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev
+# conda-forge ships casacore 3.8.1 + python-casacore for linux-aarch64, NumPy 2
+conda install -c conda-forge python-casacore
 ```
+
+or build casacore ≥3.6 from source with NumPy 2 present, then:
+
+```bash
+sudo apt install libboost-python-dev libcfitsio-dev wcslib-dev libblas-dev liblapack-dev
+pip install "pfb-imaging[casacore]"
+```
+
+Until then, `[casacore]` — i.e. `hci`, rephasing and `--target` — does not work
+on aarch64 with the distro casacore. `[full]`, which is the whole main pipeline,
+is unaffected.
 
 Numba's threading layer follows the architecture: TBB on x86_64, OpenMP
 elsewhere (Intel ships no aarch64 TBB). Override with

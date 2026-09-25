@@ -142,6 +142,19 @@ jobs:
             cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
 
           # ---- aarch64 + casacore: informational (see continue-on-error above).
+          #
+          # EXPECTED TO FAIL on ubuntu-24.04 today, for a known reason: noble's
+          # casacore 3.5.0 ships libcasa_python3.so.7 built against NumPy 1.x,
+          # and python-casacore links it rather than compiling against NumPy
+          # itself. Under our NumPy 2 the first table open raises
+          # "PycArray: failed to load the numpy API". x86_64 never sees this
+          # because its PyPI wheel bundles casacore 3.8 (libcasa_*.so.8) built
+          # against NumPy 2. Reproduces on x86_64 with --no-binary
+          # python-casacore, so it is an ABI problem, not an arm one.
+          #
+          # This leg therefore now answers "has the distro shipped a NumPy-2
+          # casacore yet?". When it goes green, [casacore] works on arm and
+          # README's aarch64 section can drop its conda-forge workaround.
           - runner: ubuntu-24.04-arm
             arch: aarch64
             python-version: "3.12"
