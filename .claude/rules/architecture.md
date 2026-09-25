@@ -21,7 +21,7 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 **Always place imports at the top of the file when possible.** Lazy (in-function) imports are only acceptable for:
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
-2. **Optional heavy runtimes** (`ray`, `dask`/`distributed`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`distributed` deferred to `set_client`.
+2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`daskms` deferred to `utils/misc.construct_mappings`. (`distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
 5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s frozen legacy oracle).
@@ -70,15 +70,22 @@ One MSv4 front-end produces the intermediary products consumed by deconvolution:
 
 1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree` (`.dt`) plus a `.scratch` cache. See §8.
 2. `pfb deconv` — composable deconvolution of the `.dt` (see §5).
-3. `pfb degrid-msv4` — degrid a `.mds` component model into MSv4 measurement sets so it can
+3. `pfb degrid` — degrid a `.mds` component model into MSv4 measurement sets so it can
    be subtracted from the visibilities (#278). Guards, the Ray Serve `Degridder` deployment
-   and the driver live in `core/degrid_msv4.py`; the pure MSv4<->kernel seam
-   (column creation, region masks, per-chunk degridding) is `utils/degrid_msv4.py`. All the
-   numerics go through `pfb_model_spec.utils.degrid`, **not** the inline `comps2vis`
-   evaluation the legacy `pfb degrid` used. Load-bearing decisions: wiki D38 (write fused
-   into the replica), D39 (unweighted chunk time/freq), D40 (unix-second epochs), D41
-   (single Stokes product), D42 (no beams in v1). `pfb degrid` still exists and is the
-   parity oracle until it is retired.
+   and the driver live in `core/degrid.py`; the pure MSv4<->kernel seam
+   (column creation, region masks, per-chunk degridding) is `utils/degrid.py`. All the
+   numerics go through `pfb_model_spec.utils.degrid`. Load-bearing decisions: wiki D38 (write
+   fused into the replica), D39 (unweighted chunk time/freq), D40 (unix-second epochs), D41
+   (single Stokes product), D42 (no beams in v1).
+
+   **#330 retired the MSv2 `degrid`** and gave this command its name. That removed the last
+   consumer of `distributed` (and of `set_client`, deleted with it) and the dead dask
+   `comps2vis`/`_comps2vis_impl` stack from `operators/gridder.py`, which is now dask-free.
+   The rename is a clean break: `--scans`/`--ddids`/`--fields` became
+   `--scan-names`/`--spw-names`/`--field-names` (names, not integer ids),
+   `--integrations-per-image`/`--channels-per-image` became `..._per_chunk`, and
+   `--host-address` became `--ray-address`. Old recipes fail with an unrecognised-option
+   error rather than silently doing something else.
 
 `pfb hci` is the separate high-cadence-imaging front-end. The legacy MSv2 subcommands
 (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) were retired in 0.1.0 (#277); their

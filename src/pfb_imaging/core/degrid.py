@@ -1,344 +1,691 @@
+"""`pfb degrid`: degrid a `.mds` component model into MSv4 data (#278).
+
+The MSv4 <-> pfb-model-spec seam lives in `utils/degrid.py` and is pure;
+this module owns the guards, the Ray Serve deployment and the driver.
+
+It replaced the MSv2/dask-ms `degrid` in #330, taking over its name. That
+retired the codebase's last consumer of `distributed`, but it is not a
+drop-in: the selection options are MSv4 names rather than MSv2 integer ids
+(`--scan-names`/`--spw-names`/`--field-names` for `--scans`/`--ddids`/
+`--fields`), chunking is `--integrations-per-chunk`/`--channels-per-chunk`
+rather than `..._per_image`, and the cluster address is `--ray-address`
+rather than `--host-address`. Recipes written against the old command fail
+with an unrecognised-option error rather than silently doing the wrong thing.
+"""
+
+import asyncio
+import gc
+import os
+import resource
 import time
+from collections import deque
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
-import dask
-import dask.array as da
+import fsspec
 import numpy as np
 import psutil
-import sympy as sm
 import xarray as xr
-from africanus.model.coherency.dask import convert
-from dask.distributed import get_client, wait
-from dask.graph_manipulation import clone
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms import xds_to_storage_table as xds_to_table
-from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
-from regions import Regions
-from sympy.parsing.sympy_parser import parse_expr
-from sympy.utilities.lambdify import lambdify
+from pfb_model_spec.utils.degrid import model_geometry
+from rarg_python_patterns.multiton import Multiton
+from ray import serve
 
-from pfb_imaging import set_client
-from pfb_imaging.operators.gridder import comps2vis
+from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import set_wcs
-from pfb_imaging.utils.misc import construct_mappings
-from pfb_imaging.utils.naming import set_output_names, xds_from_url
+from pfb_imaging.utils.degrid import (
+    RegionMask,
+    assert_writable,
+    build_region_masks,
+    check_writable_backend,
+    degrid_region,
+    ensure_model_columns,
+)
+from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
+from pfb_imaging.utils.naming import glob_uris, set_output_names
+from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
-log = pfb_logging.get_logger("DEGRID")
+log = pfb_logging.get_logger("DEGRID_MSV4")
+
+# Ray Serve application name. Used for both serve.run and the targeted
+# serve.delete that replaces a cluster-wide serve.shutdown.
+_SERVE_APP_NAME = "degrid"
+
+# Requests a replica will accept at once: one running, one ready. The driver's
+# in-flight bound is derived from it (see `max_inflight`), and the two must
+# stay tied -- a request the replicas cannot accept sits in Serve's router
+# being retried on a 0.5 s backoff, and at attempt 1024 (~510 s of waiting)
+# the router's own backoff arithmetic overflows and kills the routing task
+# that owns it (docs/msv4_issues.md, "Adjacent, not MSv4").
+_MAX_ONGOING_REQUESTS = 2
+
+
+def _default_mds(output_filename: str, suffix: str) -> str:
+    """Locate the component model when `--mds` was not given.
+
+    Two producers write a `.mds` with different names, and both are legitimate
+    inputs here:
+
+    * `pfb deconv` writes `{basename}_{suffix}.mds` (`core/deconv.py`).
+    * `pfbspec model2comps` writes `{basename}_{suffix}_{model_name}.mds`,
+      defaulting to `..._model.mds`.
+
+    The legacy `degrid` only ever looked for the second, so the common
+    `imager -> deconv -> degrid` path never worked without an explicit
+    `--mds`. Prefer `deconv`'s name, fall back to `model2comps`'.
+
+    Args:
+        output_filename: Basename, already carrying the `_PRODUCT` suffix.
+        suffix: The `--suffix` value.
+
+    Returns:
+        The path that exists.
+
+    Raises:
+        ValueError: If neither candidate exists, naming both.
+    """
+    fs = fsspec.filesystem("file")
+    candidates = [f"{output_filename}_{suffix}.mds", f"{output_filename}_{suffix}_model.mds"]
+    for candidate in candidates:
+        if fs.exists(candidate):
+            return candidate
+    raise ValueError(f"No mds found. Looked for {' and '.join(candidates)}. Pass --mds to name one explicitly.")
+
+
+def check_model(model_ds: xr.Dataset, product: str) -> dict:
+    """Validate the `.mds` and the requested product before any work starts.
+
+    `model_geometry` already raises on an unknown `spec` and on non-square
+    pixels; calling it here means those fire before a Ray cluster is stood up
+    and before a column is added to the user's MS.
+
+    The product checks are stricter than the old `degrid`'s and deliberately
+    so. The `genesis` spec stores a single Stokes plane, but the old command
+    took `len(product)` planes and degridded the same image into each, so
+    `--product IQ` emitted `XX = 2I, YY = 0`. Refusing is the fix.
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        product: The `--product` string.
+
+    Returns:
+        `model_geometry(model_ds)`: nx, ny, cell_rad, x0, y0, flip_u/v/w, stokes.
+
+    Raises:
+        ValueError: If the product is not a subset of IQUV, names more than one
+            Stokes product, or disagrees with the model's own `stokes` attr; or
+            if `model_geometry` rejects the spec or the pixel shape.
+    """
+    product = product.upper().strip()
+    remainder = product.strip("IQUV")
+    if remainder:
+        raise ValueError(f"Product {remainder} not yet supported")
+    if len(product) != 1:
+        raise ValueError(
+            f"Product {product!r} names {len(product)} Stokes products, but the "
+            "'genesis' .mds spec carries a single Stokes plane. Degrid one "
+            "product at a time until pfb-model-spec#19 lands."
+        )
+
+    geom = model_geometry(model_ds)  # raises on unknown spec / non-square pixels
+    if geom["stokes"].upper() != product:
+        raise ValueError(
+            f"Requested product {product!r} but the model's stokes attr is "
+            f"{geom['stokes']!r}. Degridding a model as a different Stokes "
+            "product produces confidently wrong correlations."
+        )
+    return geom
+
+
+def check_tangent_point(
+    model_ds: xr.Dataset,
+    nodes: list[SelectedNode],
+    tol_rad: float = 1e-9,
+) -> None:
+    """Refuse to degrid a model against a field it was not made for.
+
+    A model on a different tangent point needs a per-row inverse w-phase to be
+    predicted correctly (wiki D21, mosaics). v1 does not do that, so this is a
+    refusal rather than a warning.
+
+    Compared as a **wrapped magnitude**: a naive signed difference silently
+    accepts half of all real mismatches, and a bare `abs(a - b)` reads two RAs
+    either side of zero as ~2*pi apart.
+
+    Args:
+        model_ds: An opened `.mds` dataset, carrying `ra`/`dec` attrs.
+        nodes: Selected visibility nodes, each with a `field_radec`.
+        tol_rad: Tolerance in radians.
+
+    Raises:
+        ValueError: If any node's field centre differs from the model's.
+    """
+    model_radec = np.array([float(model_ds.ra), float(model_ds.dec)])
+    for node in nodes:
+        sep = wrapped_angle_diff(node.field_radec, model_radec)
+        if np.any(sep > tol_rad):
+            raise ValueError(
+                f"Tangent point mismatch for field {node.field_name!r} in "
+                f"{node.path}: field is (ra, dec) = "
+                f"{np.rad2deg(node.field_radec)} deg, model is "
+                f"{np.rad2deg(model_radec)} deg (separation "
+                f"{np.rad2deg(sep)} deg). Degridding a rephased or mosaic "
+                "model is not supported in v1 (see wiki D21)."
+            )
+
+
+def _load_model(mds: str) -> xr.Dataset:
+    """Load a `.mds` into memory. Module level so a `Multiton` can pickle it."""
+    return xr.open_zarr(mds).load()
+
+
+def _load_masks(mds: str, region_file: str | None) -> list[RegionMask]:
+    """Rebuild the region masks in a replica from the paths alone.
+
+    Goes through `Multiton(_load_model, mds)` rather than loading the `.mds`
+    again: the key is the one the `model` Multiton uses, so in a replica this
+    is a cache hit on the dataset that replica has already loaded, and on the
+    driver (which never touches either) it costs nothing.
+    """
+    return build_region_masks(Multiton(_load_model, mds).instance, region_file)
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    """One `(time, frequency)` region of one node of one MS.
+
+    `region` is exactly what `isel` and `to_msv2(region=...)` both consume.
+    **Slices only** -- an integer index makes the write raise
+    `MismatchedWriteRegion`.
+    """
+
+    ms_index: int
+    node_path: str
+    region: Mapping[str, slice]
+
+    def __hash__(self):
+        # Slices only became hashable in Python 3.12, and core code runs on
+        # 3.11 (the container is python:3.11-slim; CI covers 3.11-3.13), so a
+        # slice cannot go into the hash as itself -- hash its components.
+        # Sorted rather than a frozenset so the hash does not depend on the
+        # mapping's iteration order.
+        return hash(
+            (
+                self.ms_index,
+                self.node_path,
+                tuple(sorted((k, v.start, v.stop, v.step) for k, v in self.region.items())),
+            )
+        )
+
+
+@serve.deployment
+class Degridder:
+    """Degrids one region and writes it straight back to its own MS region.
+
+    The write is fused into the compute deliberately: the visibilities are the
+    large object here (~413 MB of complex64 for a 100x2016x64x4 chunk), so
+    shipping them to a separate writer would cost an object-store round trip
+    per item for nothing. We keep tricolour#106's vocabulary -- WorkItem,
+    region driving both isel and the write, Multiton, a bounded in-flight
+    queue -- and drop its three-way load/compute/write split, which suits a
+    read-heavy pipeline rather than this write-heavy one.
+    """
+
+    def __init__(
+        self,
+        datatrees: Sequence[Multiton],
+        model: Multiton,
+        masks: Multiton,
+        columns: Sequence[str],
+        accumulate: bool = False,
+        epsilon: float = 1e-7,
+        do_wgridding: bool = True,
+        nthreads: int = 1,
+    ):
+        # Multitons, not DataTrees: each replica reconstructs its own tree
+        # rather than receiving a pickled one. The driver must not touch
+        # `.instance` before the model columns exist, or replicas inherit a
+        # tree that predates them.
+        self._datatrees = list(datatrees)
+        # The .mds and the masks are Multitons for the same reason, and here it
+        # is load bearing rather than tidy: Serve cloudpickles these init args
+        # and checkpoints them into the GCS internal KV store, whose gRPC
+        # message cap is 512 MiB (RAY_max_grpc_message_size). A .mds is only
+        # "small" relative to visibilities -- a real deconvolution of a crowded
+        # field runs to millions of components (633 MB for 8.8M of them), and
+        # an all-ones 6720^2 mask adds another 361 MB, so binding the loaded
+        # objects blows the cap before a single region is degridded (#278).
+        self._model = model
+        self._masks = masks
+        # Dereferenced once per replica on the first work item and held. The
+        # Multiton cache has a 300 s *inactivity* TTL, so leaving a 633 MB .mds
+        # behind it would let a quiet replica drop and reload it mid-run.
+        self._model_ds: xr.Dataset | None = None
+        self._mask_list: list[np.ndarray] | None = None
+        self._columns = list(columns)
+        self._accumulate = accumulate
+        self._epsilon = epsilon
+        self._do_wgridding = do_wgridding
+        self._nthreads = nthreads
+        # Process-global, so it covers `_degrid`'s worker thread too (measured:
+        # a ducc FFT at nthreads=8 runs 0.71 s with the pool at 1 and 0.16 s
+        # with it at 8, from the resizing thread and from another thread alike).
+        resize_thread_pool(nthreads)
+        # One worker thread, and the reason is Serve's user-loop watchdog.
+        # `degrid` used to be a sync def, which Serve runs *on* the replica's
+        # asyncio loop (RAY_SERVE_RUN_SYNC_IN_THREADPOOL defaults to 0), so a
+        # multi-minute item wedged the loop; the watchdog probes every 60 s
+        # with a 300 s timeout and kills the replica after 3 misses, which
+        # surfaces to the driver as a bare ActorDiedError. max_workers=1 keeps
+        # one item in flight per replica -- and keeps arcae's handles on a
+        # single thread -- no matter what Serve's concurrency ends up being.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="degrid")
+
+    async def degrid(self, item: WorkItem) -> dict:
+        """Degrid and write one region. Returns post-gc memory telemetry.
+
+        Async purely so the replica's event loop stays free to answer health
+        probes; all the work happens on `_executor`'s single thread.
+        """
+        return await asyncio.get_running_loop().run_in_executor(self._executor, self._degrid, item)
+
+    def _degrid(self, item: WorkItem) -> dict:
+        try:
+            if self._model_ds is None:
+                self._model_ds = self._model.instance
+                self._mask_list = self._masks.instance
+            dt = self._datatrees[item.ms_index].instance
+            node_ds = dt[item.node_path].ds
+            write_ds = degrid_region(
+                node_ds,
+                region=item.region,
+                model_ds=self._model_ds,
+                masks=self._mask_list,
+                columns=self._columns,
+                corr_types=tuple(str(p) for p in node_ds.polarization.values),
+                accumulate=self._accumulate,
+                epsilon=self._epsilon,
+                do_wgridding=self._do_wgridding,
+                nthreads=self._nthreads,
+            )
+            assert_writable(write_ds)
+            # region MUST be explicit: the default "auto" expands each dim to
+            # slice(0, size) and would write every chunk to the start of the
+            # array. write_map is identity so MSV4_WRITE_MAP cannot redirect a
+            # column that happens to share an MSv4 variable name.
+            write_ds.to_msv2(
+                compute=True,
+                region=dict(item.region),
+                write_map={c: c for c in self._columns},
+            )
+        finally:
+            # No _release_ms_caches() here. That helper clears the *whole*
+            # class-level Multiton cache, which since this deployment began
+            # keying its model and masks on Multitons would evict them too and
+            # reload a 633 MB .mds on every work item. It is also no longer
+            # buying anything: xarray-ms >= 0.5.8 (its PR #169) bounds both the
+            # tiled storage-manager caches and the table caches via
+            # driver_kwargs={"cache_size": 256}, and clearing measurably does
+            # not change post-gc RSS growth (wiki memory-and-ray). Reference
+            # cycles in deserialised xarray objects still need the collect.
+            gc.collect()
+
+        return {
+            "pid": os.getpid(),
+            "rss_gb": psutil.Process().memory_info().rss / 2**30,
+            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
+        }
+
+
+def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int):
+    """Yield the `(time, frequency)` regions of one selected node.
+
+    Frequency slices are shifted by `node.chan0` because `--freq-range` trims
+    the axis for compute while write regions index the unsliced node.
+
+    Args:
+        ms_index: Index into the driver's MS list.
+        node: A `SelectedNode`.
+        integrations_per_chunk: Times per chunk; `-1`/`0` means the whole node.
+        channels_per_chunk: Channels per chunk.
+
+    Yields:
+        `WorkItem`s covering the node exactly once.
+    """
+    ntime = node.ntime
+    tstep = ntime if integrations_per_chunk in (-1, 0, None) else int(integrations_per_chunk)
+    fstep = int(channels_per_chunk)
+    for t in range(0, ntime, tstep):
+        for f in range(0, node.nchan, fstep):
+            yield WorkItem(
+                ms_index=ms_index,
+                node_path=node.path,
+                region={
+                    "time": slice(t, min(t + tstep, ntime)),
+                    "frequency": slice(node.chan0 + f, node.chan0 + min(f + fstep, node.nchan)),
+                },
+            )
 
 
 def degrid(
     ms: list[Path],
     output_filename: str,
-    scans: str | None = None,
-    ddids: str | None = None,
-    fields: str | None = None,
+    channels_per_chunk: int,
     suffix: str = "main",
-    mds: Path | None = None,
+    mds: str | None = None,
     model_column: str = "MODEL_DATA",
     product: str = "I",
+    scan_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    field_names: list[str] | None = None,
     freq_range: str | None = None,
-    integrations_per_image: int = -1,
-    channels_per_image: int | None = None,
+    data_group: str = "base",
+    partition_columns: list[str] | None = None,
+    auto_corrs: bool = False,
+    integrations_per_chunk: int = -1,
     accumulate: bool = False,
     region_file: str | None = None,
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
-    host_address: str | None = None,
+    ray_address: str = "local",
     nworkers: int = 1,
     nthreads: int | None = None,
+    progressbar: bool = True,
     log_directory: str | None = None,
-):
-    """
-    Predict model visibilities to measurement sets.
-    The default behaviour is to read the frequency mapping from the dds and
-    degrid one image per band.
-    If channels-per-image is provided, the model is evaluated from the mds.
-    """
-    # to log options
-    opts_dict = locals().copy()
+) -> None:
+    """Degrid a `.mds` component model into MSv4 measurement sets.
 
-    output_filename, _, log_directory, _ = set_output_names(
-        output_filename,
-        product,
-        log_directory=log_directory,
-    )
+    Args:
+        ms: Measurement sets to write to.
+        output_filename: Output basename; only used for naming and the default
+            `.mds` location -- nothing image-space is written.
+        channels_per_chunk: Channels per degridding chunk. Required, and must
+            be positive: it also sets how finely the model's spectrum is
+            sampled, so there is no defensible default while the `.mds` does
+            not record the imaging run's channelisation (#327).
+        mds: Path to the component model. Defaults to whichever of
+            `{output_filename}_{suffix}.mds` (what `deconv` writes) or
+            `{output_filename}_{suffix}_model.mds` (what `pfbspec model2comps`
+            writes) exists -- see `_default_mds`.
+        suffix: Product suffix used to build the default `.mds` path.
+        model_column: Column to write. `--region-file` adds
+            `{model_column}1`, `{model_column}2`, ... one per region.
+        product: Stokes product; must match the model's own `stokes` attr.
+        field_names: Field names to degrid into. Defaults to all.
+        spw_names: Spectral window names. Defaults to all.
+        scan_names: Scan names. Defaults to all.
+        freq_range: `'fmin:fmax'` in Hz; either side may be empty.
+        data_group: MSv4 data group used to resolve the field_and_source subtable.
+        partition_columns: xarray-ms partition schema override.
+        integrations_per_chunk: Times per chunk; `-1` means the whole node.
+        accumulate: Add to the existing column rather than replacing it.
+        region_file: Region file splitting the model across columns (#115).
+        epsilon: Gridder accuracy.
+        do_wgridding: Perform w-correction via improved w-stacking.
+        ray_address: Ray cluster address, or `"local"` for a private one.
+        nworkers: Maximum `Degridder` replicas.
+        nthreads: ducc threads per replica. Defaults to half the logical CPUs.
+        progressbar: Print per-item progress with memory telemetry.
+        log_directory: Directory for the run log.
+
+    Raises:
+        ValueError: If `channels_per_chunk` is not positive, no MS matches, the
+            selection matches no data, or any guard in `check_model` /
+            `check_tangent_point` fires.
+    """
+    opts_dict = locals().copy()
+    time_start = time.time()
+
+    # a negative step other than -1 would reach range(0, ntime, step) as a
+    # negative stride, yielding zero work items -- the command would start
+    # Serve, write nothing and exit successfully
+    if integrations_per_chunk is not None and int(integrations_per_chunk) < -1:
+        raise ValueError(
+            f"integrations-per-chunk must be -1 (whole partition), 0 (same) or positive, got {integrations_per_chunk}"
+        )
+    if int(channels_per_chunk) <= 0:
+        raise ValueError(
+            "channels-per-chunk must be positive. There is no "
+            "defensible default while the .mds does not record the imaging "
+            "run's channelisation (see issue #327); it also sets how finely "
+            "the model's spectrum is sampled, so it is a science choice."
+        )
+
+    output_filename, _, log_directory, _ = set_output_names(output_filename, product, log_directory=log_directory)
     opts_dict["output_filename"] = output_filename
     opts_dict["log_directory"] = log_directory
 
+    ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
-        nthreads = psutil.cpu_count(logical=True)
-        ncpu = psutil.cpu_count(logical=False)
-        # use half by default
-        nthreads //= 2
-        ncpu //= 2
-    resize_thread_pool(nthreads)
+        nthreads = psutil.cpu_count(logical=True) // 2
+        ncpu = ncpu // 2
     opts_dict["nthreads"] = nthreads
-    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
-
-    msnames = []
-    for ms_name in ms:
-        msstore = DaskMSStore(str(ms_name).rstrip("/"))
-        mslist = msstore.fs.glob(str(ms_name).rstrip("/"))
-        try:
-            assert len(mslist) > 0
-            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception:
-            log.error_and_raise(f"No MS at {ms_name}", ValueError)
-    ms = msnames
-    opts_dict["ms"] = ms
-
-    basename = output_filename
-
-    if mds is None:
-        mds_store = DaskMSStore(f"{basename}_{suffix}_model.mds")
-    else:
-        mds_store = DaskMSStore(mds)
-        try:
-            assert mds_store.exists()
-        except Exception:
-            log.error_and_raise(f"No mds at {mds}", ValueError)
-    mds = mds_store.url
-    opts_dict["mds"] = mds
-
-    dds_store = DaskMSStore(f"{basename}_{suffix}.dds")
-    if channels_per_image is None and not mds_store.exists():
-        try:
-            assert dds_store.exists()
-        except Exception:
-            log.error_and_raise(
-                f"There must be a dds at {dds_store.url}. Specify mds and channels-per-image to degrid from mds.",
-                ValueError,
-            )
-    dds = dds_store.url
-
-    remprod = product.upper().strip("IQUV")
-    if len(remprod):
-        log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/degrid_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
-
+    pfb_logging.log_to_file(f"{log_directory}/degrid_{timestamp}.log")
     log.log_options_dict(opts_dict, title="DEGRID options")
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
-    # we still need the collections interface for xds_to_table
-    client = set_client(nworkers, log, host_address=host_address, client_log_level=log_directory)
+    # --- resolve inputs -------------------------------------------------
+    msnames = []
+    for ms_path in ms:
+        matches = glob_uris(ms_path)
+        if not matches:
+            raise ValueError(f"No MS at {ms_path}")
+        # strip file:// -- these go on to arcae/python-casacore, which want a
+        # plain filesystem path. A remote protocol survives and fails later at
+        # the backend check, which is where it should fail.
+        msnames += [m.replace("file://", "") for m in matches]
 
-    time_start = time.time()
-
-    client = get_client()
-
-    dds_store = DaskMSStore(dds)
-    mds_store = DaskMSStore(mds)
-
-    if channels_per_image is None:
-        if dds_store.exists():
-            dds, dds_list = xds_from_url(dds_store.url)
-            cpi = 0
-            for ds in dds:
-                cpi = np.maximum(ds.chan.size, cpi)
-        else:
-            log.error_and_raise("You must supply channels per image in the absence of a dds", ValueError)
-    else:
-        cpi = channels_per_image
-
-    if freq_range is not None and len(freq_range):
-        fmin, fmax = freq_range.strip(" ").split(":")
-        if len(fmin) > 0:
-            freq_min = float(fmin)
-        else:
-            freq_min = -np.inf
-        if len(fmax) > 0:
-            freq_max = float(fmax)
-        else:
-            freq_max = np.inf
-    else:
-        freq_min = -np.inf
-        freq_max = np.inf
-
-    group_by = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
-
-    log.info("Constructing mapping")
-    (
-        row_mapping,
-        freq_mapping,
-        time_mapping,
-        freqs,
-        utimes,
-        ms_chunks,
-        gains,
-        radecs,
-        chan_widths,
-        max_blength,
-        antpos,
-        poltype,
-    ) = construct_mappings(ms, None, ipi=integrations_per_image, cpi=cpi, freq_min=freq_min, freq_max=freq_max)
-    #    field_ids=opts.fields,
-    #    ddids=opts.ddids,
-    #    scans=opts.scans)
-
-    mds = xr.open_zarr(mds)
-    foo = client.scatter(mds, broadcast=True)
-    wait(foo)
-
-    # grid spec
-    nx = mds.npix_x
-    ny = mds.npix_y
-
-    # model func
-    params = sm.symbols(("t", "f"))
-    params += sm.symbols(tuple(mds.params.values))
-    symexpr = parse_expr(mds.parametrisation)
-    modelf = lambdify(params, symexpr)
-    texpr = parse_expr(mds.texpr)
-    tfunc = lambdify(params[0], texpr)
-    fexpr = parse_expr(mds.fexpr)
-    ffunc = lambdify(params[1], fexpr)
-
-    # load region file if given
-    masks = []
+    if mds is None:
+        mds = _default_mds(output_filename, suffix)
+    elif not fsspec.filesystem("file").exists(mds):
+        raise ValueError(f"No mds at {mds}")
+    # absolute, because these two paths are now reopened by the replicas rather
+    # than shipped to them, and a Ray worker's cwd is its own session directory
+    mds = str(Path(mds).resolve())
     if region_file is not None:
-        rfile = Regions.read(region_file)  # should detect format
-        # get wcs for model
-        wcs = set_wcs(
-            np.rad2deg(mds.cell_rad_x),
-            np.rad2deg(mds.cell_rad_y),
-            mds.npix_x,
-            mds.npix_y,
-            (mds.ra, mds.dec),
-            mds.freqs.values,
-            header=False,
-        )
-        wcs = wcs.dropaxis(-1)
-        wcs = wcs.dropaxis(-1)
+        region_file = str(Path(region_file).resolve())
+    # The options block above was logged before this defaulting and
+    # resolution, so it carries `mds: None` for a defaulted path and the
+    # unresolved string for a relative one. These are the paths every replica
+    # reopens by name, so name them once they are final.
+    log.info(f"Model: {mds}" + (f", regions: {region_file}" if region_file else ""))
+    # the driver loads it for the guards below; replicas reopen it themselves
+    model_ds = _load_model(mds)
 
-        mask = np.zeros((nx, ny), dtype=np.float64)
-        # get a mask for each region
-        for region in rfile:
-            pixel_region = region.to_pixel(wcs)
-            # why the transpose?
-            region_mask = pixel_region.to_mask().to_image((ny, nx))
-            region_mask = region_mask.T
-            mask += region_mask
-            masks.append(region_mask)
-        if (mask > 1).any():
-            log.error_and_raise("Overlapping regions are not supported", ValueError)
-        remainder = 1 - mask
-        # place DI component first
-        masks = [remainder] + masks
-    else:
-        masks = [np.ones((nx, ny), dtype=np.float64)]
+    geom = check_model(model_ds, product)
+    log.info(
+        f"Model grid {geom['nx']}x{geom['ny']} at {np.rad2deg(geom['cell_rad']) * 3600:.4e} arcsec, "
+        f"stokes {geom['stokes']}"
+    )
 
-    input_schema = sorted(product.upper())
-    if poltype == "linear":
-        output_schema = ["XX", "XY", "YX", "YY"]
-    else:
-        output_schema = ["RR", "RL", "LR", "LL"]
+    freq_min, freq_max = -np.inf, np.inf
+    if freq_range:
+        fmin, fmax = freq_range.strip().split(":")
+        freq_min = float(fmin) if fmin else -np.inf
+        freq_max = float(fmax) if fmax else np.inf
 
-    writes = []
-    for ms_name in ms:
-        xds = xds_from_ms(ms_name, chunks=ms_chunks[ms_name], group_cols=group_by)
+    # built here only to count the columns and to fire the overlapping-region
+    # guard before a Ray cluster exists; the replicas build their own
+    masks = build_region_masks(model_ds, region_file)
+    columns = [model_column] + [f"{model_column}{i}" for i in range(1, len(masks))]
+    log.info(f"Writing {len(columns)} column(s): {', '.join(columns)}")
 
-        for i, mask in enumerate(masks):
-            out_data = []
-            columns = []
-            for k, ds in enumerate(xds):
-                fid = ds.FIELD_ID
-                ddid = ds.DATA_DESC_ID
-                scanid = ds.SCAN_NUMBER
-                if (fields is not None) and (fid not in fields):
-                    continue
-                if (ddids is not None) and (ddid not in ddids):
-                    continue
-                if (scans is not None) and (scanid not in scans):
-                    continue
-                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+    # --- guards, then column creation, then close -----------------------
+    selected: list[tuple[int, SelectedNode]] = []
+    for ims, ms_name in enumerate(msnames):
+        # before opening anything: degrid writes, and only the CASA backend can
+        # be written back to
+        check_writable_backend(ms_name)
+        # one MAIN instance: this tree adds columns, and with several instances
+        # arcae can answer the follow-up reads from one that has not seen them
+        # (see get_engine). It only reads metadata and is closed before any
+        # replica starts, so there is no parallelism to lose.
+        dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
+        dt = xr.open_datatree(ms_name, **dt_kwargs)
+        try:
+            nodes = select_vis_nodes(
+                dt,
+                data_group=data_group,
+                field_names=field_names,
+                spw_names=spw_names,
+                scan_names=scan_names,
+                freq_min=freq_min,
+                freq_max=freq_max,
+            )
+            if not nodes:
+                continue
+            check_tangent_point(model_ds, nodes)
+            ensure_model_columns(ms_name, dt, columns)
+            selected += [(ims, node) for node in nodes]
+        finally:
+            # LOAD BEARING, do not tidy away: newly added columns are invisible
+            # to other processes until the table is closed (CTDS property), and
+            # every Ray replica is another process.
+            dt.close()
 
-                if i == 0:
-                    column_name = model_column
-                else:
-                    column_name = f"{model_column}{i}"
-                columns.append(column_name)
+    if not selected:
+        raise ValueError("Selection matched no data")
 
-                # time <-> row mapping
-                utime = da.from_array(utimes[ms_name][idt], chunks=integrations_per_image)
-                tidx = da.from_array(time_mapping[ms_name][idt]["start_indices"], chunks=1)
-                tcnts = da.from_array(time_mapping[ms_name][idt]["counts"], chunks=1)
+    # Creating a column leaves every table handle that was already open on that
+    # MS unable to resync -- any later read through one raises "another process
+    # changed the number of columns" (ska-sa/arcae#241). Handles opened after
+    # the change are fine, so drop the process-wide cache here and let the next
+    # reader rebuild. This is once per run, NOT per work item: the same call in
+    # `Degridder.degrid` reloaded the model every chunk (wiki memory-and-ray).
+    _release_ms_caches()
 
-                ridx = da.from_array(row_mapping[ms_name][idt]["start_indices"], chunks=integrations_per_image)
-                rcnts = da.from_array(row_mapping[ms_name][idt]["counts"], chunks=integrations_per_image)
+    # --- distribute -----------------------------------------------------
+    # model_ds and masks are dead once the guards above have run, and since the
+    # bind site now passes Multitons rather than the objects themselves they
+    # are no longer needed to build the app. Drop them before Serve starts: at
+    # 6720^2 that is 633 MB plus 361 MB per mask the driver would otherwise
+    # hold for the whole run while replicas compete for the same node's memory.
+    del model_ds, masks
 
-                # freq <-> band mapping (entire freq axis)
-                freq = da.from_array(freqs[ms_name][idt], chunks=ms_chunks[ms_name][k]["chan"])
-                fcnts = np.array(ms_chunks[ms_name][k]["chan"])
-                fidx = np.concatenate((np.array([0]), np.cumsum(fcnts)))[0:-1]
+    resize_thread_pool(nthreads)
+    env_vars = set_envs(nthreads, ncpu, log=log)
+    # +1 CPU for the Serve controller, which would otherwise contend with the
+    # replicas for the cluster's only slots. `init_ray` is a no-op (with a
+    # warning) if Ray is already up, which is the case under pytest -- hence
+    # the nominal replica CPU claim below.
+    init_ray(
+        nworkers + 1,
+        ray_address=ray_address,
+        runtime_env={"env_vars": env_vars, "worker_process_setup_hook": setup_ray_worker},
+        log=log,
+    )
 
-                fidx = da.from_array(fidx, chunks=1)
-                fcnts = da.from_array(fcnts, chunks=1)
+    datatrees = [
+        Multiton(xr.open_datatree, name, **get_engine(name, partition_columns, auto_corrs=auto_corrs))
+        for name in msnames
+    ]
 
-                # number of chunks need to match in mapping and coord
-                ntime_out = len(tidx.chunks[0])
-                assert len(utime.chunks[0]) == ntime_out
-                nfreq_out = len(fidx.chunks[0])
-                assert len(freq.chunks[0]) == nfreq_out
-                # and they need to match the number of row chunks
-                uvw = clone(ds.UVW.data)
-                assert len(uvw.chunks[0]) == len(tidx.chunks[0])
+    app = Degridder.options(
+        num_replicas="auto",
+        # nominal CPU claim, as BandWorkerPool does: replicas are ducc
+        # thread-pool bound, and a real per-replica claim deadlocks scheduling
+        # on a small cluster (the test session's is num_cpus=2). max_replicas
+        # is what actually caps concurrency.
+        ray_actor_options={"num_cpus": 1e-2},
+        # One running plus one ready per replica. This MUST live here and not
+        # in `autoscaling_config`: that is a pydantic model which silently
+        # drops the key, leaving the default of 5 in force -- five items then
+        # queue on the replica, and back when `degrid` was sync that wedged
+        # the event loop until Serve's watchdog killed the replica.
+        #
+        # 2 rather than 1 so a replica has its next item in hand the moment it
+        # finishes one, without the driver holding requests the router cannot
+        # place. Concurrency is NOT what this bounds: `_executor` has a single
+        # worker, so a replica still degrids strictly one item at a time. The
+        # second request simply awaits that executor, which is harmless now
+        # that `degrid` is async and the event loop stays free.
+        max_ongoing_requests=_MAX_ONGOING_REQUESTS,
+        autoscaling_config={
+            "upscale_delay_s": 1.0,
+            "min_replicas": 1,
+            "initial_replicas": 1,
+            # must not exceed max_ongoing_requests, or a saturated replica
+            # never reaches the target and the deployment never scales out
+            "target_ongoing_requests": 1,
+            "max_replicas": nworkers,
+        },
+    ).bind(
+        datatrees=datatrees,
+        model=Multiton(_load_model, mds),
+        masks=Multiton(_load_masks, mds, region_file),
+        columns=columns,
+        accumulate=accumulate,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        nthreads=nthreads,
+    )
+    # build the work list before standing the app up, so a bad chunk spec
+    # cannot leave a Serve deployment running with nothing to shut it down
+    items = [
+        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, channels_per_chunk)
+    ]
+    log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 
-                ncorr = ds.corr.size
-
-                vis = comps2vis(
-                    uvw,
-                    utime,
-                    freq,
-                    ridx,
-                    rcnts,
-                    tidx,
-                    tcnts,
-                    fidx,
-                    fcnts,
-                    mask,
-                    mds,
-                    modelf,
-                    tfunc,
-                    ffunc,
-                    nthreads=nthreads,
-                    epsilon=epsilon,
-                    do_wgridding=do_wgridding,
-                    freq_min=freq_min,
-                    freq_max=freq_max,
-                    product=product,
-                )
-
-                # convert to single precision to write to MS
-                vis = vis.astype(np.complex64)
-
-                if ncorr == 1:
-                    out_schema = output_schema[0]
-                elif ncorr == 2:
-                    out_schema = [output_schema[0], output_schema[-1]]
-                else:
-                    out_schema = output_schema
-
-                vis = convert(vis, input_schema, out_schema, implicit_stokes=True)
-
-                if accumulate:
-                    vis += getattr(ds, column_name).data
-
-                out_ds = ds.assign(**{column_name: (("row", "chan", "corr"), vis)})
-                out_data.append(out_ds)
-
-            writes.append(xds_to_table(out_data, ms_name, columns=columns, rechunk=True))
-
-    # optimize_graph can make things much worse
-    log.info("Computing model visibilities")
-    dask.compute(writes)  # , optimize_graph=False)
-
-    log.info(f"All done after {time.time() - time_start}s.")
+    # No HTTP surface at all. route_prefix=None keeps this application off the
+    # proxy's routing table, but Serve still starts a ProxyActor per node and
+    # that actor binds 127.0.0.1:8000 -- so an unrelated listener on 8000 (a
+    # port-forward, another Serve cluster) fails the whole run at startup with
+    # `RuntimeError: Failed to bind to address '127.0.0.1:8000'`. We drive the
+    # deployment entirely through the handle returned below, so the proxy is a
+    # port dependency we never use. location="NoServer" removes it.
+    serve.start(http_options={"location": "NoServer"})
+    handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
 
     try:
-        client.close()
-    except Exception:
-        pass
+        # Bounded in-flight queue: drain the oldest response once more than
+        # `max_inflight` are outstanding, so submission cannot outrun the
+        # replicas and pile up unwritten regions.
+        #
+        # Sized to exactly what the replicas can accept. Anything beyond that
+        # is not extra throughput -- Serve's router cannot place it, so it
+        # spins on a 0.5 s backoff for as long as the queue ahead of it takes,
+        # and past ~510 s of that the router's backoff overflows (see
+        # `_MAX_ONGOING_REQUESTS`). Items here run for minutes, so a queue
+        # deeper than capacity reaches that reliably rather than rarely.
+        max_inflight = _MAX_ONGOING_REQUESTS * max(nworkers, 1)
+        inflight: deque = deque()
+        ncomplete = 0
+
+        def drain(target: int) -> None:
+            nonlocal ncomplete
+            while len(inflight) > target:
+                mem = inflight.popleft().result()
+                ncomplete += 1
+                if progressbar:
+                    # a post-gc rss that ratchets for a pid across items means
+                    # retention below Python; peak is the lifetime high-water
+                    print(
+                        f"Completed: {ncomplete} / {len(items)} "
+                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                        end="\n",
+                        flush=True,
+                    )
+
+        for item in items:
+            # `- 1` because we are about to add one: draining *to* max_inflight
+            # and then appending peaks at max_inflight + 1, which is one more
+            # than the replicas can accept. That one surplus request is never
+            # routable, so it sits in Serve's router being retried until a slot
+            # frees -- and if it stays there past ~510 s the router's backoff
+            # overflows and kills the routing task holding it. Measured on a
+            # real run: exactly one homeless request at a time, rotating, and
+            # two OverflowErrors by item 36.
+            drain(max_inflight - 1)
+            inflight.append(handle.degrid.remote(item))
+        drain(0)
+    finally:
+        # delete only this application. serve.shutdown() is cluster-wide --
+        # it deletes every app and tears down the Serve system actors -- so on
+        # a shared --ray-address cluster it would kill unrelated workloads.
+        serve.delete(_SERVE_APP_NAME)
+
+    log.info(f"All done after {time.time() - time_start}s.")

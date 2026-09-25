@@ -58,18 +58,15 @@ class _BandWorkerImpl:
 
     def __init__(self, nthreads):
         # Load TBB in this process — ctypes.CDLL in the driver process does
-        # not carry over to forked/spawned Ray workers.
+        # not carry over to forked/spawned Ray workers. Off x86_64 there is no
+        # TBB to load (no wheel, no sdist) and _load_tbb() is a no-op returning
+        # None; numba uses its OpenMP layer there instead.
         # deferred: worker-side setup; keeps driver-side import of this module light
-        import ctypes
-        import importlib.metadata
-
         import numba
 
-        dist = importlib.metadata.distribution("tbb")
-        for f in dist.files:
-            if str(f).endswith("/libtbb.so"):
-                ctypes.CDLL(str(dist.locate_file(f).resolve()))
-                break
+        from pfb_imaging import _load_tbb
+
+        _load_tbb()
         numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
 
         # deferred: worker-side setup; keeps driver-side import light

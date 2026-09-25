@@ -5,13 +5,11 @@ import time
 import warnings
 from pathlib import Path
 
-import fsspec
 import numpy as np
 import psutil
 import ray
 import xarray as xr
 import zarr
-from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from meerkat_beams.utils import BeamWizard
 from xarray_ms.errors import (
@@ -34,7 +32,7 @@ from pfb_imaging.utils.misc import (
     to_mjd_time,
 )
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
-from pfb_imaging.utils.naming import set_output_names
+from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
 
@@ -460,26 +458,20 @@ def imager(
 
     msnames = []
     for ms_path in ms:
-        msstore = DaskMSStore(str(ms_path).rstrip("/"))
-        mslist = msstore.fs.glob(str(ms_path).rstrip("/"))
-        try:
-            assert len(mslist) > 0
-            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
-        except Exception:
+        matches = glob_uris(ms_path)
+        if not matches:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
+        msnames += matches
     ms = msnames
     opts_dict["ms"] = ms
 
     if gain_table is not None:
         gainnames = []
         for gt in gain_table:
-            gainstore = DaskMSStore(str(gt).rstrip("/"))
-            gtlist = gainstore.fs.glob(str(gt).rstrip("/"))
-            try:
-                assert len(gtlist) > 0
-                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
-            except Exception:
+            matches = glob_uris(gt)
+            if not matches:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
+            gainnames += matches
         gain_table = gainnames
         opts_dict["gain_table"] = gain_table
 
@@ -505,18 +497,17 @@ def imager(
     basename = f"{output_filename}"
 
     # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
-    scratch_store = DaskMSStore(f"{basename}.scratch")
-    if scratch_store.exists():
+    scratch_fs, scratch_url = uri_and_fs(f"{basename}.scratch")
+    if scratch_fs.exists(scratch_url):
         if overwrite:
             log.info(f"Overwriting {basename}.scratch")
-            scratch_store.rm(recursive=True)
+            scratch_fs.rm(scratch_url, recursive=True)
         else:
             log.error_and_raise(f"{basename}.scratch exists. Set overwrite to overwrite it. ", RuntimeError)
 
-    fs = fsspec.filesystem(scratch_store.protocol)
-    fs.makedirs(scratch_store.url, exist_ok=True)
+    scratch_fs.makedirs(scratch_url, exist_ok=True)
 
-    log.info(f"Pass-1 scratch products will be stored in {scratch_store.url}")
+    log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
 
     if gain_table is not None:
 
@@ -578,7 +569,7 @@ def imager(
             **dt_kwargs,
         )
         # Name-based selection, the frequency window and the chan0 offset all
-        # come from utils/msv4.select_vis_nodes, shared with degrid-msv4 so the
+        # come from utils/msv4.select_vis_nodes, shared with degrid so the
         # two front ends cannot drift. It selects channels by matching index
         # rather than by label slice, which is correct for a descending
         # spectral window and gives each node a chan0 on its own axis.
@@ -718,7 +709,7 @@ def imager(
     # combined with consolidated=False on the worker writes (consolidation is
     # done once below, in the driver), it removes all shared-mutable-state races
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
-    scratch_root = zarr.open_group(scratch_store.url, mode="a")
+    scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
     for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
         scan_name = np.unique(node.ds.scan_name.load().values).item()
@@ -762,7 +753,7 @@ def imager(
                     dc2=dc2,
                     operator=operator,
                     node_dt=subdt,
-                    scratch_store=scratch_store.url,
+                    scratch_store=scratch_url,
                     bandid=bandid,
                     timeid=timeid,
                     msid=ims,
@@ -821,13 +812,13 @@ def imager(
     ntime = len(set(timeids_out))
     nband_out = len(set(bandids_out))
 
-    log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_store.url}")
+    log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_url}")
     log.info(f"Pass 1 done after {time.time() - time_start}s")
 
     # consolidate the scratch metadata once, single-threaded, now that all
     # workers have finished (workers wrote with consolidated=False to avoid
     # racing on the shared root .zmetadata; see stokes_vis)
-    zarr.consolidate_metadata(scratch_store.url)
+    zarr.consolidate_metadata(scratch_url)
 
     # ---- between passes: stream per-piece counts into the applied grouping ----
     # effective grouping first: time-resolved groupings contradict a
@@ -854,7 +845,7 @@ def imager(
             return (tid,)
         return ()  # mfs
 
-    scratch_dt = xr.open_datatree(scratch_store.url, engine="zarr", chunks=None)
+    scratch_dt = xr.open_datatree(scratch_url, engine="zarr", chunks=None)
     # per-scratch-node summary: (bandid, timeid, ra, dec, time_out)
     node_info = {}
     # one counts grid per applied-weighting group -- accumulating at the
@@ -930,13 +921,13 @@ def imager(
     log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")
 
     # ---- initialise the .dt store root ----
-    dt_store = DaskMSStore(f"{basename}.dt")
-    if dt_store.exists():
+    dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
+    if dt_fs.exists(dt_url):
         if overwrite:
-            dt_store.rm(recursive=True)
+            dt_fs.rm(dt_url, recursive=True)
         else:
             log.error_and_raise(f"{basename}.dt exists. Set overwrite to overwrite it.", RuntimeError)
-    fs.makedirs(dt_store.url, exist_ok=True)
+    dt_fs.makedirs(dt_url, exist_ok=True)
     root_attrs = {
         "pfb-imaging-version": pfb_version,
         "product": product,
@@ -950,8 +941,8 @@ def imager(
         "max_blength": float(max_blength),
         "max_freq": float(max_freq),
     }
-    xr.Dataset(attrs=root_attrs).to_zarr(dt_store.url, mode="w")
-    log.info(f"Imaging products will be written to {dt_store.url}")
+    xr.Dataset(attrs=root_attrs).to_zarr(dt_url, mode="w")
+    log.info(f"Imaging products will be written to {dt_url}")
 
     # per-partition sanity FITS (field/beam orientation checks); the driver
     # creates the directory single-threaded so workers never race on mkdir
@@ -965,8 +956,8 @@ def imager(
     tasks = []
     for out_name, src_names, meta in work:
         fut = _grid_image.remote(
-            scratch_store.url,
-            dt_store.url,
+            scratch_url,
+            dt_url,
             src_names,
             out_name,
             # None under natural weighting (robustness None); grid_partition
@@ -1022,7 +1013,7 @@ def imager(
 
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)
-    zarr.consolidate_metadata(dt_store.url)
+    zarr.consolidate_metadata(dt_url)
 
     # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
     psfparsn = {}
@@ -1052,15 +1043,15 @@ def imager(
                 extra_hdr={"BEAMINCN": (True, "beam includes the wgridder n-term (D22)")},
             )
         fits_tasks = [
-            rdt2fits.remote(dt_store.url, column, fits_oname, **{**base_kwargs, **overrides})
+            rdt2fits.remote(dt_url, column, fits_oname, **{**base_kwargs, **overrides})
             for column, overrides in columns.items()
         ]
         for task in fits_tasks:
             ray.get(task)
 
     if not keep_scratch:
-        log.info(f"Removing scratch store {scratch_store.url}")
-        scratch_store.rm(recursive=True)
+        log.info(f"Removing scratch store {scratch_url}")
+        scratch_fs.rm(scratch_url, recursive=True)
 
     log.info(f"All done after {time.time() - time_start}s")
 

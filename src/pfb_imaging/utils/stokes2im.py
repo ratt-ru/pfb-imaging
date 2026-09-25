@@ -167,7 +167,7 @@ def batch_stokes_image(
 
     # write output chunks
     dso = xr.concat(dso, dim="TIME")
-    dso.to_zarr(fds_store.url, region="auto", synchronizer=synchronizer, safe_chunks=False)
+    dso.to_zarr(fds_store, region="auto", synchronizer=synchronizer, safe_chunks=False)
 
     return timeid, bandid
 
