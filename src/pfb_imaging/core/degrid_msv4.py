@@ -630,7 +630,14 @@ def degrid_msv4(
     ]
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 
-    # route_prefix=None: a batch job must not bind an HTTP route
+    # No HTTP surface at all. route_prefix=None keeps this application off the
+    # proxy's routing table, but Serve still starts a ProxyActor per node and
+    # that actor binds 127.0.0.1:8000 -- so an unrelated listener on 8000 (a
+    # port-forward, another Serve cluster) fails the whole run at startup with
+    # `RuntimeError: Failed to bind to address '127.0.0.1:8000'`. We drive the
+    # deployment entirely through the handle returned below, so the proxy is a
+    # port dependency we never use. location="NoServer" removes it.
+    serve.start(http_options={"location": "NoServer"})
     handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
 
     try:
