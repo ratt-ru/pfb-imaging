@@ -87,11 +87,11 @@ def degrid(
 
     msnames = []
     for ms_name in ms:
-        msstore = DaskMSStore(ms_name.rstrip("/"))
-        mslist = msstore.fs.glob(ms_name.rstrip("/"))
+        msstore = DaskMSStore(str(ms_name).rstrip("/"))
+        mslist = msstore.fs.glob(str(ms_name).rstrip("/"))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except Exception:
             log.error_and_raise(f"No MS at {ms_name}", ValueError)
     ms = msnames

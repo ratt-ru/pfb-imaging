@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-08-06T00:00:00Z
-last_verified_commit: 5a30f2a
+timestamp: 2026-09-10T15:04:42Z
+last_verified_commit: 4bb6825
 ---
 
 # MSv4 DataTree imager pipeline
@@ -183,3 +183,14 @@ linear in rows, so the two must agree to gridder precision).
   no opt-out flag.
 - **Band-drop indexing:** a fully-flagged band leaves a gap in imager band ids while
   legacy `init`+`grid` reindexes contiguously; align on `freq_out`, never on band index.
+
+## Shared MSv4 access
+
+`get_engine` — which maps an MS path to the backend kwargs `xr.open_datatree`
+needs — no longer lives in `core/imager.py`. It moved to
+`utils/msv4.py` (#278) so both MSv4 front ends resolve backends identically;
+`imager` imports it from there. That module also carries `select_vis_nodes`
+and `wrapped_angle_diff`, which are used only by `degrid-msv4`: the imager's
+own node loop additionally computes imaging geometry, channel widths and the
+rephasing barycentre, so it was deliberately **not** retrofitted onto the
+shared selector.

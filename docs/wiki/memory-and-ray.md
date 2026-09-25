@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-07-17T20:00:00Z
-last_verified_commit: 4b571e9
+timestamp: 2026-09-24T09:00:00Z
+last_verified_commit: 0f7296f
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -13,7 +13,8 @@ How `pfb imager`'s footprint went from a 932 GB OOM to 87 GB (and 23m36s to
 2m24s) on an 8-worker, 80-task MeerKAT 1024-channel run, and the reusable
 diagnostics that got it there. Kept for posterity: each of these mechanisms
 will bite again in any Ray + xarray + arcae pipeline. The final section covers
-the deconv band workers, which inherit this discipline.
+the deconv band workers, which inherit this discipline, and `degrid-msv4`,
+which is the first Ray **Serve** consumer in the repo.
 
 ## The core fact
 
@@ -58,12 +59,40 @@ end of the run. Telemetry showed post-gc RSS ratcheting **+3.55 GB/task,
 perfectly linearly, identically on all 8 workers** to ~39.5 GB each — the
 349 GB machine peak. Strong references: `gc.collect()` cannot touch them.
 
-**Fix:** `_release_ms_caches()` in `utils/stokes2vis_msv4.py` clears
-`Multiton._INSTANCE_CACHE` between tasks (safe: Ray runs one task at a time
-per worker; measured cost ~7 MB/task of subtable re-open churn vs ~3.5
-GB/task retained). This is private API by necessity — worth an upstream
-xarray-ms issue asking for a TTL/cache-off knob or public eviction hook, and
-this helper should be deleted when one exists.
+**Fix (pass 1):** `_release_ms_caches()` in `utils/stokes2vis_msv4.py` clears
+`Multiton._INSTANCE_CACHE` between tasks (measured cost ~7 MB/task of subtable
+re-open churn vs ~3.5 GB/task retained). Private API by necessity.
+
+**This helper is on its way out, and `degrid-msv4` no longer calls it.** Two
+things changed:
+
+1. **Upstream bounded the caches.** xarray-ms 0.5.8 (its PR #169) upgraded to
+   arcae 0.5.4, which bounds the previously unbounded tiled storage-manager
+   caches, and added `driver_kwargs`, defaulting to `{"cache_size": 256}`,
+   which bounds the main-table and subtable caches. Both are already in the
+   `0.4.0a7` alpha the repo pins. xarray-ms 0.5.9 (#172) additionally closes
+   subtable handles. Measured on `tests/data/test_ascii_1h60.0s.MS`, 120
+   open/read/close iterations, post-gc RSS: **clearing 971.9 MB vs keeping
+   965.9 MB** (slopes +5.24 vs +4.83 MB/iter) — i.e. the clear buys nothing
+   distinguishable from noise. Caveat: that MS has a *single* small partition,
+   so it does not reproduce the per-partition-key accumulation that motivated
+   the helper. **Removing it from pass 1 needs a cluster-scale imager run
+   first**; this page's +3.55 GB/task figure has not been re-measured against
+   the bounded caches.
+2. **It is not a keyed eviction.** `Multiton._INSTANCE_CACHE.clear()` wipes the
+   **whole class-level cache**, every key, every consumer — so any Multiton the
+   *caller* owns is collateral damage. `degrid-msv4` keys its `.mds` and region
+   masks on Multitons so replicas rebuild rather than receive them, and the
+   clear was evicting those too, reloading a 633 MB `.mds` on **every work
+   item** (measured: 6 work items produced 7 `_load_model` calls; 2 after the
+   fix). `Multiton.release()` is a clean per-key eviction, but xarray-ms
+   creates its Multitons internally and exposes no hook to release them, which
+   is why the wholesale clear was the only lever. That gap is the upstream ask.
+
+The independent residual: even with no clearing at all, repeated
+open/read/close of a datatree ratchets ~5-8 MB/iter with no plateau over 120
+iterations, and **~4.5 MB/iter of that is open/close alone** with no data read.
+Not yet reported upstream.
 
 ## The diagnostic that separates the layers
 
@@ -132,6 +161,61 @@ and exact-residual inputs. Its memory/scheduling rules:
   test images this dwarfs the data and dominates stimela's memory stats.
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
+
+## The degrid-msv4 replicas
+
+`pfb degrid-msv4` (#278) is the repo's first Ray **Serve** deployment: one
+`Degridder` replica per worker, each degridding a `(time, frequency)` region
+and writing that region straight back to the MS (wiki D38). It inherits the
+same rules as pass 1, with one deliberate exception — `Degridder.degrid` calls
+`gc.collect()` in a `finally` but **not** `_release_ms_caches()` (see layer 3:
+the wholesale clear would evict the deployment's own model/mask Multitons), and
+returns the same `{pid, rss_gb, peak_gb}` telemetry the imager prints. The
+replica dereferences its model and masks once, on the first work item, and
+holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
+otherwise drop and reload a 633 MB `.mds` mid-run.
+
+Four Serve-specific notes:
+
+- **`degrid` is `async def` and hands its body to a one-thread executor, and
+  this is load bearing.** Serve runs a *sync* method directly on the replica's
+  asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`), so a
+  long item wedges that loop; Serve's watchdog probes it every 60 s with a
+  300 s timeout and `ray.kill`s the replica after 3 misses. The driver then
+  sees a bare `ActorDiedError` from `drain()` with no user traceback — the
+  only hint is a `UserWarning` buried in replica startup. A real `--regions`
+  run died this way (772f216) because three regions cost three `dirty2vis`
+  passes per item. `max_workers=1` keeps one item per replica and arcae's
+  handles on one thread. `max_ongoing_requests=1` belongs in `.options()`,
+  **never** in `autoscaling_config`, which is a pydantic model that drops the
+  key without complaint and leaves the default of 5 in force; five items then
+  queue per replica and serialise behind the wedged loop, so each item's
+  latency is five items deep (measured: min 70 s, median 363 s, max 633 s).
+  `target_ongoing_requests` must come down to match, or a replica capped at 1
+  can never reach a target of 2 and the deployment never scales out.
+- **Replicas claim a nominal `num_cpus=1e-2`**, exactly as `BandWorkerPool`
+  does and for the same reason: they are ducc thread-pool bound, and a real
+  per-replica claim deadlocks scheduling on a small cluster. `max_replicas`
+  is what actually caps concurrency. The driver asks `init_ray` for
+  `nworkers + 1` CPUs so the Serve controller is not competing for the last
+  slot.
+- **Region masks are cropped to their bounding boxes before they are shipped**
+  (D38 amendment 0f7296f). This is a memory note as much as a speed one: a
+  full-grid float64 mask is 361 MB at 6720^2, so three regions put 1033 MB
+  through the Multiton rebuild in every replica; cropped, the same three come
+  to 353 MB, nearly all of it the remainder mask, which genuinely does cover
+  the grid. Note `build_region_masks` itself costs ~93 s on that model (astropy
+  `regions` rasterising 6720^2 per region) — it runs once per replica behind a
+  Multiton, but a replica that went quiet long enough to drop the Multiton
+  would pay it again.
+- **Measured (2 replicas, 80 chunks, 6-time x 351-baseline x 1-channel):**
+  post-gc RSS rose 0.63 -> 0.89 GB over ~40 items per pid, i.e. ~6.5 MB/task.
+  That is three orders of magnitude below the pass-1 pathology this page was
+  written about, but it is a ratchet rather than a flat line. The most likely
+  source is *not* in this repo: `eval_coeffs_to_slice` runs `parse_expr` and
+  `lambdify` on **every** render, so a run pays sympy once per chunk and
+  sympy's caches are global. Caching the compiled model expression belongs in
+  pfb-model-spec.
 
 ## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
 

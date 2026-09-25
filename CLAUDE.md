@@ -26,6 +26,10 @@ branch, fold any durable knowledge (decisions, rationale, gotchas, layouts) into
 and plan files die with the branch. Wiki pages and rules files cite code, tests, PRs,
 commits and issues as sources, never spec/plan paths.
 
+**Upstream MSv4 issues live in `docs/msv4_issues.md`.** Every arcae / xarray-ms bug we hit
+goes there — filed or not — with a runnable reproducer in `scripts/msv4_issues/`. Check it
+before debugging anything odd on the MSv4 write path, and add to it rather than rediscovering.
+
 ## MSv4 DataTree imager (`pfb imager`)
 
 `pfb imager` is the MSv4 front-end: a two-pass pipeline producing
@@ -34,6 +38,11 @@ a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,ti
 (`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
 `xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
 `.claude/rules/architecture.md §8` and `docs/wiki/imager-pipeline.md`.
+
+**`pfb degrid-msv4`** is the second MSv4 front-end: it degrids a `.mds` component model into
+MSv4 measurement sets via `xarray-ms` write support and Ray Serve, replacing the dask-ms
+`pfb degrid` (#278). All numerics go through `pfb_model_spec.utils.degrid`. Detail:
+`.claude/rules/architecture.md` §6 and wiki design-decisions D38-D42.
 
 **arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
 python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/` and
@@ -64,10 +73,11 @@ uv run ruff format . && uv run ruff check . --fix
 ```
 
 **Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
-`uv run pytest tests/` runs 654 tests in ~151 s. The 35 deselected tests are the end-to-end
-pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci drivers) plus a few whose cost is
-Ray actor startup or a dense operator build (the `_build_hess` preset-wiring pair, the
-frequency-prior fixed-point guard and the frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
+`uv run pytest tests/` runs 687 tests in ~172 s. The 42 deselected tests are the end-to-end
+pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci and degrid-msv4 drivers, and the
+degrid parity/null tests) plus a few whose cost is Ray actor startup or a dense operator build
+(the `_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the
+frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
 `-m ""` locally before finishing a branch — not per-task during development. A test earns the
 `slow` marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
 for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.

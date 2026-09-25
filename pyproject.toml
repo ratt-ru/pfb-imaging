@@ -40,12 +40,13 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 #   * tbb -- Intel ships x86_64/win_amd64 wheels only, and no sdist at all.
 full = [
     "katbeam>=0.1",
-    "pfb-model-spec[full]>=0.0.2",
+    "pfb-model-spec[full]>=0.0.3",  # >=0.0.3 has utils.degrid (the degrid-msv4 kernel)
     "codex-africanus[dask,scipy,astropy] >= 0.4.4",
     "reproject",
-    "ray[default]>=2.55.0",
+    "ray[default,serve]>=2.55.0",
     "radiomesh>=0.1.2 ; python_version >= '3.11'",
     "rarg-numba-patterns>=0.0.1",
+    "rarg-python-patterns>=0.0.4 ; python_version >= '3.11'",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -86,7 +87,17 @@ full = [
     "numcodecs",
     "astropy",
     "scipy",
-    "xarray-ms>=0.5.5 ; python_version >= '3.11'",
+    # write support lives on the 0.4.0-alpha line, which is cut from commits
+    # LATER than 0.5.x -- these version numbers do not order by capability.
+    # NEVER raise the <0.5.0 ceilings: 0.5.x has no write support at all.
+    # See wiki design-decisions D14 and ratt-ru/xarray-ms#170.
+    # The a11 floors are load bearing: 0.4.0a8 made sync_msv2 create canonical
+    # MAIN columns (ratt-ru/xarray-ms#171), which is what removed our
+    # _create_missing_columns fallback, and a11 is the combination we test.
+    # Both are aarch64-clean: xarray-ms is pure python, and arcae 0.4.0a11 has
+    # manylinux_2_28_aarch64 wheels for cp311-cp314 (it vendors casacore).
+    "xarray-ms>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
+    "arcae>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
