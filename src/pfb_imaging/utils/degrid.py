@@ -1,10 +1,10 @@
-"""The MSv4 <-> pfb-model-spec seam for `pfb degrid-msv4` (issue #278).
+"""The MSv4 <-> pfb-model-spec seam for `pfb degrid` (issue #278).
 
 Everything here is pure and Ray-free: turning a `(time, frequency)` region of
 a visibility node into the arguments `pfb_model_spec.utils.degrid` wants, and
 turning its answer back into a minimal Dataset `to_msv2` can write to that
 same region. The numerics live in pfb-model-spec; the distribution and the
-CLI live in `core/degrid_msv4.py`. This mirrors `utils/stokes2vis_msv4.py`,
+CLI live in `core/degrid.py`. This mirrors `utils/stokes2vis_msv4.py`,
 which plays the same role for the imager's pass 1.
 
 Axis convention: pfb-model-spec and ducc0 are both x-major `(nx, ny)`, and
@@ -68,7 +68,7 @@ def check_writable_backend(ms_path: str) -> None:
     backend = infer_backend(path)
     if backend is not MSv4Backend.CASA_TABLE:
         raise ValueError(
-            f"{ms_path} is a {backend.name} store; degrid-msv4 writes model "
+            f"{ms_path} is a {backend.name} store; degrid writes model "
             "columns through xarray-ms's MSv2 write support and can only "
             "write to a CASA measurement set. Read-only front ends such as "
             "`pfb imager` accept this store, but degrid cannot."
@@ -93,7 +93,7 @@ def ensure_model_columns(
        belongs to the whole MAIN table, not to a partition.
     2. Creating a column leaves table handles that were already open on this MS
        unable to resync (ska-sa/arcae#241), so the caller must drop any it holds
-       -- `core/degrid_msv4.degrid_msv4` evicts the process-wide table cache once
+       -- `core/degrid.degrid` evicts the process-wide table cache once
        after this returns.
 
     The caller must **close `dt` afterwards** before any other process reads
@@ -136,7 +136,7 @@ def ensure_model_columns(
     if len(shapes) > 1:
         raise ValueError(
             f"{ms_path} has visibility partitions with differing "
-            f"(nchan, ncorr) shapes {sorted(shapes)}. degrid-msv4 writes one "
+            f"(nchan, ncorr) shapes {sorted(shapes)}. degrid writes one "
             "fixed-shape column across the whole MAIN table and cannot span "
             "heterogeneous spectral windows. Note --spw-names cannot help: a "
             "CASA column belongs to the whole MAIN table, so this is checked "
@@ -237,7 +237,7 @@ def crop_phase_centre(
     the axis's flip convention: `flip_u`/`flip_v` negate the direction the
     offset is measured in. Getting either sign wrong is not a small error --
     it puts the model in the wrong place on the sky, and the visibilities come
-    back order-unity wrong (`tests/test_degrid_msv4.py`, the crop-parity test,
+    back order-unity wrong (`tests/test_degrid.py`, the crop-parity test,
     checks all four flip combinations).
 
     Args:

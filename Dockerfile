@@ -6,7 +6,7 @@ FROM python:3.11-slim
 ARG TARGETARCH
 
 # Which extras to install. Defaults to the full cross-platform stack plus the
-# casacore/distributed extras, i.e. the pre-split behaviour. Override to build
+# casacore extra, i.e. the pre-split behaviour. Override to build
 # a lean arm image:  --build-arg PFB_EXTRAS=".[full]"
 ARG PFB_EXTRAS=".[all]"
 

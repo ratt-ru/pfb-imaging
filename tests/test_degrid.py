@@ -1,5 +1,12 @@
-"""Unit tests for the MSv4 degrid front end (`pfb degrid-msv4`, issue #278)."""
+"""Tests for the MSv4 degrid front end (`pfb degrid`, issue #278).
 
+Mostly unit tests of the seam in `utils/degrid.py` and the driver's guards,
+plus the end-to-end null at the bottom -- which was the whole-pipeline
+acceptance test for the port and outlived the MSv2 command it replaced
+(#330).
+"""
+
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +14,7 @@ import pytest
 
 
 def test_write_support_and_kernel_available():
-    """The three moving parts degrid-msv4 rests on are importable and armed.
+    """The three moving parts degrid rests on are importable and armed.
 
     This is a dependency-pin regression test, not a smoke test: each import
     below fails for a *different* and easily-reintroduced reason -- a
@@ -128,7 +135,7 @@ def test_ensure_model_columns_creates_a_canonical_column(degrid_ms):
     import arcae
     import xarray as xr
 
-    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
     from tests.conftest import drop_column
 
@@ -159,7 +166,7 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
     import arcae
     import xarray as xr
 
-    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
 
     dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
@@ -204,7 +211,7 @@ def test_ensure_model_columns_is_idempotent(degrid_ms):
     import xarray as xr
     from casacore.tables import table as pctable
 
-    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
 
     with pctable(degrid_ms, readonly=False, ack=False) as tab:
@@ -232,7 +239,7 @@ def test_ensure_model_columns_does_not_read_the_visibility_column():
     """
     import xarray as xr
 
-    from pfb_imaging.utils.degrid_msv4 import MODEL_DIMS, make_column_placeholder
+    from pfb_imaging.utils.degrid import MODEL_DIMS, make_column_placeholder
 
     ph = make_column_placeholder((60, 351, 8, 4))
     assert ph.shape == (60, 351, 8, 4)
@@ -247,7 +254,7 @@ def test_ensure_model_columns_does_not_read_the_visibility_column():
 
 def test_build_region_masks_without_a_region_file(simple_mds):
     """No region file means one all-ones mask on the model's own grid."""
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+    from pfb_imaging.utils.degrid import build_region_masks
 
     _, ds = simple_mds
     masks = build_region_masks(ds, None)
@@ -266,7 +273,7 @@ def test_build_region_masks_is_x_major_on_a_non_square_grid(simple_mds, tmp_path
     the right shape but the wrong orientation would select the wrong pixel.
     The region is placed on the component at (x=40, y=9).
     """
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+    from pfb_imaging.utils.degrid import build_region_masks
 
     _, ds = simple_mds
     nx, ny = 64, 32
@@ -298,7 +305,7 @@ def test_build_region_masks_is_x_major_on_a_non_square_grid(simple_mds, tmp_path
 
 def test_build_region_masks_refuses_overlapping_regions(simple_mds, tmp_path):
     """Overlaps would double-count flux across columns; refuse, as today."""
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+    from pfb_imaging.utils.degrid import build_region_masks
 
     _, ds = simple_mds
     region_file = tmp_path / "two.reg"
@@ -328,7 +335,7 @@ def test_degrid_region_returns_only_the_model_columns(degrid_ms, simple_mds):
     nothing else -- while keeping `ds.encoding`, which the MSv2 store needs to
     find the table it came from.
     """
-    from pfb_imaging.utils.degrid_msv4 import MODEL_DIMS, build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import MODEL_DIMS, build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
@@ -361,7 +368,7 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
     """
     from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
 
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
@@ -408,7 +415,7 @@ def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_md
     """
     from pfb_model_spec.utils.degrid import render_model_region
 
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
@@ -449,7 +456,7 @@ def test_degrid_region_tolerates_nan_padded_rows(degrid_ms, simple_mds):
     heap corruption (issue #287). Padded rows must come back exactly zero and
     must not perturb the rest.
     """
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
@@ -489,7 +496,7 @@ def test_degrid_region_accumulates_onto_the_existing_column(degrid_ms, simple_md
     """`--accumulate` adds to what is already in the column, within the region."""
     from casacore.tables import table as pctable
 
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     with pctable(degrid_ms, readonly=False, ack=False) as tab:
         tab.putcol("MODEL_DATA", np.full((21060, 8, 4), 1 + 1j, np.complex64))
@@ -514,7 +521,7 @@ def test_degrid_region_accumulates_onto_the_existing_column(degrid_ms, simple_md
 
 def test_degrid_region_masks_split_flux_across_columns(degrid_ms, simple_mds, tmp_path):
     """Region masks partition the model, so the columns must sum to the whole."""
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     region_file = tmp_path / "one.reg"
     region_file.write_text("image\nbox(41,10,3,3,0)\n")
@@ -555,7 +562,7 @@ def test_assert_writable_rejects_a_dataset_without_store_encoding():
     """
     import xarray as xr
 
-    from pfb_imaging.utils.degrid_msv4 import assert_writable
+    from pfb_imaging.utils.degrid import assert_writable
 
     ds = xr.Dataset({"MODEL_DATA": (("time",), np.zeros(4, np.complex64))})
     with pytest.raises(ValueError, match="encoding"):
@@ -566,7 +573,7 @@ def test_assert_writable_rejects_a_dataset_without_store_encoding():
 
 
 def test_check_model_accepts_a_well_formed_mds(simple_mds):
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     geom = check_model(ds, "I")
@@ -576,7 +583,7 @@ def test_check_model_accepts_a_well_formed_mds(simple_mds):
 
 
 def test_check_model_refuses_a_product_outside_iquv(simple_mds):
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     with pytest.raises(ValueError, match="not yet supported"):
@@ -586,7 +593,7 @@ def test_check_model_refuses_a_product_outside_iquv(simple_mds):
 def test_check_model_refuses_a_product_the_model_is_not(simple_mds):
     """The .mds records what it was made from; degridding it as something else
     would produce confidently wrong correlations."""
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     with pytest.raises(ValueError, match="stokes"):
@@ -600,7 +607,7 @@ def test_check_model_refuses_a_multi_stokes_product(simple_mds):
     single plane into every slot, so `--product IQ` produced XX = 2I, YY = 0 --
     silently wrong. Refuse instead.
     """
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     with pytest.raises(ValueError, match="single Stokes"):
@@ -608,7 +615,7 @@ def test_check_model_refuses_a_multi_stokes_product(simple_mds):
 
 
 def test_check_model_refuses_an_unknown_spec(simple_mds):
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     bad = ds.copy()
@@ -618,7 +625,7 @@ def test_check_model_refuses_an_unknown_spec(simple_mds):
 
 
 def test_check_model_refuses_non_square_pixels(simple_mds):
-    from pfb_imaging.core.degrid_msv4 import check_model
+    from pfb_imaging.core.degrid import check_model
 
     _, ds = simple_mds
     bad = ds.copy()
@@ -635,7 +642,7 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
     wrapped magnitude: a field at RA=2*pi-eps and a model at RA=+eps are the
     same direction and must pass.
     """
-    from pfb_imaging.core.degrid_msv4 import check_tangent_point
+    from pfb_imaging.core.degrid import check_tangent_point
     from pfb_imaging.utils.msv4 import SelectedNode
 
     def node(ra, dec):
@@ -664,7 +671,7 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
 
 
 @pytest.mark.slow
-def test_degrid_msv4_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
+def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
     """A full driver run must fill MODEL_DATA with what `degrid_region` computes.
 
     This is the region-write test: the driver chunks the node into several
@@ -676,8 +683,8 @@ def test_degrid_msv4_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
     import xarray as xr
     from casacore.tables import table as pctable
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks, degrid_region
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 
     mds_path, mds_ds = simple_mds
@@ -685,7 +692,7 @@ def test_degrid_msv4_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
     with pctable(degrid_ms, readonly=False, ack=False) as tab:
         tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
 
-    degrid_msv4(
+    degrid(
         [degrid_ms],
         str(tmp_path / "out"),
         mds=mds_path,
@@ -725,17 +732,17 @@ def test_degrid_msv4_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
 
 
 @pytest.mark.slow
-def test_degrid_msv4_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path):
+def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path):
     """The default --model-column on an MS that has no MODEL_DATA."""
     from casacore.tables import table as pctable
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
     from tests.conftest import drop_column
 
     drop_column(degrid_ms, "MODEL_DATA")
     mds_path, _ = simple_mds
 
-    degrid_msv4(
+    degrid(
         [degrid_ms],
         str(tmp_path / "out"),
         mds=mds_path,
@@ -756,7 +763,7 @@ def test_degrid_msv4_creates_the_column_when_it_is_absent(degrid_ms, simple_mds,
 
 
 @pytest.mark.slow
-def test_degrid_msv4_honours_freq_range(degrid_ms, simple_mds, tmp_path):
+def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path):
     """`--freq-range` must write to the selected channels and no others.
 
     The highest-risk arithmetic in the driver: the frequency axis is trimmed
@@ -767,7 +774,7 @@ def test_degrid_msv4_honours_freq_range(degrid_ms, simple_mds, tmp_path):
     import xarray as xr
     from casacore.tables import table as pctable
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine
 
     with pctable(degrid_ms, readonly=False, ack=False) as tab:
@@ -783,7 +790,7 @@ def test_degrid_msv4_honours_freq_range(degrid_ms, simple_mds, tmp_path):
     hi = float(freqs[5]) + 1.0
 
     mds_path, _ = simple_mds
-    degrid_msv4(
+    degrid(
         [degrid_ms],
         str(tmp_path / "out"),
         mds=mds_path,
@@ -804,13 +811,13 @@ def test_degrid_msv4_honours_freq_range(degrid_ms, simple_mds, tmp_path):
 
 
 @pytest.mark.slow
-def test_degrid_msv4_handles_multiple_measurement_sets(degrid_ms, simple_mds, tmp_path):
+def test_degrid_handles_multiple_measurement_sets(degrid_ms, simple_mds, tmp_path):
     """`WorkItem.ms_index` must route each region to the MS it came from."""
     import shutil
 
     from casacore.tables import table as pctable
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
 
     second = str(tmp_path / "second.ms")
     shutil.copytree(degrid_ms, second)
@@ -819,7 +826,7 @@ def test_degrid_msv4_handles_multiple_measurement_sets(degrid_ms, simple_mds, tm
             tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
 
     mds_path, _ = simple_mds
-    degrid_msv4(
+    degrid(
         [degrid_ms, second],
         str(tmp_path / "out"),
         mds=mds_path,
@@ -842,12 +849,12 @@ def test_degrid_msv4_handles_multiple_measurement_sets(degrid_ms, simple_mds, tm
     np.testing.assert_array_equal(first_col, second_col)
 
 
-def test_degrid_msv4_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
+def test_degrid_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
     """The guard must fire before Ray starts and before a column is created."""
     from pfb_model_spec.utils.io import build_mds_dataset
     from pfb_model_spec.utils.modelspec import fit_image_cube
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
 
     image = np.zeros((1, 2, 32, 32))
     image[:, :, 20, 5] = 1.0
@@ -883,7 +890,7 @@ def test_degrid_msv4_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
     ds.to_zarr(str(mds_path), mode="w")
 
     with pytest.raises(ValueError, match="[Tt]angent point mismatch"):
-        degrid_msv4(
+        degrid(
             [degrid_ms],
             str(tmp_path / "out"),
             mds=str(mds_path),
@@ -941,7 +948,7 @@ def test_ensure_model_columns_refuses_heterogeneous_partition_shapes(tmp_path):
     """
     import xarray as xr
 
-    from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+    from pfb_imaging.utils.degrid import ensure_model_columns
 
     dt = xr.DataTree(children={"p0": _vis_node(8), "p1": _vis_node(4, name="spw1")})
     with pytest.raises(ValueError, match="differing"):
@@ -989,7 +996,7 @@ def test_default_mds_prefers_deconv_then_model2comps(tmp_path):
     `{base}_{suffix}_model.mds`. The legacy `degrid` only ever looked for the
     second, so `imager -> deconv -> degrid` never worked without `--mds`.
     """
-    from pfb_imaging.core.degrid_msv4 import _default_mds
+    from pfb_imaging.core.degrid import _default_mds
 
     base = str(tmp_path / "out_I")
     deconv_name = f"{base}_main.mds"
@@ -1008,17 +1015,17 @@ def test_default_mds_prefers_deconv_then_model2comps(tmp_path):
     assert _default_mds(base, "main") == deconv_name  # deconv wins when both exist
 
 
-def test_degrid_msv4_refuses_a_negative_integrations_per_chunk(degrid_ms, simple_mds, tmp_path):
+def test_degrid_refuses_a_negative_integrations_per_chunk(degrid_ms, simple_mds, tmp_path):
     """A negative step other than -1 silently produces zero work items.
 
     `range(0, ntime, -2)` is empty, so the command would start Serve, write
     nothing, and exit successfully.
     """
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
 
     mds_path, _ = simple_mds
     with pytest.raises(ValueError, match="integrations-per-chunk"):
-        degrid_msv4(
+        degrid(
             [degrid_ms],
             str(tmp_path / "out"),
             8,
@@ -1081,12 +1088,12 @@ def test_select_vis_nodes_handles_multiple_spectral_windows(multi_spw_ms):
 
 
 @pytest.mark.slow
-def test_degrid_msv4_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path):
+def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path):
     """A full run over two SPWs must fill both, each on its own channel axis."""
     import xarray as xr
     from casacore.tables import table as pctable
 
-    from pfb_imaging.core.degrid_msv4 import degrid_msv4
+    from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 
     with pctable(multi_spw_ms, readonly=False, ack=False) as tab:
@@ -1094,7 +1101,7 @@ def test_degrid_msv4_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_
         tab.putcol("MODEL_DATA", np.zeros((nrow, 8, 4), np.complex64))
 
     mds_path, _ = simple_mds
-    degrid_msv4(
+    degrid(
         [multi_spw_ms],
         str(tmp_path / "out"),
         4,
@@ -1137,7 +1144,7 @@ def test_crop_phase_centre_reproduces_the_full_grid_degrid(flip_u, flip_v):
     """
     from ducc0.wgridder import dirty2vis
 
-    from pfb_imaging.utils.degrid_msv4 import crop_bbox, crop_phase_centre
+    from pfb_imaging.utils.degrid import crop_bbox, crop_phase_centre
 
     rng = np.random.default_rng(42)
     nx, ny, cell = 64, 48, 1e-5
@@ -1190,7 +1197,7 @@ def test_crop_phase_centre_reproduces_the_full_grid_degrid(flip_u, flip_v):
 
 def test_crop_bbox_of_an_empty_mask_is_degenerate():
     """An empty region must not crop to a zero-sized grid ducc would reject."""
-    from pfb_imaging.utils.degrid_msv4 import crop_bbox
+    from pfb_imaging.utils.degrid import crop_bbox
 
     rm = crop_bbox(np.zeros((16, 8)))
     assert rm.mask.shape == (2, 2)
@@ -1205,7 +1212,7 @@ def test_workitem_is_hashable_with_slice_regions():
     hashable; a `frozenset` of the region's items made that a lie on 3.11,
     which is what the container ships and the floor for core code.
     """
-    from pfb_imaging.core.degrid_msv4 import WorkItem
+    from pfb_imaging.core.degrid import WorkItem
 
     a = WorkItem(0, "/node", {"time": slice(0, 4), "frequency": slice(0, 128)})
     b = WorkItem(0, "/node", {"frequency": slice(0, 128), "time": slice(0, 4)})
@@ -1219,7 +1226,7 @@ def test_workitem_is_hashable_with_slice_regions():
 
 def test_build_region_masks_names_a_region_that_misses_the_grid(simple_mds, tmp_path):
     """A region off the grid must say so, not die on `None.T`."""
-    from pfb_imaging.utils.degrid_msv4 import build_region_masks
+    from pfb_imaging.utils.degrid import build_region_masks
 
     _, ds = simple_mds
     region_file = tmp_path / "off.reg"
@@ -1232,7 +1239,7 @@ def test_build_region_masks_names_a_region_that_misses_the_grid(simple_mds, tmp_
 
 def test_check_writable_backend_refuses_a_non_casa_store(tmp_path):
     """degrid writes; only the CASA backend can be written back to."""
-    from pfb_imaging.utils.degrid_msv4 import check_writable_backend
+    from pfb_imaging.utils.degrid import check_writable_backend
 
     store = tmp_path / "some.zarr"
     store.mkdir()
@@ -1244,7 +1251,151 @@ def test_check_writable_backend_refuses_a_non_casa_store(tmp_path):
 
 def test_check_writable_backend_accepts_a_measurement_set(ms_name):
     """The happy path stays open, including through a file:// prefix."""
-    from pfb_imaging.utils.degrid_msv4 import check_writable_backend
+    from pfb_imaging.utils.degrid import check_writable_backend
 
     check_writable_backend(ms_name)
     check_writable_backend(f"file://{ms_name}")
+
+
+@pytest.mark.slow
+def test_imager_degrid_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_path):
+    """The full loop must subtract the sky it degridded.
+
+    `imager --psf` -> real `.mds` -> `degrid` -> `imager` on
+    `DATA-MODEL_DATA`. The model here is the injected truth rather than a
+    deconvolved estimate, written through pfb-model-spec's own `model_to_ds`,
+    so the `.mds` schema, the component fit and the re-render are all the
+    production ones and the null is strict: no beam anywhere on this path, and
+    a perfect model, so what is left is gridder error.
+
+    **Why `deconv` is not in this chain.** It cannot be, in this test session.
+    A single-band run makes `fit_image_cube` raise `UnboundLocalError` (`xfit`
+    is only assigned inside its multi-band branches) and `deconv` swallows
+    that in a bare `except Exception`, so no `.mds` is written at all --
+    silently. More than one band makes `deconv` stand up one long-lived Ray
+    actor per band, which starves on the session cluster's `RAY_NUM_CPUS=2`
+    (the same constraint `test_deconv_groundtruth` documents when it pins
+    itself to `channels_per_image=-1`). So there is no band count at which
+    `deconv -> degrid` runs here. Using the truth as the model tests strictly
+    more of degrid than a deconvolved model would, and the `.mds` is still
+    produced by the real writer.
+    """
+    import xarray as xr
+    from pfb_model_spec.utils.io import model_to_ds
+
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.core.imager import imager as imager_core
+    from pfb_imaging.operators.gridder import wgridder_conventions
+
+    work_ms = tmp_path / "e2e.ms"
+    shutil.copytree(ms_name, work_ms)
+
+    outname = str(tmp_path / "e2e")
+    imager_core(
+        [Path(work_ms)],
+        outname,
+        channels_per_image=4,  # 2 bands: fit_image_cube needs more than one
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=0.0,
+        psf=True,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        assert len(nodes) == 2, f"expected 2 bands, got {nodes}"
+        freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
+        time_out = np.array([float(dt[nodes[0]].ds.attrs["time_out"])])
+        radec = (float(dt[nodes[0]].ds.attrs["ra"]), float(dt[nodes[0]].ds.attrs["dec"]))
+        dirty = sum(dt[n].ds.DIRTY[0] for n in nodes).values
+        wsum_total = sum(float(dt[n].ds.WSUM.values[0]) for n in nodes)
+        dirty_peak = float(np.abs(dirty).max() / wsum_total)
+    finally:
+        dt.close()
+
+    # the injected truth on the imager's own grid, x-major (nband, nx, ny)
+    nx, ny = sky_truth.nx, sky_truth.ny
+    model = np.zeros((freq_out.size, nx, ny))
+    for b, f in enumerate(freq_out):
+        for s in range(sky_truth.lpix.size):
+            ix = nx // 2 - int(sky_truth.lpix[s])
+            iy = ny // 2 + int(sky_truth.mpix[s])
+            model[b, ix, iy] = sky_truth.ref_flux[s] * (f / ms_meta.freq0) ** sky_truth.alpha[s]
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    mds_path = str(tmp_path / "truth.mds")
+    model_to_ds(
+        time_out,
+        freq_out,
+        np.ones(freq_out.size, dtype=bool),  # fsel: fit every band
+        model,  # (nband, nx, ny); model_to_ds adds the time axis itself
+        np.ones(freq_out.size),  # per-band fit weight
+        mds_path,
+        sky_truth.cell_rad,
+        nx,
+        ny,
+        x0,
+        y0,
+        flip_u,
+        flip_v,
+        flip_w,
+        radec,
+        "I",
+        "test",
+    )
+    assert Path(mds_path).exists()
+
+    degrid(
+        [Path(work_ms)],
+        outname,
+        4,
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=-1,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    resname = str(tmp_path / "e2e_res")
+    imager_core(
+        [Path(work_ms)],
+        resname,
+        data_column="DATA-MODEL_DATA",
+        channels_per_image=4,
+        integrations_per_image=-1,
+        product="I",
+        nx=nx,
+        ny=ny,
+        cell_size=sky_truth.cell_size,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    dt = xr.open_datatree(resname + "_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        residual = sum(dt[n].ds.DIRTY[0] for n in nodes).values
+        wsum = sum(float(dt[n].ds.WSUM.values[0]) for n in nodes)
+        peak = float(np.abs(residual).max() / wsum)
+    finally:
+        dt.close()
+
+    # Stated against the pre-subtraction dirty peak, so an all-zero
+    # MODEL_DATA (peak == dirty_peak) cannot pass and the threshold does not
+    # silently encode a model-quality assumption.
+    assert peak < 0.05 * dirty_peak, (
+        f"residual peak {peak:.3e} vs dirty peak {dirty_peak:.3e} -- the degridded model did not subtract"
+    )

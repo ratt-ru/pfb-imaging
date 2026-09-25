@@ -39,9 +39,13 @@ a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,ti
 `xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
 `.claude/rules/architecture.md §8` and `docs/wiki/imager-pipeline.md`.
 
-**`pfb degrid-msv4`** is the second MSv4 front-end: it degrids a `.mds` component model into
-MSv4 measurement sets via `xarray-ms` write support and Ray Serve, replacing the dask-ms
-`pfb degrid` (#278). All numerics go through `pfb_model_spec.utils.degrid`. Detail:
+**`pfb degrid`** is the second MSv4 front-end: it degrids a `.mds` component model into
+MSv4 measurement sets via `xarray-ms` write support and Ray Serve (#278). All numerics go
+through `pfb_model_spec.utils.degrid`. It took the `degrid` name from the dask-ms command it
+replaced in #330, which retired the codebase's last `distributed` consumer — a clean break,
+not a drop-in: the selection flags are MSv4 names (`--scan-names`/`--spw-names`/
+`--field-names`) rather than MSv2 integer ids, chunking is `--integrations-per-chunk`/
+`--channels-per-chunk`, and the cluster address is `--ray-address`. Detail:
 `.claude/rules/architecture.md` §6 and wiki design-decisions D38-D42.
 
 **arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
@@ -74,8 +78,8 @@ uv run ruff format . && uv run ruff check . --fix
 
 **Tests are fast by default.** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so
 `uv run pytest tests/` runs 687 tests in ~172 s. The 42 deselected tests are the end-to-end
-pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci and degrid-msv4 drivers, and the
-degrid parity/null tests) plus a few whose cost is Ray actor startup or a dense operator build
+pipeline ones (`*_groundtruth`, the imager/deconv/restore/hci and degrid drivers, and the
+end-to-end degrid null) plus a few whose cost is Ray actor startup or a dense operator build
 (the `_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the
 frequency-prior spectrum guards). They are left to CI, which overrides with `-m ""`. Use
 `-m ""` locally before finishing a branch — not per-task during development. A test earns the

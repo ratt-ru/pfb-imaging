@@ -43,13 +43,13 @@ The dependencies are split so the cross-platform stack installs cleanly on
 | extra | contents | notes |
 |---|---|---|
 | `full` | the cross-platform scientific stack | everything `deconv`, `restore` and the MSv4/`xarray-ms` path need |
-| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | MSv2 access for `imager`, `hci`, `degrid`. No aarch64 wheel — see below |
-| `distributed` | `distributed`, `bokeh` | only `degrid` still needs it |
+| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | MSv2 access for `imager` and `hci`, and rephasing. No aarch64 wheel — see below |
 | `x86` | `tbb` | x86_64-only; a no-op elsewhere |
 | `all` | all of the above | safe on every architecture |
 
-`pip install "pfb-imaging[full]"` is enough for deconvolution and restoration.
-Add `casacore` only if you need to read MSv2 tables through `dask-ms`.
+`pip install "pfb-imaging[full]"` is enough for `imager` on MSv4 data, `deconv`,
+`restore` and `degrid` — the whole MSv4 pipeline. Add `casacore` only for MSv2
+input, `hci`, or rephasing (multi-field mosaics / `--phase-dir`).
 
 **On linux-aarch64:**
 
@@ -118,7 +118,7 @@ The processing pipeline follows a modular pattern where each step is a separate 
 
 1. `pfb imager` -- Image measurement sets (MSv4 via arcae) into a unified DataTree
 2. `pfb deconv` -- General composable deconvolution of the imager output
-3. `pfb degrid` -- Subtract model from visibilities
+3. `pfb degrid` -- Degrid a component model into MSv4 data so it can be subtracted
 
 Additional commands:
 

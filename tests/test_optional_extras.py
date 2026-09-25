@@ -29,6 +29,12 @@ OPTIONAL_ROOTS = {"daskms", "casacore", "distributed"}
 CASACORE_FREE_ENTRY_POINTS = [
     "pfb_imaging.core.deconv",
     "pfb_imaging.core.restore",
+    # degrid reaches tables through arcae, never dask-ms. It is here because
+    # the MSv4 front end arrived carrying a module-scope
+    # `from daskms.fsspec_store import DaskMSStore` for a glob that plain
+    # fsspec does -- exactly the silent re-break this guard exists to catch,
+    # and it was invisible while the entry point was unlisted (#330).
+    "pfb_imaging.core.degrid",
     "pfb_imaging.cli",
 ]
 
@@ -103,13 +109,19 @@ def test_optional_dependency_names_the_extra():
 
 
 def test_optional_dependency_sees_through_a_reraised_import_error():
-    """dask.distributed re-raises with exc.name unset; the cause still names it."""
-    original = ModuleNotFoundError("No module named 'distributed'", name="distributed")
+    """A shim re-raises with exc.name unset; the cause still names the module.
+
+    dask-ms's own `requires_optional` does this for python-casacore
+    (`daskms/utils.py`: `raise ImportError(msg) from import_errors[0]`), so the
+    ImportError that reaches us carries a summary message and no `name` at all.
+    Giving up on the first frame would report a missing extra as a mystery.
+    """
+    original = ModuleNotFoundError("No module named 'casacore'", name="casacore")
     with pytest.raises(ImportError) as excinfo:
-        with optional_dependency("The degrid command"):
-            raise ImportError("dask.distributed is not installed.") from original
+        with optional_dependency("The hci command"):
+            raise ImportError("Optional extras required by ... are missing") from original
     message = str(excinfo.value)
-    assert "pfb-imaging[distributed]" in message
+    assert "pfb-imaging[casacore]" in message
 
 
 def test_optional_dependency_passes_through_unknown_import_errors():

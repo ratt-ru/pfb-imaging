@@ -190,7 +190,7 @@ linear in rows, so the two must agree to gridder precision).
 needs — no longer lives in `core/imager.py`. It moved to
 `utils/msv4.py` (#278) so both MSv4 front ends resolve backends identically;
 `imager` imports it from there. That module also carries `select_vis_nodes`
-and `wrapped_angle_diff`, which are used only by `degrid-msv4`: the imager's
+and `wrapped_angle_diff`, which are used only by `degrid`: the imager's
 own node loop additionally computes imaging geometry, channel widths and the
 rephasing barycentre, so it was deliberately **not** retrofitted onto the
 shared selector.

@@ -396,7 +396,7 @@ def simple_mds(ms_name, tmp_path):
     exactly 1.5 -- which is the frequency-upsampling assertion.
 
     The tangent point is read from the test MS's own FIELD.PHASE_DIR rather
-    than invented: `degrid-msv4` refuses to degrid a model whose tangent point
+    than invented: `degrid` refuses to degrid a model whose tangent point
     differs from the field's (wiki D21, mosaics are not supported in v1), so a
     made-up radec makes every driver test fail the guard rather than exercise
     the code under test.

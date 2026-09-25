@@ -3,7 +3,6 @@ import importlib
 import logging
 import os
 import platform
-import warnings
 from importlib.metadata import PackageNotFoundError, version
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -194,62 +193,3 @@ def setup_ray_worker():
             "Could not initialise the TBB threading layer for numba in this worker process; "
             "numba will fall back to its default layer. Install pfb-imaging[x86] to restore TBB."
         )
-
-
-def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=False, client_log_level=None):
-    warnings.filterwarnings("ignore", message="Port 8787 is already in use")
-    if client_log_level == "error":
-        logging.getLogger("distributed").setLevel(logging.ERROR)
-        logging.getLogger("bokeh").setLevel(logging.ERROR)
-        logging.getLogger("tornado").setLevel(logging.CRITICAL)
-    elif client_log_level == "warning":
-        logging.getLogger("distributed").setLevel(logging.WARNING)
-        logging.getLogger("bokeh").setLevel(logging.WARNING)
-        logging.getLogger("tornado").setLevel(logging.WARNING)
-    elif client_log_level == "info":
-        logging.getLogger("distributed").setLevel(logging.INFO)
-        logging.getLogger("bokeh").setLevel(logging.INFO)
-        logging.getLogger("tornado").setLevel(logging.INFO)
-    elif client_log_level == "debug":
-        logging.getLogger("distributed").setLevel(logging.DEBUG)
-        logging.getLogger("bokeh").setLevel(logging.DEBUG)
-        logging.getLogger("tornado").setLevel(logging.DEBUG)
-
-    # deferred: optional heavy runtime (dask/distributed)
-    import dask
-
-    # set up client
-    host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
-    if host_address is not None:
-        # deferred: optional heavy runtime (dask/distributed)
-        from distributed import Client
-
-        log.info("Initialising distributed client.")
-        if stack is not None:
-            client = stack.enter_context(Client(host_address))
-        else:
-            client = Client(host_address)
-    else:
-        # deferred: optional heavy runtime (dask/distributed)
-        from dask.distributed import Client, LocalCluster
-
-        log.info("Initialising client with LocalCluster.")
-        dask.config.set({"distributed.comm.compression": {"on": True, "type": "lz4"}})
-        cluster = LocalCluster(
-            processes=True,
-            n_workers=nworkers,
-            threads_per_worker=1,
-            memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-            asynchronous=False,
-        )
-        if stack is not None:
-            cluster = stack.enter_context(cluster)
-        client = Client(cluster, direct_to_workers=direct_to_workers)
-        if stack is not None:
-            client = stack.enter_context(client)
-
-    client.wait_for_workers(nworkers)
-    dashboard_url = client.dashboard_link
-    log.info(f"Dask Dashboard URL at {dashboard_url}")
-
-    return client

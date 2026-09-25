@@ -51,7 +51,7 @@ was never asked for it and the following `to_msv2` had nowhere to write. No erro
   On a7 `MODEL_DATA created=False`; on a11 `created=True`.
 - **Done:** `_create_missing_columns` is deleted and the pins now floor at a11, so
   `ensure_model_columns` relies on `sync_msv2` alone (and on its `ColumnCreationError` to
-  verify). Dropping below 0.4.0a8 would make `degrid-msv4` silently write nothing.
+  verify). Dropping below 0.4.0a8 would make `degrid` silently write nothing.
 
 ### 2. `addcols` then read is answered by a stale table instance — FILED
 
@@ -77,7 +77,7 @@ after `addcols` to verify creation, so it can fail against its own write.
 - Timing dependent, so it hides: 0/25 locally in isolation, but it failed CI on
   [pfb-imaging#329](https://github.com/ratt-ru/pfb-imaging/pull/329) (Python 3.12 only).
 - **Our workaround:** `get_engine(..., main_ninstances=1)` for any tree that creates columns;
-  the driver's guard tree uses it (`core/degrid_msv4.py`). Wiki: design-decisions gotchas.
+  the driver's guard tree uses it (`core/degrid.py`). Wiki: design-decisions gotchas.
 - This matters more from 0.4.0a8 on, because issue 1's fix routes canonical columns
   (i.e. the default `MODEL_DATA`) through the same `addcols` path.
 
@@ -92,10 +92,10 @@ handles are in one process and one of them made the change.
   a handle opened afterwards is fine. Reproduces at `ninstances=1`, which is what separates it
   from issue 2. `getcol` never recovers on the poisoned handle; `columns()` fails once then
   succeeds, so the handle ends up half-recovered rather than resynced.
-- **Blocks the a11 bump.** `tests/test_degrid_parity.py::test_imager_degrid_msv4_nulls_the_residual`
+- **Blocks the a11 bump.** `tests/test_degrid_parity.py::test_imager_degrid_nulls_the_residual`
   is `3/3 pass` on a7/a8 and `3/3 fail` on a11, at `CorrelatedFactory.__init__`'s
   `ms.tabledesc()` in the second `imager` call of an in-process
-  `imager → degrid-msv4 → imager` chain. It appears at a8 because that is when `sync_msv2`
+  `imager → degrid → imager` chain. It appears at a8 because that is when `sync_msv2`
   began creating canonical columns itself (issue 1) rather than leaving `MODEL_DATA` to
   pfb-imaging's own short-lived handle.
 - **Upstream's recommended workaround** (sjperkins on arcae#241) is `table.close()` followed
@@ -117,7 +117,7 @@ handles are in one process and one of them made the change.
   Python reference to call `close()` on, persisting until the 300 s inactivity TTL. That is the
   case upstream's close-and-reopen advice does not reach, and the reason the eviction hook in
   ratt-ru/xarray-ms#177 is worth asking for.
-- **Fixed on our side:** `core/degrid_msv4.degrid_msv4` calls `_release_ms_caches()` once
+- **Fixed on our side:** `core/degrid.degrid` calls `_release_ms_caches()` once
   after the column-creation loop — *not* per work item, which is what made it reload the model
   every chunk (see wiki memory-and-ray). The test passes on a11 with it.
 - Production impact is narrower than the test suggests: degrid's replicas are separate
@@ -175,7 +175,7 @@ them. `Multiton.release()` is a clean per-key eviction, but only for keys you ho
 only lever a consumer has is `Multiton._INSTANCE_CACHE.clear()` — a private, class-level
 wipe that destroys *every* consumer's Multitons as collateral.
 
-- This is not hypothetical: it is what made `degrid-msv4` reload a 633 MB `.mds` on every
+- This is not hypothetical: it is what made `degrid` reload a 633 MB `.mds` on every
   work item, because the deployment keys its model and masks on Multitons too
   ([pfb-imaging#331](https://github.com/ratt-ru/pfb-imaging/pull/331)).
 - Issue 3 makes the ask sharper: consumers now *need* a targeted eviction after creating a
@@ -217,7 +217,7 @@ wipe that destroys *every* consumer's Multitons as collateral.
 
 ## Adjacent, not MSv4
 
-Ray issues, hit on the `degrid-msv4` Serve path. **Nothing here is filed yet** — the Ray-side
+Ray issues, hit on the `degrid` Serve path. **Nothing here is filed yet** — the Ray-side
 findings want another pair of eyes first, so that we file one coherent story rather than
 several fragments. Reproducers: [`scripts/ray_issues/`](../scripts/ray_issues).
 

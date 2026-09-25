@@ -32,15 +32,13 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 # both linux-x86_64 and linux-aarch64. This is what `deconv`, `restore` and the
 # MSv4/xarray-ms path need.
 #
-# Deliberately NOT here (see the casacore/distributed/x86 extras below):
+# Deliberately NOT here (see the casacore/x86 extras below):
 #   * anything that drags in python-casacore -- no aarch64 wheel has ever been
 #     published, and casacore is on its way out of this project anyway;
-#   * distributed -- only `degrid` still needs it, and it is likewise on the
-#     way out;
 #   * tbb -- Intel ships x86_64/win_amd64 wheels only, and no sdist at all.
 full = [
     "katbeam>=0.1",
-    "pfb-model-spec[full]>=0.0.3",  # >=0.0.3 has utils.degrid (the degrid-msv4 kernel)
+    "pfb-model-spec[full]>=0.0.3",  # >=0.0.3 has utils.degrid (the degrid kernel)
     "codex-africanus[dask,scipy,astropy] >= 0.4.4",
     "reproject",
     "ray[default,serve]>=2.55.0",
@@ -102,9 +100,12 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# MSv2 access through casacore. Needed by `imager` (MSv2 input), `hci` and
-# `degrid`; not needed by `deconv` or `restore`, nor by the MSv4/xarray-ms
-# path, which reaches tables through arcae (aarch64 wheels, casacore vendored).
+# MSv2 access through casacore. Needed by `imager` (MSv2 input) and `hci`, and
+# by the rephasing path in `utils/stokes2vis_msv4.py`, which calls africanus'
+# synthesize_uvw/get_coordinates (pyrap). NOT needed by `deconv`, `restore` or
+# `degrid`: those reach tables through arcae, which vendors casacore and does
+# publish aarch64 wheels. `degrid` joined that set in #330, when the MSv2
+# command of the same name was retired.
 #
 # python-casacore has never published an aarch64 wheel, so on arm this extra
 # compiles from sdist and needs, on Ubuntu/DGX OS:
@@ -115,13 +116,6 @@ full = [
 casacore = [
     "codex-africanus[python-casacore] >= 0.4.4",
     "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
-]
-
-# dask.distributed scheduler. Only `degrid` still requires it; everything else
-# runs on Ray.
-distributed = [
-    "distributed>=2026.3.0",
-    "bokeh>=3.1.0",
 ]
 
 # x86_64-only accelerators. The marker is deliberate and not redundant with the
@@ -142,7 +136,6 @@ all = [
     # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
     "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
     "pfb-imaging[casacore]",
-    "pfb-imaging[distributed]",
     "pfb-imaging[x86]",
 ]
 

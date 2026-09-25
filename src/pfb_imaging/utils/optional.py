@@ -6,7 +6,6 @@ assumed packages have no wheels:
 
 * ``python-casacore`` has never published an aarch64 wheel, and ``dask-ms``
   depends on it unconditionally -- both live behind ``[casacore]``;
-* ``distributed`` is only still needed by ``degrid`` -- ``[distributed]``;
 * ``tbb`` is x86_64/Windows only and has no sdist -- ``[x86]``.
 
 Commands that need one of those import it lazily, so ``pfb --help`` and the
@@ -21,7 +20,6 @@ from contextlib import contextmanager
 _EXTRA_FOR_MODULE = {
     "casacore": "casacore",
     "daskms": "casacore",
-    "distributed": "distributed",
     "tbb": "x86",
 }
 
@@ -33,6 +31,8 @@ def _missing_module(exc):
     ``ImportError`` from ``import distributed`` and raises its own advisory
     ``ImportError`` with no ``name``. The original is preserved on
     ``__cause__``, so walk the chain rather than giving up on the first frame.
+    dask-ms does the same for python-casacore, which is why this matters after
+    the distributed extra went away with the MSv2 degrid (#330).
     """
     seen = set()
     while exc is not None and id(exc) not in seen:

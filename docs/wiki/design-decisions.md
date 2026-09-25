@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-24T09:00:00Z
+timestamp: 2026-09-25T12:00:00Z
 last_verified_commit: 0f7296f
 ---
 
@@ -485,8 +485,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   recovery). DIRTY/RESIDUAL are unchanged (no beam or n is ever applied on
   the imaging side). **Consumers must not treat the stored BEAM as the bare
   primary beam** — a future PB-corrected quicklook must use B = BEAM·n, or
-  check `beam_includes_n`. `degrid`/`comps2vis` predates beams entirely and
-  still predicts unattenuated model vis (pre-existing limitation, unchanged).
+  check `beam_includes_n`. `degrid` predicts unattenuated
+  model vis (D42; the MSv2 command it replaced did too, via the since-deleted
+  `comps2vis`).
   Known residual approximation errors in the PSF-convolution Hessian, now
   documented: the w-term, the `abs(PSFHAT)` rectification (Hermitian-
   positivity for CG) — both far larger than the n-term at any fov, sub-
@@ -1336,7 +1337,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 - **Context:** ratt-ru/tricolour#106 is the reference implementation of MSv4 + Ray region
   writes, by the xarray-ms author, and it separates loading, computing and writing into
-  three Ray Serve deployments. `degrid-msv4` (#278) had to decide whether to copy that.
+  three Ray Serve deployments. `degrid` (#278) had to decide whether to copy that.
 - **Decision:** adopt tricolour's *vocabulary* — `WorkItem(ms_index, node_path, region)`,
   a `region` dict driving both `isel` and the write, `Multiton` so each replica rebuilds
   its own `DataTree` rather than receiving a pickled one, a bounded in-flight queue — and
@@ -1395,7 +1396,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   slightly off when missed:** each axis's offset sign is its own flip convention
   (`-1 if flip_u else +1`, likewise `flip_v`), and ducc asserts an even grid extent, so an
   odd bounding box must grow by a pixel *into real model pixels* — zero-padding would
-  misplace the window. `tests/test_degrid_msv4.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`
+  misplace the window. `tests/test_degrid.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`
   pins both over all four flip combinations, and asserts each wrong sign is order-unity wrong.
   This also replaced `model_to_apparent_vis_for_region` with its own primitives
   (`render_model_region`/`degrid_stokes`/`stokes_vis_to_corr`), so the chunk renders once for
@@ -1406,7 +1407,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   consumes all regions/directions *simultaneously*, so a multi-region entry point that
   renders once and degrids N cropped sub-grids serves both consumers and is where the crop
   test really belongs. Filed, not scheduled.
-- **Source:** `src/pfb_imaging/core/degrid_msv4.py`, `src/pfb_imaging/utils/degrid_msv4.py`,
+- **Source:** `src/pfb_imaging/core/degrid.py`, `src/pfb_imaging/utils/degrid.py`,
   ratt-ru/tricolour#106, issue #278, PR #331, pfb-model-spec#27.
 
 ### D39 — the degrid chunk's representative time and frequency are unweighted means
@@ -1421,13 +1422,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   since `dirty2vis` receives the full `freq` array; the only approximation is the model's
   spectral variation *across* a chunk, which is what `--channels-per-chunk` controls.
 - **Consequences:** D28 is an imager rule, not a repo-wide one. Do not "unify" them.
-- **Source:** `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+- **Source:** `src/pfb_imaging/utils/degrid.py::degrid_region`, issue #278.
 
 ### D40 — the model is evaluated at unix-second times, and the legacy `degrid` was wrong here
 
 - **Context:** a `.mds`'s `texpr` is fitted against whatever time axis it was given. For a
   model written by `deconv` that axis is the `.dt`'s `time_out`, i.e. **unix seconds** (D13).
-- **Decision:** `degrid-msv4` passes the MSv4 `time` coordinate — also unix seconds —
+- **Decision:** `degrid` passes the MSv4 `time` coordinate — also unix seconds —
   straight through to `render_model_region`, with no conversion.
 - **Rationale / Consequences:** the old `degrid` passed MSv2 `TIME`, i.e. **MJD seconds**,
   into the same expression: wrong by ~111 years of offset. It never bit because `deconv`
@@ -1436,7 +1437,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   The moment a multi-time `.mds` exists the old behaviour is wrong and the new one is right.
   Do not "restore parity" here.
 - **Source:** `pfb_model_spec.utils.modelspec.fit_image_cube`,
-  `src/pfb_imaging/utils/degrid_msv4.py::degrid_region`, issue #278.
+  `src/pfb_imaging/utils/degrid.py::degrid_region`, issue #278.
 
 ### D41 — `--product` must match the model's `stokes` attr, and may name only one product
 
@@ -1450,10 +1451,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   silently wrong output rather than an error.
 - **Consequences:** a deliberate, documented behaviour change from `degrid`. Revisit when
   pfb-model-spec#19/#20 add a Stokes axis to the spec.
-- **Source:** `src/pfb_imaging/core/degrid_msv4.py::check_model`,
-  `tests/test_degrid_msv4.py::test_check_model_refuses_a_multi_stokes_product`, issue #278.
+- **Source:** `src/pfb_imaging/core/degrid.py::check_model`,
+  `tests/test_degrid.py::test_check_model_refuses_a_multi_stokes_product`, issue #278.
 
-### D42 — no beams in `degrid-msv4` v1: upsampling and a per-band beam are in tension
+### D42 — no beams in `degrid` v1: upsampling and a per-band beam are in tension
 
 - **Context:** beam application was the headline addition proposed in #278, and the `.dt`
   stores one beam per `(band, partition)`.
@@ -1475,6 +1476,51 @@ update it (and this page's `last_verified_commit`) in the same session.
   sources are fidelity levels, not competitors — gauge-exact but diagonal and per-band,
   versus full-Mueller and frequency-resolved but not gauge-exact.
 - **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278.
+
+### D43 — the MSv2 `degrid` was retired outright rather than aliased or deprecated
+
+- **Context:** #329 landed `degrid-msv4` alongside the dask-ms `degrid`, which was kept as
+  the parity oracle. Once the MSv4 pipeline was complete (imager + deconv + degrid) and
+  validated on real data, the MSv2 command's only remaining job was to be compared against.
+- **Decision (#330):** delete `cli/degrid.py`, `core/degrid.py` and `cabs/degrid.yml`, move
+  the MSv4 command into those names, and register it as `pfb degrid` with **no alias and no
+  deprecation period**. `pfb degrid-msv4` no longer exists.
+- **Rationale:** the option surfaces are not compatible, so an alias would have bought
+  nothing. MSv4 selection is by *name* where MSv2 was by integer id
+  (`--scan-names`/`--spw-names`/`--field-names` vs `--scans`/`--ddids`/`--fields`); chunking
+  is `--integrations-per-chunk`/`--channels-per-chunk` vs `..._per_image`; the cluster is
+  `--ray-address` vs `--host-address`. Keeping the old *spellings* over the new semantics
+  was considered and rejected: `--ddids 0,1` silently meaning "SPWs named 0 and 1" is worse
+  than an unrecognised-option error. A recipe written against the MSv2 command now fails
+  loudly at parse time.
+- **Consequences:** three things fell out with it, each a real simplification rather than a
+  rename.
+  1. **`distributed` left the dependency set entirely.** `set_client` (deleted) had exactly
+     one caller, `core/degrid.py`, so the `[distributed]` extra and its `bokeh` pin are gone
+     — the aarch64 story loses a whole optional axis (#330 builds on the extras split).
+  2. **`operators/gridder.py` is dask-free.** The `comps2vis`/`_comps2vis`/`_comps2vis_impl`
+     stack (222 lines, `dask.array` blockwise) was the legacy command's inline model
+     evaluation and had no other importer. Its `import dask.array as da` was the module's
+     only dask use, and `gridder.py` is on the deconv and imager paths.
+  3. **`core/degrid` joined the casacore-free entry points.** It arrived from #329 carrying a
+     module-scope `from daskms.fsspec_store import DaskMSStore`, used only for a glob that
+     `fsspec.core.url_to_fs` does — a top-level dask-ms import on a path that must install
+     without python-casacore. It was invisible because `test_optional_extras.py` did not list
+     the module; it does now.
+
+  What did **not** change: `[casacore]` still exists. `imager` (MSv2 input), `hci` and the
+  rephasing path in `utils/stokes2vis_msv4.py` (africanus `synthesize_uvw`/`get_coordinates`,
+  which pull pyrap) still need it. Retiring `degrid` removed casacore from the *degrid* path,
+  not from the project.
+
+  The two legacy-comparison tests in `tests/test_degrid_parity.py` were written to be
+  deleted with the command and were. The end-to-end null
+  (`imager --psf` → `.mds` → `degrid` → `imager` on `DATA-MODEL_DATA`) outlived them and
+  moved into `tests/test_degrid.py`; it is the acceptance test, and it never referenced the
+  MSv2 command.
+- **Source:** `src/pfb_imaging/core/degrid.py`, `src/pfb_imaging/cli/degrid.py`,
+  `src/pfb_imaging/operators/gridder.py`, `tests/test_optional_extras.py`,
+  `tests/test_degrid.py::test_imager_degrid_nulls_the_residual`, issues #278, #330.
 
 ## Known debt
 
@@ -1553,14 +1599,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   `ms_descriptor("MAIN", complete=True)` and then skipped with no warning and no error,
   while non-canonical names (`MODEL_DATA1`) were created normally. The
   `_create_missing_columns` fallback that covered it is gone. Its removal is why the
-  floor is load bearing: on an older xarray-ms, `degrid-msv4` would silently write nothing
+  floor is load bearing: on an older xarray-ms, `degrid` would silently write nothing
   to `MODEL_DATA`. Note the fix routes canonical columns through `addcols` too, which is
   what exposed ska-sa/arcae#241 on the default column.
 - **Creating a column poisons table handles already open on that MS** (ska-sa/arcae#241).
   Any read through one then raises `Table::lock cannot sync table …; another process changed
   the number of columns`; handles opened afterwards are fine, and `getcol` never recovers on
-  a poisoned one. `degrid_msv4` evicts the process-wide table cache once after column
-  creation. Without it an in-process `imager → degrid-msv4 → imager` chain fails
+  a poisoned one. `degrid` evicts the process-wide table cache once after column
+  creation. Without it an in-process `imager → degrid → imager` chain fails
   deterministically on xarray-ms >= 0.4.0a8.
 - **`sync_msv2` silently drops a variable that is not on every correlated node.** It compares
   each variable's node count against the number of nodes it visited in `dt.subtree` and warns

@@ -592,7 +592,7 @@ def imager(
             **dt_kwargs,
         )
         # Name-based selection, the frequency window and the chan0 offset all
-        # come from utils/msv4.select_vis_nodes, shared with degrid-msv4 so the
+        # come from utils/msv4.select_vis_nodes, shared with degrid so the
         # two front ends cannot drift. It selects channels by matching index
         # rather than by label slice, which is correct for a descending
         # spectral window and gives each node a chan0 on its own axis.
