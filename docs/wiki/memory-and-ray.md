@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-24T09:00:00Z
-last_verified_commit: 0f7296f
+timestamp: 2026-09-25T12:30:00Z
+last_verified_commit: 15b5a9e
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -13,7 +13,7 @@ How `pfb imager`'s footprint went from a 932 GB OOM to 87 GB (and 23m36s to
 2m24s) on an 8-worker, 80-task MeerKAT 1024-channel run, and the reusable
 diagnostics that got it there. Kept for posterity: each of these mechanisms
 will bite again in any Ray + xarray + arcae pipeline. The final section covers
-the deconv band workers, which inherit this discipline, and `degrid-msv4`,
+the deconv band workers, which inherit this discipline, and `degrid`,
 which is the first Ray **Serve** consumer in the repo.
 
 ## The core fact
@@ -63,7 +63,7 @@ perfectly linearly, identically on all 8 workers** to ~39.5 GB each — the
 `Multiton._INSTANCE_CACHE` between tasks (measured cost ~7 MB/task of subtable
 re-open churn vs ~3.5 GB/task retained). Private API by necessity.
 
-**This helper is on its way out, and `degrid-msv4` no longer calls it.** Two
+**This helper is on its way out, and `degrid` no longer calls it.** Two
 things changed:
 
 1. **Upstream bounded the caches.** xarray-ms 0.5.8 (its PR #169) upgraded to
@@ -81,7 +81,7 @@ things changed:
    the bounded caches.
 2. **It is not a keyed eviction.** `Multiton._INSTANCE_CACHE.clear()` wipes the
    **whole class-level cache**, every key, every consumer — so any Multiton the
-   *caller* owns is collateral damage. `degrid-msv4` keys its `.mds` and region
+   *caller* owns is collateral damage. `degrid` keys its `.mds` and region
    masks on Multitons so replicas rebuild rather than receive them, and the
    clear was evicting those too, reloading a 633 MB `.mds` on **every work
    item** (measured: 6 work items produced 7 `_load_model` calls; 2 after the
@@ -162,9 +162,9 @@ and exact-residual inputs. Its memory/scheduling rules:
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
 
-## The degrid-msv4 replicas
+## The degrid replicas
 
-`pfb degrid-msv4` (#278) is the repo's first Ray **Serve** deployment: one
+`pfb degrid` (#278) is the repo's first Ray **Serve** deployment: one
 `Degridder` replica per worker, each degridding a `(time, frequency)` region
 and writing that region straight back to the MS (wiki D38). It inherits the
 same rules as pass 1, with one deliberate exception — `Degridder.degrid` calls

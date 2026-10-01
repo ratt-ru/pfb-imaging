@@ -23,9 +23,9 @@ nothing restarts one periodically, so a request stranded at the tail of a run
 has nothing to rescue it.
 
 Any deployment whose work items outlast the router's patience hits this: it
-needs only that some request waits ~510 s for a free replica. `pfb degrid-msv4`
+needs only that some request waits ~510 s for a free replica. `pfb degrid`
 did, with multi-minute items and an in-flight queue deeper than the replicas
-could accept (fixed by tying the two together -- see `core/degrid_msv4.py`).
+could accept (fixed by tying the two together -- see `core/degrid.py`).
 
 Run: uv run python scripts/ray_issues/serve_router_backoff_overflow.py
 No cluster, no MS, no deployment -- it only does the router's arithmetic.

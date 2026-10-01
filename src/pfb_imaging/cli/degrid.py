@@ -3,9 +3,9 @@ from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import (
-    ListInt,
+    ListStr,
     StimelaMeta,
-    parse_list_int,
+    parse_list_str,
     parse_upath,
     stimela_cab,
     stimela_output,
@@ -17,7 +17,7 @@ URI = NewType("URI", Path)
 
 @stimela_cab(
     name="degrid",
-    info="Degrid visibilities from model image(s) into measurement set. "
+    info="Degrid visibilities from a component model into MSv4 measurement sets. "
     "The model image needs to be in component format.",
 )
 @stimela_output(
@@ -61,36 +61,17 @@ def degrid(
             rich_help_panel="Naming",
         ),
     ],
-    scans: Annotated[
-        ListInt | None,
+    channels_per_chunk: Annotated[
+        int,
         typer.Option(
-            parser=parse_list_int,
-            help="List of SCAN_NUMBERS to image. "
-            "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI.",
-            rich_help_panel="Data Selection",
+            ...,
+            help="Number of channels per degridding chunk. "
+            "Required. "
+            "The model is re-rendered once per chunk so this sets how finely the model spectrum is sampled. "
+            "Narrower chunks cost more FFTs at the same visibility count.",
+            rich_help_panel="Chunking",
         ),
-    ] = None,
-    ddids: Annotated[
-        ListInt | None,
-        typer.Option(
-            parser=parse_list_int,
-            help="List of DATA_DESC_ID's to images. "
-            "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI.",
-            rich_help_panel="Data Selection",
-        ),
-    ] = None,
-    fields: Annotated[
-        ListInt | None,
-        typer.Option(
-            parser=parse_list_int,
-            help="List of FIELD_ID's to image. "
-            "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI.",
-            rich_help_panel="Data Selection",
-        ),
-    ] = None,
+    ],
     suffix: Annotated[
         str,
         typer.Option(
@@ -103,7 +84,9 @@ def degrid(
     mds: Annotated[
         str | None,
         typer.Option(
-            help="Optional path to mds to use for degridding. By default mds is inferred from output-filename.",
+            help="Optional path to mds to use for degridding. "
+            "By default it is inferred from output-filename and suffix. "
+            "Both the deconv name and the model2comps name are tried.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -117,10 +100,45 @@ def degrid(
     product: Annotated[
         str,
         typer.Option(
-            help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
+            help="Stokes product to degrid. "
+            "Must name exactly one product and must match the model's own stokes attribute. "
+            "The genesis mds spec stores a single Stokes plane.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",
+    scan_names: Annotated[
+        ListStr | None,
+        typer.Option(
+            parser=parse_list_str,
+            help="List of scan names to degrid. "
+            "Defaults to all. "
+            "These are MSv4 scan_name values, not SCAN_NUMBER integers. "
+            "Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = None,
+    spw_names: Annotated[
+        ListStr | None,
+        typer.Option(
+            parser=parse_list_str,
+            help="List of spectral window names to degrid. "
+            "Defaults to all. "
+            "These are MSv4 spectral_window_name values, not DATA_DESC_ID integers. "
+            "Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = None,
+    field_names: Annotated[
+        ListStr | None,
+        typer.Option(
+            parser=parse_list_str,
+            help="List of field names to degrid. "
+            "Defaults to all. "
+            "These are MSv4 field_name values, not FIELD_ID integers. "
+            "Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = None,
     freq_range: Annotated[
         str | None,
         typer.Option(
@@ -128,21 +146,40 @@ def degrid(
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    integrations_per_image: Annotated[
-        int,
+    data_group: Annotated[
+        str,
         typer.Option(
-            help="Number of time integrations corresponding to each image. "
-            "Default -1 (equivalently 0 or None) implies degrid per scan.",
-            rich_help_panel="Imaging",
+            help="MSv4 data group used to resolve the 'DATA' column to its correlated_data variable. "
+            "Also selects the field_and_source subtable.",
+            rich_help_panel="Data Selection",
         ),
-    ] = -1,
-    channels_per_image: Annotated[
-        int | None,
+    ] = "base",
+    partition_columns: Annotated[
+        ListStr | None,
         typer.Option(
-            help="Number of channels per image. Default (None) -> read mapping from dds. (-1, 0) -> one band per SPW.",
-            rich_help_panel="Imaging",
+            parser=parse_list_str,
+            help="Columns to partition the MSv4 store by (xarray-ms PARTITION_SCHEMA). "
+            "Defaults to FIELD_ID,DATA_DESC_ID,SCAN_NUMBER; other instruments may need SOURCE_ID. "
+            "Input as a comma separated list if running from CLI.",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
+    auto_corrs: Annotated[
+        bool,
+        typer.Option(
+            help="Include auto-correlations in the degridding process.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = False,
+    integrations_per_chunk: Annotated[
+        int,
+        typer.Option(
+            help="Number of time integrations per degridding chunk. "
+            "Default -1 degrids the whole partition in one chunk. "
+            "This is a memory and parallelism knob only.",
+            rich_help_panel="Chunking",
+        ),
+    ] = -1,
     accumulate: Annotated[
         bool,
         typer.Option(
@@ -173,13 +210,13 @@ def degrid(
             rich_help_panel="WGridder",
         ),
     ] = True,
-    host_address: Annotated[
-        str | None,
+    ray_address: Annotated[
+        str,
         typer.Option(
-            help="Address where the distributed client lives. Uses LocalCluster if no address is provided.",
-            rich_help_panel="Distribution",
+            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            rich_help_panel="Performance",
         ),
-    ] = None,
+    ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
@@ -196,6 +233,13 @@ def degrid(
             rich_help_panel="Performance",
         ),
     ] = None,
+    progressbar: Annotated[
+        bool,
+        typer.Option(
+            help="Display progress. Use --no-progressbar to deactivate.",
+            rich_help_panel="Reporting",
+        ),
+    ] = True,
     log_directory: Annotated[
         Directory | None,
         typer.Option(
@@ -231,7 +275,7 @@ def degrid(
     ] = False,
 ):
     """
-    Degrid visibilities from model image(s) into measurement set.
+    Degrid visibilities from a component model into MSv4 measurement sets.
     The model image needs to be in component format.
     """
     if backend == "native" or backend == "auto":
@@ -244,23 +288,27 @@ def degrid(
                 dict(
                     ms=ms,
                     output_filename=output_filename,
-                    scans=scans,
-                    ddids=ddids,
-                    fields=fields,
+                    channels_per_chunk=channels_per_chunk,
                     suffix=suffix,
                     mds=mds,
                     model_column=model_column,
                     product=product,
+                    scan_names=scan_names,
+                    spw_names=spw_names,
+                    field_names=field_names,
                     freq_range=freq_range,
-                    integrations_per_image=integrations_per_image,
-                    channels_per_image=channels_per_image,
+                    data_group=data_group,
+                    partition_columns=partition_columns,
+                    auto_corrs=auto_corrs,
+                    integrations_per_chunk=integrations_per_chunk,
                     accumulate=accumulate,
                     region_file=region_file,
                     epsilon=epsilon,
                     do_wgridding=do_wgridding,
-                    host_address=host_address,
+                    ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
+                    progressbar=progressbar,
                     log_directory=log_directory,
                 ),
             )
@@ -272,23 +320,27 @@ def degrid(
             degrid_core(
                 ms,
                 output_filename,
-                scans=scans,
-                ddids=ddids,
-                fields=fields,
+                channels_per_chunk,
                 suffix=suffix,
                 mds=mds,
                 model_column=model_column,
                 product=product,
+                scan_names=scan_names,
+                spw_names=spw_names,
+                field_names=field_names,
                 freq_range=freq_range,
-                integrations_per_image=integrations_per_image,
-                channels_per_image=channels_per_image,
+                data_group=data_group,
+                partition_columns=partition_columns,
+                auto_corrs=auto_corrs,
+                integrations_per_chunk=integrations_per_chunk,
                 accumulate=accumulate,
                 region_file=region_file,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
-                host_address=host_address,
+                ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
+                progressbar=progressbar,
                 log_directory=log_directory,
             )
             return
@@ -309,23 +361,27 @@ def degrid(
         dict(
             ms=ms,
             output_filename=output_filename,
-            scans=scans,
-            ddids=ddids,
-            fields=fields,
+            channels_per_chunk=channels_per_chunk,
             suffix=suffix,
             mds=mds,
             model_column=model_column,
             product=product,
+            scan_names=scan_names,
+            spw_names=spw_names,
+            field_names=field_names,
             freq_range=freq_range,
-            integrations_per_image=integrations_per_image,
-            channels_per_image=channels_per_image,
+            data_group=data_group,
+            partition_columns=partition_columns,
+            auto_corrs=auto_corrs,
+            integrations_per_chunk=integrations_per_chunk,
             accumulate=accumulate,
             region_file=region_file,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
-            host_address=host_address,
+            ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,
+            progressbar=progressbar,
             log_directory=log_directory,
         ),
         image=image,

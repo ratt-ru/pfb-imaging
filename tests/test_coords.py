@@ -1,6 +1,7 @@
 """Casacore-free coordinate helpers used by the imager mosaic path."""
 
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
 
 from pfb_imaging.utils.misc import (
@@ -18,7 +19,10 @@ def test_mjd_unix_roundtrip():
 
 
 def test_radec_to_lm_matches_africanus():
-    # africanus is the reference implementation (pulls casacore -> test-only import)
+    # africanus is the reference implementation (pulls casacore -> test-only import).
+    # casacore is behind the optional [casacore] extra, so skip without it
+    # rather than failing a cross-platform ([full]-only) run.
+    pytest.importorskip("africanus.coordinates", reason="reference implementation needs codex-africanus")
     from africanus.coordinates import radec_to_lm as af_radec_to_lm
 
     rng = np.random.default_rng(42)

@@ -5,8 +5,31 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
 ## 1. Test Infrastructure
 
 * Tests are parametrized with `pytest.mark.parametrize`.
-* Test data in `tests/data/` is downloaded automatically from Google Drive on first run.
+* Test data in `tests/data/` is downloaded automatically from Google Drive on first run,
+  **unconditionally** — the MS is read through arcae, so the casacore-free legs need it too.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
+
+### What skips without the `[casacore]` extra
+
+`ms_name` is only a path, and the test MS is *downloaded*, not built — `imager` and `degrid`
+read it through arcae. So **`ms_name` does not require the extra**, and MSv2-backed tests run
+on a `[full]`-only install. It used to `importorskip("daskms")`, which cascaded a skip to all
+77 of them; that made the aarch64 `--extra full` leg — the one we gate on — skip every test
+that grids a visibility, so a green arm tick said nothing about whether imaging worked there
+(#330).
+
+What skips now is only what genuinely needs the extra, and each declares it for itself:
+
+| | needs | why |
+|---|---|---|
+| `ms_meta`, and `sky_truth` through it | dask-ms | reads the MS with `xds_from_ms` |
+| the `pctable` fixture | python-casacore | casacore's *write* API — `addrows`, `putcell` on subtables, `removecols` — which arcae does not expose |
+| `drop_column`, `make_multi_spw_ms` | python-casacore | same |
+| `test_stokes_vis_beam_on_image_grid` | pyrap | rephasing calls africanus' `synthesize_uvw` |
+| `test_hci.py`, `test_imager_pol.py` | dask-ms | module-scope imports, so `collect_ignore` rather than a skip (pytest reports a collection-time ImportError as an error, not a skip) |
+
+A test needing casacore's write API takes the `pctable` fixture rather than importing it —
+one reason string, one place to change.
 
 ### Dependency groups: one `dev` group, `full` is the heavy axis
 
@@ -16,13 +39,13 @@ The distinction that *is* load-bearing is the `full` extra:
 
 ```bash
 uv sync --group dev                 # lint/cab tooling only — the Code Quality job
-uv sync --extra full --group dev    # + the scientific stack — tests, and local work
+uv sync --extra all --group dev    # + the scientific stack — tests, and local work
 ```
 
 **Never put `pfb-imaging[full]` into the `dev` group.** `dev` is a uv default group, so
 doing so drags ray/ducc0/jax/dask-ms/africanus into `uv sync --group dev` — i.e. into the
 Code Quality job, whose entire body is `ruff format --check .` and `ruff check .`, and into
-`update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra full`
+`update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra all`
 explicitly.
 
 ### arcae / python-casacore coexistence
@@ -37,10 +60,15 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 687 tests, ~172 s
-uv run pytest -m slow tests/  # only the deselected 42, ~550 s
-uv run pytest -m "" tests/    # everything, 729 tests, ~745 s (what CI runs)
+uv run pytest tests/          # fast loop: 743 tests -- run THIS locally
+uv run pytest -m slow tests/  # only the deselected 41
+uv run pytest -m "" tests/    # everything, 784 tests, ~13 min -- leave this to CI
 ```
+
+**The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the
+whole suite on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
+`--extra all` and `--extra full`). Reproducing one of those locally costs ~13 min and
+still covers less than a push does. Run fast, push, read the result.
 
 A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
 Both `ci.yml` and `publish.yml` therefore pass `-m ""` — a release must be gated on the whole

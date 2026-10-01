@@ -14,7 +14,7 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
-from daskms import xds_to_table
+from daskms import xds_from_ms, xds_to_table
 from ducc0.wgridder.experimental import dirty2vis
 from numpy.testing import assert_allclose
 
@@ -26,7 +26,6 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 def test_imager_polproducts(ms_name, ms_meta, image_geometry, tmp_path):
     """A polarised point source is recovered in each Stokes product."""
     np.random.seed(420)
-    xds = ms_meta.xds
     freq = ms_meta.freq
     nchan = ms_meta.nchan
     ncorr = ms_meta.ncorr
@@ -86,7 +85,7 @@ def test_imager_polproducts(ms_name, ms_meta, image_geometry, tmp_path):
     # write DATA and clear flags so every sample participates (flag handling
     # is covered by the sky_truth-based tests)
     flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
-    xds_w = xds.assign(
+    xds_w = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0].assign(
         DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
         FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow, dtype=bool, chunks=-1)),

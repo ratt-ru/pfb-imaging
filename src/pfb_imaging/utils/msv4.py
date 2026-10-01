@@ -1,8 +1,8 @@
 """Shared MSv4 access helpers.
 
 `get_engine` is lifted verbatim out of `core/imager.py` so both MSv4 front
-ends (`imager`, `degrid-msv4`) resolve backend kwargs the same way. The
-selection and angle helpers below are new and used only by `degrid-msv4`:
+ends (`imager`, `degrid`) resolve backend kwargs the same way. The
+selection and angle helpers below are new and used only by `degrid`:
 the imager's own node loop also computes imaging geometry and the rephasing
 barycentre, so sharing it would be a contortion, not a simplification.
 """

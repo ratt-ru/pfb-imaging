@@ -20,6 +20,8 @@ os.environ.setdefault("RAY_NUM_CPUS", "2")
 # come before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
+import functools  # noqa: E402
+import importlib.util  # noqa: E402
 import shutil  # noqa: E402
 import tarfile  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -70,9 +72,86 @@ gdrive_id = "1rfGXGjjJ2XtF26LImlyJzCJMCNQZgEFT"
 url = "https://drive.google.com/uc?id={id}".format(id=gdrive_id)
 
 
+def _have_daskms():
+    return importlib.util.find_spec("daskms") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def casacore_unusable_reason():
+    """Why python-casacore cannot be used here, or None if it works.
+
+    Importing `casacore.tables` is NOT enough to know casacore works. The
+    python bindings are a thin layer over casacore's own `libcasa_python3`,
+    whose NumPy ABI is fixed when *that* library was compiled -- so on a distro
+    casacore built against NumPy 1.x the import succeeds and the first table
+    open raises:
+
+        RuntimeError: PycArray: failed to load the numpy API
+
+    Ubuntu 24.04 is exactly that case (casacore 3.5.0), which is why the arm
+    `--extra all` CI leg turned 25 tests red with the same message instead of
+    skipping them. Probe a real table open once per session so those tests skip
+    with one honest reason, and let
+    `test_optional_extras.test_casacore_is_usable_when_installed` be the single
+    place that reports the breakage. Details and a container reproducer:
+    `scripts/casacore_issues/numpy2_abi_distro_casacore.sh` (#330).
+
+    Returns:
+        A reason string suitable for `pytest.skip`, or None when casacore works.
+    """
+    try:
+        from casacore.tables import makescacoldesc, maketabdesc, table
+    except ImportError as exc:
+        return f"python-casacore is not installed ([casacore] extra): {exc}"
+
+    import tempfile
+
+    # a scratch table rather than the test MS: self-contained, and it exercises
+    # the same converter layer that fails.
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            desc = maketabdesc([makescacoldesc("X", 0)])
+            with table(f"{tmp}/probe.tab", desc, nrow=1, ack=False) as tab:
+                tab.putcol("X", np.zeros(1, dtype=np.int32))
+    except Exception as exc:  # noqa: BLE001 - any failure here means unusable
+        return f"python-casacore is installed but cannot open a table: {exc}"
+
+    return None
+
+
+def require_casacore():
+    """Skip unless python-casacore is installed *and* actually works."""
+    reason = casacore_unusable_reason()
+    if reason:
+        pytest.skip(reason)
+
+
+def daskms_unusable_reason():
+    """Why dask-ms cannot be used here, or None if it works.
+
+    dask-ms reads and writes through python-casacore, so "dask-ms is
+    importable" is not enough -- on a casacore whose NumPy ABI does not match
+    (see `casacore_unusable_reason`) every dask-ms call fails at the first
+    table open, exactly as a direct casacore call would.
+    """
+    if not _have_daskms():
+        return "dask-ms is not installed ([casacore] extra)"
+    return casacore_unusable_reason()
+
+
+def require_daskms():
+    """Skip unless dask-ms is installed and its casacore actually works."""
+    reason = daskms_unusable_reason()
+    if reason:
+        pytest.skip(reason)
+
+
 def pytest_sessionstart(session):
     """Called after Session object has been created, before run test loop."""
 
+    # Downloaded unconditionally: arcae reads this MS without dask-ms or
+    # python-casacore, so the [casacore]-free legs need it too (they run the
+    # imager and degrid tests against it).
     if ms_path.exists():
         print("Test data already present - not downloading.")
     else:
@@ -88,6 +167,20 @@ def pytest_sessionstart(session):
 
 @pytest.fixture(scope="session")
 def ms_name():
+    """Path to the shared MSv2 test set.
+
+    This is just a path, and the MS is *downloaded*, not built -- `imager` and
+    `degrid` read MSv2 tables through arcae, which vendors casacore. So this
+    fixture deliberately does NOT require the [casacore] extra.
+
+    It used to `importorskip("daskms")`, which cascaded a skip to every
+    MSv2-backed test. That was convenient and wrong: it meant the aarch64
+    `--extra full` leg -- the one we gate on -- skipped all 77 of them and
+    never gridded a visibility, so "arm is green" said nothing about whether
+    imaging worked there. Fixtures and helpers that genuinely need dask-ms or
+    python-casacore now skip for themselves (`ms_meta`, `drop_column`,
+    `simple_mds`, `make_multi_spw_ms`), which is narrower and honest.
+    """
     return str(ms_path)
 
 
@@ -97,29 +190,35 @@ def ms_meta(ms_name):
 
     Reading the MS and extracting uvw/freq/times once per session avoids
     re-doing the same I/O and reductions in every test.
+
+    Read with **arcae**, not dask-ms: this is plain column access, arcae ships
+    aarch64 wheels and python-casacore does not, and every consumer of this
+    fixture is a test we want running on the casacore-free legs. Exposing plain
+    numpy rather than an xarray dataset also means `sky_truth` can write the MS
+    back with arcae (#330).
     """
-    from daskms import xds_from_ms, xds_from_table
+    import arcae
 
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
+    with arcae.table(ms_name) as tab:
+        time = np.asarray(tab.getcol("TIME"))
+        uvw = np.asarray(tab.getcol("UVW"))
+        ant1 = np.asarray(tab.getcol("ANTENNA1"))
+        ant2 = np.asarray(tab.getcol("ANTENNA2"))
+        # arcae indexes with a tuple of slices, not casacore's (start, nrow)
+        ncorr = int(np.asarray(tab.getcol("DATA", (slice(0, 1),))).shape[-1])
+    with arcae.table(f"{ms_name}::SPECTRAL_WINDOW") as spw:
+        freq = np.asarray(spw.getcol("CHAN_FREQ")).squeeze()
 
-    utime = np.unique(xds.TIME.values)
-    freq = spw.CHAN_FREQ.values.squeeze()
-    uvw = xds.UVW.values
-    ant1 = xds.ANTENNA1.values
-    ant2 = xds.ANTENNA2.values
-    time = xds.TIME.values
+    utime = np.unique(time)
 
     return SimpleNamespace(
-        xds=xds,
-        spw=spw,
         utime=utime,
         freq=freq,
         freq0=float(np.mean(freq)),
         ntime=utime.size,
         nchan=freq.size,
         nant=int(np.maximum(ant1.max(), ant2.max()) + 1),
-        ncorr=xds.corr.size,
+        ncorr=ncorr,
         uvw=uvw,
         nrow=uvw.shape[0],
         max_blength=float(np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()),
@@ -232,16 +331,13 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     The truth WCS is built with plain astropy (not pfb's set_wcs) so the
     coordinate truth is independent of the code under test.
     """
-    import dask
-    import dask.array as da
+    import arcae
     from astropy.wcs import WCS
-    from daskms import xds_from_table, xds_to_table
     from ducc0.wgridder import dirty2vis
 
     from pfb_imaging.operators.gridder import wgridder_conventions
 
     rng = np.random.default_rng(1234)
-    xds = ms_meta.xds
     freq = ms_meta.freq
     freq0 = ms_meta.freq0
     nchan = ms_meta.nchan
@@ -254,8 +350,8 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     cell_deg = image_geometry.cell_deg
     cell_size = image_geometry.cell_size  # arcsec
 
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
-    radec = field.PHASE_DIR.values.squeeze()  # (ra, dec) rad
+    with arcae.table(f"{ms_name}::FIELD") as field:
+        radec = np.asarray(field.getcol("PHASE_DIR")).squeeze()  # (ra, dec) rad
     assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
 
     # sources at exact pixel centres: (lpix, mpix) = pixels east / north of
@@ -303,12 +399,11 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     flag = np.broadcast_to(flag_rc[:, :, None], (nrow, nchan, ncorr)).copy()
     flag_row = flag.all(axis=(1, 2))
 
-    xds_w = xds.assign(
-        DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
-        FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
-        FLAG_ROW=(("row",), da.from_array(flag_row, chunks=-1)),
-    )
-    dask.compute(xds_to_table(xds_w, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
+    with arcae.table(ms_name, readonly=False) as tab:
+        dtype = np.asarray(tab.getcol("DATA", (slice(0, 1),))).dtype
+        tab.putcol("DATA", model_vis.astype(dtype))
+        tab.putcol("FLAG", flag)
+        tab.putcol("FLAG_ROW", flag_row)
 
     # truth WCS (plain astropy; 0-based pixel (ix, iy) with crpix 1-based)
     w = WCS(naxis=2)
@@ -337,6 +432,19 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     )
 
 
+# Modules that import dask-ms at module scope. pytest reports a collection-time
+# ImportError as an error rather than a skip, so these have to be excluded
+# before collection when dask-ms cannot be used.
+#
+# "cannot be used" covers more than "not installed": dask-ms works through
+# python-casacore, so a casacore that imports but cannot open a table (the
+# distro NumPy-1 ABI case, #330) makes every one of these fail at runtime with
+# the same message. Excluding them there keeps the failure reported once, by
+# `test_optional_extras.test_casacore_is_usable_when_installed`, instead of
+# once per test.
+collect_ignore = [] if daskms_unusable_reason() is None else ["test_hci.py", "test_imager_pol.py"]
+
+
 @pytest.fixture
 def degrid_ms(ms_name, tmp_path):
     """A private copy of the shared test MS, safe to add columns to and write.
@@ -351,8 +459,45 @@ def degrid_ms(ms_name, tmp_path):
     return str(dest)
 
 
+@pytest.fixture
+def needs_rephasing():
+    """Skip unless rephasing can run.
+
+    `--phase-dir`, any multi-field selection and `--target` all go through
+    `utils/astrometry.synthesize_uvw` / `get_coordinates`, which wrap pyrap
+    measures -- the one part of the *imaging* path that still needs
+    python-casacore (#330). Everything else in `imager` reaches the MS through
+    arcae.
+    """
+    pytest.importorskip("pyrap.measures", reason="rephasing needs the [casacore] extra")
+    # pyrap goes through the same libcasa_python3 converters as casacore.tables
+    require_casacore()
+
+
+@pytest.fixture
+def pctable():
+    """python-casacore's ``table``, or skip the test.
+
+    Several tests need casacore's *write* API (adding rows, putcell on
+    subtables, removecols) which arcae does not expose. They are the only
+    reason those tests cannot run on a [full]-only install, so they declare it
+    here rather than each repeating the check.
+    """
+    require_casacore()
+
+    from casacore.tables import table
+
+    return table
+
+
 def drop_column(ms_path, column):
-    """Remove a column with python-casacore (arcae has no removecols)."""
+    """Remove a column with python-casacore (arcae has no removecols).
+
+    Skips rather than errors without the [casacore] extra -- raising Skipped
+    from a helper works the same inside a fixture or a test body.
+    """
+    require_casacore()
+
     from casacore.tables import table as pctable
 
     with pctable(ms_path, readonly=False, ack=False) as tab:
@@ -370,16 +515,19 @@ def simple_mds(ms_name, tmp_path):
     exactly 1.5 -- which is the frequency-upsampling assertion.
 
     The tangent point is read from the test MS's own FIELD.PHASE_DIR rather
-    than invented: `degrid-msv4` refuses to degrid a model whose tangent point
+    than invented: `degrid` refuses to degrid a model whose tangent point
     differs from the field's (wiki D21, mosaics are not supported in v1), so a
     made-up radec makes every driver test fail the guard rather than exercise
     the code under test.
     """
-    from casacore.tables import table as pctable
+    import arcae
     from pfb_model_spec.utils.io import build_mds_dataset
     from pfb_model_spec.utils.modelspec import fit_image_cube
 
-    with pctable(f"{ms_name}::FIELD", ack=False) as tab:
+    # arcae, not python-casacore: this only reads one subtable cell, and arcae
+    # ships aarch64 wheels while python-casacore does not. Keeping it casacore-
+    # free is what lets the degrid tests run on the arm gating leg.
+    with arcae.table(f"{ms_name}::FIELD") as tab:
         radec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
     assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
 
@@ -446,6 +594,8 @@ def make_multi_spw_ms(src, dest, nchan2, freq_offset=2.0e8, name2="spw-upper"):
         `dest` as a string.
     """
     import shutil
+
+    require_casacore()
 
     from casacore.tables import table as pctable
 

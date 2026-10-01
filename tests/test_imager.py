@@ -91,8 +91,6 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
 @pytest.mark.slow
 def test_scratch_retained_by_default(ms_name, tmp_path):
     """The pass-1 .scratch store is kept by default for re-gridding without re-read."""
-    from daskms.fsspec_store import DaskMSStore  # casacore-free fsspec store
-
     outname = str(tmp_path / "cache")
     imager_core(
         [Path(ms_name)],
@@ -105,8 +103,8 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
         overwrite=True,
         keep_ray_alive=True,
     )
-    assert DaskMSStore(outname + "_I.scratch").exists()
-    assert DaskMSStore(outname + "_I.dt").exists()
+    assert Path(outname + "_I.scratch").exists()
+    assert Path(outname + "_I.dt").exists()
 
 
 @pytest.mark.slow
@@ -170,6 +168,10 @@ def test_imager_concat_row_collapses_time(ms_name, tmp_path):
 
 def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
+    from tests.conftest import require_daskms
+
+    require_daskms()
+
     from daskms import xds_from_ms
 
     xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
@@ -389,7 +391,7 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=
     return ds.load()
 
 
-def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
+def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path, needs_rephasing):
     """Rephasing changes phases and UVW only; attrs record both centres.
 
     sky_truth guarantees non-zero DATA (the phases-differ assertion is
@@ -416,7 +418,7 @@ def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
 
 
 @pytest.mark.slow
-def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
+def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path, needs_rephasing):
     """Rephasing to an offset phase_dir with target back at the original field
     centre reproduces the unrephased image -- compared projection-aware.
 
@@ -521,7 +523,7 @@ def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
         assert abs(val - expected) < 0.15 * expected, f"source {src}: {val} vs {expected}"
 
 
-def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
+def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     """Pass-1 places the BEAM on the image grid; under rephasing its peak
     stays at the FIELD pointing (where the antennas point), not the tangent.
 

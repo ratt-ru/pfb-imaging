@@ -7,9 +7,6 @@ import jax
 import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
-from daskms import xds_from_storage_ms as xds_from_ms
-from daskms import xds_from_storage_table as xds_from_table
-from daskms.experimental.zarr import xds_from_zarr
 from ducc0.fft import c2r, good_size, r2c
 from jax import value_and_grad
 from numba import njit, prange
@@ -410,6 +407,16 @@ def construct_mappings(
     time_mapping    - dict[MS][IDT] utimes per dataset
 
     """
+    # deferred: dask-ms (and therefore python-casacore) lives behind the
+    # optional [casacore] extra. Importing it at module scope would drag
+    # casacore onto the deconv/restore path, which does not need an MS at all
+    # and must stay installable on linux-aarch64, where python-casacore has no
+    # wheel. construct_mappings is the only function in this module that reads
+    # MSv2 tables.
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
+    from daskms.experimental.zarr import xds_from_zarr
+
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig):
         ms_name = [ms_name]
 

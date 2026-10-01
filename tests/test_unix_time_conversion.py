@@ -8,11 +8,13 @@ def test_casacore_vs_astropy(ms_name, ms_meta):
     """
     Test casacore.quanta.quantity against astropy.time.Time unix time conversion
     """
+    from tests.conftest import require_casacore
+
+    require_casacore()
+
     from casacore.quanta import quantity
 
-    xds = ms_meta.xds
-    time = xds.TIME.values
-    utime = np.unique(time)
+    utime = ms_meta.utime
 
     for t in utime:
         # casacore conversion

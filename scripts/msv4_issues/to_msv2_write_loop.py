@@ -12,7 +12,7 @@ shows #235 made fds and threads flat on 0.4.0a11 -- but only for the *read*
 path, and tricolour's note says reads were never the problem. This is the
 write-path equivalent, so the two can be compared directly.
 
-It matters for `pfb degrid-msv4` because each work item ends in one
+It matters for `pfb degrid` because each work item ends in one
 `to_msv2()`, so a real run does tens to hundreds of writes per replica --
 squarely in the range tricolour reports deadlocking.
 
@@ -36,7 +36,7 @@ import psutil
 import xarray as xr
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 
-from pfb_imaging.utils.degrid_msv4 import ensure_model_columns
+from pfb_imaging.utils.degrid import ensure_model_columns
 from pfb_imaging.utils.msv4 import get_engine
 
 warnings.filterwarnings("ignore")

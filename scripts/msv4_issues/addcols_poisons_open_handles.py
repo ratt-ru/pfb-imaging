@@ -20,7 +20,7 @@ arcae Table.
 `columns()` recovers on a retry (its second call re-reads the descriptor), but
 `getcol` does not: the handle stays unusable for data reads.
 
-In pfb-imaging this breaks an in-process `imager -> degrid-msv4 -> imager`
+In pfb-imaging this breaks an in-process `imager -> degrid -> imager`
 chain on xarray-ms >= 0.4.0a8, where `sync_msv2` creates canonical columns
 itself (ratt-ru/xarray-ms#171) through a tree other than the one still open.
 Copies the MS first, so the original is untouched.

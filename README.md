@@ -25,7 +25,7 @@ _include:
 To run the code natively you need to install the full stack using
 
 ```bash
-pip install "pfb-imaging[full]"
+pip install "pfb-imaging[all]"
 ```
 
 For maximum performance install `ducc0` in no-binary mode:
@@ -33,6 +33,90 @@ For maximum performance install `ducc0` in no-binary mode:
 ```bash
 pip install ducc0 --no-binary ducc0
 ```
+
+**Extras:**
+
+The dependencies are split so the cross-platform stack installs cleanly on
+`linux-aarch64` (NVIDIA DGX Spark / GB10, Grace, Graviton) as well as
+`linux-x86_64`:
+
+| extra | contents | notes |
+|---|---|---|
+| `full` | the cross-platform scientific stack | `imager`, `deconv`, `degrid`, `restore` — the whole main pipeline |
+| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | `hci`, rephasing, `--target`. No aarch64 wheel — see below |
+| `x86` | `tbb` | x86_64-only; a no-op elsewhere |
+| `all` | all of the above | safe on every architecture |
+
+`pip install "pfb-imaging[full]"` is enough for `imager`, `deconv`, `degrid` and
+`restore` — the whole main pipeline, on MSv4 **and** MSv2 data, because those
+read CASA tables through `arcae` (which vendors casacore and ships aarch64
+wheels).
+
+### What still requires python-casacore
+
+Exactly three things need `[casacore]`:
+
+| | needs it for | why |
+|---|---|---|
+| `pfb hci` | the whole command | reads the MS with `dask-ms`, and QuartiCal gains with `xds_from_zarr` |
+| `--phase-dir`, and any multi-field selection | rephasing | `synthesize_uvw` goes through pyrap measures (`utils/astrometry.py`) |
+| `--target <body>` | ephemeris lookup | `get_coordinates`, same pyrap measures; on both `imager` and `hci` |
+
+The last two are *options*, not commands: `pfb imager` installs and runs fine
+without `[casacore]` — their imports are deferred, so you only pay for them if
+you pass the flag. `deconv`, `degrid` and `restore` never touch an MS at all.
+`tests/test_optional_extras.py` pins this boundary so it cannot silently drift.
+
+**On linux-aarch64:**
+
+```bash
+# ducc0 has no aarch64 wheel and is compiled from sdist; pin the arch flags
+# rather than letting its default -march=native guess on a big.LITTLE CPU
+sudo apt install build-essential cmake ninja-build
+export CMAKE_ARGS="-DDUCC0_ARCH_FLAGS=-mcpu=cortex-x925"   # GB10; or -march=armv8.2-a
+pip install "pfb-imaging[full]"
+```
+
+#### `[casacore]` on aarch64 needs a NumPy-2 casacore
+
+There has never been an aarch64 wheel for `python-casacore`, so on arm it builds
+from sdist and links the **system** casacore. Ubuntu 24.04 ships casacore 3.5.0,
+whose `libcasa_python3.so.7` was compiled against NumPy 1.x, so it builds
+cleanly and then dies at first use:
+
+```
+RuntimeError: PycArray: failed to load the numpy API
+A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x
+```
+
+This is not arm-specific — it reproduces on x86_64 with `--no-binary
+python-casacore`. x86_64 escapes it only because the PyPI wheel bundles its own
+casacore 3.8 (`libcasa_*.so.8`), built against NumPy 2.
+
+`python-casacore` does not compile against NumPy at all (its CMakeLists has no
+`NumPy` component), so no pip/uv build flag can fix this: the ABI comes from the
+casacore shared library, not from the build. You need a casacore built against
+NumPy 2. Either:
+
+```bash
+# conda-forge ships casacore 3.8.1 + python-casacore for linux-aarch64, NumPy 2
+conda install -c conda-forge python-casacore
+```
+
+or build casacore ≥3.6 from source with NumPy 2 present, then:
+
+```bash
+sudo apt install libboost-python-dev libcfitsio-dev wcslib-dev libblas-dev liblapack-dev
+pip install "pfb-imaging[casacore]"
+```
+
+Until then, `[casacore]` — i.e. `hci`, rephasing and `--target` — does not work
+on aarch64 with the distro casacore. `[full]`, which is the whole main pipeline,
+is unaffected.
+
+Numba's threading layer follows the architecture: TBB on x86_64, OpenMP
+elsewhere (Intel ships no aarch64 TBB). Override with
+`PFB_NUMBA_THREADING_LAYER`.
 
 See the [Development](#development) section for instructions on how to set the package up in development mode and make contributions.
 
@@ -80,7 +164,7 @@ The processing pipeline follows a modular pattern where each step is a separate 
 
 1. `pfb imager` -- Image measurement sets (MSv4 via arcae) into a unified DataTree
 2. `pfb deconv` -- General composable deconvolution of the imager output
-3. `pfb degrid` -- Subtract model from visibilities
+3. `pfb degrid` -- Degrid a component model into MSv4 data so it can be subtracted
 
 Additional commands:
 
@@ -225,7 +309,7 @@ git clone https://github.com/ratt-ru/pfb-imaging.git
 cd pfb-imaging
 
 # Install dependencies with development tools
-uv sync --extra full --group dev
+uv sync --extra all --group dev
 
 # Install pre-commit hooks (recommended)
 uv run pre-commit install --hook-type commit-msg

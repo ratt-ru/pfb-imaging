@@ -103,6 +103,10 @@ def holed_ms(ms_name, tmp_path_factory):
     hole is made with a TaQL selection copied deeply into a fresh MS. xarray-ms
     then pads the missing slots, which is what we need to exercise.
     """
+    from tests.conftest import require_casacore
+
+    require_casacore()
+
     from casacore.tables import table
 
     dst = Path(tmp_path_factory.mktemp("holed")) / "holes.MS"

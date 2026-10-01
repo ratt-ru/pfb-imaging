@@ -26,8 +26,17 @@ PRECISIONS = {"single": (np.float32, np.complex64), "double": (np.float64, np.co
 
 
 @pytest.fixture(scope="module")
-def precision_trees(ms_name, tmp_path_factory):
-    """Image the same data at each precision; returns {precision: output basename}."""
+def precision_trees(ms_name, sky_truth, tmp_path_factory):
+    """Image the same data at each precision; returns {precision: output basename}.
+
+    `sky_truth` is requested because these tests assert the image is not dead,
+    and the sky they image is *written into the shared MS* by that fixture. It
+    used to be omitted, and the tests passed only because `test_imager.py` runs
+    earlier in the session and injects the sky as a side effect. On a fresh
+    checkout where that fixture was skipped, the imager correctly gridded an
+    empty DATA column and these assertions failed on an all-zero DIRTY -- which
+    looked like an aarch64 gridder bug for a while (#330).
+    """
     out = {}
     tmp_path = tmp_path_factory.mktemp("precision")
     for precision in PRECISIONS:
