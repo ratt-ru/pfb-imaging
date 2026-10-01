@@ -168,6 +168,8 @@ def test_imager_concat_row_collapses_time(ms_name, tmp_path):
 
 def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
+    pytest.importorskip("daskms", reason="needs the [casacore] extra")
+
     from daskms import xds_from_ms
 
     xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
@@ -527,6 +529,9 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
     (at the default 1e-5 rad cell the beam is flat to ~1e-6 over the fov and
     the argmax is noise).
     """
+    # rephasing calls africanus' synthesize_uvw, which pulls pyrap
+    pytest.importorskip("pyrap.measures", reason="rephasing needs the [casacore] extra")
+
     cell = 5.0e-4  # rad; 64 px fov ~ 1.8 deg
     ref = _run_stokes_vis(ms_name, str(tmp_path / "b0.scratch"), beam_model="katbeam", cell_rad=cell)
     assert ref.BEAM.dims == ("corr", "y", "x")

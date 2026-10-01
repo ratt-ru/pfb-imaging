@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from astropy.time import Time
 
 from pfb_imaging.utils.misc import to_unix_time
@@ -8,6 +9,8 @@ def test_casacore_vs_astropy(ms_name, ms_meta):
     """
     Test casacore.quanta.quantity against astropy.time.Time unix time conversion
     """
+    pytest.importorskip("casacore.quanta", reason="needs the [casacore] extra")
+
     from casacore.quanta import quantity
 
     xds = ms_meta.xds

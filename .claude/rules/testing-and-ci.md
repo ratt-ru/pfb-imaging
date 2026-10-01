@@ -5,8 +5,31 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
 ## 1. Test Infrastructure
 
 * Tests are parametrized with `pytest.mark.parametrize`.
-* Test data in `tests/data/` is downloaded automatically from Google Drive on first run.
+* Test data in `tests/data/` is downloaded automatically from Google Drive on first run,
+  **unconditionally** — the MS is read through arcae, so the casacore-free legs need it too.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
+
+### What skips without the `[casacore]` extra
+
+`ms_name` is only a path, and the test MS is *downloaded*, not built — `imager` and `degrid`
+read it through arcae. So **`ms_name` does not require the extra**, and MSv2-backed tests run
+on a `[full]`-only install. It used to `importorskip("daskms")`, which cascaded a skip to all
+77 of them; that made the aarch64 `--extra full` leg — the one we gate on — skip every test
+that grids a visibility, so a green arm tick said nothing about whether imaging worked there
+(#330).
+
+What skips now is only what genuinely needs the extra, and each declares it for itself:
+
+| | needs | why |
+|---|---|---|
+| `ms_meta`, and `sky_truth` through it | dask-ms | reads the MS with `xds_from_ms` |
+| the `pctable` fixture | python-casacore | casacore's *write* API — `addrows`, `putcell` on subtables, `removecols` — which arcae does not expose |
+| `drop_column`, `make_multi_spw_ms` | python-casacore | same |
+| `test_stokes_vis_beam_on_image_grid` | pyrap | rephasing calls africanus' `synthesize_uvw` |
+| `test_hci.py`, `test_imager_pol.py` | dask-ms | module-scope imports, so `collect_ignore` rather than a skip (pytest reports a collection-time ImportError as an error, not a skip) |
+
+A test needing casacore's write API takes the `pctable` fixture rather than importing it —
+one reason string, one place to change.
 
 ### Dependency groups: one `dev` group, `full` is the heavy axis
 
@@ -37,9 +60,9 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 731 tests, ~158 s -- run THIS locally
+uv run pytest tests/          # fast loop: 743 tests -- run THIS locally
 uv run pytest -m slow tests/  # only the deselected 41
-uv run pytest -m "" tests/    # everything, 772 tests, ~13 min -- leave this to CI
+uv run pytest -m "" tests/    # everything, 784 tests, ~13 min -- leave this to CI
 ```
 
 **The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the

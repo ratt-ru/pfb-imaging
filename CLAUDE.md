@@ -77,8 +77,8 @@ uv run ruff format . && uv run ruff check . --fix
 ```
 
 **Tests are fast by default, and the fast loop is the *only* loop you run locally.**
-`pyproject.toml`'s `addopts` carries `-m "not slow"`, so `uv run pytest tests/` runs 731
-tests in ~158 s. The 41 deselected tests are the end-to-end pipeline ones
+`pyproject.toml`'s `addopts` carries `-m "not slow"`, so `uv run pytest tests/` runs 743
+tests in ~154 s. The 41 deselected tests are the end-to-end pipeline ones
 (`*_groundtruth`, the imager/deconv/restore/hci and degrid drivers, and the end-to-end
 degrid null) plus a few whose cost is Ray actor startup or a dense operator build (the
 `_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the

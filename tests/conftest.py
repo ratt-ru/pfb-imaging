@@ -78,10 +78,9 @@ def _have_daskms():
 def pytest_sessionstart(session):
     """Called after Session object has been created, before run test loop."""
 
-    if not _have_daskms():
-        print("dask-ms not installed ([casacore] extra) - skipping MS test data download.")
-        return
-
+    # Downloaded unconditionally: arcae reads this MS without dask-ms or
+    # python-casacore, so the [casacore]-free legs need it too (they run the
+    # imager and degrid tests against it).
     if ms_path.exists():
         print("Test data already present - not downloading.")
     else:
@@ -99,13 +98,18 @@ def pytest_sessionstart(session):
 def ms_name():
     """Path to the shared MSv2 test set.
 
-    dask-ms and python-casacore live behind the optional [casacore] extra --
-    python-casacore has never published a linux-aarch64 wheel -- and the MS
-    itself is not even downloaded without them (see pytest_sessionstart). Every
-    MSv2-backed test reaches the data through this fixture, so skipping here
-    cascades to all of them instead of erroring one by one.
+    This is just a path, and the MS is *downloaded*, not built -- `imager` and
+    `degrid` read MSv2 tables through arcae, which vendors casacore. So this
+    fixture deliberately does NOT require the [casacore] extra.
+
+    It used to `importorskip("daskms")`, which cascaded a skip to every
+    MSv2-backed test. That was convenient and wrong: it meant the aarch64
+    `--extra full` leg -- the one we gate on -- skipped all 77 of them and
+    never gridded a visibility, so "arm is green" said nothing about whether
+    imaging worked there. Fixtures and helpers that genuinely need dask-ms or
+    python-casacore now skip for themselves (`ms_meta`, `drop_column`,
+    `simple_mds`, `make_multi_spw_ms`), which is narrower and honest.
     """
-    pytest.importorskip("daskms", reason="MSv2 tests need the [casacore] extra")
     return str(ms_path)
 
 
@@ -116,8 +120,10 @@ def ms_meta(ms_name):
     Reading the MS and extracting uvw/freq/times once per session avoids
     re-doing the same I/O and reductions in every test.
 
-    Skipped without the [casacore] extra by way of the ms_name fixture.
+    Needs dask-ms to read the MS; skipped without the [casacore] extra.
     """
+    pytest.importorskip("daskms", reason="needs the [casacore] extra")
+
     from daskms import xds_from_ms, xds_from_table
 
     xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
@@ -377,8 +383,30 @@ def degrid_ms(ms_name, tmp_path):
     return str(dest)
 
 
+@pytest.fixture
+def pctable():
+    """python-casacore's ``table``, or skip the test.
+
+    Several tests need casacore's *write* API (adding rows, putcell on
+    subtables, removecols) which arcae does not expose. They are the only
+    reason those tests cannot run on a [full]-only install, so they declare it
+    here rather than each repeating an importorskip.
+    """
+    pytest.importorskip("casacore.tables", reason="needs casacore's write API ([casacore] extra)")
+
+    from casacore.tables import table
+
+    return table
+
+
 def drop_column(ms_path, column):
-    """Remove a column with python-casacore (arcae has no removecols)."""
+    """Remove a column with python-casacore (arcae has no removecols).
+
+    Skips rather than errors without the [casacore] extra -- raising Skipped
+    from a helper works the same inside a fixture or a test body.
+    """
+    pytest.importorskip("casacore.tables", reason="needs the [casacore] extra")
+
     from casacore.tables import table as pctable
 
     with pctable(ms_path, readonly=False, ack=False) as tab:
@@ -401,11 +429,14 @@ def simple_mds(ms_name, tmp_path):
     made-up radec makes every driver test fail the guard rather than exercise
     the code under test.
     """
-    from casacore.tables import table as pctable
+    import arcae
     from pfb_model_spec.utils.io import build_mds_dataset
     from pfb_model_spec.utils.modelspec import fit_image_cube
 
-    with pctable(f"{ms_name}::FIELD", ack=False) as tab:
+    # arcae, not python-casacore: this only reads one subtable cell, and arcae
+    # ships aarch64 wheels while python-casacore does not. Keeping it casacore-
+    # free is what lets the degrid tests run on the arm gating leg.
+    with arcae.table(f"{ms_name}::FIELD") as tab:
         radec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
     assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
 
@@ -472,6 +503,8 @@ def make_multi_spw_ms(src, dest, nchan2, freq_offset=2.0e8, name2="spw-upper"):
         `dest` as a string.
     """
     import shutil
+
+    pytest.importorskip("casacore.tables", reason="grafting an SPW needs casacore's write API")
 
     from casacore.tables import table as pctable
 

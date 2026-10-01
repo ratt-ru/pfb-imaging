@@ -205,11 +205,10 @@ def test_get_engine_can_pin_a_single_main_instance(degrid_ms):
     dt.close()
 
 
-def test_ensure_model_columns_is_idempotent(degrid_ms):
+def test_ensure_model_columns_is_idempotent(degrid_ms, pctable):
     """The common case is an MS that already has MODEL_DATA. Must be a no-op."""
     import arcae
     import xarray as xr
-    from casacore.tables import table as pctable
 
     from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
@@ -492,9 +491,8 @@ def test_degrid_region_tolerates_nan_padded_rows(degrid_ms, simple_mds):
         dt.close()
 
 
-def test_degrid_region_accumulates_onto_the_existing_column(degrid_ms, simple_mds):
+def test_degrid_region_accumulates_onto_the_existing_column(degrid_ms, simple_mds, pctable):
     """`--accumulate` adds to what is already in the column, within the region."""
-    from casacore.tables import table as pctable
 
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
@@ -671,7 +669,7 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
 
 
 @pytest.mark.slow
-def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
+def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path, pctable):
     """A full driver run must fill MODEL_DATA with what `degrid_region` computes.
 
     This is the region-write test: the driver chunks the node into several
@@ -681,7 +679,6 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
     `degrid_region` over the whole node catches exactly that.
     """
     import xarray as xr
-    from casacore.tables import table as pctable
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
@@ -732,9 +729,8 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path):
 
 
 @pytest.mark.slow
-def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path):
+def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path, pctable):
     """The default --model-column on an MS that has no MODEL_DATA."""
-    from casacore.tables import table as pctable
 
     from pfb_imaging.core.degrid import degrid
     from tests.conftest import drop_column
@@ -763,7 +759,7 @@ def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_
 
 
 @pytest.mark.slow
-def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path):
+def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path, pctable):
     """`--freq-range` must write to the selected channels and no others.
 
     The highest-risk arithmetic in the driver: the frequency axis is trimmed
@@ -772,7 +768,6 @@ def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path):
     on the wrong channels -- which looks entirely plausible in a FITS image.
     """
     import xarray as xr
-    from casacore.tables import table as pctable
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine
@@ -811,11 +806,9 @@ def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path):
 
 
 @pytest.mark.slow
-def test_degrid_handles_multiple_measurement_sets(degrid_ms, simple_mds, tmp_path):
+def test_degrid_handles_multiple_measurement_sets(degrid_ms, simple_mds, tmp_path, pctable):
     """`WorkItem.ms_index` must route each region to the MS it came from."""
     import shutil
-
-    from casacore.tables import table as pctable
 
     from pfb_imaging.core.degrid import degrid
 
@@ -1088,10 +1081,9 @@ def test_select_vis_nodes_handles_multiple_spectral_windows(multi_spw_ms):
 
 
 @pytest.mark.slow
-def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path):
+def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path, pctable):
     """A full run over two SPWs must fill both, each on its own channel axis."""
     import xarray as xr
-    from casacore.tables import table as pctable
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes

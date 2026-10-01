@@ -294,9 +294,10 @@ jobs:
         run: uv run pfb --help
 
       # Guards the silent failure mode: a build that installs and imports
-      # cleanly but has no working numba threading layer (TBB requested where
-      # no TBB exists), or a ducc0 compiled without its NEON paths. Both give a
-      # correct-but-slow pipeline that no functional test would catch.
+      # cleanly but has no working numba threading layer -- TBB requested where
+      # no TBB exists -- which gives a correct-but-slow pipeline that no
+      # functional test would catch. (ducc0's *numerical* health is the next
+      # step, not this one.)
       - name: Report build configuration
         if: env.SKIP_CHECKS != 'true'
         run: |
@@ -347,6 +348,19 @@ jobs:
           # Every runner image here has libgomp, so treat it as a failure.
           assert actual in ("tbb", "omp"), f"no real threading layer: {actual}"
           PY
+
+      # ducc0 has no manylinux aarch64 wheel, so on arm it is compiled here from
+      # sdist with our DUCC0_ARCH_FLAGS and picks its SIMD kernels (NEON/SVE) at
+      # compile time. A miscompiled kernel returns wrong numbers rather than
+      # crashing, and downstream that looks like "the imager read no data" --
+      # which is a long way from the cause. Run the gridder checks first, on
+      # their own, so a bad ducc0 names itself in seconds instead of surfacing
+      # as a puzzling imaging failure twenty minutes later.
+      #
+      # They run again as part of the suite below; they cost ~0.1 s.
+      - name: Check the ducc0 gridder computes correct numbers
+        if: env.SKIP_CHECKS != 'true'
+        run: uv run --frozen pytest tests/test_ducc0_gridder.py -q -m ""
 
       # pyproject's addopts deselect `slow` so the local dev loop stays fast.
       # CI is the only place the end-to-end pipeline tests run, so guard against
