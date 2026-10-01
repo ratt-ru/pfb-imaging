@@ -120,32 +120,34 @@ def ms_meta(ms_name):
     Reading the MS and extracting uvw/freq/times once per session avoids
     re-doing the same I/O and reductions in every test.
 
-    Needs dask-ms to read the MS; skipped without the [casacore] extra.
+    Read with **arcae**, not dask-ms: this is plain column access, arcae ships
+    aarch64 wheels and python-casacore does not, and every consumer of this
+    fixture is a test we want running on the casacore-free legs. Exposing plain
+    numpy rather than an xarray dataset also means `sky_truth` can write the MS
+    back with arcae (#330).
     """
-    pytest.importorskip("daskms", reason="needs the [casacore] extra")
+    import arcae
 
-    from daskms import xds_from_ms, xds_from_table
+    with arcae.table(ms_name) as tab:
+        time = np.asarray(tab.getcol("TIME"))
+        uvw = np.asarray(tab.getcol("UVW"))
+        ant1 = np.asarray(tab.getcol("ANTENNA1"))
+        ant2 = np.asarray(tab.getcol("ANTENNA2"))
+        # arcae indexes with a tuple of slices, not casacore's (start, nrow)
+        ncorr = int(np.asarray(tab.getcol("DATA", (slice(0, 1),))).shape[-1])
+    with arcae.table(f"{ms_name}::SPECTRAL_WINDOW") as spw:
+        freq = np.asarray(spw.getcol("CHAN_FREQ")).squeeze()
 
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
-    spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-
-    utime = np.unique(xds.TIME.values)
-    freq = spw.CHAN_FREQ.values.squeeze()
-    uvw = xds.UVW.values
-    ant1 = xds.ANTENNA1.values
-    ant2 = xds.ANTENNA2.values
-    time = xds.TIME.values
+    utime = np.unique(time)
 
     return SimpleNamespace(
-        xds=xds,
-        spw=spw,
         utime=utime,
         freq=freq,
         freq0=float(np.mean(freq)),
         ntime=utime.size,
         nchan=freq.size,
         nant=int(np.maximum(ant1.max(), ant2.max()) + 1),
-        ncorr=xds.corr.size,
+        ncorr=ncorr,
         uvw=uvw,
         nrow=uvw.shape[0],
         max_blength=float(np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()),
@@ -258,16 +260,13 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     The truth WCS is built with plain astropy (not pfb's set_wcs) so the
     coordinate truth is independent of the code under test.
     """
-    import dask
-    import dask.array as da
+    import arcae
     from astropy.wcs import WCS
-    from daskms import xds_from_table, xds_to_table
     from ducc0.wgridder import dirty2vis
 
     from pfb_imaging.operators.gridder import wgridder_conventions
 
     rng = np.random.default_rng(1234)
-    xds = ms_meta.xds
     freq = ms_meta.freq
     freq0 = ms_meta.freq0
     nchan = ms_meta.nchan
@@ -280,8 +279,8 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     cell_deg = image_geometry.cell_deg
     cell_size = image_geometry.cell_size  # arcsec
 
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
-    radec = field.PHASE_DIR.values.squeeze()  # (ra, dec) rad
+    with arcae.table(f"{ms_name}::FIELD") as field:
+        radec = np.asarray(field.getcol("PHASE_DIR")).squeeze()  # (ra, dec) rad
     assert radec.shape == (2,), f"unexpected PHASE_DIR shape {radec.shape}"
 
     # sources at exact pixel centres: (lpix, mpix) = pixels east / north of
@@ -329,12 +328,11 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     flag = np.broadcast_to(flag_rc[:, :, None], (nrow, nchan, ncorr)).copy()
     flag_row = flag.all(axis=(1, 2))
 
-    xds_w = xds.assign(
-        DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
-        FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
-        FLAG_ROW=(("row",), da.from_array(flag_row, chunks=-1)),
-    )
-    dask.compute(xds_to_table(xds_w, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
+    with arcae.table(ms_name, readonly=False) as tab:
+        dtype = np.asarray(tab.getcol("DATA", (slice(0, 1),))).dtype
+        tab.putcol("DATA", model_vis.astype(dtype))
+        tab.putcol("FLAG", flag)
+        tab.putcol("FLAG_ROW", flag_row)
 
     # truth WCS (plain astropy; 0-based pixel (ix, iy) with crpix 1-based)
     w = WCS(naxis=2)
@@ -381,6 +379,19 @@ def degrid_ms(ms_name, tmp_path):
     dest = tmp_path / "degrid.ms"
     shutil.copytree(ms_name, dest)
     return str(dest)
+
+
+@pytest.fixture
+def needs_rephasing():
+    """Skip unless rephasing can run.
+
+    `--phase-dir`, any multi-field selection and `--target` all go through
+    `utils/astrometry.synthesize_uvw` / `get_coordinates`, which wrap pyrap
+    measures -- the one part of the *imaging* path that still needs
+    python-casacore (#330). Everything else in `imager` reaches the MS through
+    arcae.
+    """
+    pytest.importorskip("pyrap.measures", reason="rephasing needs the [casacore] extra")
 
 
 @pytest.fixture

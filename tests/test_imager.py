@@ -389,7 +389,7 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=
     return ds.load()
 
 
-def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
+def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path, needs_rephasing):
     """Rephasing changes phases and UVW only; attrs record both centres.
 
     sky_truth guarantees non-zero DATA (the phases-differ assertion is
@@ -416,7 +416,7 @@ def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path):
 
 
 @pytest.mark.slow
-def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
+def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path, needs_rephasing):
     """Rephasing to an offset phase_dir with target back at the original field
     centre reproduces the unrephased image -- compared projection-aware.
 
@@ -521,7 +521,7 @@ def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path):
         assert abs(val - expected) < 0.15 * expected, f"source {src}: {val} vs {expected}"
 
 
-def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
+def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     """Pass-1 places the BEAM on the image grid; under rephasing its peak
     stays at the FIELD pointing (where the antennas point), not the tangent.
 
@@ -529,9 +529,6 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path):
     (at the default 1e-5 rad cell the beam is flat to ~1e-6 over the fov and
     the argmax is noise).
     """
-    # rephasing calls africanus' synthesize_uvw, which pulls pyrap
-    pytest.importorskip("pyrap.measures", reason="rephasing needs the [casacore] extra")
-
     cell = 5.0e-4  # rad; 64 px fov ~ 1.8 deg
     ref = _run_stokes_vis(ms_name, str(tmp_path / "b0.scratch"), beam_model="katbeam", cell_rad=cell)
     assert ref.BEAM.dims == ("corr", "y", "x")

@@ -13,9 +13,7 @@ def test_casacore_vs_astropy(ms_name, ms_meta):
 
     from casacore.quanta import quantity
 
-    xds = ms_meta.xds
-    time = xds.TIME.values
-    utime = np.unique(time)
+    utime = ms_meta.utime
 
     for t in utime:
         # casacore conversion
