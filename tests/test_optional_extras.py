@@ -205,6 +205,16 @@ def test_numba_actually_gets_a_threading_layer():
     assert numba.threading_layer() in ("tbb", "omp", "workqueue")
 
 
+@pytest.mark.xfail(
+    condition=platform.machine() == "aarch64",
+    reason=(
+        "Ubuntu's casacore is built against NumPy 1.x and cannot run under NumPy 2, and "
+        "there is no aarch64 python-casacore wheel to use instead (#330). strict=False: "
+        "when the distro ships a NumPy-2 casacore this XPASSes, which is the signal to "
+        "drop this marker and the README's conda-forge workaround."
+    ),
+    strict=False,
+)
 def test_casacore_is_usable_when_installed():
     """If python-casacore imports, it must actually work.
 
@@ -220,7 +230,9 @@ def test_casacore_is_usable_when_installed():
     failure rather than as dozens of identical tracebacks elsewhere.
 
     Skipped entirely when casacore is not installed -- that is the supported
-    `[full]` configuration, not a breakage. Diagnosis and a container
+    `[full]` configuration, not a breakage. Expected to fail on aarch64, where
+    the only casacore available to CI is the broken distro one; on x86_64 it is
+    a hard failure, because a broken casacore there is a real regression. Diagnosis and a container
     reproducer: `scripts/casacore_issues/numpy2_abi_distro_casacore.sh` (#330).
     """
     pytest.importorskip("casacore.tables", reason="casacore is not installed; nothing to check")

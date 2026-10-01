@@ -168,7 +168,9 @@ def test_imager_concat_row_collapses_time(ms_name, tmp_path):
 
 def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
-    pytest.importorskip("daskms", reason="needs the [casacore] extra")
+    from tests.conftest import require_daskms
+
+    require_daskms()
 
     from daskms import xds_from_ms
 

@@ -126,6 +126,26 @@ def require_casacore():
         pytest.skip(reason)
 
 
+def daskms_unusable_reason():
+    """Why dask-ms cannot be used here, or None if it works.
+
+    dask-ms reads and writes through python-casacore, so "dask-ms is
+    importable" is not enough -- on a casacore whose NumPy ABI does not match
+    (see `casacore_unusable_reason`) every dask-ms call fails at the first
+    table open, exactly as a direct casacore call would.
+    """
+    if not _have_daskms():
+        return "dask-ms is not installed ([casacore] extra)"
+    return casacore_unusable_reason()
+
+
+def require_daskms():
+    """Skip unless dask-ms is installed and its casacore actually works."""
+    reason = daskms_unusable_reason()
+    if reason:
+        pytest.skip(reason)
+
+
 def pytest_sessionstart(session):
     """Called after Session object has been created, before run test loop."""
 
@@ -414,8 +434,15 @@ def sky_truth(ms_name, ms_meta, image_geometry):
 
 # Modules that import dask-ms at module scope. pytest reports a collection-time
 # ImportError as an error rather than a skip, so these have to be excluded
-# before collection when the [casacore] extra is not installed.
-collect_ignore = [] if _have_daskms() else ["test_hci.py", "test_imager_pol.py"]
+# before collection when dask-ms cannot be used.
+#
+# "cannot be used" covers more than "not installed": dask-ms works through
+# python-casacore, so a casacore that imports but cannot open a table (the
+# distro NumPy-1 ABI case, #330) makes every one of these fail at runtime with
+# the same message. Excluding them there keeps the failure reported once, by
+# `test_optional_extras.test_casacore_is_usable_when_installed`, instead of
+# once per test.
+collect_ignore = [] if daskms_unusable_reason() is None else ["test_hci.py", "test_imager_pol.py"]
 
 
 @pytest.fixture
