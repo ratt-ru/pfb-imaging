@@ -203,3 +203,34 @@ def test_numba_actually_gets_a_threading_layer():
 
     assert _sum(np.ones(128)) == 128.0
     assert numba.threading_layer() in ("tbb", "omp", "workqueue")
+
+
+def test_casacore_is_usable_when_installed():
+    """If python-casacore imports, it must actually work.
+
+    This is the one place the suite reports a broken casacore, and it exists
+    because importing the bindings proves nothing: they are a thin layer over
+    casacore's own `libcasa_python3`, whose NumPy ABI was fixed when that
+    library was compiled. Ubuntu 24.04 ships casacore 3.5.0 built against
+    NumPy 1.x, so under our NumPy 2 the import succeeds and the first table
+    open raises `PycArray: failed to load the numpy API`.
+
+    Every other casacore-needing test routes through `conftest.require_casacore`
+    and *skips* on that, so a broken casacore shows up here as a single legible
+    failure rather than as dozens of identical tracebacks elsewhere.
+
+    Skipped entirely when casacore is not installed -- that is the supported
+    `[full]` configuration, not a breakage. Diagnosis and a container
+    reproducer: `scripts/casacore_issues/numpy2_abi_distro_casacore.sh` (#330).
+    """
+    pytest.importorskip("casacore.tables", reason="casacore is not installed; nothing to check")
+
+    from tests.conftest import casacore_unusable_reason
+
+    reason = casacore_unusable_reason()
+    assert reason is None, (
+        f"python-casacore imports but does not work: {reason}\n"
+        "On linux-aarch64 this is usually the distro casacore: it is built "
+        "against NumPy 1.x and cannot run under NumPy 2. See the README's "
+        "aarch64 section for a NumPy-2 casacore (conda-forge, or a source build)."
+    )

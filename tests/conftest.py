@@ -20,6 +20,7 @@ os.environ.setdefault("RAY_NUM_CPUS", "2")
 # come before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
+import functools  # noqa: E402
 import importlib.util  # noqa: E402
 import shutil  # noqa: E402
 import tarfile  # noqa: E402
@@ -73,6 +74,56 @@ url = "https://drive.google.com/uc?id={id}".format(id=gdrive_id)
 
 def _have_daskms():
     return importlib.util.find_spec("daskms") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def casacore_unusable_reason():
+    """Why python-casacore cannot be used here, or None if it works.
+
+    Importing `casacore.tables` is NOT enough to know casacore works. The
+    python bindings are a thin layer over casacore's own `libcasa_python3`,
+    whose NumPy ABI is fixed when *that* library was compiled -- so on a distro
+    casacore built against NumPy 1.x the import succeeds and the first table
+    open raises:
+
+        RuntimeError: PycArray: failed to load the numpy API
+
+    Ubuntu 24.04 is exactly that case (casacore 3.5.0), which is why the arm
+    `--extra all` CI leg turned 25 tests red with the same message instead of
+    skipping them. Probe a real table open once per session so those tests skip
+    with one honest reason, and let
+    `test_optional_extras.test_casacore_is_usable_when_installed` be the single
+    place that reports the breakage. Details and a container reproducer:
+    `scripts/casacore_issues/numpy2_abi_distro_casacore.sh` (#330).
+
+    Returns:
+        A reason string suitable for `pytest.skip`, or None when casacore works.
+    """
+    try:
+        from casacore.tables import makescacoldesc, maketabdesc, table
+    except ImportError as exc:
+        return f"python-casacore is not installed ([casacore] extra): {exc}"
+
+    import tempfile
+
+    # a scratch table rather than the test MS: self-contained, and it exercises
+    # the same converter layer that fails.
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            desc = maketabdesc([makescacoldesc("X", 0)])
+            with table(f"{tmp}/probe.tab", desc, nrow=1, ack=False) as tab:
+                tab.putcol("X", np.zeros(1, dtype=np.int32))
+    except Exception as exc:  # noqa: BLE001 - any failure here means unusable
+        return f"python-casacore is installed but cannot open a table: {exc}"
+
+    return None
+
+
+def require_casacore():
+    """Skip unless python-casacore is installed *and* actually works."""
+    reason = casacore_unusable_reason()
+    if reason:
+        pytest.skip(reason)
 
 
 def pytest_sessionstart(session):
@@ -392,6 +443,8 @@ def needs_rephasing():
     arcae.
     """
     pytest.importorskip("pyrap.measures", reason="rephasing needs the [casacore] extra")
+    # pyrap goes through the same libcasa_python3 converters as casacore.tables
+    require_casacore()
 
 
 @pytest.fixture
@@ -401,9 +454,9 @@ def pctable():
     Several tests need casacore's *write* API (adding rows, putcell on
     subtables, removecols) which arcae does not expose. They are the only
     reason those tests cannot run on a [full]-only install, so they declare it
-    here rather than each repeating an importorskip.
+    here rather than each repeating the check.
     """
-    pytest.importorskip("casacore.tables", reason="needs casacore's write API ([casacore] extra)")
+    require_casacore()
 
     from casacore.tables import table
 
@@ -416,7 +469,7 @@ def drop_column(ms_path, column):
     Skips rather than errors without the [casacore] extra -- raising Skipped
     from a helper works the same inside a fixture or a test body.
     """
-    pytest.importorskip("casacore.tables", reason="needs the [casacore] extra")
+    require_casacore()
 
     from casacore.tables import table as pctable
 
@@ -515,7 +568,7 @@ def make_multi_spw_ms(src, dest, nchan2, freq_offset=2.0e8, name2="spw-upper"):
     """
     import shutil
 
-    pytest.importorskip("casacore.tables", reason="grafting an SPW needs casacore's write API")
+    require_casacore()
 
     from casacore.tables import table as pctable
 
