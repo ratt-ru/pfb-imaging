@@ -30,11 +30,11 @@ def test_wsum_override():
 
 
 @pmp("nband", [1, 3])
-def test_dot_matches_local_hessian_tree(nband):
+def test_dot_matches_local_hessian_tree(nband, band_pool):
     rng = np.random.default_rng(1)
     nx = ny = 16
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny) for _ in range(2)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.01)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.01, workers=band_pool(nband))
     assert isinstance(hess, LinearOperator)
 
     x = rng.standard_normal((nband, nx, ny))
@@ -46,14 +46,14 @@ def test_dot_matches_local_hessian_tree(nband):
     assert_allclose(got, want, rtol=1e-12)
 
 
-def test_dot_matches_hess_psf_single_partition():
+def test_dot_matches_hess_psf_single_partition(band_pool):
     """Single partition, unit wsum, no beam, eta=0: HessTreeRay == HessPSF."""
     rng = np.random.default_rng(2)
     nband, nx, ny = 2, 16, 16
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     abspsf = np.concatenate([p[0]["psfhat"] for p in parts], axis=0)
 
-    tree = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.0)
+    tree = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.0, workers=band_pool(nband))
     # taper_width only affects HessPSF.idot (unused here); the default (32)
     # errors for nx=ny=16 (taperf slices [:taper_width] on a length-nx axis),
     # so shrink it as tests/test_protocols.py already does for small images.
@@ -64,13 +64,13 @@ def test_dot_matches_hess_psf_single_partition():
 
 
 @pmp("nband", [1, 3])
-def test_cg_matches_local_pcg(nband):
+def test_cg_matches_local_pcg(nband, band_pool):
     from pfb_imaging.opt.pcg import pcg_numba
 
     rng = np.random.default_rng(3)
     nx = ny = 16
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.5, cg_tol=1e-8, cg_maxit=200)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.5, cg_tol=1e-8, cg_maxit=200, workers=band_pool(nband))
 
     rhs = rng.standard_normal((nband, nx, ny))
     got = hess.cg(rhs)
@@ -80,7 +80,7 @@ def test_cg_matches_local_pcg(nband):
         assert_allclose(got[b], want_b, rtol=1e-6, atol=1e-9)
 
 
-def test_prior_term_matches_the_dense_congruence():
+def test_prior_term_matches_the_dense_congruence(band_pool):
     """M_gp x == M_data x + eta * (Cinv @ x) when eta is uniform.
 
     With eta_mode unset the congruence D^.5 Cinv D^.5 collapses to eta*Cinv, so
@@ -94,7 +94,7 @@ def test_prior_term_matches_the_dense_congruence():
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
 
-    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv, workers=band_pool(nband))
 
     x = rng.standard_normal((nband, nx, ny))
     # the M_data + eta*I reference is built with local HessianTrees rather than a
@@ -107,12 +107,12 @@ def test_prior_term_matches_the_dense_congruence():
     assert_allclose(gp.dot(x), want, rtol=1e-11, atol=1e-13)
 
 
-def test_prior_is_a_no_op_when_freq_prec_is_none():
+def test_prior_is_a_no_op_when_freq_prec_is_none(band_pool):
     """The default path must be bit-identical to today (regression guard)."""
     rng = np.random.default_rng(4)
     nband, nx, ny = 2, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=None)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=None, workers=band_pool(nband))
     x = rng.standard_normal((nband, nx, ny))
     want = np.zeros_like(x)
     for b in range(nband):
@@ -120,7 +120,7 @@ def test_prior_is_a_no_op_when_freq_prec_is_none():
     assert_allclose(hess.dot(x), want, rtol=0, atol=0)
 
 
-def test_prior_hessian_stays_symmetric_and_positive_definite():
+def test_prior_hessian_stays_symmetric_and_positive_definite(band_pool):
     """CG requires both; the driver-side correction alone is only NSD."""
     from pfb_imaging.operators.hessian import freq_precision
 
@@ -128,7 +128,7 @@ def test_prior_hessian_stays_symmetric_and_positive_definite():
     nband, nx, ny = 3, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 1.0, cap=50.0)
-    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv, workers=band_pool(nband))
 
     for _ in range(10):
         u = rng.standard_normal((nband, nx, ny))
@@ -137,7 +137,7 @@ def test_prior_hessian_stays_symmetric_and_positive_definite():
         assert np.vdot(u, gp.dot(u)) > 0.0
 
 
-def test_wrong_freq_prec_shape_is_rejected():
+def test_wrong_freq_prec_shape_is_rejected(band_pool):
     from pfb_imaging.operators.hessian import freq_precision
 
     rng = np.random.default_rng(6)
@@ -145,10 +145,10 @@ def test_wrong_freq_prec_shape_is_rejected():
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, 4), 0.5)  # 4 bands, not 3
     with pytest.raises(ValueError, match="freq_prec"):
-        HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv)
+        HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, freq_prec=kinv, workers=band_pool(nband))
 
 
-def test_cg_solves_the_coupled_system_when_the_prior_is_on():
+def test_cg_solves_the_coupled_system_when_the_prior_is_on(band_pool):
     """The real contract: whichever branch runs, cg must invert the operator dot applies."""
     from pfb_imaging.operators.hessian import freq_precision
 
@@ -156,19 +156,21 @@ def test_cg_solves_the_coupled_system_when_the_prior_is_on():
     nband, nx, ny = 3, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
-    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, cg_tol=1e-10, cg_maxit=500)
+    gp = HessTreeRay(
+        parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, cg_tol=1e-10, cg_maxit=500, workers=band_pool(nband)
+    )
 
     rhs = rng.standard_normal((nband, nx, ny))
     u = gp.cg(rhs)
     assert_allclose(gp.dot(u), rhs, rtol=1e-5, atol=1e-7)
 
 
-def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path():
+def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path(band_pool):
     """The in-worker fast path is one Ray dispatch per solve; do not lose it."""
     rng = np.random.default_rng(8)
     nband, nx, ny = 2, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, workers=band_pool(nband))
 
     calls = []
     original = hess._pool.hess_cg
@@ -183,7 +185,7 @@ def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path():
     assert u.shape == (nband, nx, ny)
 
 
-def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path():
+def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool):
     """Band-parallel CG cannot solve a band-coupled operator."""
     from pfb_imaging.operators.hessian import freq_precision
 
@@ -191,7 +193,7 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path():
     nband, nx, ny = 3, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
-    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, workers=band_pool(nband))
 
     def boom(*args, **kwargs):
         raise AssertionError("hess_cg must not be called when bands are coupled")
@@ -200,15 +202,15 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path():
     gp.cg(rng.standard_normal((nband, nx, ny)))
 
 
-def test_prior_stats_are_none_when_the_prior_is_off():
+def test_prior_stats_are_none_when_the_prior_is_off(band_pool):
     rng = np.random.default_rng(10)
     nband, nx, ny = 2, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, workers=band_pool(nband))
     assert hess.get_freq_prior_stats() is None
 
 
-def test_prior_stats_report_the_spectrum_and_its_contribution_to_m():
+def test_prior_stats_report_the_spectrum_and_its_contribution_to_m(band_pool):
     from pfb_imaging.operators.hessian import freq_precision
 
     rng = np.random.default_rng(11)
@@ -216,7 +218,7 @@ def test_prior_stats_report_the_spectrum_and_its_contribution_to_m():
     eta, cap = 1e-2, 10.0
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 1.0, cap=cap)
-    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+    gp = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv, workers=band_pool(nband))
 
     stats = gp.get_freq_prior_stats()
     assert_allclose(stats["prec_max"], 1.0, rtol=1e-12)
@@ -249,7 +251,7 @@ def _shared_parts(rng, nband, nx, ny, uv_hole=False):
     return part, [[part] for _ in range(nband)]
 
 
-def _pair(parts, nx, ny, eta, kinv, **kw):
+def _pair(parts, nx, ny, eta, kinv, band_pool, **kw):
     """``(uncoupled, coupled)`` facades over ONE shared worker pool.
 
     Both constructors call ``init_hess`` with identical arguments, so the
@@ -257,9 +259,7 @@ def _pair(parts, nx, ny, eta, kinv, **kw):
     differs -- which is also what the deconv driver does, and halves the Ray
     actor startup these tests would otherwise pay twice over.
     """
-    from pfb_imaging.operators.band_worker import BandWorkerPool
-
-    common = dict(etas=eta, workers=BandWorkerPool(len(parts), 1), **kw)
+    common = dict(etas=eta, workers=band_pool(len(parts)), **kw)
     off = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, **common)
     on = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, freq_prec=kinv, **common)
     return off, on
@@ -276,7 +276,7 @@ def _dense(op, shape):
     return out
 
 
-def test_prior_couples_bands_and_never_pixels():
+def test_prior_couples_bands_and_never_pixels(band_pool):
     """The coupling is exactly ``eta*(Cinv - I)`` down the band axis, pixel by pixel.
 
     ``dot`` applies it as ``(nband, nband) @ (nband, npix)`` over a
@@ -291,7 +291,7 @@ def test_prior_couples_bands_and_never_pixels():
     eta = 1e-2
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
-    off, on = _pair(parts, nx, ny, eta, kinv)
+    off, on = _pair(parts, nx, ny, eta, kinv, band_pool)
     dprec = kinv - np.eye(nband)
 
     x = rng.standard_normal((nband, nx, ny))
@@ -306,7 +306,7 @@ def test_prior_couples_bands_and_never_pixels():
     assert_allclose(resp[:, 2, 3], eta * dprec[:, 0], rtol=1e-10)
 
 
-def test_prior_congruence_with_a_spatially_varying_eta():
+def test_prior_congruence_with_a_spatially_varying_eta(band_pool):
     """The ``eta_mode`` branch of ``_s``: D is a per-band, per-pixel profile, not a scalar.
 
     ``test_prior_term_matches_the_dense_congruence`` covers only uniform eta,
@@ -327,7 +327,7 @@ def test_prior_congruence_with_a_spatially_varying_eta():
         p["beam"] = rng.uniform(0.2, 1.0, size=(1, nx, ny))
         parts.append([p])
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
-    _, on = _pair(parts, nx, ny, eta, kinv, eta_mode=eta_mode, eta_cap=eta_cap)
+    _, on = _pair(parts, nx, ny, eta, kinv, band_pool, eta_mode=eta_mode, eta_cap=eta_cap)
 
     x = rng.standard_normal((nband, nx, ny))
     base = np.zeros_like(x)
@@ -344,7 +344,7 @@ def test_prior_congruence_with_a_spatially_varying_eta():
 
 
 @pytest.mark.slow
-def test_prior_matches_the_kronecker_spectrum():
+def test_prior_matches_the_kronecker_spectrum(band_pool):
     """M_gp's entire spectrum is ``alpha_k + eta*p_j`` -- data eigenvalue plus prior eigenvalue.
 
     Every band shares one partition, so ``M_data = I_nband (x) A`` and
@@ -362,7 +362,7 @@ def test_prior_matches_the_kronecker_spectrum():
     part, parts = _shared_parts(rng, nband, nx, ny, uv_hole=True)
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=cap)
 
-    _, on = _pair(parts, nx, ny, eta, kinv)
+    _, on = _pair(parts, nx, ny, eta, kinv, band_pool)
     got = np.linalg.eigvalsh(_dense(on.dot, (nband, nx, ny)))
 
     a = _dense(lambda z: HessianTree([part], nx, ny, 2 * nx, 2 * ny, eta=0.0).dot(z)[0], (nx, ny))
@@ -372,7 +372,7 @@ def test_prior_matches_the_kronecker_spectrum():
 
 @pytest.mark.slow
 @pmp("uv_hole", [True, False])
-def test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature(uv_hole):
+def test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature(uv_hole, band_pool):
     """``lambda_max`` is untouched; ``lambda_min`` drops by the precision's smallest eigenvalue.
 
     This is the designed trade, not a defect. The precision is normalised so the
@@ -394,7 +394,7 @@ def test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature(uv_hole):
     p_min = float(np.linalg.eigvalsh(kinv).min())
 
     shape = (nband, nx, ny)
-    off, on = _pair(parts, nx, ny, eta, kinv)
+    off, on = _pair(parts, nx, ny, eta, kinv, band_pool)
     w_off = np.linalg.eigvalsh(_dense(off.dot, shape))
     w_on = np.linalg.eigvalsh(_dense(on.dot, shape))
 
@@ -412,7 +412,7 @@ def test_prior_lowers_lambda_min_only_where_the_data_lacks_curvature(uv_hole):
 
 
 @pytest.mark.slow
-def test_prior_needs_more_cg_iterations_and_that_is_expected():
+def test_prior_needs_more_cg_iterations_and_that_is_expected(band_pool):
     """CG gets SLOWER with the prior on. Pinned here so it is not read as a regression.
 
     ``lambda_min(M)`` drops by up to ``gp_cap`` (previous test) while
@@ -442,14 +442,14 @@ def test_prior_needs_more_cg_iterations_and_that_is_expected():
         return n[0]
 
     _, holed = _shared_parts(rng, nband, nx, ny, uv_hole=True)
-    off, on = _pair(holed, nx, ny, eta, kinv)
+    off, on = _pair(holed, nx, ny, eta, kinv, band_pool)
     it_off, it_on = applications(off), applications(on)
     assert it_on > 1.5 * it_off, f"expected the prior to cost iterations, got {it_off} -> {it_on}"
 
     # where eta is not load-bearing the same prior is nearly free: the cost
     # tracks how much of M's spectrum eta is holding up, not the prior itself
     _, full = _shared_parts(rng, nband, nx, ny, uv_hole=False)
-    off_f, on_f = _pair(full, nx, ny, eta, kinv)
+    off_f, on_f = _pair(full, nx, ny, eta, kinv, band_pool)
     it_full, it_full_gp = applications(off_f), applications(on_f)
     assert it_full_gp < 1.3 * it_full, f"expected the prior to be nearly free here, got {it_full} -> {it_full_gp}"
 
@@ -461,7 +461,7 @@ def test_prior_needs_more_cg_iterations_and_that_is_expected():
 
 
 @pmp("length_scale", [None, 0.5])
-def test_prior_dot_is_exactly_the_non_data_part_of_m(length_scale):
+def test_prior_dot_is_exactly_the_non_data_part_of_m(length_scale, band_pool):
     """``dot(x) == M_data x + prior_dot(x)``, prior on or off.
 
     This is the contract --eta-in-grad rests on: the gradient must gain
@@ -477,26 +477,28 @@ def test_prior_dot_is_exactly_the_non_data_part_of_m(length_scale):
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = None if length_scale is None else freq_precision(np.linspace(1.0e9, 1.4e9, nband), length_scale)
 
-    data_only = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.0)
-    full = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
-
     x = rng.standard_normal((nband, nx, ny))
-    assert_allclose(full.dot(x) - data_only.dot(x), full.prior_dot(x), rtol=1e-11, atol=1e-13)
+    # both facades share one pool whose workers hold a single eta, so the eta=0 operator
+    # must be applied before the second construction re-inits them
+    data_only = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=0.0, workers=band_pool(len(parts)))
+    data_dot = data_only.dot(x)
+    full = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv, workers=band_pool(len(parts)))
+    assert_allclose(full.dot(x) - data_dot, full.prior_dot(x), rtol=1e-11, atol=1e-13)
 
 
-def test_prior_dot_is_eta_times_x_when_the_prior_is_off():
+def test_prior_dot_is_eta_times_x_when_the_prior_is_off(band_pool):
     """The uncorrelated limit, written out: K^-1 = eta * I."""
     rng = np.random.default_rng(21)
     nband, nx, ny = 2, 8, 8
     eta = 3e-2
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, workers=band_pool(len(parts)))
 
     x = rng.standard_normal((nband, nx, ny))
     assert_allclose(hess.prior_dot(x), eta * x, rtol=1e-12, atol=0)
 
 
-def test_prior_dot_couples_bands_through_the_correlation_matrix():
+def test_prior_dot_couples_bands_through_the_correlation_matrix(band_pool):
     """With the prior on and uniform eta: K^-1 x == eta * (Cinv @ x)."""
     from pfb_imaging.operators.hessian import freq_precision
 
@@ -505,19 +507,19 @@ def test_prior_dot_couples_bands_through_the_correlation_matrix():
     eta = 1e-2
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
     kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=eta, freq_prec=kinv, workers=band_pool(len(parts)))
 
     x = rng.standard_normal((nband, nx, ny))
     want = eta * np.einsum("bc,cyx->byx", kinv, x)
     assert_allclose(hess.prior_dot(x), want, rtol=1e-11, atol=1e-13)
 
 
-def test_prior_dot_does_not_mutate_its_argument():
+def test_prior_dot_does_not_mutate_its_argument(band_pool):
     """The driver subtracts it from a residual it still needs."""
     rng = np.random.default_rng(23)
     nband, nx, ny = 2, 8, 8
     parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
-    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-2, workers=band_pool(len(parts)))
 
     x = rng.standard_normal((nband, nx, ny))
     before = x.copy()
