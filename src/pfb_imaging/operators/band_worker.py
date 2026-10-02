@@ -566,10 +566,7 @@ class BandWorkerPool:
         multi-band pool is not that -- ``_map`` must fail on it rather than
         quietly run a single band locally.
         """
-        if not self.actors:
-            if self.actors is None:
-                return
-            self.actors = []
+        if self.actors is None:
             return
         # deferred: optional heavy runtime (ray)
         import ray

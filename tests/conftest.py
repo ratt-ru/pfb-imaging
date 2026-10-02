@@ -333,6 +333,11 @@ def band_pool(manage_ray):
     per-band HessianTree from scratch, so reuse is numerically invisible --
     pinned by tests/test_band_pool.py.
 
+    The guarantee covers the Hessian role ONLY. `init_hess` rebuilds `_hess` but
+    does not refresh `_psi` or `_hess_parts`, so a pooled test must not rely on
+    `init_hess(None, ...)` or on `load_bands` state: both would silently see
+    whatever the previous user of the pool left behind.
+
     `nband == 1` pools are cached too, but they cost nothing: that branch runs
     in-process and never imports ray.
 

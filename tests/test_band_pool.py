@@ -7,6 +7,7 @@ without them the optimisation is a silent correctness risk, not a speedup.
 
 import numpy as np
 import pytest
+import ray
 from ducc0.fft import r2c
 from numpy.testing import assert_allclose
 
@@ -71,6 +72,16 @@ def test_band_pool_shutdown_is_idempotent():
     assert pool.actors == []
 
 
+def test_band_pool_shutdown_kills_the_actors():
+    """The point of shutdown(): the actor processes are gone, not just forgotten."""
+    pool = BandWorkerPool(2, 1)
+    handles = list(pool.actors)
+    pool.shutdown()
+    for h in handles:
+        with pytest.raises(ray.exceptions.RayActorError):
+            ray.get(h.get_mem.remote())
+
+
 def test_shut_down_pool_refuses_to_dispatch():
     """A killed multi-band pool must fail loudly, not silently run one band.
 
@@ -81,5 +92,5 @@ def test_shut_down_pool_refuses_to_dispatch():
     pool = BandWorkerPool(2, 1)
     pool.shutdown()
     parts = [[_part(rng, 8, 8, 16, 16)] for _ in range(2)]
-    with pytest.raises((ValueError, IndexError, RuntimeError)):
+    with pytest.raises(ValueError, match="band results"):
         HessTreeRay(parts, 8, 8, 16, 16, etas=0.01, workers=pool).dot(rng.standard_normal((2, 8, 8)))
