@@ -165,7 +165,7 @@ def test_cg_solves_the_coupled_system_when_the_prior_is_on(band_pool):
     assert_allclose(gp.dot(u), rhs, rtol=1e-5, atol=1e-7)
 
 
-def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path(band_pool):
+def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path(band_pool, monkeypatch):
     """The in-worker fast path is one Ray dispatch per solve; do not lose it."""
     rng = np.random.default_rng(8)
     nband, nx, ny = 2, 8, 8
@@ -179,13 +179,15 @@ def test_cg_without_the_prior_still_uses_the_band_parallel_pool_path(band_pool):
         calls.append(1)
         return original(*args, **kwargs)
 
-    hess._pool.hess_cg = spy
+    # monkeypatch, not a bare assignment: the pool is session-scoped and shared, so an
+    # unrestored patch would leak into every later test that uses it
+    monkeypatch.setattr(hess._pool, "hess_cg", spy)
     u = hess.cg(rng.standard_normal((nband, nx, ny)))
     assert calls == [1], "the band-parallel pool path was bypassed"
     assert u.shape == (nband, nx, ny)
 
 
-def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool):
+def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool, monkeypatch):
     """Band-parallel CG cannot solve a band-coupled operator."""
     from pfb_imaging.operators.hessian import freq_precision
 
@@ -198,7 +200,7 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool):
     def boom(*args, **kwargs):
         raise AssertionError("hess_cg must not be called when bands are coupled")
 
-    gp._pool.hess_cg = boom
+    monkeypatch.setattr(gp._pool, "hess_cg", boom)
     gp.cg(rng.standard_normal((nband, nx, ny)))
 
 
