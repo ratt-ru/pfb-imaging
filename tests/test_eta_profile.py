@@ -105,7 +105,7 @@ def test_profile_only_ever_increases_the_denominator():
         assert float(np.vdot(x, prof.dot(x)).real) >= base, f"{mode} shrank v'Mv"
 
 
-def test_profile_survives_the_ray_facade():
+def test_profile_survives_the_ray_facade(band_pool):
     """Each worker must build the profile from ITS OWN band's beams.
 
     The profile is deliberately not shipped through Ray, so this is the check
@@ -119,7 +119,7 @@ def test_profile_survives_the_ray_facade():
     # band 0's mosaic peaks left of centre, band 1's right of it
     parts = [[_partition(_tapered_beam((NY // 2, NX // 3)))], [_partition(_tapered_beam((NY // 2, 2 * NX // 3)))]]
     kw = dict(etas=1e-2, eta_mode="invbeam", eta_cap=25.0)
-    hess = HessTreeRay(parts, NX, NY, NX_PSF, NY_PSF, wsums=3.0, **kw)
+    hess = HessTreeRay(parts, NX, NY, NX_PSF, NY_PSF, wsums=3.0, workers=band_pool(len(parts)), **kw)
     x = rng.standard_normal((2, NY, NX))
     got = hess.dot(x)
     for b in range(2):

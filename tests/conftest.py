@@ -338,6 +338,12 @@ def band_pool(manage_ray):
     `init_hess(None, ...)` or on `load_bands` state: both would silently see
     whatever the previous user of the pool left behind.
 
+    Facades sharing a pool share its worker state: the workers hold a single
+    operator, so the last `init_hess` wins. `HessTreeRay`s that coexist on one
+    pool must therefore pass identical `init_hess` arguments (partitions, nx, ny,
+    nx_psf, ny_psf, eta, wsum, eta_mode, eta_cap) or be used strictly
+    sequentially. `freq_prec` is driver-side (`_dC`) and so may differ freely.
+
     `nband == 1` pools are cached too, but they cost nothing: that branch runs
     in-process and never imports ray.
 
