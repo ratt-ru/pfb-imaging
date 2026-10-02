@@ -310,12 +310,51 @@ def manage_ray():
         "worker_process_setup_hook": setup_ray_worker,
     }
 
-    ray.init(num_cpus=1, runtime_env=runtime_env, ignore_reinit_error=True, include_dashboard=False)
+    # num_cpus=2, not 1: the session-scoped `band_pool` actors each hold a nominal
+    # 1e-2 CPU claim for the whole session, which would leave a num_cpus=1 cluster
+    # unable to ever schedule a default 1-CPU task (pfb hci hung on exactly this).
+    ray.init(num_cpus=2, runtime_env=runtime_env, ignore_reinit_error=True, include_dashboard=False)
 
     yield
 
     # Shutdown after all tests in the session are done
     ray.shutdown()
+
+
+@pytest.fixture(scope="session")
+def band_pool(manage_ray):
+    """Session-scoped BandWorkerPool cache, keyed by (nband, nthreads).
+
+    Ray actor startup, not arithmetic, is what makes the pool-backed tests
+    expensive: test_hess_tree_ray.py alone paid ~45 s of it on 8x8 and 16x16
+    arrays (29% of the fast loop) because every test built its own pool.
+    `HessTreeRay(..., workers=pool)` and `make_sara(..., workers=pool)` are
+    existing injection points, and `BandWorkerPool.init_hess` rebuilds every
+    per-band HessianTree from scratch, so reuse is numerically invisible --
+    pinned by tests/test_band_pool.py.
+
+    `nband == 1` pools are cached too, but they cost nothing: that branch runs
+    in-process and never imports ray.
+
+    Depends on `manage_ray` explicitly, not just by autouse, so finalisation
+    order is guaranteed: this fixture's teardown (ray.kill) must run BEFORE
+    manage_ray's ray.shutdown(), and pytest finalises in reverse setup order.
+    """
+    # deferred: optional heavy runtime (ray) -- mirrors band_worker's own import
+    from pfb_imaging.operators.band_worker import BandWorkerPool
+
+    pools = {}
+
+    def get(nband, nthreads=1):
+        key = (nband, nthreads)
+        if key not in pools:
+            pools[key] = BandWorkerPool(nband, nthreads)
+        return pools[key]
+
+    yield get
+
+    for pool in pools.values():
+        pool.shutdown()
 
 
 @pytest.fixture(scope="module")
