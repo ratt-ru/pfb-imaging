@@ -9,8 +9,20 @@ Primary reader: an LLM agent working in this repo; humans are a secondary audien
 Pages follow the Open Knowledge Format v0.1 (YAML frontmatter; the custom
 `last_verified_commit` field pins the commit each page's claims were checked against).
 
-**Maintenance rule:** any change that invalidates a page updates the page, its
-`timestamp` and its `last_verified_commit` in the same session/PR.
+**Where a fact belongs.** `CLAUDE.md` routes — what the project is and which file to read
+when. `.claude/rules/` holds what you must and must not *do* while editing a given kind of
+file; every entry there should be checkable by a reviewer. This wiki holds *why*. So a rule
+states the imperative and cites the decision, and the decision carries the argument. When you
+learn something durable, that test decides where it goes.
+
+**Maintenance rule:** any change that invalidates a page updates the page, its `timestamp`
+and its `last_verified_commit` in the same session/PR. A stamp asserts the page was verified
+against that commit, so never restamp a page you did not actually read.
+
+`uv run python scripts/check_docs.py` gates this: every cited `D<n>` must resolve to a heading
+in the ledger, every cited `docs/wiki/*.md` path must exist, the volatile test figures must
+live only in `.claude/rules/testing-and-ci.md`, and every page must carry its frontmatter.
+**Decisions are never renumbered** — a retired one becomes a tombstone that keeps its number.
 
 **Specs and plans are ephemeral.** `docs/superpowers/` (specs/plans written during
 brainstorming/planning) is gitignored working scratch: before finishing a branch, fold
@@ -20,7 +32,7 @@ pages cite code, tests, PRs, commits and issues as sources — never spec/plan p
 | Page | What it covers | When to read |
 |------|----------------|--------------|
 | [deconv-primer.md](deconv-primer.md) | The PFB major cycle, SARA prior, primal-dual/forward-backward math mapped to code; the load-bearing constants (`nu = nbasis`, total-wsum normalisation, λ schedule, reweighting semantics); Protocol seams and Ray topology; legacy-oracle traps. | Before touching `deconv/`, `opt/`, `prox/` or `core/deconv.py`, or when a solve converges slowly/diverges. |
-| [design-decisions.md](design-decisions.md) | Context/Decision/Rationale/Consequences ledger for the architectural choices, plus Known debt and Recurring gotchas. | When asking "why is it built this way", before "fixing" something that looks wrong, or before re-litigating a past decision. **D38-D42 and the MSv4-write gotchas are required reading before touching degridding or any `to_msv2` write.** |
+| [design-decisions.md](design-decisions.md) | Context/Decision/Rationale/Consequences ledger for the architectural choices, plus Known debt and Recurring gotchas. Covers the test harness too (D44 shared session fixtures, D45 the `slow` marking rule). | When asking "why is it built this way", before "fixing" something that looks wrong, or before re-litigating a past decision. **D38-D42 and the MSv4-write gotchas are required reading before touching degridding or any `to_msv2` write.** |
 | [memory-and-ray.md](memory-and-ray.md) | The three memory-retention layers on the Ray + MSv4 path, the rss/peak telemetry that separates them, the deconv band workers' and `degrid` Serve replicas' scheduling/pinning rules, and the cleanup runbook for interrupted/swapping runs. | Before touching imager pass 1/2, the band workers or the degrid replicas, when debugging memory footprint or Ray scheduling stalls, or after killing a run that hit swap. |
 | [imager-pipeline.md](imager-pipeline.md) | Why the imager writes a DataTree; the two-pass data flow; `.dt` layout; counts/`weight_grouping` and `concat_row` semantics; the HessianTree/`residual_from_partitions` split; known risks. | Before touching `core/imager.py`, `operators/gridder.py` pass-2 code or the `.dt` schema, or when reasoning about weighting granularity. |
 | [image-and-beam-orientation.md](image-and-beam-orientation.md) | The measured axis conventions of the wgridder image, hci cube/FITS, BeamWizard maps and `reproject_interp`; the hci path's zero-transpose (Y, X) discipline and its two x-major seams; post-mortem of the transpose+flip beam hack; the validated corrected reprojection. | Before touching `stokes_image`, `beam_for_band`, `utils/beam.py`, hci coordinate/header code, or anything that transposes/flips an image or beam array. |
