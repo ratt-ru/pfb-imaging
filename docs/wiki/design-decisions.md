@@ -456,62 +456,48 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D22 — The wgridder n-term is folded into the stored BEAM; divide_by_n stays False
 
-- **Context:** The measurement equation carries a geometric 1/n(l,m) Jacobian
-  (n = sqrt(1−l²−m²)) relative to the phase centre. It was historically
-  ignored on this path (`divide_by_n=False` everywhere), biasing the
-  deconvolved model by n (~0.2% at a 5° fov edge, ~1.5% at 10°) — relevant
-  for wide UHF mosaics. Post-D21 rephasing all partitions share one phase
-  centre, so n is a single well-defined function on the common grid.
-- **Decision:** Pass 1 stores the **effective image-plane response**
-  `BEAM = B/n` (including `1/n` when no aperture beam model is set), computed
-  on exactly ducc's pixel coordinates (absolute w.r.t. the phase centre,
-  `--target` offset included). Every ducc call on the imager+deconv path
-  keeps `divide_by_n=False`. Pieces/partitions carry `beam_includes_n: True`.
+- **Context:** the measurement equation carries a geometric `1/n(l,m)` Jacobian
+  (`n = sqrt(1−l²−m²)`) relative to the phase centre. It was historically ignored on this path
+  (`divide_by_n=False` everywhere), biasing the deconvolved model by `n` (~0.2% at a 5° fov edge,
+  ~1.5% at 10°) — relevant for wide UHF mosaics. Post-D21 rephasing all partitions share one
+  phase centre, so `n` is a single well-defined function on the common grid.
+- **Decision:** pass 1 stores the **effective image-plane response `BEAM = B/n`** (including the
+  `1/n` when no aperture beam model is set), computed on exactly ducc's pixel coordinates
+  (absolute w.r.t. the phase centre, `--target` offset included). **Every ducc call on the
+  imager+deconv path keeps `divide_by_n=False`.** Pieces/partitions carry `beam_includes_n: True`.
 - **Rationale** (measured; pinned by `tests/test_hessian_nterm.py`):
-  1. **It is exact, not an approximation:** under `do_wgridding=True`, ducc's
-     `divide_by_n=True` is precisely `diag(1/n)` on either side (verified
-     2e-14), so `diag(B/n)·GᵀWG·diag(B/n)` with `divide_by_n=False` is the
-     *identical* physical operator to flipping the flag with beam B.
-  2. **It is the optimal Hessian approximation:** `HessianTree` applies
-     `B̃ᵀ(PSF ⊛ B̃x)` — with `B̃ = B/n` the diagonal n-factors ride in the beam
-     slots and are captured exactly; the folded operator matches the pure
-     PSF-convolution baseline to 4 significant digits. Flipping
-     `divide_by_n=True` instead buries an image-plane 1/n envelope inside the
-     gridded PSF, which a convolution cannot represent: measured 4–25% worse,
-     growing with fov.
-  3. **It is trap-immune:** ducc's `divide_by_n` silently no-ops when
-     `do_wgridding=False`; the fold divides explicitly, so behaviour is
-     independent of the wgridding flag.
-- **Consequences:** the deconvolved MODEL is in **intrinsic** flux (the
-  legacy "reconstructs I/n, multiply by n afterwards" correction is gone —
-  `tests/test_deconv.py::test_deconv_groundtruth` asserts intrinsic
-  recovery). DIRTY/RESIDUAL are unchanged (no beam or n is ever applied on
-  the imaging side). **Consumers must not treat the stored BEAM as the bare
-  primary beam** — a future PB-corrected quicklook must use B = BEAM·n, or
-  check `beam_includes_n`. `degrid` predicts unattenuated
-  model vis (D42; the MSv2 command it replaced did too, via the since-deleted
-  `comps2vis`).
-  Known residual approximation errors in the PSF-convolution Hessian, now
-  documented: the w-term, the `abs(PSFHAT)` rectification (Hermitian-
-  positivity for CG) — both far larger than the n-term at any fov, sub-
-  percent for realistic decaying PSFs — and **PSF truncation** (see below).
+  1. **Exact, not an approximation:** under `do_wgridding=True`, ducc's `divide_by_n=True` is
+     precisely `diag(1/n)` on either side (verified 2e-14), so `diag(B/n)·GᵀWG·diag(B/n)` with
+     `divide_by_n=False` is the *identical* physical operator to flipping the flag with beam `B`.
+  2. **Optimal Hessian approximation:** `HessianTree` applies `B̃ᵀ(PSF ⊛ B̃x)` — with `B̃ = B/n`
+     the diagonal n-factors ride in the beam slots and are captured exactly, matching the pure
+     PSF-convolution baseline to 4 significant digits. Flipping `divide_by_n=True` instead buries
+     an image-plane `1/n` envelope inside the gridded PSF, which a convolution cannot represent:
+     measured 4-25% worse, growing with fov.
+  3. **Trap-immune:** ducc's `divide_by_n` silently no-ops when `do_wgridding=False`; the fold
+     divides explicitly, so behaviour is independent of the wgridding flag.
+- **Consequences:** the deconvolved MODEL is in **intrinsic** flux (the legacy "reconstructs I/n,
+  multiply by n afterwards" correction is gone — `test_deconv_groundtruth` asserts intrinsic
+  recovery). DIRTY/RESIDUAL are unchanged. **Consumers must not treat the stored BEAM as the bare
+  primary beam** — a PB-corrected quicklook must use `B = BEAM·n`, or check `beam_includes_n`.
+  `degrid` predicts unattenuated model vis (D42). Known residual approximation errors in the
+  PSF-convolution Hessian: the w-term and the `abs(PSFHAT)` rectification (Hermitian-positivity
+  for CG) — both far larger than the n-term at any fov, sub-percent for realistic decaying PSFs —
+  and PSF truncation, below.
 - **PSF truncation vs preconditioner rate/stability (issue #287).**
-  `nx_psf = good_size(psf_oversize·nx)` (`utils/misc.py`), default
-  `psf_oversize=1.4`, i.e. the shipped PSF is **not** the `2·nx` that makes the
-  periodic convolution aliasing-exact — the default is already truncated.
-  Truncation degrades **only the preconditioner** (the gradient is exact
-  degrid/grid, D23), so it changes convergence rate/stability, never the fixed
-  point. Measured (coplanar, isolating truncation; issue #287 has the table):
-  the exact-Hessian solution is recovered to ~1e-13 for every `psf_oversize ∈
-  [1, 2]`; κ(M⁻¹H) grows ~5.5 (2×) → ~8 (1.4× default) → ~50 (1×); and once
-  `λmax(M⁻¹H) > 2/γ ≈ 2.1` the driver's **fixed** `gamma=0.95` outer step
-  diverges (measured at `psf_oversize ≲ 1.25`). The default 1.4× is stable but
-  ~1.5× slower than an exact 2× PSF. Lowering `psf_oversize` for memory can
-  silently cross into instability — a step-size guard is proposed in #287.
-- **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy
-  study); `tests/test_preconditioner_consistency.py` (fixed-point invariance;
-  issue #287); `utils/stokes2vis_msv4.py` beam block; user-reported
-  `divide_by_n`/`do_wgridding` trap.
+  `nx_psf = good_size(psf_oversize·nx)` (`utils/misc.py`), default `psf_oversize=1.4` — the
+  shipped PSF is **not** the `2·nx` that makes the periodic convolution aliasing-exact, so the
+  default is already truncated. Truncation degrades **only the preconditioner** (the gradient is
+  exact degrid/grid, D23), so it changes convergence rate and stability, never the fixed point.
+  Measured (coplanar, isolating truncation; #287 has the table): the exact-Hessian solution is
+  recovered to ~1e-13 for every `psf_oversize ∈ [1, 2]`; `κ(M⁻¹H)` grows ~5.5 (2×) → ~8 (1.4×
+  default) → ~50 (1×); and once `λmax(M⁻¹H) > 2/γ ≈ 2.1` the driver's **fixed** `gamma=0.95`
+  outer step diverges (measured at `psf_oversize ≲ 1.25`). The default is stable but ~1.5× slower
+  than an exact 2× PSF. **Lowering `psf_oversize` for memory can silently cross into
+  instability** — a step-size guard is proposed in #287.
+- **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy study);
+  `tests/test_preconditioner_consistency.py` (fixed-point invariance; issue #287);
+  `utils/stokes2vis_msv4.py` beam block.
 
 ### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
 
@@ -558,71 +544,58 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D24 — hci transient injection: fringe sign, differential rephasing, 1/n, w-term sign
 
-- **Context:** `pfb hci --inject-transients` adds analytic point-source
-  transients into the visibilities before imaging
-  (`utils/stokes2im.stokes_image`). The source is built in the ORIGINAL
-  (field-centre) frame at the MS uvw — so a per-field beam can be applied
-  there — then carried to the rephased frame when `--phase-dir` is set. Four
-  separate convention traps live in that ~15-line block; each mis-places or
-  mis-scales injected sources and none is caught by imaging real data. Two of
-  them (the rephasing sign, and the source w-term sign) independently drove
-  "localisation error grows with distance from the phase centre" reports
-  (breifast#263).
-- **Decision:** (1) **Fringe sign.** The data is rephased by
-  `exp(+freqfactor·w_diff)` (`freqfactor = -2πi·f/c`); the injected fringe is
-  applied as `exp(-freqfactor·phase)`, so `w_diff` must enter the injection
-  phase with a **minus** (`phase = -w_diff`) to carry the source with the *same*
-  rotation the data got. `+w_diff` leaves the source **coherent** but displaced
-  by a constant `-2·(field→tangent)` translation (a whole-image shift, not
-  decorrelation). In a mosaic each field then shifts by 2× its offset from the
-  common tangent, so the error grows with distance from centre — the #263
-  signature. (2) **Differential rephasing** (mirror D21 / #280): synthesize BOTH
-  the old and new uvw through the same `synthesize_uvw` call and apply only the
-  difference — `w_diff = w_new − w_ref`, `uvw = uvw + (uvw_new − uvw_ref)` — while
-  the injection's `uvw_old` stays the **MS's own** uvw. hci previously diffed the
-  synthesized new-centre w against the MS's *recorded* w and replaced uvw
-  wholesale (`uvw = uvw_new`), leaking the measures-vs-MS earth-orientation
-  systematic (~1e-5 of the baseline length, scaling with it) into both the phase
-  and the sampling. (3) **1/n.** The RIME point-source visibility is
-  `I/n·fringe`; injection now scales `dspec /= n0t` (`n0t = √(1−l²−m²)`, a
-  per-source scalar; imaging is `divide_by_n=True`). Amplitude-only — small
-  on-axis, growing towards the field edge / at low declination. (4) **Source
-  w-term sign.** The source's own w-term is `phase += uvw_old·(n0t−1)` (a
-  **plus**). The whole fringe is written in the conjugate convention
-  `exp(-freqfactor·phase)`, opposite to `psf_vis`/`explicit_wdegridder`'s
-  `exp(+freqfactor·(…−w(n−1)))`. The l/m terms stay consistent because `x0t/y0t`
-  are **non-negated** here (vs `psf_vis`'s negated `x0/y0`), but `(n0t−1)` has no
-  coordinate to flip, so it must be **added** to match the wgridder forward
-  model. Subtracting it (the original code) leaves the source coherent on-axis
-  but drifts it off-axis in proportion to `w·(n−1)`.
-- **Rationale:** With full uv coverage the injection lands on the correct pixel
-  *and* the cube's `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the injected
-  `(ra, dec)` to <0.2 px out to 0.5° (guard test), for *both* the sign convention
-  and the differential — so traps (1)/(2) were rephasing-only, and a *constant*
-  −2× shift is the fingerprint of the rephasing phase applied with the wrong
-  sign. The differential is the same measures-vs-MS reasoning as D21. Trap (4) is
-  different: it is coverage-dependent. Full synthesis averages `w·(n−1)` down to
-  sub-pixel (so the full-synthesis guards below never saw it), but a
-  **single-integration snapshot** (`integrations_per_image=1`) at low declination
-  is a nearly coplanar array with large correlated w, where the wrong w-sign
-  drifts an off-axis source several pixels growing with distance from centre.
-- **Consequences:** Traps (1)/(2) changed only the `--phase-dir`/mosaic path.
-  Trap (4) changes any run with significant w — negligible for full-synthesis
-  imaging, multi-pixel for `hci` snapshot cubes. **Corollary for downstream
-  debugging (superseded):** an earlier version of this entry said that offset
-  transients on a *single-field* run must be downstream (breifast/WCS) rather
-  than in this injection. Trap (4) disproves that — a growing single-field
-  offset in a snapshot cube *is* this injection. The reliable discriminator is
-  coverage, not field count: reproduce with full uv coverage (error vanishes ⇒
-  injection/gridder; error persists ⇒ downstream). Guards:
+- **Context:** `pfb hci --inject-transients` adds analytic point-source transients into the
+  visibilities before imaging (`utils/stokes2im.stokes_image`). The source is built in the
+  ORIGINAL (field-centre) frame at the MS uvw — so a per-field beam can be applied there — then
+  carried to the rephased frame when `--phase-dir` is set. Four convention traps live in that
+  ~15-line block; each mis-places or mis-scales injected sources and none is caught by imaging
+  real data. Two of them independently drove "localisation error grows with distance from the
+  phase centre" reports (breifast#263).
+- **Decision — the four conventions:**
+  1. **Fringe sign.** The data is rephased by `exp(+freqfactor·w_diff)`
+     (`freqfactor = -2πi·f/c`); the injected fringe is applied as `exp(-freqfactor·phase)`, so
+     `w_diff` must enter the injection phase with a **minus** (`phase = -w_diff`) to carry the
+     source with the *same* rotation the data got. `+w_diff` leaves the source **coherent** but
+     displaced by a constant `-2·(field→tangent)` translation — a whole-image shift, not
+     decorrelation. In a mosaic each field then shifts by 2× its offset from the common tangent,
+     so the error grows with distance from centre: the #263 signature.
+  2. **Differential rephasing** (mirrors D21 / #280). Synthesize BOTH the old and new uvw through
+     the same `synthesize_uvw` call and apply only the difference — `w_diff = w_new − w_ref`,
+     `uvw = uvw + (uvw_new − uvw_ref)` — while the injection's `uvw_old` stays the **MS's own**
+     uvw. hci previously diffed the synthesized new-centre w against the MS's *recorded* w and
+     replaced uvw wholesale (`uvw = uvw_new`), leaking the measures-vs-MS earth-orientation
+     systematic (~1e-5 of baseline length, scaling with it) into both phase and sampling.
+  3. **1/n.** The RIME point-source visibility is `I/n·fringe`; injection scales `dspec /= n0t`
+     (`n0t = √(1−l²−m²)`, a per-source scalar; imaging is `divide_by_n=True`). Amplitude-only —
+     small on-axis, growing towards the field edge and at low declination.
+  4. **Source w-term sign.** The source's own w-term is `phase += uvw_old·(n0t−1)` — a **plus**.
+     The whole fringe is written in the conjugate convention `exp(-freqfactor·phase)`, opposite
+     to `psf_vis`/`explicit_wdegridder`'s `exp(+freqfactor·(…−w(n−1)))`. The l/m terms stay
+     consistent because `x0t/y0t` are **non-negated** here (vs `psf_vis`'s negated `x0/y0`), but
+     `(n0t−1)` has no coordinate to flip, so it must be **added** to match the wgridder forward
+     model. Subtracting it (the original code) leaves the source coherent on-axis but drifts it
+     off-axis in proportion to `w·(n−1)`.
+- **Rationale:** with full uv coverage the injection lands on the correct pixel *and* the cube's
+  `RA---SIN`/`DEC--SIN` WCS maps that pixel back to the injected `(ra, dec)` to <0.2 px out to
+  0.5°, for both the sign convention and the differential — so traps 1 and 2 were rephasing-only,
+  and a *constant* −2× shift is the fingerprint of the rephasing phase applied with the wrong
+  sign. Trap 4 is different: it is coverage-dependent. Full synthesis averages `w·(n−1)` down to
+  sub-pixel, but a **single-integration snapshot** (`integrations_per_image=1`) at low declination
+  is a nearly coplanar array with large correlated w, where the wrong w-sign drifts an off-axis
+  source several pixels, growing with distance from centre.
+- **Consequences:** traps 1 and 2 changed only the `--phase-dir`/mosaic path. Trap 4 changes any
+  run with significant w — negligible for full-synthesis imaging, multi-pixel for `hci` snapshot
+  cubes. **Corollary for downstream debugging (supersedes an earlier version of this entry):**
+  offset transients on a *single-field* run are NOT necessarily downstream (breifast/WCS) — a
+  growing single-field offset in a snapshot cube *is* this injection. The reliable discriminator
+  is coverage, not field count: reproduce with full uv coverage; error vanishes ⇒ injection or
+  gridder, error persists ⇒ downstream. Guards:
   `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` and
-  `::test_hci_inject_transients_rephased` (full synthesis; catch traps 1–3), plus
-  `tests/test_hessian_approx.py::test_inject_transient_fringe_wterm` (snapshot;
-  catches trap 4, drifts ≥2 px before the w-sign fix).
-- **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa
-  (differential); the w-term sign fix + snapshot guard this session;
-  `utils/stokes2im.stokes_image`; breifast#263, pfb-imaging#280.
-
+  `::test_hci_inject_transients_rephased` (full synthesis; traps 1-3), plus
+  `tests/test_hessian_approx.py::test_inject_transient_fringe_wterm` (snapshot; trap 4, drifts
+  ≥2 px before the w-sign fix).
+- **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa (differential), plus the
+  w-term sign fix and snapshot guard; `utils/stokes2im.stokes_image`; breifast#263, #280.
 
 ### D25 — `hci` beams are meerkat-beams only, with the band named separately
 
@@ -658,29 +631,26 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D26 — `--eta-mode` shapes eta over the image, in the preconditioner only
 
-- **Context:** on a real MeerKAT mosaic (750², 4.6° field, 3 bands/3 fields,
-  `psf_oversize=2`, beam on) `scripts/max_gamma.py` measured
-  `lambda_max(M^-1 H_exact) >= 14.5` at the default `--eta 1e-3`, i.e. the major cycle
-  diverges for any `gamma > 0.14` — the default `gamma=0.95` blows up after three
-  descending cycles (issue #287). The dominant eigenvector is the near-Nyquist ripple
-  seen in real images: 100% of its power in the outer half of the field, 49% above
-  half-Nyquist. Its cause is a curvature *mismatch*, not a small `eta`: along that mode
-  `v'BCBv/wsum = 3.7e-3` against `v'H_exact v = 6.9e-2`, so **M under-estimates the
-  curvature 18x** and `eta` supplies only 21% of `v'Mv`. Uniform `eta` cannot fix it —
-  reaching `gamma=1` needs 31x more damping *at that mode*, and applying that
+- **Context:** on a real MeerKAT mosaic (750², 4.6° field, 3 bands/3 fields, `psf_oversize=2`,
+  beam on) `scripts/max_gamma.py` measured `lambda_max(M^-1 H_exact) >= 14.5` at the default
+  `--eta 1e-3`, so the major cycle diverges for any `gamma > 0.14` and the default `gamma=0.95`
+  blows up after three descending cycles (issue #287). The dominant eigenvector is the
+  near-Nyquist ripple seen in real images. Its cause is a curvature *mismatch*, not a small
+  `eta`: along that mode `v'BCBv/wsum = 3.7e-3` against `v'H_exact v = 6.9e-2`, so **M
+  under-estimates the curvature 18x** and **`eta` supplies only 21% of `v'Mv`**. Uniform `eta`
+  cannot fix it — reaching `gamma=1` needs 31x more damping *at that mode*, and applying that
   everywhere flattens M into a scaled identity.
-- **Decision:** `--eta-mode` (default None = uniform, unchanged) selects a spatially
-  varying `e(x)` with dynamic range `--eta-cap` (default 100): `invbeam`/`invbeam2`
-  (`1/B_eff`, `1/B_eff²` on the wsum-weighted mosaic of `B_p²`), `radial`
-  (`1 + (cap-1)r²`, `r` in field half-widths) and `radial-invbeam`. Every mode is
-  normalised so `e == eta` where the operator is trusted, so `--eta` keeps its meaning
-  and `lambda_min(M)` cannot drop. `e` enters **`M` only** — it is absent from
-  `gridder.residual_from_partitions`, so the fixed point and the flux scale are
-  untouched and a profile only damps each forward update. Built inside each band worker
-  from that band's own beams (`operators/hessian.eta_profile`), so no `(ny, nx)` array
+- **Decision:** `--eta-mode` (default None = uniform, unchanged) selects a spatially varying
+  `e(x)` with dynamic range `--eta-cap` (default 100): `invbeam`/`invbeam2` (`1/B_eff`,
+  `1/B_eff²` on the wsum-weighted mosaic of `B_p²`), `radial` (`1 + (cap-1)r²`, `r` in field
+  half-widths) and `radial-invbeam`. Every mode is normalised so `e == eta` where the operator
+  is trusted, so `--eta` keeps its meaning and **`lambda_min(M)` cannot drop**. `e` enters **`M`
+  only** — it is absent from `gridder.residual_from_partitions`, so the fixed point and the flux
+  scale are untouched and a profile only damps each forward update. Built inside each band
+  worker from that band's own beams (`operators/hessian.eta_profile`), so no `(ny, nx)` array
   crosses Ray.
-- **Rationale:** `lambda_max(M^-1 H)` is monotone decreasing in `M` in the PSD order, so
-  raising `e` where `M` is untrustworthy lowers it. Measured (same `.dt`, `eta=1e-3`):
+- **Rationale:** `lambda_max(M^-1 H)` is monotone decreasing in `M` in the PSD order, so raising
+  `e` where `M` is untrustworthy lowers it. Measured (same `.dt`, `eta=1e-3`):
 
   | eta-mode | lambda_max | gamma_max | CG per solve |
   |---|---|---|---|
@@ -690,48 +660,36 @@ update it (and this page's `last_verified_commit`) in the same session.
   | `radial` cap=300 | 2.20 | 0.910 | 9.2 s |
   | `radial` cap=1000 | 1.41 | 1.421 | 9.5 s |
 
-  **Beam-shaped profiles barely help and radial ones do**, which is not obvious: uniform
-  `eta` already acts like an effective `eta/B²` (that is why enabling the beam helps at
-  all), so the maximiser has already relocated to where the beam is *large* — 90% of its
-  power above `B_eff = 0.39`. `invbeam` gives the same 1.3x at cap 10, 100 *and* 1000:
-  its dynamic range is spent in the skirt where the mode has no power. The w-mismatch
-  instead grows with distance from the **tangent point** and the beam does not oppose it
-  there, so a radial profile is the one aimed at the actual mode.
-- **Consequences:** end-to-end at the default `gamma=0.95` on that mosaic, uniform `eta`
-  reaches rms 2.6e-2 at cycle 3 then diverges (rms x5.2, x5.7, peak 46), while
-  `--eta-mode radial --eta-cap 1000` descends monotonically to rms 1.7e-2 with `eps`
-  still falling. The diverged model swings ±106 with 7.2% of its power beyond `b_max`;
-  the profiled model is +6.2/−0.17 with 0.0%. **CG gets cheaper, not dearer** (2.2x),
-  because the profile compresses M's spectrum where it is smallest — the earlier
-  "no CG cost" expectation was pessimistic. `lambda_max(M)` rises only 1.68 → 1.98, so
-  the backward step's `hess_norm` barely moves. Costs: `||update||` roughly halves, so
-  the outer field cleans more slowly per cycle (bought back many times over by a 7x
-  larger `gamma`), and `r` is measured from the image centre — with `--target` the
-  tangent point is offset by `l0/cell` pixels, which the radial modes ignore. This damps
-  the instability; it does not fix `M`. A w-aware or faceted preconditioner is the
-  actual fix (#287); `--eta-mode` prices how much of the divergence damping alone can
-  reach, so a better `M` has a number to beat.
-- **Band consistency:** `radial` is pure image geometry, so `e` is **bit-identical across
-  bands**; the beam-driven modes are frequency-dependent and are not. This matters even
-  though `e` cannot bias the fixed point: bands couple *only* through the L21 prox (D3),
-  so a band-dependent `e` damps some bands' updates more than others and the joint
-  sparsity decision is taken on a model whose spectral shape is still converging — a bias
-  at any finite iteration count. A band-uniform profile is the safe default;
-  band-uniformity for a beam-driven mode would need a driver-side reduction of `B2_eff`
-  across bands (each worker sees only its own band). Both halves pinned by
+  **Beam-shaped profiles barely help and radial ones do**, which is not obvious: uniform `eta`
+  already acts like an effective `eta/B²`, so the maximiser has already relocated to where the
+  beam is *large* (90% of its power above `B_eff = 0.39`) and `invbeam` spends its dynamic range
+  in the skirt where the mode has none — the same 1.3x at cap 10, 100 and 1000. The w-mismatch
+  grows with distance from the **tangent point**, which the beam does not oppose, so a radial
+  profile is the one aimed at the actual mode.
+- **Consequences:** end-to-end at `gamma=0.95` on that mosaic, uniform `eta` reaches rms 2.6e-2
+  at cycle 3 then diverges (rms x5.2, x5.7, peak 46); `--eta-mode radial --eta-cap 1000` descends
+  monotonically to rms 1.7e-2. **CG gets cheaper, not dearer** (2.2x), because the profile
+  compresses M's spectrum where it is smallest. **`lambda_max(M)` rises only 1.68 → 1.98**, so the
+  backward step's `hess_norm` barely moves. Costs: `||update||` roughly halves, so the outer field
+  cleans more slowly per cycle (bought back by a 7x larger `gamma`); and `r` is measured from the
+  image centre, so with `--target` the tangent point is offset by `l0/cell` pixels and the radial
+  modes ignore it. This damps the instability; it does not fix `M`. A w-aware or faceted
+  preconditioner is the actual fix (#287); `--eta-mode` prices how far damping alone reaches, so a
+  better `M` has a number to beat.
+- **Band consistency:** `radial` is pure image geometry, so `e` is **bit-identical across bands**;
+  beam-driven modes are frequency-dependent and are not. This matters even though `e` cannot bias
+  the fixed point: bands couple *only* through the L21 prox (D3), so a band-dependent `e` damps
+  some bands' updates more than others and the joint-sparsity decision is taken on a model whose
+  spectral shape is still converging — a bias at any finite iteration count. A band-uniform
+  profile is the safe default. Pinned by
   `tests/test_eta_profile.py::test_radial_is_identical_across_bands_and_beam_modes_are_not`.
-  **Since D30** this profile is no longer only a diagonal: `--gp-length-scale` reads `e(x)`
-  as a per-pixel inverse signal variance and couples bands through
-  `D^½C⁻¹ₙD^½`, making `M` the second band-coupling channel after the L21 prox. The
-  workers still apply `e(x)` exactly as described here; the coupling is a driver-side
-  remainder.
-- **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits`
-  once per run — a `(band, corr, ny, nx)` cube (band on the FREQ axis, so band-to-band
-  variation is visible; a 3D array would land it on STOKES because `to4d` prepends) with
-  `ETAMODE`/`ETA`/`ETACAP` in the header, and logs the range plus the band-to-band
-  spread. Note the radial modes saturate at the cap on the *inscribed circle* (`r = 1`),
-  so the corners out to `r = sqrt(2)` are all clipped to `eta*cap` — with cap=300 that is
-  ~15% of `lambda_max(M)`, i.e. the corners are heavily damped by design.
+  **Since D30** `M` is a second band-coupling channel: `--gp-length-scale` reads `e(x)` as a
+  per-pixel inverse signal variance and couples bands through `D^½C⁻¹ₙD^½`. The workers still
+  apply `e(x)` exactly as described here; the coupling is a driver-side remainder.
+- **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits` once per
+  run — a `(band, corr, ny, nx)` cube with `ETAMODE`/`ETA`/`ETACAP` in the header. The radial
+  modes saturate at the cap on the *inscribed* circle (`r = 1`), so corners out to `r = sqrt(2)`
+  are clipped to `eta*cap` — at cap=300 that is ~15% of `lambda_max(M)`, heavily damped by design.
 - **Source:** `src/pfb_imaging/operators/hessian.py` (`eta_profile`, `ETA_MODES`);
   `src/pfb_imaging/operators/band_worker.py`; `src/pfb_imaging/deconv/presets.py`;
   `src/pfb_imaging/cli/deconv.py`; `scripts/max_gamma.py` (`denominator_report`);
@@ -1275,78 +1233,58 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D38 — degrid writes its own regions; no load/compute/write split
 
-- **Context:** ratt-ru/tricolour#106 is the reference implementation of MSv4 + Ray region
-  writes, by the xarray-ms author, and it separates loading, computing and writing into
-  three Ray Serve deployments. `degrid` (#278) had to decide whether to copy that.
-- **Decision:** adopt tricolour's *vocabulary* — `WorkItem(ms_index, node_path, region)`,
-  a `region` dict driving both `isel` and the write, `Multiton` so each replica rebuilds
-  its own `DataTree` rather than receiving a pickled one, a bounded in-flight queue — and
-  fuse the write into the `Degridder` replica.
-- **Rationale:** tricolour is read-heavy and write-light; degrid is the exact inverse. It
-  reads only `UVW`, and its *output* is the whole data volume (~413 MB of `complex64` for a
-  100-time × 2016-baseline × 64-channel × 4-correlation chunk). Routing that through a
-  separate writer costs an object-store copy per item and forces a low in-flight cap, and
-  buys nothing: concurrent multi-process region writes are verified correct and
-  `xarray_ms.multithreaded_writes()` is True.
-- **Consequences:** degrid does **not** demonstrate the IO/compute isolation #279 wants for
-  `hci`; that goal is better served on the `hci` path, where the read is the expensive side.
-  The driver is also an ordinary synchronous function rather than a deployment of its own —
-  with the write fused there is one hop, so a `deque` of responses drained oldest-first
-  gives the same backpressure without asyncio.
-- **Amendment (#331):** the `.mds` and the region masks are bound as `Multiton`s too, not
-  just the `DataTree`. Serve cloudpickles a deployment's init args into the GCS internal KV
-  store, whose gRPC cap is 512 MiB; a real model (8.8M components = 633 MB) plus an
-  all-ones 6720² mask (361 MB) exceeds it and the run dies before degridding anything.
-  Binding paths and reconstructing per replica is the only shape that scales. Two
-  consequences follow: the paths must be made absolute before binding (a Ray worker's cwd
-  is its own session directory), and `Degridder.degrid` must **not** call
-  `_release_ms_caches()` — that clears the entire class-level Multiton cache and would
-  reload the `.mds` on every work item (wiki memory-and-ray, layer 3).
-- **Amendment (772f216):** `Degridder.degrid` is `async def` and defers its body to a
-  `ThreadPoolExecutor(max_workers=1)`. This is not stylistic. Serve runs a *sync* method on
-  the replica's asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to `"0"`), and its
-  watchdog kills a replica whose loop misses three 300 s probes — which a multi-region item
-  does, reaching the driver as a bare `ActorDiedError`. The one-thread executor keeps the
-  invariant the fused write depends on: one item per replica, and arcae's handles touched
-  from one thread only. Relatedly, `max_ongoing_requests` must be an `.options()` argument;
+- **Context:** ratt-ru/tricolour#106 is the reference MSv4 + Ray region-write implementation,
+  by the xarray-ms author, and it separates loading, computing and writing into three Ray Serve
+  deployments. `degrid` (#278) had to decide whether to copy that.
+- **Decision:** adopt tricolour's *vocabulary* — `WorkItem(ms_index, node_path, region)`, a
+  `region` dict driving both `isel` and the write, `Multiton` so each replica rebuilds its own
+  `DataTree` rather than receiving a pickled one, a bounded in-flight queue — and **fuse the
+  write into the `Degridder` replica**.
+- **Rationale:** tricolour is read-heavy and write-light; degrid is the exact inverse. It reads
+  only `UVW`, and its *output* is the whole data volume (~413 MB of `complex64` for a 100-time ×
+  2016-baseline × 64-channel × 4-correlation chunk). Routing that through a separate writer costs
+  an object-store copy per item and forces a low in-flight cap, and buys nothing: concurrent
+  multi-process region writes are verified correct and `xarray_ms.multithreaded_writes()` is True.
+  The driver is an ordinary synchronous function for the same reason — with the write fused there
+  is one hop, so a `deque` drained oldest-first gives the backpressure without asyncio.
+- **Consequences:** degrid does **not** demonstrate the IO/compute isolation #279 wants for `hci`;
+  that goal is better served on the `hci` path, where the read is the expensive side.
+- **Amendment (#331) — bind paths, not objects.** The `.mds` and the region masks are
+  `Multiton`s too. Serve cloudpickles a deployment's init args into the GCS internal KV store,
+  whose gRPC cap is **512 MiB**; a real model (8.8M components = 633 MB) plus an all-ones 6720²
+  mask (361 MB) exceeds it and the run dies before degridding anything. Two consequences: paths
+  must be absolute before binding (a Ray worker's cwd is its own session directory), and
+  `Degridder.degrid` must **not** call `_release_ms_caches()` — that clears the whole class-level
+  Multiton cache and would reload the `.mds` per work item (`memory-and-ray.md`, layer 3).
+- **Amendment (772f216) — the replica method is `async def` on a one-thread executor.** Serve runs
+  a *sync* method on the replica's asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to
+  `"0"`), and its watchdog kills a replica whose loop misses three 300 s probes — which a
+  multi-region item does, reaching the driver as a bare `ActorDiedError`. The one-thread executor
+  keeps the invariant the fused write depends on: one item per replica, arcae's handles touched
+  from one thread only. Relatedly, `max_ongoing_requests` must be an `.options()` argument —
   inside `autoscaling_config` pydantic drops it silently and five items queue per replica.
-  Note this does not disturb the decision above — the *driver* is still an ordinary
-  synchronous function draining a `deque`; only the replica-side method is async.
-- **Open question (2026-09-23): does the fused write survive concurrent writers?** The
-  decision above rests on concurrent multi-process region writes being correct, which they
-  are. tricolour#106 has since gone the other way — to a *single* `DataWriter` replica —
-  because "concurrent writers block on the CASA table lock and one will eventually wedge,
-  fail its Serve health check and get force-killed" (`4872aa0c`). That is a throughput and
-  liveness argument, not a correctness one, and it does not apply to us unchanged: tricolour
-  writes flags (cheap, ~160 MB) so serialising costs it little, whereas degrid's *output* is
-  the whole data volume and a single writer reintroduces exactly the object-store round trip
-  this decision avoids. Retesting the sequential write path on a11 found no thread/fd leak
-  and no deadlock over 200 writes (`scripts/msv4_issues/to_msv2_write_loop.py`), but that
-  does **not** cover the concurrent case, which is the one tricolour actually hit. Do not
-  resolve this from first principles — it wants a measurement of concurrent writers under
-  lock contention, and upstream expects arcae deadlock fixes shortly. Revisit then.
-- **Amendment (0f7296f): each region is degridded on its own bounding box.** `dirty2vis`
-  costs what the grid it is handed costs, not what the flux on it costs, so masking a 6720²
-  model down to a 344×362 region and degridding the full grid anyway paid full price. Masks
-  are cropped in `build_region_masks` and carry their origin (`RegionMask`); the sub-grid is
-  degridded with a shifted `center_x`/`center_y` (`crop_phase_centre`). Measured on the real
-  GC model (three regions, 20k rows × 128 chan, `nthreads=8`, `epsilon=1e-7`): gridder
-  18.84 s → 6.19 s (3.04×), the two paths agreeing to 2.2e-8 relative; the masks shipped to
-  each replica drop from 1033 MB to 353 MB. **Two traps, both order-unity wrong rather than
-  slightly off when missed:** each axis's offset sign is its own flip convention
-  (`-1 if flip_u else +1`, likewise `flip_v`), and ducc asserts an even grid extent, so an
-  odd bounding box must grow by a pixel *into real model pixels* — zero-padding would
-  misplace the window. `tests/test_degrid.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`
-  pins both over all four flip combinations, and asserts each wrong sign is order-unity wrong.
-  This also replaced `model_to_apparent_vis_for_region` with its own primitives
-  (`render_model_region`/`degrid_stokes`/`stokes_vis_to_corr`), so the chunk renders once for
-  all regions instead of once per region.
-- **Future: per-region evaluation probably belongs in pfb-model-spec** (pfb-model-spec#27).
-  The region loop, and the crop arithmetic above, live in pfb-imaging only because
-  `model_to_apparent_vis_for_region` renders inside its own per-region call. QuartiCal
-  consumes all regions/directions *simultaneously*, so a multi-region entry point that
-  renders once and degrids N cropped sub-grids serves both consumers and is where the crop
-  test really belongs. Filed, not scheduled.
+- **Amendment (0f7296f) — each region is degridded on its own bounding box.** `dirty2vis` costs
+  what the grid it is handed costs, not what the flux on it costs. Masks are cropped in
+  `build_region_masks` and carry their origin (`RegionMask`); the sub-grid is degridded with a
+  shifted `center_x`/`center_y` (`crop_phase_centre`). Measured on the real GC model: gridder
+  **18.84 s → 6.19 s (3.04×)**, the two paths agreeing to 2.2e-8 relative, masks shipped per
+  replica 1033 MB → 353 MB. **Two traps, order-unity wrong rather than slightly off when missed:**
+  each axis's offset sign is its own flip convention (`-1 if flip_u else +1`, likewise `flip_v`),
+  and ducc asserts an even grid extent, so an odd bounding box must grow by a pixel *into real
+  model pixels* — zero-padding would misplace the window. Pinned over all four flip combinations
+  by `tests/test_degrid.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`.
+- **Open question (2026-09-23): does the fused write survive concurrent writers?** tricolour#106
+  has since gone the other way — a *single* `DataWriter` replica — because concurrent writers
+  block on the CASA table lock and one eventually wedges, fails its health check and is
+  force-killed (`4872aa0c`). That is a throughput and liveness argument, not a correctness one,
+  and it does not transfer: tricolour writes flags (~160 MB) so serialising costs it little,
+  whereas degrid's output is the whole data volume. Retesting the sequential path found no leak
+  and no deadlock over 200 writes (`scripts/msv4_issues/to_msv2_write_loop.py`), which does
+  **not** cover the concurrent case. Do not resolve this from first principles — it wants a
+  measurement under lock contention, and upstream expects arcae deadlock fixes shortly.
+- **Future:** per-region evaluation probably belongs in pfb-model-spec (pfb-model-spec#27) —
+  QuartiCal consumes all regions simultaneously, so a multi-region entry point that renders once
+  and degrids N cropped sub-grids serves both consumers. Filed, not scheduled.
 - **Source:** `src/pfb_imaging/core/degrid.py`, `src/pfb_imaging/utils/degrid.py`,
   ratt-ru/tricolour#106, issue #278, PR #331, pfb-model-spec#27.
 
