@@ -287,10 +287,6 @@ def time_chunks(ms_meta):
 
 @pytest.fixture(scope="session", autouse=True)
 def manage_ray():
-    def get_excludes():
-        if os.path.exists(".rayignore"):
-            return [line.strip() for line in open(".rayignore") if line.strip() and not line.startswith("#")]
-
     # Define the environment once
     os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
@@ -301,12 +297,10 @@ def manage_ray():
     env_vars["JAX_LOGGING_LEVEL"] = "ERROR"
     env_vars["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     env_vars["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
-    env_vars["RAY_RUNTIME_ENV_WORKING_DIR_MAX_SIZE_MB"] = "2048"
     env_vars["RAY_ENABLE_UV_RUN_RUNTIME_ENV"] = "0"
 
     runtime_env = {
         "env_vars": env_vars,
-        "excludes": get_excludes(),
         "worker_process_setup_hook": setup_ray_worker,
     }
 
