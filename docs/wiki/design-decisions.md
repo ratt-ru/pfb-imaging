@@ -32,27 +32,19 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`dual_update`, reweighting trio) are `hasattr`-sniffed, not Protocol members.
 - **Source:** issue #185; architecture.md §5; `deconv-primer.md`.
 
-### D2 — (Partially retired 2026-07-17) Legacy code served as the test oracle
+### D2 — (Retired) Legacy code served as the test oracle
 
-- **Context:** Rewrites of numerical code need ground truth.
-- **Decision (original):** `core/sara.py`, `core/kclean.py`, the `.dds` consumers and
-  the legacy `opt` functions (`primal_dual`, `primal_dual_numba`, `pcg*`, `fista`) were
-  not modified (behaviour-wise); new implementations were validated against them in a
-  three-tier pyramid (unit rdiff < 1e-10, operator equality, e2e on a real MS).
-- **Status:** the e2e oracles (`core/sara.py`, `core/kclean.py`, `init`+`grid`) were
-  deleted in 0.1.0 (#277) once ground-truth tests against an injected sky replaced the
-  equivalence tests (which were vacuous in CI — the downloaded MS had zero DATA). Only
-  `primal_dual_numba` remains a frozen oracle, and is still not to be modified; it
-  is pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`.
-  `fista` and the bare `primal_dual` were deleted once a grep showed zero callers
-  anywhere in `src/`, `tests/` or `scripts/`. `pcg_numba` is not an oracle at all --
-  `operators/hessian.py` imports it as the live `pcg`.
-- **Rationale:** Mirrors the `init`+`grid` → `imager` strategy, which caught real bugs
-  at every tier; ground truth beats equivalence once the legacy side must go.
-- **Consequences:** Known legacy warts stay (see Debt); e2e comparisons must pin a
-  shared `hess_norm` to remove power-method nondeterminism. Docstring-only additions
-  to legacy code are fine.
-- **Source:** spec above; `tests/test_deconv.py::test_deconv_matches_legacy_sara`.
+- **Was:** rewrites of numerical code were validated against the unmodified legacy
+  implementations in a three-tier pyramid (unit rdiff < 1e-10, operator equality, e2e on a real
+  MS).
+- **Superseded by** ground-truth tests against an injected sky (#277, 0.1.0), which deleted the
+  e2e oracles (`core/sara.py`, `core/kclean.py`, `init`+`grid`); the equivalence tests were
+  vacuous in CI because the downloaded MS had zero DATA. `fista` and the bare `primal_dual` were
+  deleted in #336 after a grep showed zero callers.
+- **Still live:** `opt/primal_dual.py::primal_dual_numba` remains a frozen oracle and is **not to
+  be modified**; pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`.
+  `pcg_numba` is not an oracle — `operators/hessian.py` imports it as the live `pcg`.
+- **Source:** issues #277, #336.
 
 ### D3 — `nu = nbasis` for the SARA dictionary
 
@@ -203,31 +195,16 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D14 — (Retired 2026-07-15) The MSv4 imaging path stayed casacore-free by choice
 
-- **Context:** Until the coexistence fix (ska-sa/arcae#211, #212, merged 2026-06-12),
-  arcae and python-casacore could not coexist in one process (hard segfault constraint), so
-  the MSv4 imaging path deferred every `africanus`/`daskms`/`casacore` import into
-  functions. After the fix the deferrals were kept for a while as a lightweight-startup
-  preference.
-- **Version caveat (2026-09-09):** the real constraint is *"contains #211/#212"*, **not**
-  *"arcae >= 0.5.2"*. arcae ships a parallel `0.4.0-alpha.*` write-support line whose tags
-  are cut from **later** commits than the 0.5.x line despite the lower version numbers
-  (`0.4.0-alpha.8` is 2026-07-23, after `0.5.4` on 2026-07-22), and it contains both PRs.
-  Verified two ways: `gh api repos/ska-sa/arcae/compare/<merge-sha>...0.4.0-alpha.8` reports
-  `status=ahead, behind_by=0` for both, and python-casacore + arcae 0.4.0-alpha.8 read and
-  write each other's tables in one process. `xarray-ms` releases its write support on that
-  line deliberately (`0.4.0 <= xarray-ms < 0.5.0`) so read-only consumers resolving
-  `>= 0.5.0` never pick up the write prerelease. A degrid/`pfb`-side dependency on write
-  support therefore pins **down** into the 0.4.0 range rather than up.
-- **Decision (retired):** The preference was dropped once coexistence had soaked: the
-  deferred casacore-pulling imports moved to module scope (`construct_mappings`'s
-  daskms imports in `utils/misc.py`, `interp_beam`'s `africanus.rime` imports in
-  `utils/beam.py`, `africanus.averaging` in both `stokes2vis` modules). In-function
-  imports now need one of the documented reasons in architecture.md §3 (cycle,
-  optional runtime, serialisation, rare heavy path), each stated in an inline comment.
-- **Consequences:** No import-placement restriction remains on the imaging path. The
-  lightweight CLI install is unaffected (CLI modules still lazy-import the core).
-- **Source:** ska-sa/arcae#211/#212; architecture.md §3/§8; branch `issue270`; version
-  caveat from sjperkins on ratt-ru/xarray-ms#170.
+- **Was:** arcae and python-casacore could not coexist in one process, so the MSv4 imaging path
+  deferred every `africanus`/`daskms`/`casacore` import into functions.
+- **Superseded by** the coexistence fix (ska-sa/arcae#211, #212). Those imports are now at module
+  scope and in-function imports need one of the documented reasons in
+  `.claude/rules/architecture.md` §3. No import-placement restriction remains on this path.
+- **Still live — the version constraint is "contains #211/#212", NOT "arcae >= 0.5.2".** arcae
+  ships a parallel `0.4.0-alpha.*` write-support line cut from *later* commits than 0.5.x, so a
+  dependency on write support pins **down** into the 0.4.0 range rather than up. See the
+  "version numbers do not order by capability" gotcha below.
+- **Source:** ska-sa/arcae#211/#212; ratt-ru/xarray-ms#170.
 
 ### D15 — Imager driver accumulates counts at `weight_grouping` granularity
 
@@ -1323,66 +1300,29 @@ update it (and this page's `last_verified_commit`) in the same session.
   versus full-Mueller and frequency-resolved but not gauge-exact.
 - **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278.
 
-### D43 — the MSv2 `degrid` was retired outright rather than aliased or deprecated
+### D43 — (Retired) the MSv2 `degrid` was retired outright rather than aliased or deprecated
 
-- **Context:** #329 landed `degrid-msv4` alongside the dask-ms `degrid`, which was kept as
-  the parity oracle. Once the MSv4 pipeline was complete (imager + deconv + degrid) and
-  validated on real data, the MSv2 command's only remaining job was to be compared against.
-- **Decision (#330):** delete `cli/degrid.py`, `core/degrid.py` and `cabs/degrid.yml`, move
-  the MSv4 command into those names, and register it as `pfb degrid` with **no alias and no
-  deprecation period**. `pfb degrid-msv4` no longer exists.
-- **Rationale:** the option surfaces are not compatible, so an alias would have bought
-  nothing. MSv4 selection is by *name* where MSv2 was by integer id
-  (`--scan-names`/`--spw-names`/`--field-names` vs `--scans`/`--ddids`/`--fields`); chunking
-  is `--integrations-per-chunk`/`--channels-per-chunk` vs `..._per_image`; the cluster is
-  `--ray-address` vs `--host-address`. Keeping the old *spellings* over the new semantics
-  was considered and rejected: `--ddids 0,1` silently meaning "SPWs named 0 and 1" is worse
-  than an unrecognised-option error. A recipe written against the MSv2 command now fails
-  loudly at parse time.
-- **Consequences:** three things fell out with it, each a real simplification rather than a
-  rename.
-  1. **`distributed` left the dependency set entirely.** `set_client` (deleted) had exactly
-     one caller, `core/degrid.py`, so the `[distributed]` extra and its `bokeh` pin are gone
-     — the aarch64 story loses a whole optional axis (#330 builds on the extras split).
-  2. **`operators/gridder.py` is dask-free.** The `comps2vis`/`_comps2vis`/`_comps2vis_impl`
-     stack (222 lines, `dask.array` blockwise) was the legacy command's inline model
-     evaluation and had no other importer. Its `import dask.array as da` was the module's
-     only dask use, and `gridder.py` is on the deconv and imager paths.
-  3. **`core/degrid` joined the casacore-free entry points.** It arrived from #329 carrying a
-     module-scope `from daskms.fsspec_store import DaskMSStore`, used only for a glob that
-     `fsspec.core.url_to_fs` does — a top-level dask-ms import on a path that must install
-     without python-casacore. It was invisible because `test_optional_extras.py` did not list
-     the module; it does now.
-
-  What did **not** change: `[casacore]` still exists. `imager` (MSv2 input), `hci` and the
-  rephasing path in `utils/stokes2vis_msv4.py` (africanus `synthesize_uvw`/`get_coordinates`,
-  which pull pyrap) still need it. Retiring `degrid` removed casacore from the *degrid* path,
-  not from the project.
-
-  The two legacy-comparison tests in `tests/test_degrid_parity.py` were written to be
-  deleted with the command and were. The end-to-end null
-  (`imager --psf` → `.mds` → `degrid` → `imager` on `DATA-MODEL_DATA`) outlived them and
-  moved into `tests/test_degrid.py`; it is the acceptance test, and it never referenced the
-  MSv2 command.
-- **Source:** `src/pfb_imaging/core/degrid.py`, `src/pfb_imaging/cli/degrid.py`,
-  `src/pfb_imaging/operators/gridder.py`, `tests/test_optional_extras.py`,
-  `tests/test_degrid.py::test_imager_degrid_nulls_the_residual`, issues #278, #330.
+- **Was:** the dask-ms `degrid` ran alongside `degrid-msv4` as its parity oracle.
+- **Superseded by** #330 (2026-09-25), which deleted it and gave its name to the MSv4 command
+  with **no alias and no deprecation period** — the option surfaces are incompatible, so an old
+  recipe fails at parse time rather than silently meaning something else.
+- **What fell out with it:** `distributed` left the dependency set entirely, `operators/gridder.py`
+  became dask-free (the `comps2vis` stack had no other importer), and `core/degrid` joined the
+  casacore-free entry points. `[casacore]` still exists — `imager`, `hci` and the rephasing path
+  still need it.
+- **Current option contract** (names not integer ids; `_per_chunk`; `--ray-address`):
+  `.claude/rules/architecture.md` §6.
+- **Source:** issues #278, #330.
 
 ## Known debt
 
-- **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing, and the caller only
-  happens to be safe.** The uncoupled branch (`BandWorkerPool.hess_cg`) allocates a fresh
-  `out` and leaves `x0` untouched; the coupled branch hands `x0` to `pcg_numba`, which
-  binds it as the iterate and mutates it in place, so the returned array *is* `x0`. The
-  one caller, `PFBSolver.forward`, passes `x0 = self._update` and immediately rebinds
-  `self._update` to the return value, which is correct either way — but only by accident,
-  and a second caller that keeps its `x0` would get branch-dependent behaviour with no
-  error. Both docstrings warn; that is mitigation, not a fix. **Follow-up:** make the two
-  branches agree, preferably by having the coupled branch copy (matching
-  `_BandWorkerImpl.cg`, which already copies because Ray hands it a read-only view) and
-  dropping the warnings. Found reviewing #308; not fixed there because it changes the
-  contract of a frozen oracle's caller and deserves its own PR with a test that pins the
-  aliasing on both branches.
+- **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch
+  allocates a fresh `out` and leaves `x0` untouched; the coupled branch hands `x0` to
+  `pcg_numba`, which mutates it in place, so the returned array *is* `x0`. The one caller
+  (`PFBSolver.forward`) is correct either way but only by accident; a second caller that kept
+  its `x0` would get branch-dependent behaviour with no error. Both docstrings warn — mitigation,
+  not a fix. **Follow-up:** make the coupled branch copy (matching `_BandWorkerImpl.cg`) and drop
+  the warnings. Found reviewing #308; wants its own PR with a test pinning both branches.
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
   (zero-model and NaN-eps paths) — hangs unattended runs if triggered. Kept because the
   function is a frozen oracle; remove if it ever stops being one.
@@ -1401,28 +1341,20 @@ update it (and this page's `last_verified_commit`) in the same session.
   scale; an in-worker backward loop would change the prox's band coupling and is NOT
   planned.
 - **Phase-centre comparison, to re-land with mosaicing (issue #1).** `core/init.py`'s
-  single-field guard (`_phase_dirs_agree` + `tests/test_phase_dir_agreement.py`, commit
-  `6be3ea7`) went away with the legacy retirement (#277) — the code no longer exists on
-  this branch; `6be3ea7` is the only copy. Do **not** port it back as a rejection: it refused multiple phase centres, which is precisely what
-  mosaicing does (the imager rephases them to a common tangent plane, D21). What must
-  survive is the *comparison technique* (see the gotcha below). Its future home is the
-  field-identity test in `core/imager.py`, currently
-  `np.unique(np.round(field_centres, 12))` — exact equality in disguise. That is
-  survivable today (`radec_barycentre` averages unit vectors, so a seam-split or
-  noise-split pair still resolves to the right tangent point; the cost is a spurious
-  "multiple fields" rephase of what is one field), but it becomes load-bearing the
-  moment mosaicing has to decide which fields group together. Give it a real tolerance
-  then, and make that tolerance a wrapped magnitude. Lift the helper and its tests from
-  `6be3ea7`.
-- **`deconv` cannot read a single-precision tree (D27).** The imager honours
-  `--precision` end to end, but `gridder.residual_from_partitions` sizes `convim`/`tmp`
-  from the band `DIRTY` while the driver hands it an f8 model, so ducc rejects the mixed
-  call at the exact-residual seam; `band_worker`'s `--fits-per-partition` path allocates
-  f8 `dirty_p`/`resid_p` the same way. `HessianTree` survives only by accident (its f8
-  `xpad`/`xhat` scratch upcasts a c4 `psfhat` silently through in-place `*=`). Fixing it
-  means casting at the ducc seams while letting the image-space cubes stay f8 — deliberately
-  deferred, since the second-order schemes want double anyway. Until then a
-  single-precision tree is imager/FITS-only.
+  single-field guard (`_phase_dirs_agree` + `tests/test_phase_dir_agreement.py`) went with the
+  legacy retirement (#277); commit `6be3ea7` is the only copy. Do **not** port it back as a
+  rejection — it refused multiple phase centres, which is exactly what mosaicing does (D21). What
+  must survive is the *comparison technique* (see the wrapped-magnitude gotcha below). Its future
+  home is the field-identity test in `core/imager.py`, currently
+  `np.unique(np.round(field_centres, 12))` — exact equality in disguise, survivable today but
+  load-bearing once mosaicing must decide which fields group together. Give it a real tolerance
+  then, as a wrapped magnitude, lifting the helper and tests from `6be3ea7`.
+- **`deconv` cannot read a single-precision tree (D27).** `gridder.residual_from_partitions`
+  sizes `convim`/`tmp` from the band `DIRTY` while the driver hands it an f8 model, so ducc
+  rejects the mixed call at the exact-residual seam; `--fits-per-partition` allocates f8 the same
+  way, and `HessianTree` survives only by accident (f8 scratch silently upcasts a c4 `psfhat`).
+  The fix is casting at the ducc seams while image-space cubes stay f8 — deferred, since the
+  second-order schemes want double anyway. Until then a single-precision tree is imager/FITS-only.
 - `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D25 deleted the
   zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
   against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
