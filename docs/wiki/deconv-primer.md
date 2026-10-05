@@ -4,7 +4,7 @@ title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
 timestamp: 2026-10-05T12:44:06Z
-last_verified_commit: 78de0cf
+last_verified_commit: ec5e7f7
 ---
 
 # Deconvolution primer — the PFB framework, math to code
