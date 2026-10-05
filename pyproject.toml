@@ -199,7 +199,7 @@ addopts = [
     "--strict-config",
     "--verbose",
     # Fast by default: the end-to-end pipeline tests are deselected so the
-    # development loop stays ~80s instead of ~400s. CI overrides with `-m ""`
+    # development loop stays ~108s instead of ~465s. CI overrides with `-m ""`
     # (a command-line -m wins over this one). Run everything locally the same
     # way; `-m slow` runs only the deselected set.
     "-m",

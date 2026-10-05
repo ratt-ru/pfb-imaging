@@ -77,6 +77,13 @@ process, so there is one pytest session — no special placement for new tests, 
 casacore-related import restrictions (the historical casacore-free discipline was retired —
 wiki design-decisions D14).
 
+### `keep_ray_alive=True` is mandatory in tests
+
+Any test calling `imager_core`/`hci_core` must pass `keep_ray_alive=True`, or the driver
+calls `ray.shutdown()` and tears down the session cluster and every actor cached by the
+`band_pool` fixture (which now rebuilds its cache if Ray is down, but without the
+session's `num_cpus`/`runtime_env`).
+
 ### Fast by default, slow in CI
 
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:

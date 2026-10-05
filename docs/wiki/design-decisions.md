@@ -1655,8 +1655,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   contains it). This cost a wrong conclusion on ratt-ru/xarray-ms#170: D14's "arcae >= 0.5.2"
   was read as excluding the 0.4.0-alpha line, which in fact has the coexistence fix.
 - **`primal_dual_numba` takes `psih=synthesis, psi=analysis`** -- the inverse of what the
-  names suggest, and the inverse of the `primal_dual` function that was deleted in this
-  PR. Read call sites, not names.
+  names suggest, and the inverse of the `primal_dual` function that was deleted in
+  `ec5e7f7`. Read call sites, not names.
 - **`pcg_numba` mutates `x0` in place** (returns the same buffer).
 - **`psf_oversize` truncates the preconditioner PSF** (`nx_psf =
   good_size(psf_oversize·nx)`, default 1.4, not 2). It only affects the
