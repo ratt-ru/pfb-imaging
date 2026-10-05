@@ -206,7 +206,7 @@ def gt_imager_fits(ms_name, sky_truth, tmp_path_factory):
     one run with both flags serves both. Returns (outname, fits_dir).
     """
     root = tmp_path_factory.mktemp("gt_imager_fits")
-    outname = str(root / "gt")
+    outname = str(root / "gtfits")
     imager_core(
         [Path(ms_name)],
         outname,
@@ -618,7 +618,7 @@ def test_imager_fits_per_partition(sky_truth, gt_imager_fits):
 
     outname, fits_dir = gt_imager_fits
 
-    pdir = fits_dir / "gt_I_partitions"
+    pdir = fits_dir / "gtfits_I_partitions"
     assert pdir.is_dir(), "partitions FITS subdirectory not created"
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)

@@ -351,6 +351,10 @@ def band_pool(manage_ray):
     pools = {}
 
     def get(nband, nthreads=1):
+        # a core driver that ran without keep_ray_alive=True tore the cluster
+        # down and killed these actors; rebuild rather than hand back corpses
+        if not ray.is_initialized():
+            pools.clear()
         key = (nband, nthreads)
         if key not in pools:
             pools[key] = BandWorkerPool(nband, nthreads)
@@ -435,10 +439,10 @@ def gt_dt(ms_name, sky_truth, tmp_path_factory):
     Returns the output BASE prefix, so the tree is f"{gt_dt}_I.dt". Writers
     must take a copy via `copy_tree` -- deconv and restore both write in place.
     """
-    # deferred: scientific stack must import after the env caps at the top of conftest
+    # deferred: collection cost -- keeps ducc0/africanus out of every pytest collection
     from pfb_imaging.core.imager import imager as imager_core
 
-    base = str(tmp_path_factory.mktemp("gt_imaged") / "gt")
+    base = str(tmp_path_factory.mktemp("gt_imaged") / "gtimg")
     imager_core(
         [Path(ms_name)],
         base,
@@ -461,10 +465,10 @@ def gt_deconv_dt(gt_dt, tmp_path_factory):
     default FITS folder, and do not touch the tree). test_deconv_groundtruth
     only reads this tree; restore takes a `copy_tree` copy because it writes.
     """
-    # deferred: scientific stack must import after the env caps at the top of conftest
+    # deferred: collection cost -- keeps ducc0/africanus out of every pytest collection
     from pfb_imaging.core.deconv import deconv as deconv_core
 
-    base = copy_tree(gt_dt, tmp_path_factory.mktemp("gt_deconvolved") / "gt")
+    base = copy_tree(gt_dt, tmp_path_factory.mktemp("gt_deconvolved") / "gtdec")
     deconv_core(base, fits_per_partition=True, **GT_DECONV_KW)
     return base
 
@@ -608,8 +612,6 @@ def writable_ms(ms_name, tmp_path):
     session, so a test that overwrites DATA, FLAG or FLAG_ROW (including via
     dask-ms `xds_to_table`) would corrupt every later test. Work on a copy.
     """
-    import shutil
-
     dest = tmp_path / "writable.ms"
     shutil.copytree(ms_name, dest)
     return str(dest)

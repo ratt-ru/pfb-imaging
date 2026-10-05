@@ -39,25 +39,30 @@ def test_uri_and_fs_makes_a_relative_path_absolute_and_qualified(tmp_path, monke
 
 
 @pytest.mark.parametrize(
-    "spelling",
+    "spelling, tail",
     [
-        "{p}/out.dt",
-        "{p}/out.dt/",
-        "file://{p}/out.dt",
+        ("{p}/out.dt", "out.dt"),
+        ("{p}/out.dt/", "out.dt"),
+        ("file://{p}/out.dt", "out.dt"),
+        # `.` and `..` segments are kept verbatim, not resolved
+        ("{p}/./out.dt", "./out.dt"),
+        ("{p}/sub/../out.dt", "sub/../out.dt"),
     ],
 )
-def test_uri_and_fs_normalises_equivalent_spellings(tmp_path, spelling):
+def test_uri_and_fs_normalises_equivalent_spellings(tmp_path, spelling, tail):
     """A trailing slash and an explicit protocol both collapse.
 
     The store URI ends up in log lines and, more importantly, is the string
     handed to zarr -- two spellings of one path must not produce two stores.
-    Note `.` segments are NOT collapsed, by fsspec or by DaskMSStore before it.
+    `.` and `..` segments are NOT collapsed (measured: they pass through
+    verbatim), by fsspec or by DaskMSStore before it.
     """
     (tmp_path / "out.dt").mkdir()
+    (tmp_path / "sub").mkdir()
 
     _, uri = uri_and_fs(spelling.format(p=tmp_path))
 
-    assert uri == f"file://{tmp_path}/out.dt"
+    assert uri == f"file://{tmp_path}/{tail}"
 
 
 def test_uri_and_fs_accepts_a_purepath(tmp_path):

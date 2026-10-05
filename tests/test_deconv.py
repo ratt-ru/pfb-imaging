@@ -19,6 +19,7 @@ import xarray as xr
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(600)
 def test_deconv_groundtruth(sky_truth, gt_deconv_dt):
     """deconv on the noiseless predicted sky recovers the injected fluxes.
 
@@ -82,7 +83,7 @@ def test_deconv_groundtruth(sky_truth, gt_deconv_dt):
 
     from astropy.io import fits as afits
 
-    pdir = str(Path(outname).parent / "fits" / "gt_I_main_partitions")
+    pdir = str(Path(outname).parent / "fits" / "gtdec_I_main_partitions")
     hits = sorted(glob.glob(f"{pdir}/residual_band*_part0000_*.fits"))
     assert len(hits) == len(nodes), f"expected {len(nodes)} partition residual FITS"
     n0 = nodes[0]
