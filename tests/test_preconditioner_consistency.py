@@ -22,8 +22,6 @@ distinct-beam mosaic regime where a D23-style bias (feeding the apparent instead
 of the beam-attenuated residual) would move the fixed point off ``A^{-1} b``.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -33,6 +31,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import HessianTree
 from pfb_imaging.opt.pcg import pcg_numba
+from tests.conftest import copy_tree
 
 ifftshift = np.fft.ifftshift
 
@@ -263,7 +262,7 @@ def _resid_peak(store):
 
 @pytest.mark.timeout(600)
 @pytest.mark.slow
-def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_path):
+def test_deconv_unregularised_residual_keeps_descending(sky_truth, gt_dt, tmp_path):
     """End-to-end: with rmsfactor=0 and positivity off the major cycle is the
     preconditioned Richardson above. On noiseless predicted vis (a
     self-consistent forward model) the data misfit does not plateau -- it keeps
@@ -289,24 +288,8 @@ def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_
     distribution is covered by test_hess_tree_ray.py.
     """
     from pfb_imaging.core.deconv import deconv as deconv_core
-    from pfb_imaging.core.imager import imager as imager_core
 
-    outname = str(tmp_path / "unregdeconv")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=-1,
-        integrations_per_image=-1,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=0.0,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
+    outname = copy_tree(gt_dt, tmp_path / "unregdeconv")
     deconv_kw = dict(
         minor_cycle="sara",
         opt_backend="primal-dual",

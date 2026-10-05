@@ -19,7 +19,7 @@ import xarray as xr
 
 
 @pytest.mark.slow
-def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
+def test_deconv_groundtruth(sky_truth, gt_deconv_dt):
     """deconv on the noiseless predicted sky recovers the injected fluxes.
 
     Replaces test_deconv_matches_legacy_sara: the reference is the injected
@@ -31,57 +31,11 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
     peak dropping well below the faintest source.
 
     Single band (channels_per_image=-1) and nthreads=1 on purpose: for
-    nband==1 the Hessian/Psi pools use their local in-process path, keeping
-    the long-lived Ray-actor CPU claims within the session cluster's
-    num_cpus=1 (see tests/conftest.py) -- multi-band actor distribution is
-    covered by test_hess_tree_ray.py/test_psi_operator.py.
+    nband==1 the Hessian/Psi pools use their local in-process path, so no
+    Ray actors are started -- multi-band actor distribution is covered by
+    test_hess_tree_ray.py/test_psi_operator.py.
     """
-    from pfb_imaging.core.deconv import deconv as deconv_core
-    from pfb_imaging.core.imager import imager as imager_core
-
-    outname = str(tmp_path / "gtdeconv")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=-1,
-        integrations_per_image=-1,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=0.0,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-    deconv_core(
-        outname,
-        minor_cycle="sara",
-        opt_backend="primal-dual",
-        niter=5,
-        gamma=1.0,
-        eta=0.001,
-        rmsfactor=1.0,
-        init_factor=1.0,
-        l1_reweight_from=100,  # disabled within these few major cycles
-        bases=["self", "db1"],
-        nlevels=2,
-        positivity=1,
-        pd_tol=1e-6,
-        pd_maxit=5000,
-        cg_tol=1e-6,
-        cg_maxit=3000,
-        pm_tol=1e-4,
-        pm_maxit=200,
-        nthreads=1,
-        do_wgridding=True,
-        epsilon=1e-7,
-        fits_mfs=False,
-        fits_cubes=False,
-        fits_per_partition=True,
-        verbosity=0,
-    )
+    outname = gt_deconv_dt  # shared and read-only here: restore takes its own copy
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
     nodes = sorted(n for n in dt.children if n.startswith("band"))
@@ -128,7 +82,7 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
 
     from astropy.io import fits as afits
 
-    pdir = str(tmp_path / "fits" / "gtdeconv_I_main_partitions")
+    pdir = str(Path(outname).parent / "fits" / "gt_I_main_partitions")
     hits = sorted(glob.glob(f"{pdir}/residual_band*_part0000_*.fits"))
     assert len(hits) == len(nodes), f"expected {len(nodes)} partition residual FITS"
     n0 = nodes[0]

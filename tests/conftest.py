@@ -368,15 +368,126 @@ def band_pool(manage_ray):
         pool.shutdown()
 
 
-@pytest.fixture(scope="module")
+def copy_tree(src_base, dest_base):
+    """Copy a `<base>_I.dt` (and `.scratch`, if present) to a new base prefix.
+
+    Session-scoped pipeline products are read by several tests and written in
+    place by deconv and restore, so a writer takes a copy. Copying a small
+    test `.dt` costs ~0.2 s against a ~56 s imager+deconv rebuild.
+
+    Args:
+        src_base: Output prefix of the tree to copy.
+        dest_base: Output prefix to copy it to.
+
+    Returns:
+        `dest_base` as a string.
+    """
+    for suffix in ("_I.dt", "_I.scratch"):
+        src = Path(str(src_base) + suffix)
+        if src.exists():
+            shutil.copytree(src, Path(str(dest_base) + suffix))
+    return str(dest_base)
+
+
+# Ground-truth pipeline settings, shared so the imager/deconv/restore ground-truth
+# tests provably image the SAME data. Three tests previously inlined these and
+# happened to match byte for byte -- nothing enforced it.
+GT_IMAGER_KW = dict(
+    channels_per_image=-1,
+    integrations_per_image=-1,
+    product="I",
+    robustness=0.0,
+    fits_mfs=False,
+    fits_cubes=False,
+    overwrite=True,
+    keep_ray_alive=True,
+)
+
+GT_DECONV_KW = dict(
+    minor_cycle="sara",
+    opt_backend="primal-dual",
+    niter=5,
+    gamma=1.0,
+    eta=0.001,
+    rmsfactor=1.0,
+    init_factor=1.0,
+    l1_reweight_from=100,  # disabled within these few major cycles
+    bases=["self", "db1"],
+    nlevels=2,
+    positivity=1,
+    pd_tol=1e-6,
+    pd_maxit=5000,
+    cg_tol=1e-6,
+    cg_maxit=3000,
+    pm_tol=1e-4,
+    pm_maxit=200,
+    nthreads=1,
+    do_wgridding=True,
+    epsilon=1e-7,
+    fits_mfs=False,
+    fits_cubes=False,
+    verbosity=0,
+)
+
+
+@pytest.fixture(scope="session")
+def gt_dt(ms_name, sky_truth, tmp_path_factory):
+    """One imager run on the injected ground-truth sky, shared session-wide.
+
+    Three tests issued byte-identical imager_core calls on this sky:
+    test_deconv_groundtruth, test_restore_groundtruth, and
+    test_preconditioner_consistency's unregularised-descent test.
+
+    Returns the output BASE prefix, so the tree is f"{gt_dt}_I.dt". Writers
+    must take a copy via `copy_tree` -- deconv and restore both write in place.
+    """
+    # deferred: scientific stack must import after the env caps at the top of conftest
+    from pfb_imaging.core.imager import imager as imager_core
+
+    base = str(tmp_path_factory.mktemp("gt_imaged") / "gt")
+    imager_core(
+        [Path(ms_name)],
+        base,
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        **GT_IMAGER_KW,
+    )
+    return base
+
+
+@pytest.fixture(scope="session")
+def gt_deconv_dt(gt_dt, tmp_path_factory):
+    """`gt_dt` deconvolved at the shared ground-truth settings.
+
+    test_deconv_groundtruth and test_restore_groundtruth each ran this exact
+    imager+deconv pair -- ~56 s of the 616 s slow suite apiece. Shared here,
+    with `fits_per_partition=True` because test_deconv_groundtruth asserts on
+    the per-partition residual FITS (they land in `<dirname>/fits/`, the
+    default FITS folder, and do not touch the tree). test_deconv_groundtruth
+    only reads this tree; restore takes a `copy_tree` copy because it writes.
+    """
+    # deferred: scientific stack must import after the env caps at the top of conftest
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    base = copy_tree(gt_dt, tmp_path_factory.mktemp("gt_deconvolved") / "gt")
+    deconv_core(base, fits_per_partition=True, **GT_DECONV_KW)
+    return base
+
+
+@pytest.fixture(scope="session")
 def sky_truth(ms_name, ms_meta, image_geometry):
     """Deterministic point-source sky + flag pattern injected into the test MS.
 
     Writes DATA (predicted vis, Stokes I into XX/YY), FLAG (~10% random
     samples plus one fully flagged channel) and FLAG_ROW into the shared MS.
-    Module-scoped: the injection is seeded and idempotent (same DATA/FLAG
-    every time), so re-injecting once per consuming module is cheap and safe
-    now that the mid-session DATA-overwriting legacy tests are gone.
+    Session-scoped: the injection is seeded and idempotent (same DATA/FLAG
+    every time) and this is the only writer to the shared MS -- every
+    test_degrid writer and both drop_column callers target a function-scoped
+    copy. Session scope is required, not merely cheaper: the gt_dt pipeline
+    fixtures are session-scoped and pytest refuses to let them reach a
+    module-scoped fixture (ScopeMismatch). It buys no time on its own, since
+    the 13.19 s first use is JIT warm-up that reattaches elsewhere.
 
     The truth WCS is built with plain astropy (not pfb's set_wcs) so the
     coordinate truth is independent of the code under test.

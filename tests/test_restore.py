@@ -12,6 +12,8 @@ import pytest
 import xarray as xr
 from astropy.io import fits as afits
 
+from tests.conftest import copy_tree
+
 
 def test_restore_products_algebra():
     """The three products differ only in where the beam is applied.
@@ -737,62 +739,17 @@ def test_restore_clean_beam_not_written_when_not_requested(tmp_path):
 
 @pytest.mark.timeout(600)
 @pytest.mark.slow
-def test_restore_groundtruth(sky_truth, ms_name, tmp_path):
+def test_restore_groundtruth(sky_truth, gt_deconv_dt, tmp_path):
     """imager -> deconv -> restore recovers the injected source fluxes.
 
-    Mirrors test_deconv_groundtruth's setup (single band, nthreads=1, so the
-    nband==1 Hessian/Psi pools stay on their in-process path within the session
-    cluster's num_cpus). Restore is asserted at the FITS level because that is
-    the product users consume.
+    Restores a copy of the shared `gt_deconv_dt` tree, which runs the same
+    setup as test_deconv_groundtruth (single band, nthreads=1, so the
+    nband==1 Hessian/Psi pools stay on their in-process path). Restore is
+    asserted at the FITS level because that is the product users consume.
     """
-    from pathlib import Path
-
-    from pfb_imaging.core.deconv import deconv as deconv_core
-    from pfb_imaging.core.imager import imager as imager_core
     from pfb_imaging.core.restore import restore as restore_core
 
-    outname = str(tmp_path / "gtrestore")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=-1,
-        integrations_per_image=-1,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=0.0,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-    deconv_core(
-        outname,
-        minor_cycle="sara",
-        opt_backend="primal-dual",
-        niter=5,
-        gamma=1.0,
-        eta=0.001,
-        rmsfactor=1.0,
-        init_factor=1.0,
-        l1_reweight_from=100,
-        bases=["self", "db1"],
-        nlevels=2,
-        positivity=1,
-        pd_tol=1e-6,
-        pd_maxit=5000,
-        cg_tol=1e-6,
-        cg_maxit=3000,
-        pm_tol=1e-4,
-        pm_maxit=200,
-        nthreads=1,
-        do_wgridding=True,
-        epsilon=1e-7,
-        fits_mfs=False,
-        fits_cubes=False,
-        verbosity=0,
-    )
+    outname = copy_tree(gt_deconv_dt, tmp_path / "gtrestore")
     restore_core(
         outname,
         outputs="aik",
