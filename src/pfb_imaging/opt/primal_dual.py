@@ -92,15 +92,18 @@ def primal_dual_numba(
     tests/test_primal_dual.py); see docs/wiki/deconv-primer.md. Do not change
     its behaviour.
 
-    Naming trap (INVERTED relative to ``primal_dual``!): here ``psih`` is the
+    Naming trap (INVERTED relative to what the names suggest!): here ``psih`` is the
     SYNTHESIS operator and ``psi`` is the ANALYSIS operator — both in-place
     two-argument callables (``psi(image, coeffs_out)``,
     ``psih(coeffs, image_out)``, the ``Psi.dot``/``Psi.hdot`` convention).
     Read the loop body, not the parameter names.
 
-    ``nu`` is ||Psi Psi^T|| = nbasis for the SARA dictionary (see
-    ``primal_dual``'s docstring for the step-size consequences). ``prox`` is
-    accepted for signature compatibility; the dual update is the fused
+    ``nu`` is the squared frame bound ||Psi Psi^T|| = nbasis for the SARA
+    concatenation of orthonormal bases, NOT the tight-frame 1.0. It sets the
+    step sizes ``sigma = hessnorm/(2*gamma)/nu`` and
+    ``tau = 0.98/(hessnorm/(2*gamma) + sigma*nu**2)``; an underestimated nu
+    violates the convergence condition (observed as multi-band divergence).
+    ``prox`` is accepted for signature compatibility; the dual update is the fused
     ``dual_update_numba_fast`` with ``l1weight``. ``reweighter`` (or None)
     fires on inner convergence, up to ``maxreweight`` consecutive times.
 
