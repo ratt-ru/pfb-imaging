@@ -1347,7 +1347,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   existed (`test_hci.py`, `test_imager_pol.py`) and the bug they caused predated the branch,
   activated only by making `sky_truth` session-scoped. A forgotten writer passes in the fast loop
   and the slow loop *separately*, and fails only under `-m ""`.
-- **Measured:** fast loop 155.72 s → 107.64 s (−31%); slow set 616 s → ~465 s (−25%).
+- **Measured (#336):** the fast loop fell 31% and the slow set 25%. Current absolute figures
+  live in `.claude/rules/testing-and-ci.md` §1 and nowhere else, so they cannot drift apart.
 - **Source:** PR #336; `tests/conftest.py`; `tests/test_band_pool.py` (pins the reuse
   equivalence); `src/pfb_imaging/operators/band_worker.py` (`BandWorkerPool.shutdown`).
 

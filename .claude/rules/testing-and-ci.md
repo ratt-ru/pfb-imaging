@@ -44,7 +44,9 @@ with that, each established by breaking it:
 * Two `HessTreeRay` facades on one pool **must** share their `init_hess` args or be used
   strictly sequentially (`freq_prec` is driver-side and safe to differ).
 * **`keep_ray_alive=True` is mandatory** in any test calling `imager_core`/`hci_core` — without
-  it the driver calls `ray.shutdown()` and tears down the session cluster and every cached actor.
+  it the driver calls `ray.shutdown()` and tears down the session cluster and every actor cached
+  by `band_pool` (which rebuilds its cache if Ray is down, but without the session's
+  `num_cpus`/`runtime_env`).
 * **Do not convert `nband == 1` call sites** — that branch runs in-process and never imports Ray.
 * **Do not make `conftest.manage_ray` opt-in** to save its ~4.5 s; the same reasoning rules out
   `pytest-xdist`.
@@ -78,13 +80,6 @@ As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and python-casacore coexis
 process, so there is one pytest session — no special placement for new tests, and no
 casacore-related import restrictions (the historical casacore-free discipline was retired —
 wiki design-decisions D14).
-
-### `keep_ray_alive=True` is mandatory in tests
-
-Any test calling `imager_core`/`hci_core` must pass `keep_ray_alive=True`, or the driver
-calls `ray.shutdown()` and tears down the session cluster and every actor cached by the
-`band_pool` fixture (which now rebuilds its cache if Ray is down, but without the
-session's `num_cpus`/`runtime_env`).
 
 ### Fast by default — and the fast loop is the only loop you run
 

@@ -82,8 +82,10 @@ D27. Pinned by `tests/test_imager_precision.py`.
 `deconv` refuses with "re-run pfb imager with --psf" (guard fires before Ray init).
 `--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
 and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
-carry a `BEAMINCN` card because the stored beam includes the folded n-term. `RESIDUAL`
-is only computed when a model is passed in (future feature; no flag).
+carry a `BEAMINCN` card because the stored beam includes the folded n-term. `RESIDUAL` is only computed when a model is passed in (future feature; no flag), so the imager
+does not normally write it — **`deconv` falls back to `DIRTY` when `RESIDUAL` is absent**
+(`core/deconv.py:275`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
+refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--fits-per-partition` (default off) makes the pass-2 workers write per-partition
 sanity FITS while the products are in memory (per-partition DIRTY is never stored in the
 tree): `<var>_band####_time####_part####_<field>.fits` under

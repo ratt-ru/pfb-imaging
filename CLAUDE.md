@@ -54,8 +54,10 @@ memory discipline, and `docs/wiki/memory-and-ray.md` has the measured story.
 
 * Minimize external dependencies. The lightweight install provides CLI and cab definitions
   only (sole dependency: `hip-cargo`); the scientific stack is the optional `[full]` extra.
-* One `dev` group, with the stack behind the `full` extra (`uv sync --extra full --group dev`).
-  **Never put `pfb-imaging[full]` into `dev`** — `.claude/rules/testing-and-ci.md` §1 says why.
+* One `dev` group, with the scientific stack behind extras. Local work and tests want
+  **`uv sync --extra all --group dev`** (what CI installs); `--group dev` alone is lint/cab
+  tooling only. **Never put `pfb-imaging[full]` into `dev`** —
+  `.claude/rules/testing-and-ci.md` §1 says why.
 
 ## Mandatory Development Workflow
 

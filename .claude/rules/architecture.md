@@ -95,7 +95,7 @@ spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
 * Numba JIT with TBB threading for critical loops.
 * DUCC0 for gridding and FFT.
 * Dask for parallel chunk processing on the **`hci`** path only (`core/hci.py`, `utils/misc.py`,
-  `operators/fft.py`); threads for FFTs/gridding (`--nthreads`). The imager/deconv/degrid path is
+  `operators/fft.py`, `utils/spi.py`, `utils/correlations.py`); threads for FFTs/gridding (`--nthreads`). The imager/deconv/degrid path is
   Ray, and `degrid`'s `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the
   last `distributed` consumer).
 * Ray actors for process-level parallelism in wavelet operators.

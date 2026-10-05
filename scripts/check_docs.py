@@ -40,12 +40,15 @@ VOLATILE = (
     r"9\.5\s*min",
 )
 VOLATILE_HOME = ".claude/rules/testing-and-ci.md"
-PROSE = (
+# Searched repo-wide, not over a fixed list: a figure reintroduced into a wiki page, a
+# workflow or a docstring drifts just as silently as one left in CLAUDE.md.
+VOLATILE_GLOBS = (
     "CLAUDE.md",
-    ".claude/rules/architecture.md",
-    ".claude/rules/python-standards.md",
-    ".claude/rules/testing-and-ci.md",
+    ".claude/**/*.md",
+    "docs/**/*.md",
     "pyproject.toml",
+    ".github/workflows/*.yml",
+    "tests/**/*.py",
 )
 
 
@@ -66,13 +69,20 @@ def gate_decision_citations() -> list[str]:
         if path == LEDGER:
             continue
         text = path.read_text(errors="ignore")
-        # Only treat a file as citing decisions when it refers to the ledger at all;
-        # a bare "D1" in unrelated prose is noise.
-        if "design-decisions" not in text and "wiki D" not in text:
-            continue
-        for cited in sorted(set(re.findall(r"\bD([1-9]\d?)\b", text)), key=int):
-            if f"D{cited}" not in defined:
-                failures.append(f"{path.relative_to(ROOT)} cites undefined D{cited}")
+        # Match a decision citation in any of the forms actually used in this repo:
+        # "(D23)", "wiki D38", "design-decisions.md D1", "D19/D20", "see D22.".
+        # A bare "D1" in unrelated prose would be noise, so require a cue: either the
+        # file names the ledger, or the token is bracketed//-joined/preceded by a cue word.
+        names_ledger = "design-decisions" in text or "wiki D" in text
+        cited = set()
+        if names_ledger:
+            cited |= set(re.findall(r"\bD([1-9]\d?)\b", text))
+        cited |= set(re.findall(r"[(\[]D([1-9]\d?)[)\],;/]", text))
+        cited |= set(re.findall(r"(?:wiki|see|per|decision)\s+D([1-9]\d?)\b", text, re.I))
+        cited |= set(re.findall(r"\bD[1-9]\d?/D([1-9]\d?)\b", text))
+        for n in sorted(cited, key=int):
+            if f"D{n}" not in defined:
+                failures.append(f"{path.relative_to(ROOT)} cites undefined D{n}")
     return failures
 
 
@@ -81,7 +91,11 @@ def gate_wiki_paths() -> list[str]:
     failures = []
     for path in _files():
         text = path.read_text(errors="ignore")
-        for ref in sorted(set(re.findall(r"(?:docs/)?wiki/([a-z0-9-]+\.md)", text))):
+        refs = set(re.findall(r"(?:docs/)?wiki/([a-z0-9_-]+\.md)", text))
+        if path.parent == ROOT / "docs/wiki":
+            # Inside the wiki, links are written relatively: [primer](deconv-primer.md).
+            refs |= set(re.findall(r"\]\(([a-z0-9_-]+\.md)\)", text))
+        for ref in sorted(refs):
             if not (ROOT / "docs/wiki" / ref).exists():
                 failures.append(f"{path.relative_to(ROOT)} -> missing docs/wiki/{ref}")
     return failures
@@ -90,9 +104,14 @@ def gate_wiki_paths() -> list[str]:
 def gate_volatile_numbers() -> list[str]:
     """Test counts and timings live in exactly one file."""
     failures = []
+    candidates = []
+    for pattern in VOLATILE_GLOBS:
+        for path in sorted(ROOT.glob(pattern)):
+            if path.is_file() and "superpowers" not in path.parts:
+                candidates.append(path)
     for figure in VOLATILE:
-        pattern = re.compile(figure)
-        homes = [p for p in PROSE if pattern.search((ROOT / p).read_text(errors="ignore"))]
+        rx = re.compile(figure)
+        homes = sorted(str(p.relative_to(ROOT)) for p in candidates if rx.search(p.read_text(errors="ignore")))
         if homes != [VOLATILE_HOME]:
             failures.append(f"{figure!r} in {homes or ['nowhere']}, want ['{VOLATILE_HOME}']")
     return failures
