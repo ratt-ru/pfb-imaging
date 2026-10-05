@@ -8,65 +8,54 @@
 
 ## LLM wiki (`docs/wiki/`)
 
-Deep internal knowledge — the deconvolution math→code primer, the design-decisions
-ledger (with known debt and gotchas), and the Ray/memory discipline — lives in
-`docs/wiki/` (Open Knowledge Format v0.1; start at `docs/wiki/index.md`, which says
-when to read each page). Consult it before touching `deconv/`/`opt/`/`prox/`, before
-"fixing" something that looks wrong (it may be a documented decision), and when
-debugging memory or Ray behaviour. **Maintenance rule:** any change that invalidates a
-wiki page updates the page, its `timestamp` and its `last_verified_commit` stamp in the
-same session/PR.
+Deep internal knowledge that is expensive to re-derive from source. Open Knowledge Format
+v0.1; start at `docs/wiki/index.md`, which says when to read each page.
 
-**Specs and plans are ephemeral.** Design specs and implementation plans (the
-brainstorming/planning skills write them to `docs/superpowers/specs/` and
-`docs/superpowers/plans/`) are working scratch for the duration of a feature branch:
-`docs/superpowers/` is gitignored and its files are never committed. Before finishing a
-branch, fold any durable knowledge (decisions, rationale, gotchas, layouts) into
-`docs/wiki/` — updating the affected pages per the maintenance rule — and let the spec
-and plan files die with the branch. Wiki pages and rules files cite code, tests, PRs,
-commits and issues as sources, never spec/plan paths.
+**Maintenance rule:** any change that invalidates a wiki page updates the page, its
+`timestamp` and its `last_verified_commit`, in the same session/PR. A stamp asserts the page
+was verified against that commit, so do not restamp a page you did not read.
 
-**Upstream MSv4 issues live in `docs/msv4_issues.md`.** Every arcae / xarray-ms bug we hit
-goes there — filed or not — with a runnable reproducer in `scripts/msv4_issues/`. Check it
-before debugging anything odd on the MSv4 write path, and add to it rather than rediscovering.
+**Specs and plans are ephemeral.** `docs/superpowers/` is gitignored and never committed.
+Before finishing a branch, fold durable knowledge into `docs/wiki/` per the maintenance rule
+and let the spec and plan die with the branch. Wiki pages and rules files cite code, tests,
+PRs, commits and issues as sources — **never spec/plan paths.**
 
-## MSv4 DataTree imager (`pfb imager`)
+**Upstream MSv4 issues live in `docs/msv4_issues.md`** — every arcae / xarray-ms bug we hit,
+filed or not, with a runnable reproducer in `scripts/msv4_issues/`. Add to it rather than
+rediscovering.
 
-`pfb imager` is the MSv4 front-end: a two-pass pipeline producing
-a single unified `xarray.DataTree` (`<out>_<PRODUCT>.dt`, one node per `(band,time)` output image with a
-`part####` child per data partition) plus a `.scratch` cache. It uses the **native** DataTree API
-(`xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`) — not the legacy
-`xds_from_url`/`xds_from_list` helpers (those remain for the `.dds` consumers). Full detail:
-`.claude/rules/architecture.md §8` and `docs/wiki/imager-pipeline.md`.
+## Where things are documented
 
-**`pfb degrid`** is the second MSv4 front-end: it degrids a `.mds` component model into
-MSv4 measurement sets via `xarray-ms` write support and Ray Serve (#278). All numerics go
-through `pfb_model_spec.utils.degrid`. It took the `degrid` name from the dask-ms command it
-replaced in #330, which retired the codebase's last `distributed` consumer — a clean break,
-not a drop-in: the selection flags are MSv4 names (`--scan-names`/`--spw-names`/
-`--field-names`) rather than MSv2 integer ids, chunking is `--integrations-per-chunk`/
-`--channels-per-chunk`, and the cluster address is `--ray-address`. Detail:
-`.claude/rules/architecture.md` §6 and wiki design-decisions D38-D42.
+Read the rules file for the files you are editing, and the wiki page for the thing you are
+reasoning about. The rules say what you must do; the wiki says why.
 
-**arcae + python-casacore:** as of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
-python-casacore coexist in one process, so the whole suite runs as a single `pytest tests/` and
-`africanus`/`daskms`/`casacore` imports live at module scope like any other (the old
-casacore-free-by-choice discipline was retired — wiki design-decisions D14). Imports are
-top-level unless a documented `.claude/rules/architecture.md` §3 exception applies.
+| working on | read |
+|---|---|
+| `src/**/*.py` | `.claude/rules/python-standards.md`, `.claude/rules/architecture.md` |
+| `tests/**`, `.github/workflows/**` | `.claude/rules/testing-and-ci.md` |
+| `deconv/`, `opt/`, `prox/` | `docs/wiki/deconv-primer.md`, then `docs/wiki/design-decisions.md` |
+| the imager or degrid pipeline | `docs/wiki/imager-pipeline.md` |
+| memory or Ray behaviour | `docs/wiki/memory-and-ray.md` |
+| image or beam orientation | `docs/wiki/image-and-beam-orientation.md` |
+| something that looks wrong | `docs/wiki/design-decisions.md` — it may be a documented decision |
+| an odd MSv4 write-path failure | `docs/msv4_issues.md` |
 
-**Memory/performance:** the Ray+MSv4 path carries hard-won memory discipline (selective variable
-loads, `gc.collect()` at Ray-task boundaries, xarray-ms table-cache eviction, per-task RSS
-telemetry in the progress lines). Before touching pass 1/2 or debugging footprint, read
-`docs/wiki/memory-and-ray.md` and `.claude/rules/architecture.md` §8 — do not regress these.
+**The front-ends.** `pfb imager` (MSv4 -> `.dt`), `pfb deconv` (`.dt` -> model),
+`pfb restore` (`.dt` -> restored FITS) and `pfb degrid` (`.mds` -> MSv4), plus `pfb hci` for
+high-cadence imaging. `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
+imager's invariants; `docs/wiki/imager-pipeline.md` has the tree layout.
+
+**Two things that bite hardest, so they are stated here as well as there:** never
+blanket-`.load()` an MSv4 node (it reads every correlated-data column), and `gc.collect()` at
+every Ray-task boundary. Both are in `.claude/rules/architecture.md` §8 with the rest of the
+memory discipline, and `docs/wiki/memory-and-ray.md` has the measured story.
 
 ## Core Dependencies
 
-* Minimize external dependencies.
-* The lightweight install provides CLI and cab definitions only (sole dependency: `hip-cargo`).
-* Full scientific stack is optional via `pip install pfb-imaging[full]`.
-* Development uses a single `dev` dependency group; the scientific stack stays behind the
-  `full` extra (`uv sync --extra full --group dev`). Keeping `pfb-imaging[full]` out of `dev`
-  is deliberate — see `.claude/rules/testing-and-ci.md` §1.
+* Minimize external dependencies. The lightweight install provides CLI and cab definitions
+  only (sole dependency: `hip-cargo`); the scientific stack is the optional `[full]` extra.
+* One `dev` group, with the stack behind the `full` extra (`uv sync --extra full --group dev`).
+  **Never put `pfb-imaging[full]` into `dev`** — `.claude/rules/testing-and-ci.md` §1 says why.
 
 ## Mandatory Development Workflow
 
@@ -110,40 +99,29 @@ rediscovery:
   stats `R GB` column shows ~0); only compare wall times at matching cache state.
 * **One mechanism per commit,** with the measured before/after in the commit message. It keeps
   cluster-run bisection possible when a change must be re-litigated.
-* **`gh issue view` and `gh pr edit` are broken on this machine — use `gh api` instead.** The
-  system `gh` is Ubuntu's 2.46.0, which asks GraphQL for the Projects-classic `projectCards`
-  field; the API has hard-errored on that since the May 2024 sunset, so both commands die with
-  `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
-  Upstream feature-detects v1 projects from **2.71.0** (`issue view`) and **2.73.0** (`pr edit`),
-  but the machine deliberately stays on the distro package, so treat this as permanent. It is
-  the client, not the repo — it reproduces against `cli/cli`. Reach for REST:
-  `gh api repos/ratt-ru/pfb-imaging/issues/<n> --jq '{title,state,body}'` to read an issue, and
-  `gh api -X PATCH repos/ratt-ru/pfb-imaging/pulls/<n> --input body.json` (a `{"body": …}` file,
-  so markdown survives shell quoting) to edit a PR. `gh pr view`/`list`/`checks`/`create`/`merge`
-  and every `gh api` call are unaffected, as is CI — both workflow uses are already `gh api`.
+* **`gh issue view` and `gh pr edit` are permanently broken on this machine — use `gh api`.**
+  The distro `gh` (2.46.0) asks GraphQL for the sunset Projects-classic `projectCards` field;
+  upstream feature-detects from 2.71.0/2.73.0 but the machine stays on the distro package. Use
+  `gh api repos/ratt-ru/pfb-imaging/issues/<n> --jq '{title,state,body}'` to read an issue and
+  `gh api -X PATCH repos/ratt-ru/pfb-imaging/pulls/<n> --input body.json` to edit a PR (a file,
+  so markdown survives shell quoting). `gh pr view`/`list`/`checks`/`create`/`merge` and every
+  `gh api` call are unaffected, as is CI.
 
 ## Project Structure
 
 ```
-pfb-imaging/
-├── src/pfb_imaging/
-│   ├── __init__.py
-│   ├── _container_image.py   # Container image URL (single source of truth)
-│   ├── cabs/                 # Generated cab definitions (YAML)
-│   ├── cli/                  # Lightweight CLI wrappers
-│   │   └── __init__.py       # Main Typer app, registers commands
-│   ├── core/                 # Core implementations (lazy-loaded)
-│   ├── deconv/               # Composable deconvolution (PFBSolver + presets registry)
-│   ├── operators/            # Mathematical operators (gridding, PSF, Psi)
-│   ├── opt/                  # Optimization algorithms (PCG, FISTA, primal-dual)
-│   ├── prox/                 # Proximal operators
-│   ├── utils/                # Utility functions (FITS I/O, naming, weighting)
-│   └── wavelets/             # Wavelet transform implementations
-├── scripts/                  # Profiling and automation scripts
-├── tests/
-├── Dockerfile
-├── pyproject.toml
-├── tbump.toml
-├── .pre-commit-config.yaml
-└── README.md
+src/pfb_imaging/
+├── _container_image.py   # container image URL (single source of truth)
+├── cabs/                 # generated cab definitions (YAML) -- never edit by hand
+├── cli/                  # lightweight Typer wrappers; lazy-import core
+├── core/                 # command implementations (imager, deconv, restore, degrid, hci)
+├── deconv/               # composable deconvolution (PFBSolver + presets registry)
+├── operators/            # gridding, PSF/Hessian, Psi, band workers
+├── opt/                  # PCG and primal-dual
+├── prox/                 # proximal operators
+├── utils/                # FITS I/O, naming, weighting, MSv4 seams
+└── wavelets/             # wavelet transforms
 ```
+
+`scripts/` holds profiling and automation helpers, plus `scripts/msv4_issues/` reproducers
+and `scripts/check_docs.py`, which gates this file and the wiki against each other.
