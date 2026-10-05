@@ -309,149 +309,125 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D19 — Image-space arrays on the hci path are (Y, X)-ordered end to end
 
-- **Context:** The `hci` BeamWizard beam path historically carried a
-  transpose+flip "hack to get the images to align" (`547458f`), later removed
-  (`330bc5d`), and then bypassed reprojection entirely (`a516530`) during the
-  jagged-beam-gain investigation (breifast#208). The hack compensated three real
-  bugs in `reproject_and_interp_scat_beam` (transposed array feed, target
-  `crpix` off by one, wrong target `CDELT1` sign) and was only approximately
-  correct because the MeerKAT beam is nearly circular — measured errors: 4.3 %
-  of peak (circular), 21 % (elliptical), rephasing offsets applied along the
-  wrong axis; it also required square images.
-- **Decision:** Cube/FITS **(Y, X)** order is canonical for every image-space
-  array on the hci path — beam maps (`get_rotation_averaged_beam`, native since
-  meerkat-beams `616906b`; `reproject_and_interp_scat_beam`, fixed to the
-  measured reproject semantics with the 1D `l_beam`/`m_beam` coords, signed
-  cdelt/crpix, target WCS = the hci output header) *and* `stokes_image`'s
-  working arrays (`residual`/`psf`/`pbeam`) and cube outputs. **No data-moving
-  transposes and no flips exist.** ducc's x-major world is confined to the
-  `vis2dirty` call sites, which fill the `(ny, nx)` buffers through zero-copy
-  transposed views (`dirty=buf.T`; ducc accepts strided output). The other
-  x-major seam is `fitcleanbeam` — shared with the legacy `.dds` path, its PA
-  convention defined by its input axes — called with `yx_order=True`, an
-  explicit flag that adapts via an internal zero-copy view and returns
+- **Context:** The `hci` BeamWizard beam path historically carried a transpose+flip "hack to
+  get the images to align" (`547458f`), later removed (`330bc5d`), and then bypassed
+  reprojection entirely (`a516530`) during the jagged-beam-gain investigation (breifast#208).
+  The hack compensated three real bugs in `reproject_and_interp_scat_beam` (transposed array
+  feed, target `crpix` off by one, wrong target `CDELT1` sign) and was only approximately
+  correct because the MeerKAT beam is nearly circular — measured errors: 4.3 % of peak
+  (circular), 21 % (elliptical), rephasing offsets applied along the wrong axis; it also
+  required square images.
+- **Decision:** Cube/FITS **(Y, X)** order is canonical for every image-space array on the hci
+  path — beam maps (`get_rotation_averaged_beam`, native since meerkat-beams `616906b`;
+  `reproject_and_interp_scat_beam`, fixed to the measured reproject semantics with the 1D
+  `l_beam`/`m_beam` coords, signed cdelt/crpix, target WCS = the hci output header) *and*
+  `stokes_image`'s working arrays (`residual`/`psf`/`pbeam`) and cube outputs. **No data-moving
+  transposes and no flips exist.** ducc's x-major world is confined to the `vis2dirty` call
+  sites, which fill the `(ny, nx)` buffers through zero-copy transposed views (`dirty=buf.T`;
+  ducc accepts strided output). The other x-major seam is `fitcleanbeam` — shared with the
+  legacy `.dds` path, its PA convention defined by its input axes — called with
+  `yx_order=True`, an explicit flag that adapts via an internal zero-copy view and returns
   identical parameters for either order.
-- **Rationale:** Every layer keeps the index order its producer defines
-  (astropy/reproject, the wizard, the cube and FITS are (Y, X); only ducc and
-  legacy `fitcleanbeam` are x-major), so orientation is auditable at two
-  explicit seams instead of smeared across compensating transposes and hacks.
-  Conventions were pinned by measurement, not derivation:
+- **Rationale:** Every layer keeps the index order its producer defines (astropy/reproject, the
+  wizard, the cube and FITS are (Y, X); only ducc and legacy `fitcleanbeam` are x-major), so
+  orientation is auditable at two explicit seams instead of smeared across compensating
+  transposes and hacks. Conventions were pinned by measurement, not derivation:
   image-and-beam-orientation.md.
-- **Consequences:** Non-square images work. The refactor was verified
-  output-equivalent against the pre-refactor code on the test MS (cube/psf to
-  single-precision threading noise ~1e-7; `psf_pa` bitwise). The `.dt` imager
-  path has since followed (D20); only the legacy `.dds` reference code keeps
-  wgridder (X, Y) arrays. The zarr-beam branch (`reproject_and_interp_beam` +
-  its surviving hack + the feed→sky parity question) was the one exception on
-  the hci path; D25 deleted it, so no transpose or flip remains there either.
-  Changing any transpose/flip on this path must keep
-  `tests/test_beam_orientation.py` green.
-- **Source:** `src/pfb_imaging/utils/beam.py`;
-  `src/pfb_imaging/utils/stokes2im.py` (`stokes_image`, `beam_for_band`);
-  `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
-  `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits
-  `547458f`, `330bc5d`, `a516530`; meerkat-beams `616906b` / PR
-  landmanbester/meerkat-beams#8; ratt-ru/breifast#208.
+- **Consequences:** Non-square images work. The refactor was verified output-equivalent against
+  the pre-refactor code on the test MS (cube/psf to single-precision threading noise ~1e-7;
+  `psf_pa` bitwise). The `.dt` imager path has since followed (D20); only the legacy `.dds`
+  reference code keeps wgridder (X, Y) arrays. The zarr-beam branch
+  (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity question) was the one
+  exception on the hci path; D25 deleted it, so no transpose or flip remains there either.
+  Changing any transpose/flip on this path must keep `tests/test_beam_orientation.py` green.
+- **Source:** `src/pfb_imaging/utils/beam.py`; `src/pfb_imaging/utils/stokes2im.py`
+  (`stokes_image`, `beam_for_band`); `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
+  `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits `547458f`,
+  `330bc5d`, `a516530`; meerkat-beams `616906b` / PR landmanbester/meerkat-beams#8;
+  ratt-ru/breifast#208.
 
 
 ### D20 — The imager+deconv (.dt) path is (Y, X)-ordered end to end
 
-- **Context:** #277 makes (Y, X) canonical everywhere when the legacy
-  subcommands are retired; the imager previously stored `.dt` image-space
-  arrays x-major with dims `("corr", "x", "y")` and the FITS layer axis-swapped
-  at write time.
-- **Decision:** All image-space arrays on the imager+deconv path are
-  `(..., ny, nx)` with `.dt` dims `("corr", "y", "x")` /
-  `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and the scratch
-  `BEAM` is `("corr", "y", "x")` on the output image grid (placed there in
-  pass 1; see D21). `nx`/`ny` keep meaning the X/RA and
-  Y/Dec pixel counts everywhere — only array-axis order changed. ducc's
-  x-major world exists only behind zero-copy `.T` views at the
-  `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided
-  arrays), `fitcleanbeam` is called with `yx_order=True`, and
-  `save_fits(yx_order=True)` writes without axis swaps. The `.mds` stays
-  x-major — that convention is now **owned by pfb-model-spec** (whose
-  `fit_image_cube`/`eval_coeffs_to_slice`/`model_to_ds` pfb-imaging imports since
-  #286); pfb-imaging transposes to/from x-major at the `model_to_ds` (deconv) and
-  `.mds`-read (degrid) call sites. A future `.mds` (Y, X) flip is a pfb-model-spec
-  spec revision (landmanbester/pfb-model-spec#17), not a pfb-imaging change.
-  uv-space grids (COUNTS, weighting) are untouched.
-- **Rationale:** Same as D19 — one canonical order shared with
-  FITS/astropy/reproject, auditable at explicit seams. Extending it to the
-  `.dt` was gated on an on-disk schema change, which the 0.1.0 breaking
-  release sanctions.
-- **Consequences:** **`.dt` stores written by ≤0.0.x must be regenerated**
-  (`pfb imager`) — release-notes line required. Old stores are not rejected on
-  open: `x`/`y`/`x_psf`/`y_psf` still exist as dim *names*, and every read is
-  positional, so without a guard a square-image pre-switch store would
-  deconvolve with silently transposed rasters (model/residual/update FITS
-  flipped about the diagonal). `core/deconv.py` therefore asserts
-  `first.DIRTY.dims == ("corr", "y", "x")` on open and raises loudly instead.
-  Verification method:
-  the ground-truth tests (WCS positions/fluxes, brute-force DFT oracle,
-  per-Stokes fluxes, deconv recovery — all written order-agnostically via WCS
-  and dims names *before* the switch) pass unchanged across it, and non-square
-  shapes are pinned in `tests/test_imager_pass2.py` and
-  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's
-  `nxmax`/`nymax` buffer conventions are crossed between the solvers
-  (`(..., nymax, nxmax)`) and the band workers (`(..., nxmax, nymax)`) — masked
-  by square images, pre-existing, unchanged by this switch.
-- **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py`
-  (ground truth + DFT oracle), `tests/test_imager_pol.py`,
-  `tests/test_deconv.py`; spec/plan of 2026-07-17 (ephemeral).
+- **Context:** #277 makes (Y, X) canonical everywhere when the legacy subcommands are retired;
+  the imager previously stored `.dt` image-space arrays x-major with dims `("corr", "x", "y")`
+  and the FITS layer axis-swapped at write time.
+- **Decision:** All image-space arrays on the imager+deconv path are `(..., ny, nx)` with `.dt`
+  dims `("corr", "y", "x")` / `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and
+  the scratch `BEAM` is `("corr", "y", "x")` on the output image grid (placed there in pass 1;
+  see D21). `nx`/`ny` keep meaning the X/RA and Y/Dec pixel counts everywhere — only array-axis
+  order changed. ducc's x-major world exists only behind zero-copy `.T` views at the
+  `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided arrays),
+  `fitcleanbeam` is called with `yx_order=True`, and `save_fits(yx_order=True)` writes without
+  axis swaps. The `.mds` stays x-major — that convention is now **owned by pfb-model-spec**
+  (whose `fit_image_cube`/`eval_coeffs_to_slice`/`model_to_ds` pfb-imaging imports since #286);
+  pfb-imaging transposes to/from x-major at the `model_to_ds` (deconv) and `.mds`-read (degrid)
+  call sites. A future `.mds` (Y, X) flip is a pfb-model-spec spec revision
+  (landmanbester/pfb-model-spec#17), not a pfb-imaging change. uv-space grids (COUNTS,
+  weighting) are untouched.
+- **Rationale:** Same as D19 — one canonical order shared with FITS/astropy/reproject,
+  auditable at explicit seams. Extending it to the `.dt` was gated on an on-disk schema change,
+  which the 0.1.0 breaking release sanctions.
+- **Consequences:** **`.dt` stores written by ≤0.0.x must be regenerated** (`pfb imager`) —
+  release-notes line required. Old stores are not rejected on open: `x`/`y`/`x_psf`/`y_psf`
+  still exist as dim *names*, and every read is positional, so without a guard a square-image
+  pre-switch store would deconvolve with silently transposed rasters (model/residual/update
+  FITS flipped about the diagonal). `core/deconv.py` therefore asserts `first.DIRTY.dims ==
+  ("corr", "y", "x")` on open and raises loudly instead. Verification method: the ground-truth
+  tests (WCS positions/fluxes, brute-force DFT oracle, per-Stokes fluxes, deconv recovery — all
+  written order-agnostically via WCS and dims names *before* the switch) pass unchanged across
+  it, and non-square shapes are pinned in `tests/test_imager_pass2.py` and
+  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's `nxmax`/`nymax`
+  buffer conventions are crossed between the solvers (`(..., nymax, nxmax)`) and the band
+  workers (`(..., nxmax, nymax)`) — masked by square images, pre-existing, unchanged by this
+  switch.
+- **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py` (ground truth +
+  DFT oracle), `tests/test_imager_pol.py`, `tests/test_deconv.py`; spec/plan of 2026-07-17
+  (ephemeral).
 
 
 ### D21 — Mosaics rephase to a common tangent plane; --target is an in-plane offset
 
-- **Context:** On-the-fly mosaicing (#1, #281) needs multiple fields on one
-  grid. Ported from the abandoned `imager_rephase_and_interp_beam` branch
-  onto the (Y, X) imager.
-- **Decision:** Pass 1 rephases data+UVW to a common phase centre
-  (`--phase-dir`, defaulting to the field barycentre for multi-field
-  selections) BEFORE weighting/averaging/COUNTS, chgcentre-style
-  (w-difference phase rotation). Both old and new UVW are synthesized through
-  the same casacore-measures call and only the DIFFERENCE is applied — to the
-  phases and to the stored coordinates (`uvw + (uvw_new - uvw_old)`) — so the
-  measures-vs-MS earth-orientation systematic (~1e-5 relative, scaling with
-  baseline length) cancels instead of decorrelating off-axis sources (#280
-  remains open for a katpoint-based synthesis). `--target` shifts the image
-  centre within the tangent plane via the existing `center_x/center_y`
-  machinery; the off-centre PSF ramp is predicted adjoint-by-construction
-  (dirty2vis of a unit delta), and `set_wcs` carries the offset as a CRPIX
-  shift (CRVAL stays the tangent point — facet convention). **Beams are
-  computed and placed on the output image grid in pass 1** (#281): the
-  rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam`
-  for MeerKAT band names U/L/S0/S4 — signature kept stable so meerkat-beams
-  can grow weighted time/freq averaging underneath) is evaluated about the
-  FIELD's own pointing on a small grid, then SIN→SIN-reprojected onto the
-  mosaic grid (tangent + target CRPIX shift, zero outside coverage) per
-  piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as
-  is (no beam interpolation in `grid_partition` any more); pieces of a
-  partition share the field so the first piece's beam stands in — replace
-  with a weighted mean when time-dependent beams arrive. Verified on 3
-  MeerKLASS pointings: each partition's wizard beam peaks within half a
+- **Context:** On-the-fly mosaicing (#1, #281) needs multiple fields on one grid. Ported from
+  the abandoned `imager_rephase_and_interp_beam` branch onto the (Y, X) imager.
+- **Decision:** Pass 1 rephases data+UVW to a common phase centre (`--phase-dir`, defaulting to
+  the field barycentre for multi-field selections) BEFORE weighting/averaging/COUNTS,
+  chgcentre-style (w-difference phase rotation). Both old and new UVW are synthesized through
+  the same casacore-measures call and only the DIFFERENCE is applied — to the phases and to the
+  stored coordinates (`uvw + (uvw_new - uvw_old)`) — so the measures-vs-MS earth-orientation
+  systematic (~1e-5 relative, scaling with baseline length) cancels instead of decorrelating
+  off-axis sources (#280 remains open for a katpoint-based synthesis). `--target` shifts the
+  image centre within the tangent plane via the existing `center_x/center_y` machinery; the
+  off-centre PSF ramp is predicted adjoint-by-construction (dirty2vis of a unit delta), and
+  `set_wcs` carries the offset as a CRPIX shift (CRVAL stays the tangent point — facet
+  convention). **Beams are computed and placed on the output image grid in pass 1** (#281): the
+  rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam` for MeerKAT band
+  names U/L/S0/S4 — signature kept stable so meerkat-beams can grow weighted time/freq
+  averaging underneath) is evaluated about the FIELD's own pointing on a small grid, then
+  SIN→SIN-reprojected onto the mosaic grid (tangent + target CRPIX shift, zero outside
+  coverage) per piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as is (no
+  beam interpolation in `grid_partition` any more); pieces of a partition share the field so
+  the first piece's beam stands in — replace with a weighted mean when time-dependent beams
+  arrive. Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
   pixel of its field's predicted position in the 5600² mosaic frame.
-- **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13):
-  `synthesize_uvw` wants MJD seconds, MSv4 time is unix — `to_mjd_time` at
-  the single call site. (2) **Frames about different tangent points are
-  mutually rotated** by ~dra*sin(dec) to first order: a full-field pixel-wise
-  round-trip comparison CANNOT converge (0.14 px displacement at a 0.5 deg
-  radius for a 4 arcmin RA offset at dec 30). The old branch died
-  misdiagnosing this as an "RA-axis geometry bug"; measured central-box floor
-  is ~2e-4 of the dirty peak, i.e. the rephasing itself is numerically sound.
-  Round-trip tests must compare the central box and WCS-mapped source
-  positions, never full-field pixels.
-- **Consequences:** `.dt` attrs: band/partition `ra/dec` = tangent point,
-  `ra0/dec0` = the field's own pointing (kept for the #281 beam
-  reprojection), `l0/m0` = target offset. Deconv consumers are unchanged
-  (HessianTree/residual_from_partitions read the stored beams and l0/m0
-  attrs). Acceptance on real data: `scripts/meerklass_mosaic.py
-  --expect-aligned` (3 MeerKLASS OTF pointings; ghosts at the pre-rephasing
-  positions collapse to ~1% of source; true positions carry the PB-weighted
-  average flux — full mosaic gain needs the #281 beam weighting).
-- **Source:** commit 502fe90 (port; original work 7dcc892/649c0ce/9bc16cc/
-  ef9ae6e on the abandoned branch); `tests/test_imager.py`
-  (rephase round-trip + stokes_vis rephase unit), `tests/test_coords.py`.
+- **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13): `synthesize_uvw` wants MJD
+  seconds, MSv4 time is unix — `to_mjd_time` at the single call site. (2) **Frames about
+  different tangent points are mutually rotated** by ~dra*sin(dec) to first order: a full-field
+  pixel-wise round-trip comparison CANNOT converge (0.14 px displacement at a 0.5 deg radius
+  for a 4 arcmin RA offset at dec 30). The old branch died misdiagnosing this as an "RA-axis
+  geometry bug"; measured central-box floor is ~2e-4 of the dirty peak, i.e. the rephasing
+  itself is numerically sound. Round-trip tests must compare the central box and WCS-mapped
+  source positions, never full-field pixels.
+- **Consequences:** `.dt` attrs: band/partition `ra/dec` = tangent point, `ra0/dec0` = the
+  field's own pointing (kept for the #281 beam reprojection), `l0/m0` = target offset. Deconv
+  consumers are unchanged (HessianTree/residual_from_partitions read the stored beams and l0/m0
+  attrs). Acceptance on real data: `scripts/meerklass_mosaic.py --expect-aligned` (3 MeerKLASS
+  OTF pointings; ghosts at the pre-rephasing positions collapse to ~1% of source; true
+  positions carry the PB-weighted average flux — full mosaic gain needs the #281 beam
+  weighting).
+- **Source:** commit 502fe90 (port; original work 7dcc892/649c0ce/9bc16cc/ ef9ae6e on the
+  abandoned branch); `tests/test_imager.py` (rephase round-trip + stokes_vis rephase unit),
+  `tests/test_coords.py`.
 
 
 ### D22 — The wgridder n-term is folded into the stored BEAM; divide_by_n stays False
@@ -501,45 +477,39 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
 
-- **Context:** The data-term gradient of `½‖V − G(B·x)‖²_W` is
-  `Σ_p B_p·GᵀW(V_p − G(B_p·x))` — it carries an **outer per-partition beam** the
-  apparent (once-attenuated) residual lacks. The Hessian applies the beam on both
-  sides (`H = B GᵀWG B`), so feeding it the apparent residual makes the update
-  over-correct by ~`1/B` where the beam rolls off. Legacy sara did
-  `residual *= beam` right before the preconditioner solve; the gendeconv rewrite
-  reduced `first()` to cache-only and silently lost it (maintainer-spotted; the
-  ground-truth tests run beam≈1/n and could not see it).
-- **Decision:** Two residual products, per band. The **apparent** residual
-  `Σ_p r_p` remains the user-facing one (FITS, λ/rms schedule, `RESIDUAL`).
-  The **gradient** residual `BRESIDUAL = Σ_p B_p·r_p` is what
-  `first()`/`forward()` consume. Because it is not derivable from the apparent
-  sum when partitions carry distinct beams (mosaics), pass 2 stores
-  `BDIRTY = Σ_p B_p·dirty_p` (the model-free term) and
-  `residual_from_partitions(..., bdirty=…)` accumulates both residuals in one
-  sweep; deconv writes `BRESIDUAL` back for resume.
-- **Rationale:** Exact per-partition attenuation (not a band-average
-  approximation) at negligible cost — pass 2 has each `dirty_p` in memory and the
-  residual loop already visits every partition. λ/rms stay on the apparent
-  residual, matching legacy (rms was computed before `residual *= beam`).
-- **Consequences:** `.dt` trees without `BDIRTY` are refused ("re-run pfb
-  imager"); resuming a deconv started before this change needs a restart
-  (`MODEL` without `BRESIDUAL` is refused). Debug aid: `pfb deconv
-  --fits-per-partition` writes per-partition dirty/residual/apparent-model FITS
-  (re-gridded from the stored `VIS` worker-side, chi2 stats in the headers) to
-  localise mosaic misfits to specific partitions; `--debug` additionally logs
-  per-partition vis-space chi2 every major iteration and writes the chi2
-  trajectories plus baseline-binned residual profiles to
-  `<fits_oname>_<suffix>_debug.json`. Guards:
+- **Context:** The data-term gradient of `½‖V − G(B·x)‖²_W` is `Σ_p B_p·GᵀW(V_p − G(B_p·x))` —
+  it carries an **outer per-partition beam** the apparent (once-attenuated) residual lacks. The
+  Hessian applies the beam on both sides (`H = B GᵀWG B`), so feeding it the apparent residual
+  makes the update over-correct by ~`1/B` where the beam rolls off. Legacy sara did `residual
+  *= beam` right before the preconditioner solve; the gendeconv rewrite reduced `first()` to
+  cache-only and silently lost it (maintainer-spotted; the ground-truth tests run beam≈1/n and
+  could not see it).
+- **Decision:** Two residual products, per band. The **apparent** residual `Σ_p r_p` remains
+  the user-facing one (FITS, λ/rms schedule, `RESIDUAL`). The **gradient** residual `BRESIDUAL
+  = Σ_p B_p·r_p` is what `first()`/`forward()` consume. Because it is not derivable from the
+  apparent sum when partitions carry distinct beams (mosaics), pass 2 stores `BDIRTY = Σ_p
+  B_p·dirty_p` (the model-free term) and `residual_from_partitions(..., bdirty=…)` accumulates
+  both residuals in one sweep; deconv writes `BRESIDUAL` back for resume.
+- **Rationale:** Exact per-partition attenuation (not a band-average approximation) at
+  negligible cost — pass 2 has each `dirty_p` in memory and the residual loop already visits
+  every partition. λ/rms stay on the apparent residual, matching legacy (rms was computed
+  before `residual *= beam`).
+- **Consequences:** `.dt` trees without `BDIRTY` are refused ("re-run pfb imager"); resuming a
+  deconv started before this change needs a restart (`MODEL` without `BRESIDUAL` is refused).
+  Debug aid: `pfb deconv --fits-per-partition` writes per-partition
+  dirty/residual/apparent-model FITS (re-gridded from the stored `VIS` worker-side, chi2 stats
+  in the headers) to localise mosaic misfits to specific partitions; `--debug` additionally
+  logs per-partition vis-space chi2 every major iteration and writes the chi2 trajectories plus
+  baseline-binned residual profiles to `<fits_oname>_<suffix>_debug.json`. Guards:
   `tests/test_imager_pass2.py::test_residual_gradient_beam_applied_twice`,
-  `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct
-  per-partition beams), `test_deconv_requires_bdirty`;
-  `tests/test_preconditioner_consistency.py` (with `rmsfactor=0`/`positivity=0`
-  the preconditioned cycle's fixed point is the exact-Hessian solution — an
-  apparent-vs-beam-attenuated gradient bias would move it, plus an e2e
+  `tests/test_deconv.py::test_band_workers_load_matches_driver_side` (distinct per-partition
+  beams), `test_deconv_requires_bdirty`; `tests/test_preconditioner_consistency.py` (with
+  `rmsfactor=0`/`positivity=0` the preconditioned cycle's fixed point is the exact-Hessian
+  solution — an apparent-vs-beam-attenuated gradient bias would move it, plus an e2e
   noise-floor smoke).
 - **Source:** legacy `core/sara.py:280` (`residual *= beam`, 7eb3f1d~1);
-  `operators/gridder.residual_from_partitions`; `core/imager._grid_image`;
-  `core/deconv.py`; `deconv/pfb.py::first`.
+  `operators/gridder.residual_from_partitions`; `core/imager._grid_image`; `core/deconv.py`;
+  `deconv/pfb.py::first`.
 
 
 ### D24 — hci transient injection: fringe sign, differential rephasing, 1/n, w-term sign
@@ -733,13 +703,12 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D28 — `freq_out` is the effective (weighted) frequency, reduced at three levels
 
-- **Context:** `freq_out` was the band-edge midpoint from a `linspace` over the frequency
-  span, but channels are sliced *by count* and assigned to the nearest midpoint, so the
-  label was wrong by up to half a channel whenever `nband` did not divide `nchan` (#296).
-  Worse, `stokes_vis` evaluated the **primary beam** at that same value: the beam was being
-  *computed* at the wrong frequency, not merely reported at one. Flagging makes it worse
-  still — a fully flagged channel moves a band's centre of mass by a whole channel width,
-  which a frequency-uniform grid cannot represent at all.
+- **Context:** `freq_out` was the band-edge midpoint from a `linspace`, but channels are sliced
+  *by count* and assigned to the nearest midpoint, so the label was wrong by up to half a channel
+  whenever `nband` did not divide `nchan` (#296). Worse, `stokes_vis` evaluated the **primary
+  beam** at that value — the beam was *computed* at the wrong frequency, not merely reported at
+  one. Flagging compounds it: a fully flagged channel moves a band's centre of mass by a whole
+  channel width.
 - **Decision:** `freq_out` means the **weight-weighted mean frequency of the channels
   actually gridded**, reduced at three levels:
   1. **piece** (`stokes_vis`, pass 1) — `Σ w·mask·ν / Σ w·mask` over the post-averaging
@@ -785,13 +754,12 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D29 — Restore names its flux scale; the MFS clean beam is fitted to the MFS PSF
 
-- **Context:** `restore` was the last `.dds` consumer (#303). Porting it to the `.dt`
-  exposed two latent errors. First, the band `MODEL` is intrinsic flux (the forward solve
-  fits `V ≈ G(B·m)`, D22/D23) while the band `RESIDUAL` is apparent, once-attenuated flux
-  (`operators/gridder.residual_from_partitions`); legacy `restore_image` added them
-  directly, which is only correct where `B ≈ 1`. Second, with one PSF per data partition
-  the restoring beam was undefined, and the MFS beam was taken as the *mean of the
-  per-band fitted Gaussians* — a value with no referent when bands are not homogenised.
+- **Context:** porting `restore` to the `.dt` (#303) exposed two latent errors. The band `MODEL`
+  is intrinsic flux (the forward solve fits `V ≈ G(B·m)`, D22/D23) while the band `RESIDUAL` is
+  apparent, once-attenuated flux; legacy `restore_image` added them directly, correct only where
+  `B ≈ 1`. And with one PSF per data partition the restoring beam was undefined — the MFS beam
+  was the *mean of the per-band fitted Gaussians*, a value with no referent when bands are not
+  homogenised.
 - **Decision:** Restore emits three separately-named products, selected by CLI letter and
   stored as distinct band variables: `BIMAGE` (`a`/`A`) `= (B̄·m) ⊗ G + r/wsum`, apparent
   throughout; `IMAGE` (`i`/`I`) `= m ⊗ G + r/(wsum·B̄)`, intrinsic throughout and zeroed
