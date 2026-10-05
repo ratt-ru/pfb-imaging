@@ -6,9 +6,11 @@ thin fsspec wrapper -- `.fs.glob`, `.fs.unstrip_protocol`, `.url`, `.exists()`,
 it and drop a dask-ms (hence python-casacore) dependency from paths that never
 needed one.
 
-The equivalence tests below run only where dask-ms is installed: they exist to
-pin the claim against the thing they replaced, and the claim is what matters on
-an install that cannot have dask-ms at all.
+These tests need only fsspec, so they run on every install. The two
+DaskMSStore-equivalence tests that used to live here were deleted once the
+replacement had shipped: they forced a module-scope importorskip that made all
+13 tests skip without the [casacore] extra -- including on the aarch64 leg the
+project gates on -- which is the same cascade #330 fixed for `ms_name`.
 """
 
 from pathlib import PurePath
@@ -16,8 +18,6 @@ from pathlib import PurePath
 import pytest
 
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
-
-daskms_store = pytest.importorskip("daskms.fsspec_store", reason="dask-ms is behind the [casacore] extra")
 
 
 @pytest.fixture
@@ -109,34 +109,6 @@ def test_glob_uris_tolerates_a_trailing_slash(store_tree):
 def test_glob_uris_returns_empty_rather_than_raising(tmp_path):
     """Callers report "No MS at ..." themselves; they know what they looked for."""
     assert glob_uris(f"{tmp_path}/*.ms") == []
-
-
-def test_glob_uris_matches_daskmsstore(store_tree):
-    """The replacement must expand patterns exactly as DaskMSStore did."""
-    pattern = f"{store_tree}/*.ms"
-    store = daskms_store.DaskMSStore(pattern)
-    legacy = list(map(store.fs.unstrip_protocol, store.fs.glob(pattern)))
-
-    assert glob_uris(pattern) == legacy
-
-
-@pytest.mark.parametrize(
-    "spelling",
-    ["{p}", "{p}/", "file://{p}", "{p}/./", "{p}/sub/../sub", "s3://bucket/some.ms"],
-)
-def test_uri_matches_daskmsstore_url(tmp_path, spelling):
-    """`.url` is the string every store call site used; ours must equal it.
-
-    DaskMSStore's `.url` is `fs.unstrip_protocol(get_mapper(url).root)`, and for
-    a plain store -- no `path::SUBTABLE` -- that is the same normalisation
-    `fsspec.core.url_to_fs` performs. This pins that, including for the s3 case
-    the local-path tests cannot reach.
-    """
-    path = spelling.format(p=tmp_path)
-
-    _, uri = uri_and_fs(path)
-
-    assert uri == daskms_store.DaskMSStore(path).url
 
 
 def test_uri_and_fs_refuses_a_path_containing_the_chain_separator(tmp_path):

@@ -31,6 +31,11 @@ What skips now is only what genuinely needs the extra, and each declares it for 
 A test needing casacore's write API takes the `pctable` fixture rather than importing it —
 one reason string, one place to change.
 
+`tests/test_naming.py` used to carry the same cascade at module scope -- one
+`importorskip("daskms.fsspec_store")` skipped all 13 of its tests although only the two
+`DaskMSStore`-equivalence ones needed dask-ms. Those two were deleted and the skip
+removed, so its 11 remaining tests (pure `fsspec`) run on every leg.
+
 ### Dependency groups: one `dev` group, `full` is the heavy axis
 
 There is a single `dev` dependency group (ruff, pre-commit, pytest, tbump, stimela — the
