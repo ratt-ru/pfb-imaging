@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-09-25T12:30:00Z
+timestamp: 2026-10-05T12:44:06Z
 last_verified_commit: 15b5a9e
 ---
 
@@ -41,9 +41,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   three-tier pyramid (unit rdiff < 1e-10, operator equality, e2e on a real MS).
 - **Status:** the e2e oracles (`core/sara.py`, `core/kclean.py`, `init`+`grid`) were
   deleted in 0.1.0 (#277) once ground-truth tests against an injected sky replaced the
-  equivalence tests (which were vacuous in CI — the downloaded MS had zero DATA). The
-  frozen unit-level `opt` oracles (`primal_dual{,_numba}`, `pcg_numba`, `fista`) remain
-  and are still not to be modified.
+  equivalence tests (which were vacuous in CI — the downloaded MS had zero DATA). Only
+  `primal_dual_numba` remains a frozen oracle, and is still not to be modified; it
+  is pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`.
+  `fista` and the bare `primal_dual` were deleted once a grep showed zero callers
+  anywhere in `src/`, `tests/` or `scripts/`. `pcg_numba` is not an oracle at all --
+  `operators/hessian.py` imports it as the live `pcg`.
 - **Rationale:** Mirrors the `init`+`grid` → `imager` strategy, which caught real bugs
   at every tier; ground truth beats equivalence once the legacy side must go.
 - **Consequences:** Known legacy warts stay (see Debt); e2e comparisons must pin a
@@ -1651,9 +1654,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   ancestry (`gh api repos/<repo>/compare/<merge-sha>...<tag>` → `behind_by: 0` means the tag
   contains it). This cost a wrong conclusion on ratt-ru/xarray-ms#170: D14's "arcae >= 0.5.2"
   was read as excluding the 0.4.0-alpha line, which in fact has the coexistence fix.
-- **psi/psih naming is inverted between the two legacy PD implementations** —
-  `primal_dual(psi=synthesis, psih=analysis)` vs `primal_dual_numba(psih=synthesis,
-  psi=analysis)`. Read call sites, not names.
+- **`primal_dual_numba` takes `psih=synthesis, psi=analysis`** -- the inverse of what the
+  names suggest, and the inverse of the `primal_dual` function that was deleted in this
+  PR. Read call sites, not names.
 - **`pcg_numba` mutates `x0` in place** (returns the same buffer).
 - **`psf_oversize` truncates the preconditioner PSF** (`nx_psf =
   good_size(psf_oversize·nx)`, default 1.4, not 2). It only affects the
