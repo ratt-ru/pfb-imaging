@@ -36,6 +36,23 @@ one reason string, one place to change.
 `DaskMSStore`-equivalence ones needed dask-ms. Those two were deleted and the skip
 removed, so its 11 remaining tests (pure `fsspec`) run on every leg.
 
+**Shared session fixtures are load-bearing, not an optimisation.** `band_pool` hands out
+one `BandWorkerPool` per `(nband, nthreads)` because Ray actor startup, not arithmetic,
+dominated the pool-backed tests. Two `HessTreeRay` facades on one pool must share their
+`init_hess` args or be used strictly sequentially (`freq_prec` is driver-side and safe to
+differ). `manage_ray` runs `ray.init(num_cpus=2)`: session-scoped pool actors starve a
+1-CPU cluster and hang `test_hci` to its timeout. `gt_dt`/`gt_deconv_dt` image and
+deconvolve the ground-truth sky once for every test that needs it, and `sky_truth` is
+session-scoped to allow that. Do not convert `nband == 1` call sites: that branch runs
+in-process and never imports Ray. `tests/test_band_pool.py` pins the reuse equivalence.
+
+**The session MS is shared and session-injected.** `sky_truth` writes DATA/FLAG into it
+once per session, so any test that writes to it -- including through dask-ms
+`xds_to_table`, which a grep for `putcol` will not find -- must take the `writable_ms`
+fixture (a function-scoped copy) instead of `ms_name`, and use it for *every* access in
+that test. A forgotten writer passes in the fast loop and the slow loop separately and only
+fails under `-m ""`.
+
 ### Dependency groups: one `dev` group, `full` is the heavy axis
 
 There is a single `dev` dependency group (ruff, pre-commit, pytest, tbump, stimela — the
@@ -65,14 +82,14 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 744 tests -- run THIS locally
-uv run pytest -m slow tests/  # only the deselected 41
-uv run pytest -m "" tests/    # everything, 785 tests, ~13 min -- leave this to CI
+uv run pytest tests/          # fast loop: 743 passed + 1 skipped, ~108 s -- run THIS locally
+uv run pytest -m slow tests/  # only the deselected 41, ~465 s
+uv run pytest -m "" tests/    # everything, 785 tests, ~9.5 min -- leave this to CI
 ```
 
 **The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the
 whole suite on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
-`--extra all` and `--extra full`). Reproducing one of those locally costs ~13 min and
+`--extra all` and `--extra full`). Reproducing one of those locally costs ~9.5 min and
 still covers less than a push does. Run fast, push, read the result.
 
 A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
