@@ -89,9 +89,9 @@ session's `num_cpus`/`runtime_env`).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 743 passed + 1 skipped, ~108 s -- run THIS locally
+uv run pytest tests/          # fast loop: 745 passed + 1 skipped, ~108 s -- run THIS locally
 uv run pytest -m slow tests/  # only the deselected 41, ~465 s
-uv run pytest -m "" tests/    # everything, 785 tests, ~9.5 min -- leave this to CI
+uv run pytest -m "" tests/    # everything, 787 tests, ~9.5 min -- leave this to CI
 ```
 
 **The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the
