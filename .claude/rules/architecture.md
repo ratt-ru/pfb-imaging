@@ -8,13 +8,11 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 * Each command lives in a separate file under `src/pfb_imaging/cli/` and is registered in `cli/__init__.py`.
 * CLI modules must stay lightweight — lazy-import core implementations so `pfb --help` and cab generation don't pull in the scientific stack.
 
-## 2. Typer Option/Argument Syntax (CRITICAL)
+## 2. Typer Option/Argument Syntax
 
-**NEVER** use `None` as a positional argument to `typer.Option()` — it causes `AttributeError`.
-
-* **Required:** `Annotated[Type, typer.Option(..., help="...")]` (no `= default`).
-* **Optional with default:** `Annotated[Type, typer.Option(help="...")] = default`.
-* **Optional None:** `Annotated[Type | None, typer.Option(help="...")] = None`.
+Canonical copy lives in `python-standards.md` §2, which loads on every `**/*.py` edit — a
+superset of the files this page loads on. Section number kept so existing cross-references
+resolve.
 
 ## 3. Import Style
 
@@ -25,8 +23,6 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
 5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s `primal_dual_numba`).
-
-(A **python-casacore-pulling** exception previously applied to the MSv4 imaging path; it was retired once arcae ≥ 0.5.2 made arcae and python-casacore coexist in one process — see wiki design-decisions D14. `africanus`/`daskms` imports now live at module scope like any other.)
 
 **Every in-function import must carry a short inline comment stating why it cannot live
 at module scope** (e.g. `# deferred: import cycle with operators.hessian` or
@@ -97,8 +93,11 @@ spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
 ## 7. Performance
 
 * Numba JIT with TBB threading for critical loops.
-* DUCC0 for gridding anOne thing to note is that the raylets d FFT.
-* Dask for parallel chunk processing (`--nworkers`), threads for FFTs/gridding (`--nthreads`).
+* DUCC0 for gridding and FFT.
+* Dask for parallel chunk processing on the **`hci`** path only (`core/hci.py`, `utils/misc.py`,
+  `operators/fft.py`); threads for FFTs/gridding (`--nthreads`). The imager/deconv/degrid path is
+  Ray, and `degrid`'s `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the
+  last `distributed` consumer).
 * Ray actors for process-level parallelism in wavelet operators.
 * See `scripts/profiling.md` for profiling guides.
 
