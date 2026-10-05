@@ -36,22 +36,24 @@ one reason string, one place to change.
 `DaskMSStore`-equivalence ones needed dask-ms. Those two were deleted and the skip
 removed, so its 11 remaining tests (pure `fsspec`) run on every leg.
 
-**Shared session fixtures are load-bearing, not an optimisation.** `band_pool` hands out
-one `BandWorkerPool` per `(nband, nthreads)` because Ray actor startup, not arithmetic,
-dominated the pool-backed tests. Two `HessTreeRay` facades on one pool must share their
-`init_hess` args or be used strictly sequentially (`freq_prec` is driver-side and safe to
-differ). `manage_ray` runs `ray.init(num_cpus=2)`: session-scoped pool actors starve a
-1-CPU cluster and hang `test_hci` to its timeout. `gt_dt`/`gt_deconv_dt` image and
-deconvolve the ground-truth sky once for every test that needs it, and `sky_truth` is
-session-scoped to allow that. Do not convert `nband == 1` call sites: that branch runs
-in-process and never imports Ray. `tests/test_band_pool.py` pins the reuse equivalence.
+**Shared session fixtures (D44).** `band_pool` hands out one `BandWorkerPool` per
+`(nband, nthreads)`; `gt_dt`/`gt_deconv_dt` image and deconvolve the ground-truth sky once;
+`sky_truth` is session-scoped; `manage_ray` runs `ray.init(num_cpus=2)`. The rules that come
+with that, each established by breaking it:
 
-**The session MS is shared and session-injected.** `sky_truth` writes DATA/FLAG into it
-once per session, so any test that writes to it -- including through dask-ms
-`xds_to_table`, which a grep for `putcol` will not find -- must take the `writable_ms`
-fixture (a function-scoped copy) instead of `ms_name`, and use it for *every* access in
-that test. A forgotten writer passes in the fast loop and the slow loop separately and only
-fails under `-m ""`.
+* Two `HessTreeRay` facades on one pool **must** share their `init_hess` args or be used
+  strictly sequentially (`freq_prec` is driver-side and safe to differ).
+* **`keep_ray_alive=True` is mandatory** in any test calling `imager_core`/`hci_core` — without
+  it the driver calls `ray.shutdown()` and tears down the session cluster and every cached actor.
+* **Do not convert `nband == 1` call sites** — that branch runs in-process and never imports Ray.
+* **Do not make `conftest.manage_ray` opt-in** to save its ~4.5 s; the same reasoning rules out
+  `pytest-xdist`.
+* **Any test that writes to the session MS takes the `writable_ms` fixture** (a function-scoped
+  copy) instead of `ms_name`, and uses it for *every* access in that test — including writes
+  through dask-ms `xds_to_table`, which a grep for `putcol` will not find. A forgotten writer
+  passes in the fast loop and the slow loop separately and fails only under `-m ""`.
+
+`tests/test_band_pool.py` pins the reuse equivalence. Why each of these holds: **D44**.
 
 ### Dependency groups: one `dev` group, `full` is the heavy axis
 
@@ -84,47 +86,34 @@ calls `ray.shutdown()` and tears down the session cluster and every actor cached
 `band_pool` fixture (which now rebuilds its cache if Ray is down, but without the
 session's `num_cpus`/`runtime_env`).
 
-### Fast by default, slow in CI
+### Fast by default — and the fast loop is the only loop you run
 
-`pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the fast loop:
+`pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # fast loop: 745 passed + 1 skipped, ~108 s -- run THIS locally
-uv run pytest -m slow tests/  # only the deselected 41, ~465 s
-uv run pytest -m "" tests/    # everything, 787 tests, ~9.5 min -- leave this to CI
+uv run pytest tests/          # 745 passed + 1 skipped, ~108 s -- run THIS
 ```
 
-**The local loop is `uv run pytest tests/`, full stop.** `-m ""` is CI's job: it runs the
-whole suite on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
-`--extra all` and `--extra full`). Reproducing one of those locally costs ~9.5 min and
-still covers less than a push does. Run fast, push, read the result.
+**Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
+costs ~465 s and `uv run pytest -m "" tests/` costs ~9.5 min, and CI already runs the whole suite
+(787 collected: 786 passed + 1 skipped) on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
+`--extra all` and `--extra full`. Reproducing one leg locally costs more than a push and covers
+less. Run fast, push, read the result.
 
-A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
-Both `ci.yml` and `publish.yml` therefore pass `-m ""` — a release must be gated on the whole
-suite. `ci.yml` also runs `pytest -m slow --collect-only` as a guard, so a broken override
-cannot silently drop the slow set everywhere at once (pytest exits 5 when a selection collects
-nothing).
+**The one exception is a change to `conftest.py`'s session fixtures.** Slow tests consume them
+most heavily and are the least likely to have been re-run: a fixture-basename change reached
+final review in #336 with two broken assertions (`test_deconv.py`, `test_imager.py`) that only
+a full run caught. Change a session fixture, run the slow set once. Otherwise, don't.
 
-**Marking rule: a test is `slow` when its _cheapest_ parametrisation costs ≥2 s.** The
-"cheapest" qualifier is load-bearing. Several functions look expensive but are only carrying a
-one-off warm-up — JIT, beam-model load, Ray spin-up — attributed to whichever param ran first
-(`test_beam`: 4.40 s then 11 × 0.00 s; `test_psi`: 4.15 s then 23 × ~0.01 s). That cost is
-sticky to the *run*, not the test: marking such a function evicts its tests without removing
-the time, which simply reattaches to whatever runs next. Confirmed in practice — deselecting
-`test_hci_channels_per_bin_invariance_no_beam` pushed the hci warm-up onto
-`test_hci_produces_expected_output_structure`, which went from cheap to 10.19 s. Do not chase
-those; it is whack-a-mole.
+A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins), so
+`ci.yml` and `publish.yml` both pass `-m ""` — a release is gated on the whole suite. `ci.yml`
+also runs `pytest -m slow --collect-only` as a guard, so a broken override cannot silently drop
+the slow set everywhere at once (pytest exits 5 when a selection collects nothing). `addopts`
+carries `--durations=10` so a newly-slow test surfaces in the fast loop's own output.
 
-`addopts` also carries `--durations=10` so a genuinely newly-slow test surfaces in the fast
-loop's own output instead of quietly rotting there.
-
-**Do not make `conftest.manage_ray` opt-in to save its ~4.5 s.** No test calls Ray directly;
-that autouse fixture pre-seeds `ray.init` with a specific `runtime_env`
-(`worker_process_setup_hook`, and the `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0` workaround `conftest.py`
-documents as a hang-cause), which the source-level `ray.init(ignore_reinit_error=True)` in
-`src/pfb_imaging/__init__.py` then attaches to. Opt-in means a test that needs Ray but forgets
-to request the fixture silently gets a differently-configured cluster, or hangs. The same
-reasoning rules out `pytest-xdist`: each worker would stand up its own Ray cluster.
+**Marking rule: a test is `slow` when its _cheapest_ parametrisation costs ≥ 2 s.** The
+"cheapest" qualifier is load-bearing and the reasoning is **D45** — marking a warm-up carrier
+evicts the test without removing the time. Do not chase warm-up spikes; it is whack-a-mole.
 
 ## 2. Commit Messages
 

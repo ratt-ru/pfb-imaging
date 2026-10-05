@@ -1314,6 +1314,63 @@ update it (and this page's `last_verified_commit`) in the same session.
   `.claude/rules/architecture.md` §6.
 - **Source:** issues #278, #330.
 
+### D44 — Shared session fixtures are load-bearing, not an optimisation
+
+- **Context:** the fast loop had grown to ~156 s, and `--durations` showed the cost was not
+  arithmetic but **Ray actor startup**, paid again by every test that built a `BandWorkerPool`,
+  plus whole imager/deconv pipeline runs repeated per test (#336).
+- **Decision:** `conftest.band_pool` hands out one `BandWorkerPool` per `(nband, nthreads)` for
+  the session; `gt_dt`/`gt_deconv_dt` image and deconvolve the ground-truth sky once; `sky_truth`
+  is session-scoped to allow that; `manage_ray` runs `ray.init(num_cpus=2)`.
+- **Rationale and the constraints that come with it** — each was established by breaking it:
+  - **Two `HessTreeRay` facades on one pool must share their `init_hess` args, or be used
+    strictly sequentially.** A second facade's `init_hess` overwrites the first's in-worker
+    state, and both parametrisations then fail loudly. `freq_prec` is driver-side and safe to
+    differ.
+  - **`num_cpus=2` is required.** Session-scoped pool actors starve a 1-CPU cluster and hang
+    `test_hci` to its 300 s timeout.
+  - **`keep_ray_alive=True` is mandatory** for any test calling `imager_core`/`hci_core`, or the
+    driver calls `ray.shutdown()` and tears down the session cluster and every cached actor. The
+    pool rebuilds its cache if Ray is down, but without the session's `num_cpus`/`runtime_env`.
+  - **`nband == 1` call sites must not be converted.** That branch runs in-process and never
+    imports Ray, so a pool buys nothing and costs a process.
+  - **`manage_ray` must stay autouse.** It pre-seeds `ray.init` with a specific `runtime_env`
+    (`worker_process_setup_hook`, and the `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0` hang workaround)
+    that the source-level `ray.init(ignore_reinit_error=True)` then attaches to. Opt-in means a
+    test that forgets it silently gets a differently-configured cluster, or hangs. The same
+    reasoning rules out `pytest-xdist`: each worker would stand up its own Ray cluster.
+- **Consequence — the session MS is shared, and that is order-dependent.** `sky_truth` writes
+  DATA/FLAG into the test MS once per session instead of once per test, so it no longer re-heals
+  the MS between modules. **Any test that writes to it must take the `writable_ms` fixture (a
+  function-scoped copy) and use it for *every* access in that test.** This includes writes
+  through dask-ms `xds_to_table`, which a grep for `putcol` does not find — five such writers
+  existed (`test_hci.py`, `test_imager_pol.py`) and the bug they caused predated the branch,
+  activated only by making `sky_truth` session-scoped. A forgotten writer passes in the fast loop
+  and the slow loop *separately*, and fails only under `-m ""`.
+- **Measured:** fast loop 155.72 s → 107.64 s (−31%); slow set 616 s → ~465 s (−25%).
+- **Source:** PR #336; `tests/conftest.py`; `tests/test_band_pool.py` (pins the reuse
+  equivalence); `src/pfb_imaging/operators/band_worker.py` (`BandWorkerPool.shutdown`).
+
+### D45 — A test is `slow` when its *cheapest* parametrisation costs ≥ 2 s
+
+- **Context:** `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the marker decides what
+  the local loop runs. The obvious rule — mark whatever `--durations` reports as expensive —
+  makes the suite slower, not faster.
+- **Decision:** the threshold is applied to a test's **cheapest** parametrisation, not its most
+  expensive or its mean.
+- **Rationale:** several functions look expensive but are only carrying a one-off warm-up — JIT,
+  beam-model load, Ray spin-up — attributed to whichever parametrisation happened to run first.
+  `test_beam` measures 4.40 s then 11 × 0.00 s; `test_psi` 4.15 s then 23 × ~0.01 s. That cost is
+  sticky to the *run*, not to the test, so marking a warm-up carrier evicts the test without
+  removing the time, which simply reattaches to whatever runs next. **Confirmed in practice:**
+  deselecting `test_hci_channels_per_bin_invariance_no_beam` pushed the hci warm-up onto
+  `test_hci_produces_expected_output_structure`, which went from cheap to 10.19 s. Chasing those
+  is whack-a-mole.
+- **Consequences:** a test may sit in the fast loop although one parametrisation is slow. That is
+  intended. `--durations=10` is in `addopts` so a genuinely newly-slow test surfaces in the fast
+  loop's own output rather than rotting there.
+- **Source:** PR #336; `.claude/rules/testing-and-ci.md` §1.
+
 ## Known debt
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch

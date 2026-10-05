@@ -76,20 +76,16 @@ telemetry in the progress lines). Before touching pass 1/2 or debugging footprin
 uv run ruff format . && uv run ruff check . --fix
 ```
 
-**Tests are fast by default, and the fast loop is the *only* loop you run locally.**
-`pyproject.toml`'s `addopts` carries `-m "not slow"`, so `uv run pytest tests/` runs 745
-tests in ~108 s (measured with nothing else running). The 41 deselected tests are the end-to-end pipeline ones
-(`*_groundtruth`, the imager/deconv/restore/hci and degrid drivers, and the end-to-end
-degrid null) plus a few whose cost is Ray actor startup or a dense operator build (the
-`_build_hess` preset-wiring pair, the frequency-prior fixed-point guard and the
-frequency-prior spectrum guards).
+**Tests are fast by default, and the fast loop is the *only* loop you run locally:**
 
-**Do not run `-m ""` locally — that is CI's job.** The full suite (`-m ""`, 786 passed + 1 skipped) takes ~9.5 min here and
-CI runs it on every push across six legs (x86_64 3.11/3.12/3.13 and aarch64, each with
-`--extra all` and `--extra full`), which is broader coverage than one local run can give.
-Run the fast loop, push, and read the CI result. A test earns the
-`slow` marker when its *cheapest* parametrisation costs ≥2 s — see `.claude/rules/testing-and-ci.md` §1
-for why "cheapest" matters and why chasing warm-up spikes is whack-a-mole.
+```bash
+uv run pytest tests/
+```
+
+**Never run the slow set (`-m slow`) or the full suite (`-m ""`) locally** — CI runs everything
+on every push across six legs, which is broader coverage than one local run can give. The single
+exception is a change to `conftest.py`'s session fixtures. Counts, timings and the marking rule:
+`.claude/rules/testing-and-ci.md` §1.
 
 ## Working Effectively (notes for agents)
 
