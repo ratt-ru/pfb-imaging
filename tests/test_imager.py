@@ -197,19 +197,16 @@ def _peak_yx(da_2d):
     raise AssertionError(f"unexpected image dims {da_2d.dims}")
 
 
-@pytest.mark.slow
-def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
-    """Injected sources land at their (RA, Dec) through the FITS WCS, at the
-    right flux; the .dt arrays agree via their dims names.
+@pytest.fixture(scope="module")
+def gt_imager_fits(ms_name, sky_truth, tmp_path_factory):
+    """One ground-truth imager run with both MFS and per-partition FITS on.
 
-    Written order-agnostically (WCS + dims, never raw index order) so it
-    passes identically before and after the (Y, X) switch -- it is the safety
-    net for that switch.
+    test_imager_groundtruth and test_imager_fits_per_partition differ only in
+    which FITS they ask for (fits_mfs vs fits_per_partition) and assert on, so
+    one run with both flags serves both. Returns (outname, fits_dir).
     """
-    from astropy.io import fits as afits
-    from astropy.wcs import WCS
-
-    outname = str(tmp_path / "gt")
+    root = tmp_path_factory.mktemp("gt_imager_fits")
+    outname = str(root / "gt")
     imager_core(
         [Path(ms_name)],
         outname,
@@ -222,12 +219,29 @@ def test_imager_groundtruth(sky_truth, ms_name, tmp_path):
         robustness=None,
         fits_mfs=True,
         fits_cubes=False,
+        fits_per_partition=True,
         overwrite=True,
         keep_ray_alive=True,
     )
+    return outname, root / "fits"
+
+
+@pytest.mark.slow
+def test_imager_groundtruth(sky_truth, gt_imager_fits):
+    """Injected sources land at their (RA, Dec) through the FITS WCS, at the
+    right flux; the .dt arrays agree via their dims names.
+
+    Written order-agnostically (WCS + dims, never raw index order) so it
+    passes identically before and after the (Y, X) switch -- it is the safety
+    net for that switch.
+    """
+    from astropy.io import fits as afits
+    from astropy.wcs import WCS
+
+    outname, fits_dir = gt_imager_fits
 
     # --- FITS: WCS positions and fluxes ---
-    fits_files = glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
+    fits_files = glob.glob(str(fits_dir / "*dirty*mfs.fits"))
     assert len(fits_files) == 1
     with afits.open(fits_files[0]) as hdul:
         img = hdul[0].data.squeeze()  # (ny, nx) FITS layout
@@ -596,30 +610,15 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
 
 
 @pytest.mark.slow
-def test_imager_fits_per_partition(sky_truth, ms_name, tmp_path):
+def test_imager_fits_per_partition(sky_truth, gt_imager_fits):
     """Per-partition sanity FITS: one file per computed variable per partition,
     with a WCS that puts the injected sources where they belong."""
     from astropy.io import fits as afits
     from astropy.wcs import WCS
 
-    outname = str(tmp_path / "perpart")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=2,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=None,
-        fits_mfs=False,
-        fits_cubes=False,
-        fits_per_partition=True,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
+    outname, fits_dir = gt_imager_fits
 
-    pdir = tmp_path / "fits" / "perpart_I_partitions"
+    pdir = fits_dir / "gt_I_partitions"
     assert pdir.is_dir(), "partitions FITS subdirectory not created"
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
