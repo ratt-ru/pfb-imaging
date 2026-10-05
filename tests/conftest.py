@@ -601,6 +601,21 @@ collect_ignore = [] if daskms_unusable_reason() is None else ["test_hci.py", "te
 
 
 @pytest.fixture
+def writable_ms(ms_name, tmp_path):
+    """A private copy of the shared test MS, for tests that write to it.
+
+    The session MS is shared and `sky_truth` injects its DATA/FLAG only once per
+    session, so a test that overwrites DATA, FLAG or FLAG_ROW (including via
+    dask-ms `xds_to_table`) would corrupt every later test. Work on a copy.
+    """
+    import shutil
+
+    dest = tmp_path / "writable.ms"
+    shutil.copytree(ms_name, dest)
+    return str(dest)
+
+
+@pytest.fixture
 def degrid_ms(ms_name, tmp_path):
     """A private copy of the shared test MS, safe to add columns to and write.
 
