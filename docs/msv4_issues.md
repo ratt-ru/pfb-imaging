@@ -39,19 +39,15 @@ canonical MAIN columns, which is what allowed the `_create_missing_columns` fall
 
 ### 1. `sync_msv2` silently skips a canonical MAIN column — FIXED
 
-`MODEL_DATA`, `CORRECTED_DATA` and `DATA` are in casacore's canonical MAIN descriptor.
-`generate_column_descriptor` validated such a name and then emitted nothing, so `addcols`
-was never asked for it and the following `to_msv2` had nowhere to write. No error, no warning.
+`generate_column_descriptor` validated a canonical MAIN name (`DATA`, `MODEL_DATA`,
+`CORRECTED_DATA`) and then emitted nothing, so `addcols` was never asked for it and the
+following `to_msv2` had nowhere to write — no error, no warning.
+[ratt-ru/xarray-ms#171](https://github.com/ratt-ru/xarray-ms/issues/171), fixed in 0.4.0a8.
 
-- Filed as [ratt-ru/xarray-ms#171](https://github.com/ratt-ru/xarray-ms/issues/171), fixed by
-  [`d1a37e6`](https://github.com/ratt-ru/xarray-ms/commit/d1a37e68fdd27a8e09df43df7c9b8fde135e3b5a)
-  in 0.4.0a8, which synthesises a creatable fixed-shape descriptor rather than reusing the
-  canonical variable-shape one.
-- Reproducer: [`sync_msv2_canonical_column.py`](../scripts/msv4_issues/sync_msv2_canonical_column.py).
-  On a7 `MODEL_DATA created=False`; on a11 `created=True`.
-- **Done:** `_create_missing_columns` is deleted and the pins now floor at a11, so
-  `ensure_model_columns` relies on `sync_msv2` alone (and on its `ColumnCreationError` to
-  verify). Dropping below 0.4.0a8 would make `degrid` silently write nothing.
+**The pin floor is load-bearing:** `_create_missing_columns` is deleted and
+`ensure_model_columns` relies on `sync_msv2` alone, so dropping below 0.4.0a8 makes `degrid`
+silently write nothing. Reproducer:
+[`sync_msv2_canonical_column.py`](../scripts/msv4_issues/sync_msv2_canonical_column.py).
 
 ### 2. `addcols` then read is answered by a stale table instance — FILED
 
