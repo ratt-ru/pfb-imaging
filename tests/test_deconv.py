@@ -608,6 +608,9 @@ def mop_ds(tmp_path_factory):
     and _preserves_the_run_attrs called _run_mop with no overrides and the same
     seed, so they ran the same ~11.5 s driver three times and differed only in
     what they checked. Read-only: none of the three writes to the tree.
+
+    The dataset is lazily zarr-backed (chunks=None): a consumer that needs to
+    write must take its own copy, not write through this fixture.
     """
     return _run_mop(tmp_path_factory.mktemp("mop_shared"), "mop_shared")
 
