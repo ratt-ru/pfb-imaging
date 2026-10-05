@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-05T14:17:20Z
-last_verified_commit: 198df64
+timestamp: 2026-10-05T17:07:34Z
+last_verified_commit: 08e1daf
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -634,7 +634,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   per-pixel inverse signal variance and couples bands through `D^½C⁻¹ₙD^½`. The workers still
   apply `e(x)` exactly as described here; the coupling is a driver-side remainder.
 - **Inspecting it:** with `--eta-mode` set, `deconv` writes `<oname>_<suffix>_eta.fits` once per
-  run — a `(band, corr, ny, nx)` cube with `ETAMODE`/`ETA`/`ETACAP` in the header. The radial
+  run — a `(band, corr, ny, nx)` cube with `ETAMODE`/`ETA`/`ETACAP` in the header. **It must be
+  4D:** `to4d` *prepends*, so a 3D array would land band on STOKES instead of FREQ. The radial
   modes saturate at the cap on the *inscribed* circle (`r = 1`), so corners out to `r = sqrt(2)`
   are clipped to `eta*cap` — at cap=300 that is ~15% of `lambda_max(M)`, heavily damped by design.
 - **Source:** `src/pfb_imaging/operators/hessian.py` (`eta_profile`, `ETA_MODES`);
@@ -825,7 +826,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Consequences:**
   - **The forward CG moves from band-parallel in-worker to cube-level on the driver**
     (`HessTreeRay.cg` branches on the prior). The FFT work is unchanged and still happens in the
-    workers; only `cg_maxit` round trips are added.
+    workers; only `cg_maxit` round trips are added. **Measured cost of turning the prior on:**
+    one forward solve **5.8 s → 20.0 s (3.44×)** on `subset_withbeam_I.dt`, and that figure is a
+    **floor** — CG hit `cg_maxit`. After the `eta_freq_mul` kernel below it is **2.03×**.
   - **Slower CG is the designed behaviour, not a bug.** The prior only ever *removes* curvature
     from `M` (the roughest mode is anchored at `η`, smoother ones relax toward `η/cap`), so
     `cond(M)` rises by up to `gp_cap` and CG needs ~`√gp_cap` more iterations. It shows up only
@@ -838,6 +841,13 @@ update it (and this page's `last_verified_commit`) in the same session.
     numpy's BLAS spreads a memory-bound `matmul` over every core; those threads then busy-poll
     ~100 ms through the *next* `ray.get` while the workers need the cores, and its two
     `(nband, ny, nx)` scratch buffers are 7.6 GB at 8 × 8000². The kernel holds no scratch cubes.
+    **Its shape is load-bearing, not incidental:** band-major inside a **2048-pixel tile** —
+    band-major makes the inner loop unit-stride and vectorisable, and the tile keeps a band slice
+    of `out` in L2 across the `(b,c)` loops. Without the tile the kernel re-streams `out` `nband`
+    times and **loses to numpy above ~1024²**. At 8 × 4096² numpy takes 287 ms on 11.5 cores
+    against 83 ms on 15.6. `rarg_numba_patterns.load_data` was tried and **rejected**: gathering a
+    pixel's band column into a tuple blocks vectorisation, and the result neither vectorises nor
+    parallelises.
   - **At production size the binding cost is transfer and driver memory, not arithmetic.** A
     150-iteration cube-level solve moves **1.12 TB** through the object store (the worker's read
     is zero-copy; the return path is not) and `pcg_numba` holds 7 cubes = **26.7 GB** at
