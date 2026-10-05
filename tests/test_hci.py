@@ -324,7 +324,7 @@ def test_hci_rejects_existing_output_without_overwrite(ms_name, tmp_path):
 
 
 @pytest.mark.slow
-def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
+def test_hci_inject_transients(writable_ms, ms_meta, tmp_path):
     """Injected transient lands at the expected pixel with the expected dynamic spectrum.
 
     The base visibilities are zeroed via data_column="DATA-DATA" so the cube
@@ -341,13 +341,13 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     import dask.array as da
     from daskms import xds_from_ms, xds_to_table
 
-    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
     nrow_, nchan_, ncorr_ = xds0.FLAG.shape
     xds0 = xds0.assign(
         FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
     )
-    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+    dask.compute(xds_to_table(xds0, writable_ms, columns=["FLAG", "FLAG_ROW"]))
 
     out = str(tmp_path / "hci_transients.zarr")
 
@@ -355,7 +355,7 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
 
     # phase centre of the test field (radians)
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    field = xds_from_table(f"{writable_ms}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
 
     # place the transient an integer number of pixels off centre (well inside
@@ -383,7 +383,7 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     ipi = 4  # integrations per image -> 60 / 4 = 15 time bins
     cpi = 2  # channels per image    -> 8  / 2 = 4  freq bins
     hci_core(
-        [ms_name],
+        [writable_ms],
         out,
         product="I",
         data_column="DATA-DATA",
@@ -448,7 +448,7 @@ def test_hci_inject_transients(ms_name, ms_meta, tmp_path):
     assert_allclose(src, expected_ft, rtol=1e-2, atol=1e-2 * peak)
 
 
-def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
+def test_hci_inject_transients_location_vs_distance(writable_ms, ms_meta, tmp_path):
     """Injected sources stay at their true sky coordinate out to the field edge.
 
     Reproduces the controlled experiment in ratt-ru/breifast#263 (sources placed
@@ -476,13 +476,13 @@ def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
     from astropy.wcs import WCS
     from daskms import xds_from_ms, xds_to_table
 
-    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
     nrow_, nchan_, ncorr_ = xds0.FLAG.shape
     xds0 = xds0.assign(
         FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
     )
-    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+    dask.compute(xds_to_table(xds0, writable_ms, columns=["FLAG", "FLAG_ROW"]))
 
     out = str(tmp_path / "hci_location.zarr")
 
@@ -490,7 +490,7 @@ def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
     fov = 1.0
     nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, fov, 2.0)
 
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    field = xds_from_table(f"{writable_ms}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
 
     # sources on a diagonal ray at increasing distance from the phase centre,
@@ -514,7 +514,7 @@ def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
         yaml.safe_dump({"transients": transients}, f)
 
     hci_core(
-        [ms_name],
+        [writable_ms],
         out,
         product="I",
         data_column="DATA-DATA",
@@ -571,7 +571,7 @@ def test_hci_inject_transients_location_vs_distance(ms_name, ms_meta, tmp_path):
         )
 
 
-def test_hci_inject_transients_rephased(ms_name, ms_meta, tmp_path):
+def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
     """Injected sources land at their true position when the image is rephased.
 
     Exercises the mosaic path (``--phase-dir`` set to a tangent point that
@@ -592,19 +592,19 @@ def test_hci_inject_transients_rephased(ms_name, ms_meta, tmp_path):
     from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_to_table
 
-    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
     nrow_, nchan_, ncorr_ = xds0.FLAG.shape
     xds0 = xds0.assign(
         FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
     )
-    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+    dask.compute(xds_to_table(xds0, writable_ms, columns=["FLAG", "FLAG_ROW"]))
 
     out = str(tmp_path / "hci_rephased.zarr")
 
     nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
 
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    field = xds_from_table(f"{writable_ms}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
 
     # rephasing centre ~0.1 deg from the field centre so w_diff != 0; round-trip
@@ -635,7 +635,7 @@ def test_hci_inject_transients_rephased(ms_name, ms_meta, tmp_path):
         yaml.safe_dump({"transients": transients}, f)
 
     hci_core(
-        [ms_name],
+        [writable_ms],
         out,
         product="I",
         data_column="DATA-DATA",
@@ -875,7 +875,7 @@ def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, ms_meta, t
     assert np.any(ds.nonzero.values), "no data recorded -- the slab did not land"
 
 
-def test_hci_target_recentres_the_grid(ms_name, ms_meta, tmp_path):
+def test_hci_target_recentres_the_grid(writable_ms, ms_meta, tmp_path):
     """``--target`` moves the image centre, so the scaffold's coords must move with it.
 
     The worker centres the grid on the target (``center_x``/``center_y`` from the
@@ -891,18 +891,18 @@ def test_hci_target_recentres_the_grid(ms_name, ms_meta, tmp_path):
     from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_from_table, xds_to_table
 
-    xds0 = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
+    xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
     nrow_, nchan_, ncorr_ = xds0.FLAG.shape
     xds0 = xds0.assign(
         FLAG=(("row", "chan", "corr"), da.zeros((nrow_, nchan_, ncorr_), dtype=bool, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow_, dtype=bool, chunks=-1)),
     )
-    dask.compute(xds_to_table(xds0, ms_name, columns=["FLAG", "FLAG_ROW"]))
+    dask.compute(xds_to_table(xds0, writable_ms, columns=["FLAG", "FLAG_ROW"]))
 
     out = str(tmp_path / "hci_target.zarr")
     nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
 
-    field = xds_from_table(f"{ms_name}::FIELD")[0]
+    field = xds_from_table(f"{writable_ms}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
 
     # put the target well off the phase centre so a mismatch cannot hide inside
@@ -931,7 +931,7 @@ def test_hci_target_recentres_the_grid(ms_name, ms_meta, tmp_path):
         yaml.safe_dump({"transients": transients}, f)
 
     hci_core(
-        [ms_name],
+        [writable_ms],
         out,
         product="I",
         data_column="DATA-DATA",

@@ -63,106 +63,6 @@ def _nb_any_nonzero(x):
     return False
 
 
-def primal_dual(
-    x,  # initial guess for primal variable
-    v,  # initial guess for dual variable
-    lam,  # regulariser strength
-    psi,  # linear operator in dual domain
-    psih,  # adjoint of psi
-    hessnorm,  # spectral norm of Hessian
-    prox,  # prox of regulariser
-    grad,  # gradient of smooth term
-    nu=1.0,  # spectral norm of psi
-    sigma=None,  # step size of dual update
-    mask=None,  # regions where mask is False will be masked
-    tol=1e-5,
-    maxit=1000,
-    minit=10,
-    positivity=1,
-    report_freq=10,
-    gamma=1.0,
-    verbosity=1,
-):
-    """Legacy PDHG solver for min_x F(x) + lam*g(Psi^T x) (validation oracle).
-
-    Frozen legacy implementation kept as the test oracle for the composable
-    framework (``opt.primal_dual.PrimalDual`` is the maintained replacement);
-    see docs/wiki/deconv-primer.md. Do not change its behaviour.
-
-    Naming trap (differs from ``primal_dual_numba``!): here ``psi`` is the
-    SYNTHESIS operator (coefficients -> image, allocating, used in the primal
-    step) and ``psih`` is the ANALYSIS operator (image -> coefficients, used
-    in the dual step).
-
-    ``nu`` is the squared frame bound ||Psi Psi^T|| — ``nbasis`` for the SARA
-    concatenation of orthonormal bases, NOT the tight-frame 1.0. It sets the
-    step sizes ``sigma = hessnorm/(2*gamma)/nu`` and
-    ``tau = 0.9/(hessnorm/(2*gamma) + sigma*nu**2)``; an underestimated nu
-    violates the convergence condition (observed as multi-band divergence).
-
-    The duals ``v`` are warm-started by the caller across major cycles;
-    returns ``(x, v)``.
-    """
-    # initialise
-    xp = x.copy()
-    vp = v.copy()
-    vtilde = np.zeros_like(v)
-
-    # this seems to give a good trade-off between
-    # primal and dual problems
-    if sigma is None:
-        sigma = hessnorm / (2.0 * gamma) / nu
-
-    # stepsize control
-    tau = 0.9 / (hessnorm / (2.0 * gamma) + sigma * nu**2)
-
-    # start iterations
-    eps = 1.0
-    k = 0
-    while (eps > tol or k < minit) and k < maxit:
-        # tmp prox variable
-        vtilde = v + sigma * psih(xp)
-
-        # dual update
-        v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
-
-        # primal update
-        x = xp - tau * (psi(2 * v - vp) + grad(xp))
-        if positivity == 1:
-            x[x < 0.0] = 0.0
-        elif positivity == 2:
-            msk = np.any(x <= 0, axis=0)
-            x[:, msk] = 0.0
-
-        # convergence check
-        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
-
-        # copy contents to avoid allocating new memory
-        xp[...] = x[...]
-        vp[...] = v[...]
-
-        if np.isnan(eps) or np.isinf(eps):
-            # deferred: debug-only breakpoint in the frozen legacy oracle (wiki design-decisions: Known debt)
-            import pdb
-
-            pdb.set_trace()
-
-        if not k % report_freq and verbosity > 1:
-            # res = xbar-x
-            # phi = np.vdot(res, A(res))
-            log.info(f"At iteration {k} eps = {eps:.3e}")
-        k += 1
-
-    if k == maxit:
-        if verbosity:
-            log.info(f"Max iters reached. eps = {eps:.3e}")
-    else:
-        if verbosity:
-            log.info(f"Success, converged after {k} iterations")
-
-    return x, v
-
-
 def primal_dual_numba(
     x,  # initial guess for primal variable
     v,  # initial guess for dual variable
@@ -192,15 +92,18 @@ def primal_dual_numba(
     tests/test_primal_dual.py); see docs/wiki/deconv-primer.md. Do not change
     its behaviour.
 
-    Naming trap (INVERTED relative to ``primal_dual``!): here ``psih`` is the
+    Naming trap (INVERTED relative to what the names suggest!): here ``psih`` is the
     SYNTHESIS operator and ``psi`` is the ANALYSIS operator — both in-place
     two-argument callables (``psi(image, coeffs_out)``,
     ``psih(coeffs, image_out)``, the ``Psi.dot``/``Psi.hdot`` convention).
     Read the loop body, not the parameter names.
 
-    ``nu`` is ||Psi Psi^T|| = nbasis for the SARA dictionary (see
-    ``primal_dual``'s docstring for the step-size consequences). ``prox`` is
-    accepted for signature compatibility; the dual update is the fused
+    ``nu`` is the squared frame bound ||Psi Psi^T|| = nbasis for the SARA
+    concatenation of orthonormal bases, NOT the tight-frame 1.0. It sets the
+    step sizes ``sigma = hessnorm/(2*gamma)/nu`` and
+    ``tau = 0.98/(hessnorm/(2*gamma) + sigma*nu**2)``; an underestimated nu
+    violates the convergence condition (observed as multi-band divergence).
+    ``prox`` is accepted for signature compatibility; the dual update is the fused
     ``dual_update_numba_fast`` with ``l1weight``. ``reweighter`` (or None)
     fires on inner convergence, up to ``maxreweight`` consecutive times.
 

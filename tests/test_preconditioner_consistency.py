@@ -22,8 +22,6 @@ distinct-beam mosaic regime where a D23-style bias (feeding the apparent instead
 of the beam-attenuated residual) would move the fixed point off ``A^{-1} b``.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -33,6 +31,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import HessianTree
 from pfb_imaging.opt.pcg import pcg_numba
+from tests.conftest import copy_tree
 
 ifftshift = np.fft.ifftshift
 
@@ -263,7 +262,7 @@ def _resid_peak(store):
 
 @pytest.mark.timeout(600)
 @pytest.mark.slow
-def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_path):
+def test_deconv_unregularised_residual_keeps_descending(sky_truth, gt_dt, tmp_path):
     """End-to-end: with rmsfactor=0 and positivity off the major cycle is the
     preconditioned Richardson above. On noiseless predicted vis (a
     self-consistent forward model) the data misfit does not plateau -- it keeps
@@ -284,29 +283,13 @@ def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_
     Asserts on the RESIDUAL, not the model -- without a prior the unmeasured
     modes are legitimately unconstrained, so only the data-space misfit vanishes.
 
-    Single band + nthreads=1 on purpose (nband==1 in-process pool path, keeping
-    the Ray-actor CPU claims within the session cluster's num_cpus=1; see
-    test_deconv_groundtruth).
+    Single band + nthreads=1 on purpose: nband==1 takes the in-process pool path,
+    so the driver never starts Ray actors for this long drive; multi-band actor
+    distribution is covered by test_hess_tree_ray.py.
     """
     from pfb_imaging.core.deconv import deconv as deconv_core
-    from pfb_imaging.core.imager import imager as imager_core
 
-    outname = str(tmp_path / "unregdeconv")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=-1,
-        integrations_per_image=-1,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=0.0,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
+    outname = copy_tree(gt_dt, tmp_path / "unregdeconv")
     deconv_kw = dict(
         minor_cycle="sara",
         opt_backend="primal-dual",
@@ -355,7 +338,7 @@ def test_deconv_unregularised_residual_keeps_descending(sky_truth, ms_name, tmp_
 
 
 @pytest.mark.slow
-def test_frequency_prior_does_not_move_the_fixed_point():
+def test_frequency_prior_does_not_move_the_fixed_point(band_pool):
     """A GP prior over frequency reshapes each update but not the solution.
 
     Preconditioned Richardson converges to ``A^-1 b`` for ANY nonsingular ``M``
@@ -401,8 +384,9 @@ def test_frequency_prior_does_not_move_the_fixed_point():
         for plist in parts
     ]
     kinv = freq_precision(np.linspace(0.9e9, 1.7e9, nband), 0.5, cap=10.0)
-    base = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, nthreads=NTHREADS)
-    gp = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, nthreads=NTHREADS, freq_prec=kinv)
+    pool = band_pool(nband, NTHREADS)
+    base = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, workers=pool)
+    gp = HessTreeRay(hess_parts, nx, ny, 2 * nx, 2 * ny, etas=eta, wsums=wsum, workers=pool, freq_prec=kinv)
 
     ndof = nband * ny * nx
 

@@ -19,7 +19,8 @@ import xarray as xr
 
 
 @pytest.mark.slow
-def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
+@pytest.mark.timeout(600)
+def test_deconv_groundtruth(sky_truth, gt_deconv_dt):
     """deconv on the noiseless predicted sky recovers the injected fluxes.
 
     Replaces test_deconv_matches_legacy_sara: the reference is the injected
@@ -31,57 +32,11 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
     peak dropping well below the faintest source.
 
     Single band (channels_per_image=-1) and nthreads=1 on purpose: for
-    nband==1 the Hessian/Psi pools use their local in-process path, keeping
-    the long-lived Ray-actor CPU claims within the session cluster's
-    num_cpus=1 (see tests/conftest.py) -- multi-band actor distribution is
-    covered by test_hess_tree_ray.py/test_psi_operator.py.
+    nband==1 the Hessian/Psi pools use their local in-process path, so no
+    Ray actors are started -- multi-band actor distribution is covered by
+    test_hess_tree_ray.py/test_psi_operator.py.
     """
-    from pfb_imaging.core.deconv import deconv as deconv_core
-    from pfb_imaging.core.imager import imager as imager_core
-
-    outname = str(tmp_path / "gtdeconv")
-    imager_core(
-        [Path(ms_name)],
-        outname,
-        channels_per_image=-1,
-        integrations_per_image=-1,
-        product="I",
-        nx=sky_truth.nx,
-        ny=sky_truth.ny,
-        cell_size=sky_truth.cell_size,
-        robustness=0.0,
-        fits_mfs=False,
-        fits_cubes=False,
-        overwrite=True,
-        keep_ray_alive=True,
-    )
-    deconv_core(
-        outname,
-        minor_cycle="sara",
-        opt_backend="primal-dual",
-        niter=5,
-        gamma=1.0,
-        eta=0.001,
-        rmsfactor=1.0,
-        init_factor=1.0,
-        l1_reweight_from=100,  # disabled within these few major cycles
-        bases=["self", "db1"],
-        nlevels=2,
-        positivity=1,
-        pd_tol=1e-6,
-        pd_maxit=5000,
-        cg_tol=1e-6,
-        cg_maxit=3000,
-        pm_tol=1e-4,
-        pm_maxit=200,
-        nthreads=1,
-        do_wgridding=True,
-        epsilon=1e-7,
-        fits_mfs=False,
-        fits_cubes=False,
-        fits_per_partition=True,
-        verbosity=0,
-    )
+    outname = gt_deconv_dt  # shared and read-only here: restore takes its own copy
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
     nodes = sorted(n for n in dt.children if n.startswith("band"))
@@ -128,7 +83,7 @@ def test_deconv_groundtruth(sky_truth, ms_name, tmp_path):
 
     from astropy.io import fits as afits
 
-    pdir = str(tmp_path / "fits" / "gtdeconv_I_main_partitions")
+    pdir = str(Path(outname).parent / "fits" / "gtdec_I_main_partitions")
     hits = sorted(glob.glob(f"{pdir}/residual_band*_part0000_*.fits"))
     assert len(hits) == len(nodes), f"expected {len(nodes)} partition residual FITS"
     n0 = nodes[0]
@@ -646,10 +601,25 @@ def _run_mop(tmp_path, tag, **over):
     return xr.open_datatree(dt_name, engine="zarr", chunks=None)["band0000_time0000"].ds
 
 
+@pytest.fixture(scope="module")
+def mop_ds(tmp_path_factory):
+    """One default --mop run, shared by the three tests that asserted on it.
+
+    test_mop_writes_mopped_products_by_default, _leaves_the_deconvolved_model_alone
+    and _preserves_the_run_attrs called _run_mop with no overrides and the same
+    seed, so they ran the same ~11.5 s driver three times and differed only in
+    what they checked. Read-only: none of the three writes to the tree.
+
+    The dataset is lazily zarr-backed (chunks=None): a consumer that needs to
+    write must take its own copy, not write through this fixture.
+    """
+    return _run_mop(tmp_path_factory.mktemp("mop_shared"), "mop_shared")
+
+
 @pytest.mark.slow
-def test_mop_writes_mopped_products_by_default(tmp_path):
+def test_mop_writes_mopped_products_by_default(mop_ds):
     """--mop is on by default and lands both products in the band node."""
-    ds = _run_mop(tmp_path, "mop_on")
+    ds = mop_ds
 
     assert "MODEL_MOPPED" in ds
     assert "RESIDUAL_MOPPED" in ds
@@ -669,13 +639,13 @@ def test_no_mop_writes_neither_product(tmp_path):
 
 
 @pytest.mark.slow
-def test_mop_leaves_the_deconvolved_model_alone(tmp_path):
+def test_mop_leaves_the_deconvolved_model_alone(mop_ds):
     """MODEL stays the regularised model; the mop is a separate product.
 
     MODEL_MOPPED is MODEL plus a least-squares update, so it is not sparse and
     not a component model -- it must not overwrite what deconv converged to.
     """
-    ds = _run_mop(tmp_path, "mop_sep")
+    ds = mop_ds
 
     assert not np.allclose(ds.MODEL.values, ds.MODEL_MOPPED.values, rtol=1e-6, atol=1e-12)
 
@@ -690,7 +660,7 @@ def test_mop_leaves_the_deconvolved_model_alone(tmp_path):
 
 
 @pytest.mark.slow
-def test_mop_preserves_the_run_attrs(tmp_path):
+def test_mop_preserves_the_run_attrs(mop_ds):
     """The mop write must not wipe niters/rms/hess_norm off the band node.
 
     to_zarr(mode="a") merges variables but REPLACES attrs wholesale, so a
@@ -698,7 +668,7 @@ def test_mop_preserves_the_run_attrs(tmp_path):
     everything the major cycle recorded -- and a resumed run would then restart
     from iteration 0 and re-estimate the norm.
     """
-    ds = _run_mop(tmp_path, "mop_attrs")
+    ds = mop_ds
 
     assert ds.attrs["niters"] == 1
     assert "hess_norm" in ds.attrs

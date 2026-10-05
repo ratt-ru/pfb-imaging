@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-07-28T00:00:00Z
-last_verified_commit: bc879f0
+timestamp: 2026-10-05T16:47:58Z
+last_verified_commit: d4da59f
 ---
 
 # Image and beam orientation conventions (hci)
@@ -99,32 +99,25 @@ zarr-beam branch was deleted (§5):
 3. **Target `CDELT1` sign** — `+cell` instead of the output header's `-cell`, so
    even a correctly-fed map would come out East-West mirrored.
 
-## 5. Post-mortem of the transpose+flip hack
+## 5. Why the old transpose+flip hack appeared to work
 
-The hack (`pbeam = pbeam.transpose(0, 2, 1); pbeam = pbeam[:, ::-1, :]`,
-introduced in `547458f`, removed from the wizard branch in `330bc5d`, and gone
-from the codebase entirely with the zarr-beam branch of `stokes2im.beam_for_band`)
-composed with the buggy reprojection to give, at wgridder pixel offset `(p, q)`
-from centre, the
-beam value at `(l, m) = (q, -p)·cell` where the correct value is at
-`(-p, -q)·cell`. Those differ by a 90° rotation ∘ reflection — **identical for a
-circularly symmetric beam**, which is why the images "aligned": the MeerKAT
-rotation-averaged beam is nearly circular. Measured against an analytic
-reference (identical grids, no rephasing):
+The hack (`pbeam.transpose(0, 2, 1)` then `[:, ::-1, :]`, `547458f`, now gone from the
+codebase) composed with the buggy reprojection to return the beam at `(l, m) = (q, -p)·cell`
+where the correct value is at `(-p, -q)·cell` — a 90° rotation composed with a reflection,
+which is **identical for a circularly symmetric beam**. The MeerKAT rotation-averaged beam is
+nearly circular, so the images "aligned". Measured against an analytic reference:
 
 * circular beam: max error 4.3 % of peak (entirely the 1-pixel `crpix` shift);
 * elliptical beam (axial ratio 0.6, PA 30°): max error **21 %** of peak;
-* any rephasing offset lands on the wrong axis regardless of beam shape
-  (worst case for MeerKLASS drift scans, where per-scan pointings are rephased
-  to a common target mostly along RA).
+* any rephasing offset lands on the wrong axis regardless of beam shape — worst for MeerKLASS
+  drift scans, whose per-scan pointings are rephased mostly along RA.
 
-It also silently required `nx == ny` (the transpose swaps the axes' lengths).
+It also silently required `nx == ny`. **The lesson generalises: a symmetric test object cannot
+distinguish an orientation bug from correctness.** Validate orientation with an asymmetric beam.
 
-The `[:, ::-1, :]` flip was *not* the physical feed-plane→sky flip mentioned in
-the (now deleted) zarr branch's "flip the beam upside down" comment. Only the
-wizard path survives, so that parity question is owned entirely by meerkat-beams
-(its PR #8 M1 validation); it would have to be re-answered from scratch if raw
-MdV zarr beams ever come back.
+The `[:, ::-1, :]` flip was *not* the physical feed-plane→sky flip. Only the wizard path
+survives, so that parity question is owned entirely by meerkat-beams (PR #8 M1 validation) and
+would have to be re-answered from scratch if raw MdV zarr beams ever came back.
 
 ## 6. The corrected construction (validated)
 

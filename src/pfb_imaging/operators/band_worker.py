@@ -554,3 +554,23 @@ class BandWorkerPool:
         import ray
 
         return ray.get([a.get_mem.remote() for a in self.actors])
+
+    # --- lifecycle ---
+
+    def shutdown(self):
+        """Kill this pool's Ray actors; no-op on the in-process (nband == 1) path.
+
+        Idempotent, so a fixture finaliser and an explicit call can both run.
+        Sets ``actors`` to ``[]`` rather than ``None`` on purpose: ``None`` is
+        the sentinel for "this pool has an in-process worker", and a shut-down
+        multi-band pool is not that -- ``_map`` must fail on it rather than
+        quietly run a single band locally.
+        """
+        if self.actors is None:
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        for a in self.actors:
+            ray.kill(a)
+        self.actors = []

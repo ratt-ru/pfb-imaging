@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-08-07T13:53:02Z
-last_verified_commit: 78de0cf
+timestamp: 2026-10-05T12:44:06Z
+last_verified_commit: ec5e7f7
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -82,8 +82,7 @@ here), and Ψ is the concatenation of `nbasis` orthonormal bases (`self` + Daube
 
 - **`nu = nbasis` — not 1.0.** The primal-dual step sizes are
   `sigma = hessnorm/(2γ)/nu` and `tau = 0.98/(hessnorm/(2γ) + sigma·nu²)`
-  (`opt/primal_dual.py`; the 0.98 holds for `PrimalDual` and `primal_dual_numba` —
-  the legacy allocating `primal_dual` uses 0.9). With the tight-frame default
+  (`opt/primal_dual.py`; the 0.98 holds for `PrimalDual` and `primal_dual_numba`). With the tight-frame default
   `nu=1.0` the dual step is
   ~nbasis× too large and the backward solve **diverges on multi-band data** (single-band
   can survive on stability margin, which is why tests missed it). `deconv/presets.py`
@@ -182,17 +181,17 @@ memory discipline: see `memory-and-ray.md`.
 
 ## Legacy code: oracles, not dead code
 
-`opt.primal_dual.primal_dual{,_numba}`, `opt.pcg.pcg_numba` and `opt.fista.fista` are
-the unit-level validation oracles for the new framework — **do not modify their
-behaviour**. (The e2e oracles `core/sara.py`/`core/kclean.py` were retired with the
+`opt.primal_dual.primal_dual_numba` is the unit-level validation oracle for the new
+framework (pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`) —
+**do not modify its behaviour**. (`fista` and the bare `primal_dual` were deleted as
+uncalled; `opt.pcg.pcg_numba` is not an oracle, it is the live `pcg` in
+`operators/hessian.py`.) (The e2e oracles `core/sara.py`/`core/kclean.py` were retired with the
 legacy pipeline in 0.1.0 (#277, D2); e2e correctness is now pinned by the ground-truth
 tests against an injected sky in `tests/test_imager*.py`/`tests/test_deconv.py`.)
 Traps when reading them:
 
-- Argument naming is inverted between the two PD implementations: in `primal_dual`,
-  `psi` is SYNTHESIS (coeffs→image, allocating) and `psih` is ANALYSIS; in
-  `primal_dual_numba`, `psih` is SYNTHESIS and `psi` is ANALYSIS (both in-place,
-  two-arg). Check the call sites, not the names.
+- Argument naming in `primal_dual_numba` is inverted: `psih` is SYNTHESIS and `psi` is
+  ANALYSIS (both in-place, two-arg). Check the call sites, not the names.
 - `pcg_numba` binds `x = x0` and updates it **in place** — callers see their `x0`
   mutated (the Ray band worker copies before calling for exactly this reason).
 - `primal_dual_numba` contains `pdb.set_trace()` breakpoints on its zero-model and

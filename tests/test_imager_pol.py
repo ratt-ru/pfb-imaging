@@ -23,7 +23,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 
 
 @pytest.mark.slow
-def test_imager_polproducts(ms_name, ms_meta, image_geometry, tmp_path):
+def test_imager_polproducts(writable_ms, ms_meta, image_geometry, tmp_path):
     """A polarised point source is recovered in each Stokes product."""
     np.random.seed(420)
     freq = ms_meta.freq
@@ -85,17 +85,17 @@ def test_imager_polproducts(ms_name, ms_meta, image_geometry, tmp_path):
     # write DATA and clear flags so every sample participates (flag handling
     # is covered by the sky_truth-based tests)
     flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
-    xds_w = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0].assign(
+    xds_w = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1})[0].assign(
         DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
         FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
         FLAG_ROW=(("row",), da.zeros(nrow, dtype=bool, chunks=-1)),
     )
-    dask.compute(xds_to_table(xds_w, ms_name, columns=["DATA", "FLAG", "FLAG_ROW"]))
+    dask.compute(xds_to_table(xds_w, writable_ms, columns=["DATA", "FLAG", "FLAG_ROW"]))
 
     outname = str(tmp_path / "pol")
     for p in ["I", "Q", "U", "V", "IQUV"]:
         imager_core(
-            [Path(ms_name)],
+            [Path(writable_ms)],
             outname,
             data_column="DATA",
             channels_per_image=1,

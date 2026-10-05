@@ -317,7 +317,7 @@ def test_make_sara_sets_dictionary_nu():
 
 
 @pytest.mark.slow
-def test_make_sara_colocates_band_state():
+def test_make_sara_colocates_band_state(band_pool):
     """Hess and Psi share one BandWorkerPool: one worker process per band.
 
     Co-location is the whole point of the pool (one JIT warm-up, one thread
@@ -360,7 +360,9 @@ def test_make_sara_colocates_band_state():
         pm_verbose=0,
         pm_report_freq=100,
     )
-    solver = make_sara(_delta_partitions(nband, 16, 16), geometry, model.copy(), model.copy(), opts)
+    solver = make_sara(
+        _delta_partitions(nband, 16, 16), geometry, model.copy(), model.copy(), opts, workers=band_pool(nband)
+    )
     pool = solver.hess._pool
     assert pool is solver.reg.psi._pool
     assert pool.actors is not None and len(pool.actors) == nband
@@ -435,17 +437,24 @@ def _gp_opts(**overrides):
 
 
 @pytest.mark.slow
-def test_build_hess_omits_the_frequency_prior_by_default():
+def test_build_hess_omits_the_frequency_prior_by_default(band_pool):
     """Callers that never ask for the prior must not have to supply freq_out."""
     from pfb_imaging.deconv.presets import make_sara
 
     geometry = {"nx": 16, "ny": 16, "nx_psf": 32, "ny_psf": 32}  # no freq_out
-    solver = make_sara(_delta_partitions(2, 16, 16), geometry, np.zeros((2, 16, 16)), np.zeros((2, 16, 16)), _gp_opts())
+    solver = make_sara(
+        _delta_partitions(2, 16, 16),
+        geometry,
+        np.zeros((2, 16, 16)),
+        np.zeros((2, 16, 16)),
+        _gp_opts(),
+        workers=band_pool(2),
+    )
     assert solver.hess._dC is None
 
 
 @pytest.mark.slow
-def test_build_hess_wires_the_frequency_prior_when_requested():
+def test_build_hess_wires_the_frequency_prior_when_requested(band_pool):
     """gp_length_scale must reach HessTreeRay, not be silently dropped."""
     from pfb_imaging.deconv.presets import make_sara
 
@@ -459,7 +468,12 @@ def test_build_hess_wires_the_frequency_prior_when_requested():
     }
     opts = _gp_opts(gp_length_scale=0.5, gp_cap=10.0)
     solver = make_sara(
-        _delta_partitions(nband, 16, 16), geometry, np.zeros((nband, 16, 16)), np.zeros((nband, 16, 16)), opts
+        _delta_partitions(nband, 16, 16),
+        geometry,
+        np.zeros((nband, 16, 16)),
+        np.zeros((nband, 16, 16)),
+        opts,
+        workers=band_pool(nband),
     )
     assert solver.hess._dC is not None
     assert solver.hess._dC.shape == (nband, nband)

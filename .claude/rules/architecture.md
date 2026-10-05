@@ -8,13 +8,11 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 * Each command lives in a separate file under `src/pfb_imaging/cli/` and is registered in `cli/__init__.py`.
 * CLI modules must stay lightweight — lazy-import core implementations so `pfb --help` and cab generation don't pull in the scientific stack.
 
-## 2. Typer Option/Argument Syntax (CRITICAL)
+## 2. Typer Option/Argument Syntax
 
-**NEVER** use `None` as a positional argument to `typer.Option()` — it causes `AttributeError`.
-
-* **Required:** `Annotated[Type, typer.Option(..., help="...")]` (no `= default`).
-* **Optional with default:** `Annotated[Type, typer.Option(help="...")] = default`.
-* **Optional None:** `Annotated[Type | None, typer.Option(help="...")] = None`.
+Canonical copy lives in `python-standards.md` §2, which loads on every `**/*.py` edit — a
+superset of the files this page loads on. Section number kept so existing cross-references
+resolve.
 
 ## 3. Import Style
 
@@ -24,9 +22,7 @@ Read this when editing `src/pfb_imaging/**/*.py` files.
 2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`daskms` deferred to `utils/misc.construct_mappings`. (`distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
-5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s frozen legacy oracle).
-
-(A **python-casacore-pulling** exception previously applied to the MSv4 imaging path; it was retired once arcae ≥ 0.5.2 made arcae and python-casacore coexist in one process — see wiki design-decisions D14. `africanus`/`daskms` imports now live at module scope like any other.)
+5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s `primal_dual_numba`).
 
 **Every in-function import must carry a short inline comment stating why it cannot live
 at module scope** (e.g. `# deferred: import cycle with operators.hessian` or
@@ -66,164 +62,80 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 
 ## 6. Processing Pipeline
 
-One MSv4 front-end produces the intermediary products consumed by deconvolution:
+**Data flow:** MS -> `.dt` (Zarr) -> FITS.
 
-1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree` (`.dt`) plus a `.scratch` cache. See §8.
-2. `pfb deconv` — composable deconvolution of the `.dt` (see §5).
-3. `pfb degrid` — degrid a `.mds` component model into MSv4 measurement sets so it can
-   be subtracted from the visibilities (#278). Guards, the Ray Serve `Degridder` deployment
-   and the driver live in `core/degrid.py`; the pure MSv4<->kernel seam
-   (column creation, region masks, per-chunk degridding) is `utils/degrid.py`. All the
-   numerics go through `pfb_model_spec.utils.degrid`. Load-bearing decisions: wiki D38 (write
-   fused into the replica), D39 (unweighted chunk time/freq), D40 (unix-second epochs), D41
-   (single Stokes product), D42 (no beams in v1).
+1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree`
+   (`.dt`) plus a `.scratch` cache. See §8.
+2. `pfb deconv` — composable deconvolution of the `.dt` (see §5). Writes `MODEL`/`RESIDUAL`/
+   `NOISE`, plus `MODEL_MOPPED`/`RESIDUAL_MOPPED` when `--mop` is on (the default, D35).
+3. `pfb restore` — the three explicitly-scaled restored products, apparent/intrinsic/mixed
+   (D29). No longer uses Ray.
+4. `pfb degrid` — degrid a `.mds` component model into MSv4 measurement sets (#278). Guards,
+   the Ray Serve `Degridder` deployment and the driver live in `core/degrid.py`; the pure
+   MSv4<->kernel seam is `utils/degrid.py`. All numerics go through
+   `pfb_model_spec.utils.degrid`. Load-bearing decisions: D38-D42.
 
-   **#330 retired the MSv2 `degrid`** and gave this command its name. That removed the last
-   consumer of `distributed` (and of `set_client`, deleted with it) and the dead dask
-   `comps2vis`/`_comps2vis_impl` stack from `operators/gridder.py`, which is now dask-free.
-   The rename is a clean break: `--scans`/`--ddids`/`--fields` became
-   `--scan-names`/`--spw-names`/`--field-names` (names, not integer ids),
-   `--integrations-per-image`/`--channels-per-image` became `..._per_chunk`, and
-   `--host-address` became `--ray-address`. Old recipes fail with an unrecognised-option
-   error rather than silently doing something else.
+`pfb hci` is the separate high-cadence-imaging front-end.
 
-`pfb hci` is the separate high-cadence-imaging front-end. The legacy MSv2 subcommands
-(`init`, `grid`, `kclean`, `sara`, `fluxtractor`) were retired in 0.1.0 (#277); their
-correctness coverage lives in the ground-truth imager tests (`tests/test_imager*.py`,
-`tests/test_deconv.py`). `pfb restore` was ported to the `.dt` in #303 and is tested
-(`tests/test_restore.py`, including an end-to-end `imager → deconv → restore` ground
-truth); it emits three explicitly-scaled restored products — apparent, intrinsic and
-mixed (wiki D29) — and no longer uses Ray. Its functionality may still fold into `deconv`
-eventually. `pfb model2comps` was **removed** (#286): its portable WSClean-FITS →
-`.mds` path migrated to `pfbspec model2comps` in
-[pfb-model-spec](https://github.com/landmanbester/pfb-model-spec), and its `.dds`-input path
-(daskms-coupled, no longer producible in-repo) was dropped. The component-model spec library
-(`fit_image_cube`/`eval_coeffs_to_slice`/`model_from_mds`) and the `.mds` writer
-(`model_to_ds`) now live in `pfb_model_spec.utils` and are imported from there (`deconv.py`);
-pfb-imaging no longer carries its own `utils/modelspec.py`.
+**`degrid`'s option contract is MSv4-native and is not the MSv2 command's.** Selection is by
+**name** — `--scan-names`/`--spw-names`/`--field-names`, not integer ids; chunking is
+`--integrations-per-chunk`/`--channels-per-chunk`; the cluster is `--ray-address`. The MSv2
+`degrid` was retired outright in #330 (D43), so an old recipe fails with an unrecognised-option
+error rather than silently doing something else.
 
-**Data flow:** MS → `.dt` (Zarr) → FITS.
+**Removed commands.** The legacy MSv2 subcommands (`init`, `grid`, `kclean`, `sara`,
+`fluxtractor`) were retired in 0.1.0 (#277); their correctness coverage lives in the
+ground-truth imager tests. `pfb model2comps` was removed in #286 — its portable
+WSClean-FITS -> `.mds` path is now `pfbspec model2comps` in
+[pfb-model-spec](https://github.com/landmanbester/pfb-model-spec), and the component-model
+spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
 
 ## 7. Performance
 
 * Numba JIT with TBB threading for critical loops.
-* DUCC0 for gridding anOne thing to note is that the raylets d FFT.
-* Dask for parallel chunk processing (`--nworkers`), threads for FFTs/gridding (`--nthreads`).
+* DUCC0 for gridding and FFT.
+* Dask for parallel chunk processing on the **`hci`** path only (`core/hci.py`, `utils/misc.py`,
+  `operators/fft.py`, `utils/spi.py`, `utils/correlations.py`); threads for FFTs/gridding (`--nthreads`). The imager/deconv/degrid path is
+  Ray, and `degrid`'s `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the
+  last `distributed` consumer).
 * Ray actors for process-level parallelism in wavelet operators.
 * See `scripts/profiling.md` for profiling guides.
 
 ## 8. MSv4 DataTree Imager (`pfb imager`)
 
-`pfb imager` is the MSv4 front-end. It reads MSv4 data via the `arcae` `xarray-ms` engine and
-writes a single unified `xarray.DataTree`, replacing the legacy `.xds`+`.dds` split for this
-path. Design rationale, `concat_row` semantics and known risks: `docs/wiki/imager-pipeline.md`.
+Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`) plus a
+`.scratch` cache. **Tree layout, every stored variable and its dims, product selection
+(`--psf`/`--beam`/`--fits-per-partition`), the two passes and the counts reduction:
+`docs/wiki/imager-pipeline.md`.** Do not restate them here.
 
-**Two passes (both Ray-distributed):**
-1. **Pass 1** — `utils/stokes2vis_msv4.stokes_vis`: reads raw MSv4 finely (per scan /
-   `integrations_per_image`), converts to Stokes, averages, and writes fine pieces plus a
-   per-piece uv `COUNTS` grid into a `.scratch` DataTree.
-2. **Reduction** — the driver streams per-piece `COUNTS` directly into one grid per applied
-   `weight_grouping` group (`per-band-time` default, `mfs`, `per-band`, `per-time`), holding
-   `ngroups` grids rather than `nband*ntime` (`counts_key` in `core/imager.imager`;
-   `utils/weighting.reduce_counts` documents the grouping semantics). Natural weighting is
-   `robustness` `None` or `> 2` (no `natural` grouping; counts are skipped entirely).
-3. **Pass 2** — `core/imager._grid_image` (one Ray task per output image): groups fine pieces
-   into partitions, concatenates scans along `row`, grids each partition with
-   `operators/gridder.grid_partition`, sums the image-space products over partitions into the
-   band node, and writes the `.dt` tree. FITS via `utils/fits.dt2fits`/`rdt2fits`.
-
-**Tree layout** (`<out>_<PRODUCT>.dt`): one node per output image
-`band{b:04d}_time{t:04d}` (attrs `freq_out` = the effective wsum-weighted frequency of the
-channels actually gridded, `freq_nominal` = the band-edge midpoint used only for band
-assignment — wiki D28); one child `part{p:04d}` per data partition identified by
-`(msid, field, spw, baseline_group)` (`baseline_group` is a single `"all"` group for now,
-extensible for MeerKAT+ per-antenna-pair Mueller beams). Band nodes hold the summed image-space
-products (`DIRTY`, `BDIRTY` — the beam-attenuated `Σ_p B_p·dirty_p`, the model-free term of the
-exact deconv gradient (wiki D23) — `WSUM`, `BEAM` — the wsum-weighted mean of the partition
-beams, i.e. the linear-mosaic response — plus `PSF`/`PSFPARSN` when `--psf` is on); partition
-children hold the ragged vis-space arrays (`VIS`, `WEIGHT`, `MASK`, `UVW`, `FREQ`),
-per-partition `BEAM`, and `PSF`/`PSFHAT`/`PSFPARSN` when `--psf` is on. **Product selection:** `--psf` is a compute toggle
-(a `--no-psf` tree is quicklook-only; `deconv` refuses it with a clear error), `--beam` gates
-only the beam FITS (the stored `BEAM` is load-bearing, D22), and `--fits-per-partition` writes
-per-partition dirty/psf/beam FITS (`<var>_band####_time####_part####_<field>.fits` in a
-`<oname>_partitions/` subdirectory) for field/beam orientation sanity checks. `RESIDUAL` is no
-longer imager-written: residual computation arrives with model-input support, and `deconv`
-falls back to `DIRTY` when it is absent.
-**Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")` etc.,
-scratch beam `("corr", "m_beam", "l_beam")`; ducc's x-major world exists only behind zero-copy
-`.T` views at the wgridder call sites (wiki design-decisions D19/D20).
-`MODEL`/`RESIDUAL`/`NOISE` are added later by the `deconv` consumer (plus
-`MODEL_MOPPED`/`RESIDUAL_MOPPED` when `--mop` is on, the default — wiki D35), and
-`IMAGE`/`BIMAGE`/`KIMAGE` plus `PSFPARSF` by the `restore` consumer (the intrinsic,
-apparent and mixed flux scales — wiki D29), and optionally `CRESIDUAL` (`--outputs s`/`S`),
-the residual convolved to the restoring resolution — apparent, pre-beam-division, and the
-only record of what the resolution change did to the residual (wiki D33).
-
-**Access layer — native DataTree only.** Use `xr.open_datatree(store)`,
-`ds.to_zarr(store, group="band…/part…", mode="a")`, and `dt.children` directly. Do **not** add
-`xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (those remain only for the legacy
-`.dds` consumers), and do not add one-level-deep shims around the native API.
-
-**Memory discipline (Ray + MSv4) — battle-tested, do not regress.** Ray workers are long-lived;
-anything a task leaves behind compounds across the run. Full story, measured numbers and the
-local repro harness: `docs/wiki/memory-and-ray.md`.
-* Never blanket-`.load()` an MSv4 node — it reads *every* correlated-data column
-  (`VISIBILITY`, `CORRECTED_DATA`, `MODEL_DATA`, …). Load only the needed variables, extract
-  to plain numpy, then release the Dataset *before* heavy processing (`stokes_vis` is the
-  template).
-* `gc.collect()` in a `try/finally` at every Ray-task boundary: deserialised xarray objects
-  sit in reference cycles that refcounting cannot free.
-* Evict xarray-ms's process-level Multiton table cache between tasks
-  (`stokes2vis_msv4._release_ms_caches`): its 300 s *inactivity* TTL + per-partition cache
-  keys mean a busy worker otherwise retains ~a task's read footprint per task, below Python.
-* Pass-1/2 tasks return post-gc `{pid, rss_gb, peak_gb}`, printed in the progress lines.
-  Read this before theorising about memory: ratcheting post-gc rss per pid = below-Python
-  retention; flat rss with high peak = per-task transients.
-
-**Rephasing / mosaics (D21).** Pass 1 rephases all selected data to a common tangent point
-(`--phase-dir`; barycentre default for multi-field selections) before weighting/averaging/COUNTS,
-using differential measures-synthesized UVW (the systematic vs the MS's own UVW cancels);
-`--target` is an in-plane image-centre offset carried as `l0/m0` attrs and a CRPIX shift in the
-FITS. Band/partition attrs: `ra/dec` = tangent point, `ra0/dec0` = field pointing. Beams are
-evaluated (katbeam or `BeamWizard` band names U/L/S0/S4) about the field pointing, at the piece's
-**effective frequency** (wiki D28 — not the band-edge centre), and reprojected
-onto the image grid **in pass 1** (#281); scratch/partition `BEAM` is `(corr, ny, nx)`, and pass 2
-reduces a partition's pieces to one `BEAM` as a `wsum_nat`-weighted mean (`_concat_pieces`, D28). The stored `BEAM` is the **effective response `B/n`** — the wgridder n-term is
-folded into it and every ducc call stays `divide_by_n=False` (wiki D22; the fold is an exact
-operator identity and keeps the PSF-convolution Hessian at its baseline accuracy, unlike
-`divide_by_n=True` which a convolution cannot represent). The deconvolved MODEL is intrinsic flux.
-
-**Time epochs.** The MSv4 `time` coordinate and the `.dt`'s `time_out` attrs are **unix
-seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. `utils/fits.set_wcs` takes
-`time_is_unix=` — applying the wrong convention shifts FITS `DATE-OBS` by ~111 years (ERFA
-"dubious year" warnings are the symptom).
-
-**Deconvolution operators** (per output image; the embarrassingly-parallel `(band,time)` axis is
-distributed by Ray, the sum over a band's partitions is not):
-* `operators/hessian.HessianTree` — PSF-convolution Hessian summed over a band's partitions,
-  using the stored `PSFHAT`/`BEAM` (cheap minor-cycle operator; preallocated FFT scratch so a
-  future Ray actor can reuse one instance across iterations).
-* `operators/gridder.residual_from_partitions` — exact degrid/grid residual reusing the stored
-  per-partition inputs, **never recomputing the PSF** (per-major-cycle gradient). This mirrors
-  the legacy `image_data_products`/`compute_residual` split and owns the exact path, so
-  `HessianTree` is PSF-convolution only. One sweep returns both the apparent residual (FITS,
-  λ/rms) and the beam-attenuated gradient `BRESIDUAL = BDIRTY − Σ_p B_p·GᵀWG(B_p·m)` that the
-  forward solver consumes (wiki D23 — the Hessian applies the beam twice, so its rhs must carry
-  the outer per-partition beam).
-* `operators/band_worker.BandWorkerPool` — one Ray worker process per band co-locating all
-  per-band deconv state (the band's `HessianTree` with in-worker CG, the wavelet jitclass, and
-  the pinned gridding inputs for the exact residual). The `HessTreeRay`/`PsiNocopytRay` facades
-  and the `pfb deconv` driver's residual step share one pool, so a run needs exactly nband
-  workers; workers claim nominal (1e-2) CPUs because they are thread-pool-bound (a real claim
-  can deadlock scheduling), and the driver sizes the local cluster's `num_cpus` to
-  `max(nworkers, nband+1)` so worker startup is not throttled. Each worker reads its own band's
-  vis-scale inputs (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`/`DIRTY`) straight from the
-  `.dt` store (`load_bands`), so that data never enters the driver or the Ray object store —
-  the driver reads only image-scale cubes (`RESIDUAL`/`MODEL`/`UPDATE`), `WSUM` and attrs.
-
-**arcae + python-casacore.** As of **arcae 0.5.2** (ratt-ru/arcae#211, #212) arcae and
-python-casacore coexist in one process, so the suite runs as a single `pytest tests/`
-(the ground-truth fixture writes the test MS with python-casacore while the imager reads
-it with arcae). The historical casacore-free discipline on the imaging path was retired
-(wiki design-decisions D14): `africanus`/`daskms`/`casacore` imports follow the ordinary
-§3 rules — top-level unless a documented §3 exception applies.
+* **Native DataTree API only.** `xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`.
+  Do not add `xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (those remain only
+  for the legacy `.dds` consumers), and do not add one-level-deep shims around the native API.
+* **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")`,
+  scratch beam `("corr", "m_beam", "l_beam")`. ducc's x-major world exists only behind
+  zero-copy `.T` views at the wgridder call sites (D19/D20).
+* **`.dt` times are unix seconds; the legacy `.dds` is MJD seconds.** `utils/fits.set_wcs`
+  takes `time_is_unix=` — the wrong convention shifts FITS `DATE-OBS` by ~111 years (D13).
+* **The stored `BEAM` is the effective response `B/n`** and every ducc call on this path stays
+  `divide_by_n=False` (D22). Do not "fix" this; consumers wanting the bare primary beam must
+  use `B = BEAM·n` or check `beam_includes_n`.
+* **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8) and `MASK` (u1).
+  ducc enforces this; it is not a memory optimisation (D27).
+* **Memory discipline — do not regress** (`docs/wiki/memory-and-ray.md` has the measured
+  story; D44 is the test-harness equivalent):
+  * Never blanket-`.load()` an MSv4 node — it reads *every* correlated-data column. Load only
+    the needed variables, extract to plain numpy, and release the Dataset before heavy
+    processing (`stokes_vis` is the template).
+  * `gc.collect()` in a `try/finally` at every Ray-task boundary: deserialised xarray objects
+    sit in reference cycles that refcounting cannot free.
+  * Evict xarray-ms's process-level Multiton table cache between tasks
+    (`stokes2vis_msv4._release_ms_caches`).
+  * Read the per-task post-gc RSS telemetry in the progress lines before theorising:
+    ratcheting post-gc rss per pid = below-Python retention; flat rss with high peak =
+    per-task transients.
+* **Deconvolution operators.** `HessianTree` is PSF-convolution only;
+  `gridder.residual_from_partitions` owns the exact degrid/grid path and **never recomputes
+  the PSF**; `BandWorkerPool` workers claim nominal (1e-2) CPUs because a real claim can
+  deadlock scheduling (D8), and read their own vis-scale inputs straight from the store so
+  that data never enters the driver or the Ray object store (D10). The driver sizes the local
+  cluster to `max(nworkers, nband+1)`. Rationale: `docs/wiki/imager-pipeline.md`.

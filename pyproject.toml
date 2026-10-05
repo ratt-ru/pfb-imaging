@@ -199,9 +199,9 @@ addopts = [
     "--strict-config",
     "--verbose",
     # Fast by default: the end-to-end pipeline tests are deselected so the
-    # development loop stays ~80s instead of ~400s. CI overrides with `-m ""`
-    # (a command-line -m wins over this one). Run everything locally the same
-    # way; `-m slow` runs only the deselected set.
+    # development loop stays short. CI overrides with `-m ""` (a command-line
+    # -m wins over this one). Do not run the slow set locally -- see
+    # .claude/rules/testing-and-ci.md section 1.
     "-m",
     "not slow",
     # Drift guard: surfaces a newly-slow test in the fast loop's own output
