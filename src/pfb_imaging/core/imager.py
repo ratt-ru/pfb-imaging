@@ -52,7 +52,9 @@ warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
 log = pfb_logging.get_logger("IMAGER")
 
 
-def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, cell_rad, do_psf, do_beam):
+def _partition_fits(
+    fits_dir, out_name, pid, field_name, baseline_group, prod, meta, freq_out, cell_rad, do_psf, do_beam
+):
     """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
 
     Runs inside the pass-2 worker while the partition products are in memory;
@@ -79,7 +81,10 @@ def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, c
             ncorr=ncorr,
         )
 
-    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}.fits"
+    # the group suffix is conditional: with grouping off there is one partition
+    # per field and today's filenames must not change
+    bg = "" if str(baseline_group) == "all" else f"_{baseline_group}"
+    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}{bg}.fits"
     wsum = prod["WSUM"][:, None, None]
     with np.errstate(invalid="ignore", divide="ignore"):
         dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
@@ -296,6 +301,7 @@ def _grid_image(
                 out_name,
                 pid,
                 key[1],
+                key[3],
                 prod,
                 meta,
                 float(part.attrs["freq_out"]),

@@ -1011,3 +1011,59 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
 
     assert sorted(g for _, g in built) == ["MM", "MPM", "MPMP"]
     assert {b for b, _ in built} == {"L"}
+
+
+def test_partition_fits_names_carry_the_group_when_split(tmp_path):
+    """With grouping on, three partitions per field would otherwise collide."""
+    from pfb_imaging.core.imager import _partition_fits
+
+    nx = ny = 8
+    prod = {
+        "DIRTY": np.ones((1, ny, nx)),
+        "WSUM": np.ones(1),
+        "BEAM": np.ones((1, ny, nx)),
+    }
+    meta = {"ra": 0.1, "dec": -0.5, "time_out": 1.6e9, "l0": 0.0, "m0": 0.0}
+
+    _partition_fits(
+        str(tmp_path),
+        "band0000_time0000",
+        2,
+        "FIELD_A",
+        "MPM",
+        prod,
+        meta,
+        1.4e9,
+        1e-6,
+        do_psf=False,
+        do_beam=True,
+    )
+    assert glob.glob(str(tmp_path / "dirty_band0000_time0000_part0002_FIELD_A_MPM.fits"))
+
+
+def test_partition_fits_names_are_unchanged_when_not_split(tmp_path):
+    """baseline_group 'all' must not rename today's output."""
+    from pfb_imaging.core.imager import _partition_fits
+
+    nx = ny = 8
+    prod = {
+        "DIRTY": np.ones((1, ny, nx)),
+        "WSUM": np.ones(1),
+        "BEAM": np.ones((1, ny, nx)),
+    }
+    meta = {"ra": 0.1, "dec": -0.5, "time_out": 1.6e9, "l0": 0.0, "m0": 0.0}
+
+    _partition_fits(
+        str(tmp_path),
+        "band0000_time0000",
+        2,
+        "FIELD_A",
+        "all",
+        prod,
+        meta,
+        1.4e9,
+        1e-6,
+        do_psf=False,
+        do_beam=True,
+    )
+    assert glob.glob(str(tmp_path / "dirty_band0000_time0000_part0002_FIELD_A.fits"))

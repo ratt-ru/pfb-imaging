@@ -233,6 +233,24 @@ def imager(
             rich_help_panel="Input",
         ),
     ] = None,
+    baseline_groups: Annotated[
+        bool,
+        typer.Option(
+            help="Partition visibilities into MeerKAT baseline groups. "
+            "Splits each partition into MM, MPM and MPMP, each with its own primary beam. "
+            "Requires a MeerKAT array and L band when a beam model is given.",
+            rich_help_panel="Imaging",
+        ),
+    ] = False,
+    antenna_groups: Annotated[
+        str | None,
+        typer.Option(
+            help="Name the two dish classes explicitly as two comma separated glob patterns. "
+            "The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas. "
+            "Use this when automatic classification from dish diameter is refused.",
+            rich_help_panel="Imaging",
+        ),
+    ] = None,
     phase_dir: Annotated[
         str | None,
         typer.Option(
@@ -524,6 +542,8 @@ def imager(
                     bda_decorr=bda_decorr,
                     max_field_of_view=max_field_of_view,
                     beam_model=beam_model,
+                    baseline_groups=baseline_groups,
+                    antenna_groups=antenna_groups,
                     phase_dir=phase_dir,
                     target=target,
                     chan_average=chan_average,
@@ -583,6 +603,8 @@ def imager(
                 bda_decorr=bda_decorr,
                 max_field_of_view=max_field_of_view,
                 beam_model=beam_model,
+                baseline_groups=baseline_groups,
+                antenna_groups=antenna_groups,
                 phase_dir=phase_dir,
                 target=target,
                 chan_average=chan_average,
@@ -651,6 +673,8 @@ def imager(
             bda_decorr=bda_decorr,
             max_field_of_view=max_field_of_view,
             beam_model=beam_model,
+            baseline_groups=baseline_groups,
+            antenna_groups=antenna_groups,
             phase_dir=phase_dir,
             target=target,
             chan_average=chan_average,
