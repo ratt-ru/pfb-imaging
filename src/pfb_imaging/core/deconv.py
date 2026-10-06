@@ -427,16 +427,23 @@ def deconv(
         # write component model (carried over from the legacy driver; .dt-native attrs)
         log.info(f"Writing model to {basename}_{suffix}.mds")
         try:
-            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+            # radec is the TANGENT point; x0/y0 are what carry the in-plane
+            # offset of the image centre from it (D21, D37). Hardcoding (0, 0)
+            # here -- while every FITS header above used the real (l0, m0) --
+            # made a --target run's .mds claim a grid centred on the tangent
+            # point when its pixels are centred on the target, which a consumer
+            # faithfully turns into sources displaced by (l0, m0) (#326).
+            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
             # the .mds stays x-major (degrid/model2comps convention; see the
             # pfb-model-spec migration in #277) -- model_to_ds re-evaluates the
             # fit at every band internally, the transpose stays in pfb-imaging
-            # until we formally update the spec version
+            # until we formally update the spec version. `model` is
+            # (nband, ny, nx) here and the spec wants (nband, nx, ny), both ways.
             model = model_to_ds(
                 time_out,
                 freq_out,
                 fsel,
-                model.transpose(0, 1, 3, 2),
+                model.transpose(0, 2, 1),
                 wsums / wsum,
                 f"{basename}_{suffix}.mds",
                 cell_rad,
@@ -451,9 +458,13 @@ def deconv(
                 product,
                 pfb_version,
                 nbasisf=nbasisf,
-            ).T
+            ).transpose(0, 2, 1)
         except Exception as e:
-            log.info(f"Exception {e} raised during model fit.")
+            # Not fatal: the deconvolution itself is unaffected and the band
+            # products are already written. It IS worth shouting about, because
+            # the only symptom is a missing .mds -- which is how a 4-d transpose
+            # on a 3-d cube survived here unnoticed (#326).
+            log.warning(f"Model fit failed ({type(e).__name__}: {e}); no .mds written this cycle.")
 
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
