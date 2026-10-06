@@ -943,6 +943,10 @@ def test_baseline_groups_write_three_partitions_with_the_right_row_counts(ms_nam
     # 10 vs 17 antennas: MM has the fewest baselines (45), MPM the most (170).
     assert rows["MM"] < rows["MPMP"] < rows["MPM"], f"group sizes look wrong: {rows}"
 
+    # D46's diagnostic must reach the .dt, not die in the scratch store.
+    for p in band.children:
+        assert "beam_imre_ratio" in band[p].ds.attrs
+
     # Review Focus 2: no partition may be written with zero wsum -- the band
     # BEAM is a wsum-weighted mean and would divide by zero.
     for p in band.children:
@@ -1067,3 +1071,47 @@ def test_partition_fits_names_are_unchanged_when_not_split(tmp_path):
         do_beam=True,
     )
     assert glob.glob(str(tmp_path / "dirty_band0000_time0000_part0002_FIELD_A.fits"))
+
+
+def test_concat_pieces_reports_the_worst_beam_imre_ratio():
+    """The Re(B) diagnostic must survive the piece reduction as a max.
+
+    _concat_pieces keeps piece 0's attrs, so a naive reduction would report
+    whichever piece happened to be first rather than the worst one (wiki D46).
+    """
+    from pfb_imaging.core.imager import _concat_pieces
+
+    def _piece(ratio, wsum):
+        return xr.Dataset(
+            {
+                "VIS": (("corr", "row", "chan"), np.ones((1, 2, 1), dtype=np.complex64)),
+                "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1), dtype=np.float32)),
+                "MASK": (("row", "chan"), np.ones((2, 1), dtype=np.uint8)),
+                "UVW": (("row", "three"), np.zeros((2, 3))),
+                "FREQ": (("chan",), np.array([1.4e9])),
+                "BEAM": (("corr", "y", "x"), np.ones((1, 2, 2), dtype=np.float32)),
+            },
+            attrs={"wsum_nat": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
+        )
+
+    part = _concat_pieces([_piece(0.01, 1.0), _piece(0.25, 1.0), _piece(0.05, 1.0)])
+    assert part.attrs["beam_imre_ratio"] == pytest.approx(0.25)
+
+
+def test_antenna_groups_without_baseline_groups_is_refused(ms_name, tmp_path, monkeypatch):
+    """An ignored option must say so rather than silently doing nothing."""
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="--baseline-groups"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            antenna_groups="m*,e*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )

@@ -32,12 +32,12 @@ SEARCH_GLOBS = (
 # is written with and without a space before the unit ("~108 s" vs "~108s") and a
 # literal-substring check silently misses the other spelling.
 VOLATILE = (
-    r"\b745\b",
     r"\b786\b",
-    r"\b787\b",
-    r"~?108\s*s\b",
+    r"\b830\b",
+    r"\b831\b",
+    r"~?110\s*s\b",
     r"~?465\s*s\b",
-    r"9\.5\s*min",
+    r"9\.6\s*min",
 )
 VOLATILE_HOME = ".claude/rules/testing-and-ci.md"
 # Searched repo-wide, not over a fixed list: a figure reintroduced into a wiki page, a

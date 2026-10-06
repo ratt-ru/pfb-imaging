@@ -159,6 +159,9 @@ def _concat_pieces(plist):
     part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
     part.attrs["freq_out"] = freq_out
     part.attrs["wsum_nat"] = wsum_nat
+    # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
+    # is what `part = plist[0].drop_vars(...)` would otherwise leave here.
+    part.attrs["beam_imre_ratio"] = max(float(p.attrs.get("beam_imre_ratio", 0.0)) for p in plist)
     return part
 
 
@@ -227,6 +230,8 @@ def _grid_image(
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # worst Re(B) approximation error over this image's partitions (wiki D46)
+    beam_imre_max = 0.0
     # float64 regardless of --precision: the tree may be single-precision
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
@@ -288,12 +293,16 @@ def _grid_image(
                 "m0": meta.get("m0", 0.0),
                 # stored BEAM = effective image-plane response B/n (D22)
                 "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
+                # max|Im|/max|Re| of the evaluated beam; non-zero only for the
+                # MPM cross group, where the stored BEAM is Re(B) (wiki D46)
+                "beam_imre_ratio": float(part.attrs.get("beam_imre_ratio", 0.0)),
                 "wsum": prod["WSUM"].tolist(),
             },
         )
         # consolidated=False: each pass-2 worker owns a distinct image_name node,
         # but they share the store root; the driver consolidates once at the end
         part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
+        beam_imre_max = max(beam_imre_max, float(part.attrs.get("beam_imre_ratio", 0.0)))
 
         if part_fits_dir is not None:
             _partition_fits(
@@ -386,7 +395,13 @@ def _grid_image(
         "rss_gb": psutil.Process().memory_info().rss / 2**30,
         "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
     }
-    return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum, "mem": mem}
+    return {
+        "timeid": meta["timeid"],
+        "psf": psf_sum,
+        "wsum": wsum_sum,
+        "mem": mem,
+        "beam_imre_ratio": beam_imre_max,
+    }
 
 
 # meerkat-beams serves baseline-group beams for L band only (its
@@ -557,6 +572,15 @@ def imager(
     antenna_group_override = None
     if baseline_groups:
         antenna_group_override = _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
+    elif antenna_groups is not None:
+        # Refuse rather than ignore: an ungrouped run with --antenna-groups set
+        # is indistinguishable in its output from the grouped run the user asked
+        # for, and the spec would not even have parsed the pattern.
+        log.error_and_raise(
+            "--antenna-groups only has an effect with --baseline-groups, which is not set. "
+            "Add --baseline-groups, or drop --antenna-groups.",
+            ValueError,
+        )
 
     if gain_table is not None:
         gainnames = []
@@ -1116,10 +1140,12 @@ def imager(
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
+    beam_imre_max = 0.0
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
+            beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
             tid = res["timeid"]
             if res["psf"] is not None:
                 # accumulate at the precision the workers gridded in (see _grid_image)
@@ -1136,6 +1162,15 @@ def imager(
                     end="\n",
                     flush=True,
                 )
+
+    if beam_imre_max > 0:
+        # The MPM cross-group beam is complex and we store Re(B) (wiki D46).
+        # This is the evidence that the approximation holds; it is also on every
+        # partition as the beam_imre_ratio attr.
+        log.info(
+            f"Cross-group beam max|Im|/max|Re| = {beam_imre_max:.3e} "
+            f"(stored BEAM is Re(B); see wiki design-decisions D46)"
+        )
 
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)

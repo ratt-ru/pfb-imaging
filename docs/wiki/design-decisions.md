@@ -1392,8 +1392,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   `H = Σ_p B_pᵀ G_pᵀ W_p G_p B_p`, `BDIRTY = Σ_p B_p·dirty_p` and the beam FITS
   path all assume a real `B`.
 - **Decision:** store `Re(B)` for the cross group. `utils/stokes2vis_msv4.real_beam_maps`
-  takes the real part explicitly and records `max|Im|/max|Re|` in the partition
-  attr `beam_imre_ratio`.
+  takes the real part explicitly and records `max|Im|/max|Re|`. That number is
+  carried out of the scratch store deliberately, because it is the decision's
+  only mitigation: `_concat_pieces` reduces it across a partition's pieces as a
+  **max** (piece 0's value is not representative), pass 2 writes it to every
+  `.dt` partition as the `beam_imre_ratio` attr, and the driver logs the
+  run-level maximum once after pass 2 when it is non-zero.
 - **Rationale:** the imaginary part is the antisymmetric response, which
   integrates to zero for a real sky over conjugate baseline orderings. Taking
   it keeps every image-space operator, the uniform-`--precision` invariant (D27)

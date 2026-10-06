@@ -247,6 +247,7 @@ def imager(
         typer.Option(
             help="Name the two dish classes explicitly as two comma separated glob patterns. "
             "The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas. "
+            "Requires --baseline-groups. "
             "Use this when automatic classification from dish diameter is refused.",
             rich_help_panel="Imaging",
         ),
