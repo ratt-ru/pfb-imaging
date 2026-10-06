@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-05T17:07:34Z
-last_verified_commit: 08e1daf
+timestamp: 2026-10-06T09:18:06Z
+last_verified_commit: 7096abf
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1382,6 +1382,78 @@ update it (and this page's `last_verified_commit`) in the same session.
   loop's own output rather than rotting there.
 - **Source:** PR #336; `.claude/rules/testing-and-ci.md` §1.
 
+### D46 — the cross-group beam is stored as `Re(B)`
+
+- **Context:** On a mixed MeerKAT / MeerKAT+ array the primary beam depends on
+  which pair of dishes forms a baseline. `meerkat-beams` serves `MM`, `MPM` and
+  `MPMP` beams, but a mixed baseline has no single Jones matrix, so `MPM`'s
+  Stokes variables come back **complex64** (its `jones`/`njones` are absent
+  entirely). The stored `.dt` `BEAM` is real everywhere, and
+  `H = Σ_p B_pᵀ G_pᵀ W_p G_p B_p`, `BDIRTY = Σ_p B_p·dirty_p` and the beam FITS
+  path all assume a real `B`.
+- **Decision:** store `Re(B)` for the cross group. `utils/stokes2vis_msv4.real_beam_maps`
+  takes the real part explicitly and records `max|Im|/max|Re|`. That number is
+  carried out of the scratch store deliberately, because it is the decision's
+  only mitigation: `_concat_pieces` reduces it across a partition's pieces as a
+  **max** (piece 0's value is not representative), pass 2 writes it to every
+  `.dt` partition as the `beam_imre_ratio` attr, and the driver logs the
+  run-level maximum once after pass 2 when it is non-zero.
+- **Rationale:** the imaginary part is the antisymmetric response, which
+  integrates to zero for a real sky over conjugate baseline orderings. Taking
+  it keeps every image-space operator, the uniform-`--precision` invariant (D27)
+  and the `B/n` convention (D22) exactly as they are. The alternatives were
+  worse: `|B|` discards the sign of a genuinely negative off-axis response,
+  precisely in the far-sidelobe regime that motivates per-group beams; a complex
+  `BEAM` end to end breaks D27 and touches every image-space operator; and
+  dropping cross-group baselines costs a large fraction of the array's uv
+  coverage.
+- **Consequences:** this is an approximation, not a derivation. The explicit
+  `np.real` is load-bearing — numpy assigns complex into a float array with only
+  a `ComplexWarning` (verified, numpy 2.4.6), so the same result would otherwise
+  be reached by accident and `beam_imre_ratio` would never be computed. **Watch
+  that attr on real MeerKAT+ data**; a large ratio means this decision needs
+  revisiting.
+- **Measured (meerkat-beams 0.1.0, staged MdV-2026 products, real MeerKAT+ MS):**
+  `MM` and `MPMP` come back real (`float32` `nstokes`, `jones`/`njones` present);
+  `MPM` is `complex64` with `jones`/`njones` absent, exactly as upstream
+  documents. At 1.28 GHz the discarded part is **`max|Im|/max|Re| = 2.1e-2`** —
+  about 2% of peak, not a rounding error. A full `pfb imager --baseline-groups
+  --beam-model L` run over a 20 MHz slice of a 37-antenna MeerKAT+ observation
+  wrote `beam_imre_ratio` 0.0 / 2.1287e-02 / 0.0 for `MM` / `MPM` / `MPMP`, and
+  the band `BEAM` stayed finite and within [0.738, 1]. So the approximation is
+  now quantified rather than assumed, and 2% is the number to argue about.
+
+### D47 — the baseline-group telescope guard keys on the beam model
+
+- **Context:** `--baseline-groups` needs per-group MeerKAT beams, which exist
+  only for MeerKAT, only for L band, and only from staged MdV-2026 products. A
+  non-MeerKAT array has no group beam at all.
+- **Decision:** the telescope and band guards fire when a group-capable
+  `BeamWizard` is required — i.e. whenever `--beam-model` is set — not on
+  `--baseline-groups` alone. They run in `_preflight_baseline_groups` **before**
+  `init_ray`, so a bad request never stands up a cluster.
+- **Rationale:** with no beam model there is no group beam to get wrong, and the
+  split degenerates to pure data partitioning whose summation is algebraically
+  identical to not splitting (imaging weights are reduced per band, not per
+  partition, so both runs see identical weights and gridding is linear in rows).
+  That is also what lets the grouped-equals-ungrouped equivalence test run on
+  the VLA test MS on every CI leg, with no MS mutation and no python-casacore.
+- **Consequences:** a non-MeerKAT user passing `--baseline-groups` with no beam
+  model gets a pointless-but-harmless three-way split instead of an error. The
+  guard reads `antenna_xds.attrs["overall_telescope_name"]`, which xarray-ms
+  broadcasts from `OBSERVATION::TELESCOPE_NAME` — it identifies the array but
+  **cannot** discriminate dishes, which is what `ANTENNA_DISH_DIAMETER` is for.
+  That is not an xarray-ms bug and there is nothing to file: checked with
+  python-casacore on a real MeerKAT+ MS, `OBSERVATION` has one row whose
+  `TELESCOPE_NAME` is `"MeerKAT"` (correct — in MSv2 the telescope names the
+  *observation*), and the MSv2 `ANTENNA` table has **no** telescope column at
+  all (`DISH_DIAMETER, FLAG_ROW, MOUNT, NAME, OFFSET, POSITION, STATION, TYPE`).
+  MSv4's per-antenna `telescope_name` has no MSv2 source, so broadcasting is the
+  only available imputation — it is just a confidently-wrong one on a
+  heterogeneous array. On that same MS `STATION` duplicates `NAME`, and `MOUNT`
+  and `TYPE` are uniform, so `ANTENNA_DISH_DIAMETER` is the **only** per-antenna
+  discriminator MSv2 carries. See `docs/msv4_issues.md`.
+
 ## Known debt
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch
@@ -1431,6 +1503,14 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Recurring gotchas
 
+- **`pfb` repoints the meerkat-beams cache, so hand-staged beams go missing.**
+  `pfb_imaging/__init__.py` sets `MBEAMS_CACHE_DIR=/tmp/mbeams-cache-<uid>` by
+  `setdefault` (#270: Ray workers and containers need a shared, mountable path).
+  meerkat-beams' own default is `~/.cache/meerkat-beams`, so MdV-2026 group
+  products staged by hand land where `pfb` will not look, and `imager` dies with
+  "beam product 'MeerKAT_L_mdv2026' is not yet published" even though the files
+  are on disk. Stage into `/tmp/mbeams-cache-<uid>`, or export an explicit
+  `MBEAMS_CACHE_DIR` (the `setdefault` means an explicit value always wins).
 - **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
   to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
   rather than where it came from. Always pass `region` explicitly, and only slices — an

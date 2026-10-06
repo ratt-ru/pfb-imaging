@@ -729,3 +729,483 @@ def test_imager_effective_freq_uneven_bands(ms_name, tmp_path):
         w = np.array([np.asarray(p.attrs["wsum"]).sum() for p in parts])
         f = np.array([p.attrs["freq_out"] for p in parts])
         assert_allclose(dt[name].ds.attrs["freq_out"], (w * f).sum() / w.sum(), rtol=1e-10)
+
+
+def test_baseline_groups_refuses_non_meerkat_before_ray_init(ms_name, tmp_path, monkeypatch):
+    """A non-MeerKAT array is rejected up front: we have no group beam for it.
+
+    The monkeypatch is the real assertion -- the guard must fire before a Ray
+    cluster is stood up, the way deconv's --psf guard does.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="vla"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="L",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_without_beam_model_skips_the_telescope_guard(ms_name, tmp_path, monkeypatch):
+    """With no beam model there is no group beam to get wrong, so the split is
+    pure data partitioning and is telescope-agnostic (spec §4 ruling)."""
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise RuntimeError("reached init_ray")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(RuntimeError, match="reached init_ray"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            antenna_groups="vla-0*,vla-[12]*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_refuses_katbeam(ms_name, tmp_path, monkeypatch):
+    """katbeam has no MeerKAT+ model and gives only power beams."""
+    import pfb_imaging.core.imager as imager_mod
+
+    monkeypatch.setattr(imager_mod, "init_ray", lambda *a, **kw: None)
+
+    with pytest.raises(ValueError, match="katbeam"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="katbeam",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_refuses_non_l_band(ms_name, tmp_path, monkeypatch):
+    """meerkat-beams serves groups for L band only (its design-decisions D15)."""
+    import pfb_imaging.core.imager as imager_mod
+
+    monkeypatch.setattr(imager_mod, "init_ray", lambda *a, **kw: None)
+
+    with pytest.raises(ValueError, match="L band"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="UHF",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_bad_antenna_groups_spec_is_refused_early(ms_name, tmp_path, monkeypatch):
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="exactly two"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            antenna_groups="m*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def _total_rows(dt_path):
+    """Total vis rows across every partition of every band."""
+    dt = xr.open_datatree(dt_path, engine="zarr", chunks=None)
+    return sum(dt[b][p].ds.sizes["row"] for b in dt.children if b.startswith("band") for p in dt[b].children)
+
+
+def _summed_band_products(dt_path):
+    """Per-band summed DIRTY/PSF/WSUM, keyed by band node name."""
+    dt = xr.open_datatree(dt_path, engine="zarr", chunks=None)
+    out = {}
+    for name in sorted(n for n in dt.children if n.startswith("band")):
+        band = dt[name].ds
+        out[name] = (band.DIRTY.values, band.PSF.values, band.WSUM.values)
+    return out
+
+
+@pytest.mark.slow
+def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
+    """Summing the three groups reproduces the ungrouped image exactly.
+
+    Imaging weights are reduced per band, not per partition, so both runs see
+    identical weights; gridding is then linear in rows, so the split is
+    algebraically a no-op. The two patterns cover 10 and 17 of the MS's 27
+    antennas -- exhaustive, no overlap.
+    """
+    common = dict(
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    plain = str(tmp_path / "plain")
+    imager_core([Path(ms_name)], plain, **common)
+
+    grouped = str(tmp_path / "grouped")
+    imager_core(
+        [Path(ms_name)],
+        grouped,
+        baseline_groups=True,
+        antenna_groups="vla-0*,vla-[12]*",
+        **common,
+    )
+
+    # The equivalence below is vacuous unless the split actually happened: an
+    # unsplit "grouped" run is the plain run, and would match trivially.
+    gdt = xr.open_datatree(grouped + "_I.dt", engine="zarr", chunks=None)
+    gband = gdt[sorted(n for n in gdt.children if n.startswith("band"))[0]]
+    assert sorted(gband[p].ds.attrs["baseline_group"] for p in gband.children) == ["MM", "MPM", "MPMP"]
+
+    # Rows are partitioned, not duplicated or dropped: the masks must index the
+    # node's own baseline axis (Review Focus 3).
+    assert _total_rows(grouped + "_I.dt") == _total_rows(plain + "_I.dt")
+
+    ref = _summed_band_products(plain + "_I.dt")
+    got = _summed_band_products(grouped + "_I.dt")
+    assert set(ref) == set(got), "grouped run produced different band nodes"
+
+    for name in ref:
+        rd, rp, rw = ref[name]
+        gd, gp, gw = got[name]
+        # wsum is a plain sum of weights and must agree to roundoff.
+        assert_allclose(gw, rw, rtol=1e-10, atol=0)
+        # DIRTY/PSF are compared against the image peak, not per pixel: summing
+        # three partial griddings is algebraically identical but not bitwise
+        # associative, and a relative tolerance would be dominated by pixels
+        # near zero. The bound is the wgridder's OWN accuracy target
+        # (epsilon=1e-7, operators/gridder.py) with a 10x margin -- comparing
+        # tighter than epsilon compares beyond what the gridder promises.
+        # Measured worst-pixel agreement here: 7.8e-8 relative, 6.7e-8 of peak.
+        assert_allclose(gd, rd, rtol=0, atol=1e-6 * np.abs(rd).max())
+        assert_allclose(gp, rp, rtol=0, atol=1e-6 * np.abs(rp).max())
+
+
+@pytest.mark.slow
+def test_baseline_groups_write_three_partitions_with_the_right_row_counts(ms_name, tmp_path):
+    """Three partitions per band, each sliced on its own node's baseline axis."""
+    outname = str(tmp_path / "grouped")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        baseline_groups=True,
+        antenna_groups="vla-0*,vla-[12]*",
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    band = dt[sorted(n for n in dt.children if n.startswith("band"))[0]]
+
+    labels = sorted(band[p].ds.attrs["baseline_group"] for p in band.children)
+    assert labels == ["MM", "MPM", "MPMP"]
+
+    # Every group must carry data. Exact row counts are NOT ntime*nbl: pass 1
+    # drops fully-flagged rows, and flagging is not uniform across baselines.
+    # Row conservation across the split is pinned in the equivalence test.
+    rows = {band[p].ds.attrs["baseline_group"]: band[p].ds.sizes["row"] for p in band.children}
+    assert set(rows) == {"MM", "MPM", "MPMP"}
+    assert all(v > 0 for v in rows.values()), f"a group carries no rows: {rows}"
+    # 10 vs 17 antennas: MM has the fewest baselines (45), MPM the most (170).
+    assert rows["MM"] < rows["MPMP"] < rows["MPM"], f"group sizes look wrong: {rows}"
+
+    # D46's diagnostic must reach the .dt, not die in the scratch store.
+    for p in band.children:
+        assert "beam_imre_ratio" in band[p].ds.attrs
+
+    # Review Focus 2: no partition may be written with zero wsum -- the band
+    # BEAM is a wsum-weighted mean and would divide by zero.
+    for p in band.children:
+        assert np.all(np.asarray(band[p].ds.attrs["wsum"]) > 0)
+    assert np.isfinite(band.ds.BEAM.values).all()
+    assert np.isfinite(band.ds.BDIRTY.values).all()
+
+
+@pytest.mark.slow
+def test_single_class_array_writes_one_partition_not_three(ms_name, tmp_path):
+    """Review Focus 1: an empty group must not become an empty partition."""
+    outname = str(tmp_path / "onegroup")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        baseline_groups=True,
+        antenna_groups="vla-*,nosuchantenna*",
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    band = dt[sorted(n for n in dt.children if n.startswith("band"))[0]]
+    assert len(band.children) == 1
+    assert band[next(iter(band.children))].ds.attrs["baseline_group"] == "MM"
+
+
+def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypatch):
+    """Three groups -> three wizards, each constructed with its own group label."""
+    import pfb_imaging.core.imager as imager_mod
+
+    built = []
+
+    class _FakeWizard:
+        def __init__(self, band=None, group=None):
+            built.append((band, group))
+
+    monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
+    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+
+    def _stop(*a, **kw):
+        raise RuntimeError("stop after beam construction")
+
+    # zarr.open_group is the first call after the beam block; set_image_size
+    # runs BEFORE it and would stop too early to observe the wizards.
+    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+
+    with pytest.raises(RuntimeError, match="stop after beam construction"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "beams"),
+            baseline_groups=True,
+            antenna_groups="vla-0*,vla-[12]*",
+            beam_model="L",
+            field_of_view=1.0,
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+    assert sorted(g for _, g in built) == ["MM", "MPM", "MPMP"]
+    assert {b for b, _ in built} == {"L"}
+
+
+def test_partition_fits_names_carry_the_group_when_split(tmp_path):
+    """With grouping on, three partitions per field would otherwise collide."""
+    from pfb_imaging.core.imager import _partition_fits
+
+    nx = ny = 8
+    prod = {
+        "DIRTY": np.ones((1, ny, nx)),
+        "WSUM": np.ones(1),
+        "BEAM": np.ones((1, ny, nx)),
+    }
+    meta = {"ra": 0.1, "dec": -0.5, "time_out": 1.6e9, "l0": 0.0, "m0": 0.0}
+
+    _partition_fits(
+        str(tmp_path),
+        "band0000_time0000",
+        2,
+        "FIELD_A",
+        "MPM",
+        prod,
+        meta,
+        1.4e9,
+        1e-6,
+        do_psf=False,
+        do_beam=True,
+    )
+    assert glob.glob(str(tmp_path / "dirty_band0000_time0000_part0002_FIELD_A_MPM.fits"))
+
+
+def test_partition_fits_names_are_unchanged_when_not_split(tmp_path):
+    """baseline_group 'all' must not rename today's output."""
+    from pfb_imaging.core.imager import _partition_fits
+
+    nx = ny = 8
+    prod = {
+        "DIRTY": np.ones((1, ny, nx)),
+        "WSUM": np.ones(1),
+        "BEAM": np.ones((1, ny, nx)),
+    }
+    meta = {"ra": 0.1, "dec": -0.5, "time_out": 1.6e9, "l0": 0.0, "m0": 0.0}
+
+    _partition_fits(
+        str(tmp_path),
+        "band0000_time0000",
+        2,
+        "FIELD_A",
+        "all",
+        prod,
+        meta,
+        1.4e9,
+        1e-6,
+        do_psf=False,
+        do_beam=True,
+    )
+    assert glob.glob(str(tmp_path / "dirty_band0000_time0000_part0002_FIELD_A.fits"))
+
+
+def test_concat_pieces_reports_the_worst_beam_imre_ratio():
+    """The Re(B) diagnostic must survive the piece reduction as a max.
+
+    _concat_pieces keeps piece 0's attrs, so a naive reduction would report
+    whichever piece happened to be first rather than the worst one (wiki D46).
+    """
+    from pfb_imaging.core.imager import _concat_pieces
+
+    def _piece(ratio, wsum):
+        return xr.Dataset(
+            {
+                "VIS": (("corr", "row", "chan"), np.ones((1, 2, 1), dtype=np.complex64)),
+                "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1), dtype=np.float32)),
+                "MASK": (("row", "chan"), np.ones((2, 1), dtype=np.uint8)),
+                "UVW": (("row", "three"), np.zeros((2, 3))),
+                "FREQ": (("chan",), np.array([1.4e9])),
+                "BEAM": (("corr", "y", "x"), np.ones((1, 2, 2), dtype=np.float32)),
+            },
+            attrs={"wsum_nat": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
+        )
+
+    part = _concat_pieces([_piece(0.01, 1.0), _piece(0.25, 1.0), _piece(0.05, 1.0)])
+    assert part.attrs["beam_imre_ratio"] == pytest.approx(0.25)
+
+
+def test_antenna_groups_without_baseline_groups_is_refused(ms_name, tmp_path, monkeypatch):
+    """An ignored option must say so rather than silently doing nothing."""
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="--baseline-groups"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            antenna_groups="m*,e*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, monkeypatch):
+    """Building a wizard for an absent group would stage beams nothing uses.
+
+    The MdV-2026 group products need hand-staging, so an eager wizard for a
+    group with no baselines kills the run in meerkat_beams.cache for a beam no
+    task would ever consume.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    built = []
+
+    class _FakeWizard:
+        def __init__(self, band=None, group=None):
+            built.append((band, group))
+
+    monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
+    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+
+    def _stop(*a, **kw):
+        raise RuntimeError("stop after beam construction")
+
+    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+
+    with pytest.raises(RuntimeError, match="stop after beam construction"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "onegroup"),
+            baseline_groups=True,
+            antenna_groups="vla-*,nosuchantenna*",
+            beam_model="L",
+            field_of_view=1.0,
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+    assert [g for _, g in built] == ["MM"], f"built wizards for absent groups: {built}"
+
+
+@pytest.mark.slow
+def test_real_group_beams_are_complex_only_for_the_cross_group():
+    """D46 rests on MPM being complex and MM/MPMP being real. Check that against
+    the actual meerkat-beams group datasets rather than a mock.
+
+    The MdV-2026 products are unpublished (placeholder gdrive IDs in
+    meerkat_beams.cache), so they cannot be downloaded and CI never runs this --
+    it skips unless they have been staged by hand into MBEAMS_CACHE_DIR, which
+    pfb points at /tmp/mbeams-cache-<uid> (see pfb_imaging/__init__.py), NOT at
+    meerkat-beams' own ~/.cache default.
+
+    Measured on staged products at 1.28 GHz: max|Im|/max|Re| = 2.1e-2.
+    """
+    from pathlib import Path as _Path
+
+    cache = pytest.importorskip("meerkat_beams.cache")
+    for product in ("MeerKAT_L_mdv2026", "MKE_L"):
+        if not _Path(cache.bds_path_for_product(product)).exists():
+            pytest.skip(f"group beam product {product!r} not staged under {cache.cache_root()}")
+
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.time import Time
+    from meerkat_beams.utils import BeamWizard
+
+    from pfb_imaging.utils.stokes2vis_msv4 import real_beam_maps
+
+    lm = np.linspace(-1.0, 1.0, 32)
+    times = Time(np.array([60000.0]), format="mjd")
+    ratios = {}
+    for group in ("MM", "MPM", "MPMP"):
+        bw = BeamWizard(band="L", group=group)
+        bw.set_field_centre(SkyCoord(ra=0.0 * u.rad, dec=-0.5 * u.rad))
+        bmap, _ = bw.get_rotation_averaged_beam(
+            l=lm,
+            m=lm,
+            times=times,
+            freq=np.atleast_1d(1.28e9),
+            time_stepping=1,
+            pixel_stepping=1,
+            var="nstokes",
+            i="I",
+            j="I",
+            verbose=0,
+        )
+        maps, ratio = real_beam_maps([bmap])
+        assert maps.dtype == np.float64
+        assert np.isfinite(maps).all()
+        ratios[group] = ratio
+
+    assert ratios["MM"] == 0.0, "MeerKAT-MeerKAT beam should be real"
+    assert ratios["MPMP"] == 0.0, "MeerKAT+-MeerKAT+ beam should be real"
+    # the cross group has no single Jones matrix, so its Stokes beam is complex
+    assert 0.0 < ratios["MPM"] < 0.1, f"unexpected cross-group |Im|/|Re|: {ratios['MPM']}"

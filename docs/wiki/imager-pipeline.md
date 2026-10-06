@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-09-25T12:30:00Z
-last_verified_commit: 15b5a9e
+timestamp: 2026-10-06T09:18:06Z
+last_verified_commit: 7096abf
 ---
 
 # MSv4 DataTree imager pipeline
@@ -33,9 +33,11 @@ share a `row` dimension in one `Dataset`. The tree is a 1:1 map of the equation:
 plus `PSF`/`PSFPARSN` when `--psf` is on), the **partition children are the terms** (ragged
 vis-space arrays plus per-partition `BEAM` (+ `PSF`/`PSFHAT` with `--psf`) and the phase
 offsets `l0, m0`).
-`baseline_group` sits in the partition identity `(msid, field, spw, baseline_group)` —
-only ever `"all"` today — so per-antenna-pair Mueller beams (MeerKAT+) become a storage
-no-op later: just another `part{p}` child with its own `BEAM`.
+`baseline_group` sits in the partition identity `(msid, field, spw, baseline_group)`:
+`"all"` by default, or `MM` / `MPM` / `MPMP` under `--baseline-groups`, which splits
+each partition by dish-pair class so each carries its own MeerKAT+ Mueller beam
+(#335). It was always a storage no-op — a split group is just another `part{p}`
+child with its own `BEAM`.
 
 ## Tree layout (as built)
 
@@ -109,6 +111,12 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, and return the
    piece's uv `COUNTS` contribution. Fine granularity (per scan /
    `integrations_per_image`) is needed because pass 1 reads raw unaveraged data.
+   Under `--baseline-groups` the driver emits one pass-1 task per group per
+   (node, time block, channel block), slicing the node with
+   `isel(baseline_id=…)`. Masks are computed **per selected node** — different
+   scans/SPWs can carry different antenna subsets, so `baseline_id` indices are
+   only valid for the node they came from. Groups with no baselines are omitted
+   rather than written as empty partitions.
 2. **Counts reduction** (driver, between passes): `COUNTS` is a first-class reducible
    intermediate. The driver streams per-piece counts into **one grid per applied
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
@@ -117,6 +125,13 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `utils/weighting.reduce_counts`). Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
    Natural weighting is `robustness None` or `> 2`: counts are skipped entirely.
+   Counts are reduced per `weight_grouping` group, **not** per partition, so
+   baseline groups share one counts grid exactly as multiple fields do. Robust
+   weighting is therefore computed over the whole array rather than
+   independently per group — which is what makes summing the groups
+   algebraically identical to not splitting (pinned by
+   `tests/test_imager.py::test_baseline_groups_sum_to_the_ungrouped_image`,
+   which agrees to within the wgridder's own `epsilon=1e-7`).
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
    pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
    along `row`; `BEAM` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
@@ -183,6 +198,19 @@ linear in rows, so the two must agree to gridder precision).
 - **`PSFHAT` footprint:** every partition stores its own `PSFHAT` + vis-space arrays —
   more disk than the legacy single-PSF-per-band layout, required by the operator split;
   no opt-out flag.
+- **`--baseline-groups` triples the image-space cost, not the vis-space one.**
+  Rows are partitioned rather than duplicated, so total vis-space storage and
+  total gridding work stay roughly constant; what triples is the per-partition
+  `PSF`/`PSFHAT`/`BEAM` set, the FFTs over them (including `HessianTree`'s, per
+  minor cycle) and beam evaluation, which is image-sized and independent of row
+  count. The driver also opens each node once per group; whether strided
+  baseline reads cost more than one contiguous read is unmeasured.
+- **Groups are very uneven.** On real MeerKAT+ data (37 antennas, 3 extension
+  dishes) the split is `MM` 561 / `MPM` 102 / `MPMP` 3 baselines, so one pass-1
+  task per block handles 84% of the baselines and another 0.45%. Keep the small
+  groups regardless: the extension dishes carry the longest spacings (`MPMP` up
+  to 8.6 km, `MPM` up to 11.8 km, against 6.3 km for the longest `MM`), so they
+  hold the high-resolution uv coverage.
 - **Band-drop indexing:** a fully-flagged band leaves a gap in imager band ids while
   legacy `init`+`grid` reindexes contiguously; align on `freq_out`, never on band index.
 

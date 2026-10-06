@@ -22,6 +22,13 @@ from xarray_ms.errors import (
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.baselines import (
+    GROUP_LABELS,
+    baseline_group_masks,
+    check_telescope_is_meerkat,
+    classify_antennas,
+    parse_antenna_groups,
+)
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.misc import (
     fitcleanbeam,
@@ -45,7 +52,9 @@ warnings.filterwarnings("ignore", category=ColumnShapeImputationWarning)
 log = pfb_logging.get_logger("IMAGER")
 
 
-def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, cell_rad, do_psf, do_beam):
+def _partition_fits(
+    fits_dir, out_name, pid, field_name, baseline_group, prod, meta, freq_out, cell_rad, do_psf, do_beam
+):
     """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
 
     Runs inside the pass-2 worker while the partition products are in memory;
@@ -72,7 +81,10 @@ def _partition_fits(fits_dir, out_name, pid, field_name, prod, meta, freq_out, c
             ncorr=ncorr,
         )
 
-    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}.fits"
+    # the group suffix is conditional: with grouping off there is one partition
+    # per field and today's filenames must not change
+    bg = "" if str(baseline_group) == "all" else f"_{baseline_group}"
+    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}{bg}.fits"
     wsum = prod["WSUM"][:, None, None]
     with np.errstate(invalid="ignore", divide="ignore"):
         dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
@@ -147,6 +159,9 @@ def _concat_pieces(plist):
     part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
     part.attrs["freq_out"] = freq_out
     part.attrs["wsum_nat"] = wsum_nat
+    # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
+    # is what `part = plist[0].drop_vars(...)` would otherwise leave here.
+    part.attrs["beam_imre_ratio"] = max(float(p.attrs.get("beam_imre_ratio", 0.0)) for p in plist)
     return part
 
 
@@ -215,6 +230,8 @@ def _grid_image(
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # worst Re(B) approximation error over this image's partitions (wiki D46)
+    beam_imre_max = 0.0
     # float64 regardless of --precision: the tree may be single-precision
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
@@ -276,12 +293,16 @@ def _grid_image(
                 "m0": meta.get("m0", 0.0),
                 # stored BEAM = effective image-plane response B/n (D22)
                 "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
+                # max|Im|/max|Re| of the evaluated beam; non-zero only for the
+                # MPM cross group, where the stored BEAM is Re(B) (wiki D46)
+                "beam_imre_ratio": float(part.attrs.get("beam_imre_ratio", 0.0)),
                 "wsum": prod["WSUM"].tolist(),
             },
         )
         # consolidated=False: each pass-2 worker owns a distinct image_name node,
         # but they share the store root; the driver consolidates once at the end
         part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
+        beam_imre_max = max(beam_imre_max, float(part.attrs.get("beam_imre_ratio", 0.0)))
 
         if part_fits_dir is not None:
             _partition_fits(
@@ -289,6 +310,7 @@ def _grid_image(
                 out_name,
                 pid,
                 key[1],
+                key[3],
                 prod,
                 meta,
                 float(part.attrs["freq_out"]),
@@ -373,7 +395,87 @@ def _grid_image(
         "rss_gb": psutil.Process().memory_info().rss / 2**30,
         "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
     }
-    return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum, "mem": mem}
+    return {
+        "timeid": meta["timeid"],
+        "psf": psf_sum,
+        "wsum": wsum_sum,
+        "mem": mem,
+        "beam_imre_ratio": beam_imre_max,
+    }
+
+
+# meerkat-beams serves baseline-group beams for L band only (its
+# design-decisions D15 -- no matched MeerKAT counterpart exists for MKE's S3
+# product). Keep this in sync with meerkat_beams.cache.
+_GROUP_BANDS = ("L",)
+
+
+def _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups):
+    """Validate a --baseline-groups request before any Ray cluster exists.
+
+    Opens each MS once to read antenna_xds.attrs["overall_telescope_name"].
+    That attr is broadcast from OBSERVATION::TELESCOPE_NAME, so it identifies
+    the array (it cannot discriminate dishes -- that is dish diameter's job).
+
+    The telescope and band checks are conditioned on a beam model being
+    requested: with no beam model there is no group beam to get wrong, and the
+    split degenerates to pure data partitioning whose summation is algebraically
+    identical to not splitting. See wiki design-decisions D47.
+
+    Args:
+        ms: resolved MS paths.
+        partition_columns: MSv2 partition schema override, as passed to imager.
+        beam_model: the --beam-model value, or None.
+        antenna_groups: the --antenna-groups value, or None.
+
+    Returns:
+        The parsed (meerkat_pattern, meerkat_plus_pattern) override, or None.
+
+    Raises:
+        ValueError: on a bad override, a non-MeerKAT array, katbeam, or a band
+            for which meerkat-beams has no group beams.
+    """
+    override = None
+    if antenna_groups is not None:
+        try:
+            override = parse_antenna_groups(antenna_groups)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    if beam_model is None:
+        return override
+
+    if str(beam_model).lower() == "katbeam":
+        log.error_and_raise(
+            "--baseline-groups needs per-group MeerKAT beams; katbeam has no MeerKAT+ "
+            "model and gives power beams only. Pass --beam-model L instead.",
+            ValueError,
+        )
+    if str(beam_model).upper() not in _GROUP_BANDS:
+        log.error_and_raise(
+            f"meerkat-beams serves baseline-group beams for {', '.join(_GROUP_BANDS)} band "
+            f"only; --beam-model {beam_model!r} has no group products. The MdV-2026 group "
+            f"beams also need staging by hand -- see meerkat-beams scripts/stage_group_cache.py.",
+            ValueError,
+        )
+
+    for ms_name in ms:
+        dt_kwargs = get_engine(ms_name, partition_columns)
+        path = ms_name.replace("file://", "") if "file://" in ms_name else ms_name
+        dt = xr.open_datatree(path, **dt_kwargs)
+        try:
+            node = next(iter(dt.children.values()))
+            telescope = node["antenna_xds"].ds.attrs["overall_telescope_name"]
+        finally:
+            dt.close()
+            del dt
+            gc.collect()
+        try:
+            check_telescope_is_meerkat(telescope, path)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    return override
 
 
 def imager(
@@ -398,6 +500,8 @@ def imager(
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
     beam_model: str | None = None,
+    baseline_groups: bool = False,
+    antenna_groups: str | None = None,
     phase_dir: str | None = None,
     target: str | None = None,
     chan_average: int = 1,
@@ -464,6 +568,19 @@ def imager(
         msnames += matches
     ms = msnames
     opts_dict["ms"] = ms
+
+    antenna_group_override = None
+    if baseline_groups:
+        antenna_group_override = _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
+    elif antenna_groups is not None:
+        # Refuse rather than ignore: an ungrouped run with --antenna-groups set
+        # is indistinguishable in its output from the grouped run the user asked
+        # for, and the spec would not even have parsed the pattern.
+        log.error_and_raise(
+            "--antenna-groups only has an effect with --baseline-groups, which is not set. "
+            "Add --baseline-groups, or drop --antenna-groups.",
+            ValueError,
+        )
 
     if gain_table is not None:
         gainnames = []
@@ -693,12 +810,52 @@ def imager(
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
 
+    # Baseline-group masks, one dict per selected node. Computed here rather
+    # than inside the dispatch loop so the set of groups that actually exist is
+    # known before any BeamWizard is built -- an eager wizard for an absent
+    # group would stage MdV-2026 products for a beam no task consumes.
+    # Still strictly per node: different scans/SPWs can carry different antenna
+    # subsets, so baseline_id indices are only valid for their own node.
+    node_masks_list = []
+    for _ims, node, _f, _t, _c, _r in selected:
+        if not baseline_groups:
+            node_masks_list.append({"all": None})
+            continue
+        ant_xds = node["antenna_xds"].ds
+        ant_names = ant_xds.antenna_name.values
+        diam = ant_xds.ANTENNA_DISH_DIAMETER.values if "ANTENNA_DISH_DIAMETER" in ant_xds.data_vars else None
+        try:
+            is_ext = classify_antennas(ant_names, diam, override=antenna_group_override)
+            node_masks_list.append(
+                baseline_group_masks(
+                    is_ext,
+                    ant_names,
+                    node.ds.baseline_antenna1_name.values,
+                    node.ds.baseline_antenna2_name.values,
+                )
+            )
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+    if baseline_groups:
+        present_groups = sorted({g for m in node_masks_list for g in m}, key=GROUP_LABELS.index)
+        log.info("Baseline groups present: " + ", ".join(present_groups))
+
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    beam_refs = None
     if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        log.info("Assuming MeerKAT data and initialising BeamWizard")
-        # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
-        beam_model = BeamWizard(band=beam_model)
+        if baseline_groups:
+            # One wizard per baseline group. ray.put is load-bearing, not
+            # tidiness: a group wizard holds an IN-MEMORY cross-multiplied
+            # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
+            # file-backed) and pass 1 emits hundreds of tasks, so passing it by
+            # value per task would serialise it hundreds of times.
+            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
+        else:
+            log.info("Assuming MeerKAT data and initialising BeamWizard")
+            # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
+            beam_model = BeamWizard(band=beam_model)
 
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
@@ -711,7 +868,7 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
-    for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
+    for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
         ntimes_node = times_node.size
@@ -748,39 +905,41 @@ def imager(
                     scratch_root.require_group(parent)
                     created_parents.add(parent)
 
-                fut = safe_stokes_vis.remote(
-                    dc1=dc1,
-                    dc2=dc2,
-                    operator=operator,
-                    node_dt=subdt,
-                    scratch_store=scratch_url,
-                    bandid=bandid,
-                    timeid=timeid,
-                    msid=ims,
-                    freq_nominal=band_centres[bandid],
-                    precision=precision,
-                    sigma_column=sigma_column,
-                    weight_column=weight_column,
-                    product=product,
-                    chan_average=chan_average,
-                    bda_decorr=bda_decorr,
-                    max_field_of_view=max_field_of_view,
-                    beam_model=beam_model,
-                    wgt_mode=wgt_mode,
-                    max_blength=max_blength,
-                    max_freq=max_freq,
-                    nx_pad=nx_pad,
-                    ny_pad=ny_pad,
-                    cell_rad=cell_rad,
-                    baseline_group="all",
-                    data_group=data_group,
-                    radec_new=radec_new,
-                    target=target,
-                    nx=nx,
-                    ny=ny,
-                    nthreads=nthreads,
-                )
-                tasks.append(fut)
+                for bg, bl_idx in node_masks.items():
+                    subdt_bg = subdt if bl_idx is None else subdt.isel(baseline_id=bl_idx)
+                    fut = safe_stokes_vis.remote(
+                        dc1=dc1,
+                        dc2=dc2,
+                        operator=operator,
+                        node_dt=subdt_bg,
+                        scratch_store=scratch_url,
+                        bandid=bandid,
+                        timeid=timeid,
+                        msid=ims,
+                        freq_nominal=band_centres[bandid],
+                        precision=precision,
+                        sigma_column=sigma_column,
+                        weight_column=weight_column,
+                        product=product,
+                        chan_average=chan_average,
+                        bda_decorr=bda_decorr,
+                        max_field_of_view=max_field_of_view,
+                        beam_model=beam_model if beam_refs is None else beam_refs[bg],
+                        wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=max_freq,
+                        nx_pad=nx_pad,
+                        ny_pad=ny_pad,
+                        cell_rad=cell_rad,
+                        baseline_group=bg,
+                        data_group=data_group,
+                        radec_new=radec_new,
+                        target=target,
+                        nx=nx,
+                        ny=ny,
+                        nthreads=nthreads,
+                    )
+                    tasks.append(fut)
 
     nds = len(tasks)
     ncomplete = 0
@@ -990,10 +1149,12 @@ def imager(
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
+    beam_imre_max = 0.0
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
+            beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
             tid = res["timeid"]
             if res["psf"] is not None:
                 # accumulate at the precision the workers gridded in (see _grid_image)
@@ -1010,6 +1171,15 @@ def imager(
                     end="\n",
                     flush=True,
                 )
+
+    if beam_imre_max > 0:
+        # The MPM cross-group beam is complex and we store Re(B) (wiki D46).
+        # This is the evidence that the approximation holds; it is also on every
+        # partition as the beam_imre_ratio attr.
+        log.info(
+            f"Cross-group beam max|Im|/max|Re| = {beam_imre_max:.3e} "
+            f"(stored BEAM is Re(B); see wiki design-decisions D46)"
+        )
 
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)

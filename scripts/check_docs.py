@@ -12,6 +12,7 @@ deletion must not silently orphan them.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,16 +29,18 @@ SEARCH_GLOBS = (
     "CLAUDE.md",
 )
 
-# Figures that must appear in exactly one file. Regexes, because the same figure
+# Timings that must appear in exactly one file. Regexes, because the same figure
 # is written with and without a space before the unit ("~108 s" vs "~108s") and a
 # literal-substring check silently misses the other spelling.
+#
+# Test COUNTS are deliberately absent here: they are measured by
+# gate_test_counts() instead of pinned, because every commit that adds a test
+# invalidated a hardcoded list and the single-homing gate could not tell a stale
+# figure from a current one.
 VOLATILE = (
-    r"\b745\b",
-    r"\b786\b",
-    r"\b787\b",
-    r"~?108\s*s\b",
+    r"~?115\s*s\b",
     r"~?465\s*s\b",
-    r"9\.5\s*min",
+    r"9\.6\s*min",
 )
 VOLATILE_HOME = ".claude/rules/testing-and-ci.md"
 # Searched repo-wide, not over a fixed list: a figure reintroduced into a wiki page, a
@@ -131,11 +134,65 @@ def gate_frontmatter() -> list[str]:
     return failures
 
 
+def _collect(marker: str) -> int:
+    """Number of tests pytest collects under `-m <marker>`."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", marker, "tests"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    # The summary reads "N tests collected" or "N/M tests collected (K deselected)".
+    # Not anchored to line start: pyproject's addopts carries --verbose, so pytest
+    # wraps the summary in "=" padding and -q does not suppress it.
+    match = re.search(r"(\d+)(?:/\d+)? tests collected", proc.stdout)
+    if not match:
+        raise RuntimeError(f"could not parse pytest collection output:\n{proc.stdout[-2000:]}")
+    return int(match.group(1))
+
+
+def gate_test_counts() -> list[str]:
+    """Test counts in the rules file match what pytest actually collects.
+
+    Counts used to be pinned in VOLATILE and single-homed. That caught a figure
+    copied into a second file but not a figure that had simply gone stale, so
+    every commit adding a test left the rules file quietly wrong while the gate
+    stayed green. Measuring instead makes the gate self-correcting: it fails
+    with the number to paste in.
+
+    Only *collected* counts are checked, never pass/skip counts -- how many tests
+    skip depends on which extras are installed, so a pinned pass count could not
+    be true on every CI leg at once.
+
+    Counts are not cross-file single-homed the way the timings are. A collected
+    count is often a small, unremarkable integer (the slow count is 44, which is
+    also a grid size in tests/test_weighting.py and a figure in two wiki pages),
+    so "appears in exactly one file" produces false positives it cannot
+    distinguish from real duplication. Staleness was the actual problem, and
+    measurement fixes that at the source.
+    """
+    failures = []
+    text = (ROOT / VOLATILE_HOME).read_text()
+    measured = {
+        "full": _collect(""),
+        "slow": _collect("slow"),
+        "fast": _collect("not slow"),
+    }
+    for label, count in measured.items():
+        if not re.search(rf"\b{count}\b", text):
+            failures.append(
+                f"{VOLATILE_HOME} does not state the measured {label} count {count} "
+                f"(suite changed -- update the figure there)"
+            )
+    return failures
+
+
 def main() -> int:
     gates = {
         "decision citations resolve": gate_decision_citations,
         "wiki paths exist": gate_wiki_paths,
-        "volatile numbers single-homed": gate_volatile_numbers,
+        "volatile timings single-homed": gate_volatile_numbers,
+        "test counts match reality": gate_test_counts,
         "wiki frontmatter complete": gate_frontmatter,
     }
     bad = 0

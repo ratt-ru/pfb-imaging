@@ -66,6 +66,9 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 
 1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree`
    (`.dt`) plus a `.scratch` cache. See §8.
+   `--baseline-groups` splits each partition into the `MM`/`MPM`/`MPMP` dish-pair
+   classes, each with its own beam (#335, D46/D47). Off by default and
+   byte-identical to not using it.
 2. `pfb deconv` — composable deconvolution of the `.dt` (see §5). Writes `MODEL`/`RESIDUAL`/
    `NOISE`, plus `MODEL_MOPPED`/`RESIDUAL_MOPPED` when `--mop` is on (the default, D35).
 3. `pfb restore` — the three explicitly-scaled restored products, apparent/intrinsic/mixed
@@ -119,6 +122,12 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
 * **The stored `BEAM` is the effective response `B/n`** and every ducc call on this path stays
   `divide_by_n=False` (D22). Do not "fix" this; consumers wanting the bare primary beam must
   use `B = BEAM·n` or check `beam_includes_n`.
+* **Baseline groups are a partition axis, not a new concept.** `--baseline-groups`
+  populates the `baseline_group` slot that already exists in the partition
+  identity; pass 2, the `.dt` schema and every deconv operator are unchanged.
+  Classify antennas on `ANTENNA_DISH_DIAMETER`, never on `telescope_name` (it is
+  broadcast from `OBSERVATION::TELESCOPE_NAME` and is identical for every
+  antenna). The cross group's beam is stored as `Re(B)` (D46).
 * **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8) and `MASK` (u1).
   ducc enforces this; it is not a memory optimisation (D27).
 * **Memory discipline — do not regress** (`docs/wiki/memory-and-ray.md` has the measured

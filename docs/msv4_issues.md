@@ -210,6 +210,20 @@ wipe that destroys *every* consumer's Multitons as collateral.
   error. We always pass `region` explicitly. Worth raising as an API-safety question — a
   default that silently corrupts is a poor default — but it is a design opinion rather than a
   bug, so it needs a decision before filing.
+- **Per-antenna `telescope_name` is broadcast, and there is nothing to file.** `antenna_xds`
+  carries `telescope_name` per antenna, which looks like the way to tell MeerKAT dishes from
+  MeerKAT+ ones. It is not: xarray-ms fills every entry with the single
+  `OBSERVATION::TELESCOPE_NAME` value
+  (`xarray_ms/backend/msv2/factories/antenna.py:61`), so a MeerKAT+ MS reports `MeerKAT` for
+  the `e` dishes too. Checked against a real MeerKAT+ MS with python-casacore: `OBSERVATION`
+  has one row, `TELESCOPE_NAME = "MeerKAT"` — correct, because in MSv2 the telescope names the
+  *observation* — and the MSv2 `ANTENNA` table has no telescope column at all (`DISH_DIAMETER,
+  FLAG_ROW, MOUNT, NAME, OFFSET, POSITION, STATION, TYPE`). MSv4's per-antenna field simply has
+  no MSv2 source, so broadcasting is the only imputation available; it is just a
+  confidently-wrong one on a heterogeneous array, and unlike the `PROCESSOR` case it carries no
+  `ImputedMetadataWarning`. **Use `ANTENNA_DISH_DIAMETER`** (13.5 m vs SKA-Mid 15 m) — on that
+  MS `STATION` duplicates `NAME` and `MOUNT`/`TYPE` are uniform, so it is the only per-antenna
+  discriminator MSv2 carries. See wiki design-decisions D47 and `utils/baselines.py`.
 
 ## Adjacent, not MSv4
 

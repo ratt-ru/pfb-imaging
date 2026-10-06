@@ -123,7 +123,7 @@ cabs:
           Number of time integrations per image.
           Default (-1, 0, None) -> dataset per scan.
         dtype: int
-        default: '-1'
+        default: -1
         metadata:
           rich_help_panel: Imaging
       channels-per-image:
@@ -131,7 +131,7 @@ cabs:
           Number of channels per image for degridding resolution.
           Any of (-1, 0, None) implies single dataset per spw.
         dtype: int
-        default: '-1'
+        default: -1
         metadata:
           rich_help_panel: Imaging
       concat-row:
@@ -174,6 +174,24 @@ cabs:
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
+      baseline-groups:
+        info:
+          Partition visibilities into MeerKAT baseline groups.
+          Splits each partition into MM, MPM and MPMP, each with its own primary beam.
+          Requires a MeerKAT array and L band when a beam model is given.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Imaging
+      antenna-groups:
+        info:
+          Name the two dish classes explicitly as two comma separated glob patterns.
+          The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas.
+          Requires --baseline-groups.
+          Use this when automatic classification from dish diameter is refused.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Imaging
       phase-dir:
         info:
           Rephase visibilities to this phase center.
