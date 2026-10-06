@@ -203,9 +203,12 @@ addopts = [
     "--strict-config",
     "--verbose",
     # Fast by default: the end-to-end pipeline tests are deselected so the
-    # development loop stays short. CI overrides with `-m ""` (a command-line
-    # -m wins over this one). Do not run the slow set locally -- see
-    # .claude/rules/testing-and-ci.md section 1.
+    # development loop stays short, and `ci.yml` runs exactly this selection on
+    # every push -- it does NOT override. The slow set runs in
+    # `acceptance.yml` (`-m slow`, on demand and on push to main) and
+    # `publish.yml` (`-m ""`, so a release is gated on the whole suite); a
+    # command-line -m wins over this one. Do not run the slow set locally --
+    # see .claude/rules/testing-and-ci.md section 1.
     "-m",
     "not slow",
     # Drift guard: surfaces a newly-slow test in the fast loop's own output

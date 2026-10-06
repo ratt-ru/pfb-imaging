@@ -95,20 +95,39 @@ because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
 runs the 45 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
-already runs all 836 on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
-`--extra all` and `--extra full`. Reproducing one leg locally costs more than a push and covers
-less. Run fast, push, read the result.
+already runs the fast set on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64,
+each with `--extra all` and `--extra full` — and the slow set separately (see below).
+Reproducing one leg locally costs more than a push and covers less. Run fast, push, read the
+result.
 
 **The one exception is a change to `conftest.py`'s session fixtures.** Slow tests consume them
 most heavily and are the least likely to have been re-run: a fixture-basename change reached
 final review in #336 with two broken assertions (`test_deconv.py`, `test_imager.py`) that only
 a full run caught. Change a session fixture, run the slow set once. Otherwise, don't.
 
-A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins), so
-`ci.yml` and `publish.yml` both pass `-m ""` — a release is gated on the whole suite. `ci.yml`
-also runs `pytest -m slow --collect-only` as a guard, so a broken override cannot silently drop
-the slow set everywhere at once (pytest exits 5 when a selection collects nothing). `addopts`
-carries `--durations=10` so a newly-slow test surfaces in the fast loop's own output.
+### The CI split: fast on every push, slow on demand (#338)
+
+A command-line `-m` overrides the one in `addopts` (pytest keeps a single value, last wins).
+Which workflow passes what is the whole design:
+
+| workflow | selection | when |
+|---|---|---|
+| `ci.yml` | the fast set (`addopts`, no override) | every push and PR, six legs |
+| `acceptance.yml` | `-m slow` | push to `main`; `/test-acceptance` on a PR; `workflow_dispatch` |
+| `publish.yml` | `-m ""` | version tags — a release is gated on the whole suite |
+
+The slow set is 45 of the 836 collected tests and ~80% of the suite's wall time, so running it
+on all six legs of every push was the bulk of the repo's CI bill. `ci.yml` still runs
+`pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
+empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters
+more now that no `ci.yml` leg collects a slow test. `addopts` carries `--durations=10` so a
+newly-slow test surfaces in the fast loop's own output.
+
+**A green PR no longer means the pipeline still images a sky.** Comment `/test-acceptance` on
+any PR that touches the imager, deconv, degrid or gridding paths — it is authorized to
+OWNER/MEMBER/COLLABORATOR, reports a commit status named `acceptance`, and replies on the PR
+with the result. `acceptance.yml`'s install steps are a subset of `ci.yml`'s and must stay in
+step with them.
 
 **Marking rule: a test is `slow` when its _cheapest_ parametrisation costs ≥ 2 s.** The
 "cheapest" qualifier is load-bearing and the reasoning is **D45** — marking a warm-up carrier
@@ -143,8 +162,10 @@ The CI pipeline uses a custom `[skip checks]` tag (not GitHub's `[skip ci]`).
 
 ## 5. GitHub Actions Workflows
 
-* **`ci.yml`**: Code quality (ruff) and tests across Python 3.11-3.13. The whole suite runs as a
-  single `pytest tests/` invocation (arcae and python-casacore coexist as of arcae 0.5.2; see §1).
+* **`ci.yml`**: Code quality (ruff) and the fast test set across Python 3.11-3.13, as a single
+  `pytest tests/` invocation (arcae and python-casacore coexist as of arcae 0.5.2; see §1).
+* **`acceptance.yml`**: the slow set (`-m slow`) on x86_64 and aarch64. Triggers and the
+  reasoning: §1's CI-split table.
 * **`publish.yml`**: PyPI publishing on version tags. Runs quality + tests before publishing.
 * **`publish-container.yml`**: Build and push container images to GHCR.
 * **`update-cabs.yml`**: Regenerate cab definitions on push to `main`. Uses `landman-ci-bot` GitHub App for auth.

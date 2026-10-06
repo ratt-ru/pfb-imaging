@@ -362,9 +362,10 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: uv run --frozen pytest tests/test_ducc0_gridder.py -q -m ""
 
-      # pyproject's addopts deselect `slow` so the local dev loop stays fast.
-      # CI is the only place the end-to-end pipeline tests run, so guard against
-      # that override silently collecting nothing.
+      # The slow set runs in acceptance.yml, not here (#338). It is therefore
+      # not collected on this leg at all, so guard against the `slow` marker
+      # or the -m override breaking and silently emptying that workflow --
+      # which would otherwise be invisible until a release.
       - name: Check slow tests are collectable
         if: env.SKIP_CHECKS != 'true'
         run: |
@@ -376,8 +377,11 @@ jobs:
             exit 1
           fi
 
-      # -m "" overrides the `-m "not slow"` in pyproject's addopts, so CI runs
-      # the whole suite (fast + slow).
+      # The fast set only: pyproject's addopts carry `-m "not slow"` and
+      # nothing here overrides them. The end-to-end pipeline tests are ~80% of
+      # the suite's wall time and ran on all six legs of every push until #338;
+      # they now run in acceptance.yml (on demand, and on every push to main)
+      # and in publish.yml (which gates a release on `-m ""`).
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
-        run: uv run --frozen pytest -v -m "" tests/
+        run: uv run --frozen pytest -v tests/

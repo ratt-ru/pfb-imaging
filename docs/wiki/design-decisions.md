@@ -1622,6 +1622,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   median ≈ 0) flags exactly the bright transient bins and suppresses them in
   `cube_mean`; the raw `cube` is unaffected. (`utils/transients.py`; the designed
   end-to-end test is still unimplemented — see `docs/look-ahead.md`.)
+- **Never write the skip-checks tag into a commit message you want tested.** Every
+  `ci.yml` job greps the head commit's message for the literal tag and sets
+  `SKIP_CHECKS=true` on a hit — it does not care *where* in the message it appears. A
+  commit whose body merely *describes* the mechanism ("Honours ...,  so cab regeneration
+  does not run it") skips the entire matrix, and every leg reports green in ~5 s, which
+  reads exactly like a fast pass. Quote it as "the skip-checks tag" in prose, or check
+  `gh api .../actions/jobs/<id> --jq '[.steps[].conclusion]'` for a wall of `skipped`.
 - **A resumed deconv run continues from the tree's MODEL/UPDATE/niters.** After a
   crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`UPDATE`
   arrays and the `niters`/`rms`/`rmax`/`hess_norm` attrs from each band group (zarr),

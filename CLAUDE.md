@@ -73,10 +73,11 @@ uv run ruff format . && uv run ruff check . --fix
 uv run pytest tests/
 ```
 
-**Never run the slow set (`-m slow`) or the full suite (`-m ""`) locally** — CI runs everything
-on every push across six legs, which is broader coverage than one local run can give. The single
-exception is a change to `conftest.py`'s session fixtures. Counts, timings and the marking rule:
-`.claude/rules/testing-and-ci.md` §1.
+**Never run the slow set (`-m slow`) or the full suite (`-m ""`) locally** — the fast set runs
+on every push across six legs, which is broader coverage than one local run can give, and the
+slow set runs in `acceptance.yml` (on demand via a `/test-acceptance` PR comment, and on every
+push to `main`). The single exception is a change to `conftest.py`'s session fixtures. Counts,
+timings, the marking rule and the CI split: `.claude/rules/testing-and-ci.md` §1.
 
 ## Working Effectively (notes for agents)
 

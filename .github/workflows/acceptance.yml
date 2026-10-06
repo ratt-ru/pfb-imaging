@@ -1,0 +1,304 @@
+name: pfb-imaging Acceptance Tests
+
+# The end-to-end pipeline tests (`-m slow`): every test whose cheapest
+# parametrisation costs >= 2 s, which is ~80% of the suite's wall time while
+# being ~5% of its test count. `ci.yml` used to run them on all six matrix
+# legs of every push; that is what this workflow exists to stop (#338).
+#
+# The split is: `ci.yml` answers "does this branch build, lint, import and
+# compute correctly on six platforms", on every push, in a couple of minutes.
+# This workflow answers "does the pipeline still image a sky", on demand and
+# after merge, on the two legs that matter -- x86_64 (the reference) and
+# aarch64 (where ducc0 is compiled from sdist, so a miscompiled SIMD kernel
+# returns wrong numbers rather than crashing).
+#
+# It runs:
+#   * on every push to main -- the post-merge signal
+#   * on demand when an authorized user comments `/test-acceptance` on a PR
+#   * manually via the Actions UI (workflow_dispatch), optionally against a PR
+#
+# A release is gated on the whole suite independently: `publish.yml` runs
+# `pytest -m ""` before publishing.
+#
+# NOTE: the install steps below are deliberately a subset of `ci.yml`'s and
+# must stay in step with them. Factoring them into a composite action is the
+# right fix and is tracked separately.
+on:
+  push:
+    branches:
+      - main
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to run against (optional; defaults to the dispatched ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+
+# One run per PR / branch; a second `/test-acceptance` supersedes the first.
+# `github.event.inputs.pr` is in the key because a dispatch is identified by the
+# ref it was launched FROM, not the PR it targets: without it, dispatching for
+# PR B from main cancels an in-flight run for PR A and strands A's `acceptance`
+# status at pending, because a concurrency-cancelled run never reaches `report`.
+# It is empty on every other event, so those fall through to the ref.
+concurrency:
+  group: >-
+    acceptance-${{ github.event_name == 'issue_comment' && github.event.issue.number
+    || github.event.inputs.pr || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve ref
+    # A push to main or a manual dispatch always runs. A comment runs only when
+    # it is on a PR and carries the command.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/test-acceptance'))
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      pr: ${{ steps.ref.outputs.pr }}
+      sha: ${{ steps.ref.outputs.sha }}
+      skip: ${{ steps.skip.outputs.skip }}
+    steps:
+      # `issue_comment` runs with write permissions on the base repo, so the
+      # command must not be usable by arbitrary accounts.
+      - name: Check authorization
+        if: github.event_name == 'issue_comment'
+        run: |
+          assoc="${{ github.event.comment.author_association }}"
+          case "$assoc" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "Authorized to run acceptance tests ($assoc)" ;;
+            *)
+              echo "::error::@${{ github.event.comment.user.login }} ($assoc) is not authorized to run acceptance tests"
+              exit 1 ;;
+          esac
+
+      - name: Acknowledge command
+        if: github.event_name == 'issue_comment'
+        run: |
+          gh api -X POST \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes
+
+      # Both on-demand triggers check out the *PR head*, so they run that
+      # branch's test code rather than main's.
+      - name: Resolve checkout ref
+        id: ref
+        run: |
+          set -euo pipefail
+          pr=""
+          case "${{ github.event_name }}" in
+            issue_comment)    pr="${{ github.event.issue.number }}" ;;
+            workflow_dispatch) pr="${{ github.event.inputs.pr }}" ;;
+          esac
+
+          if [ -n "$pr" ]; then
+            sha=$(gh api "repos/${{ github.repository }}/pulls/$pr" --jq .head.sha)
+          else
+            sha="${{ github.sha }}"
+          fi
+
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Acceptance tests will run against $sha${pr:+ (PR #$pr)}"
+
+      # `update-cabs.yml` pushes regenerated cabs to main with `[skip checks]`;
+      # without this, every cab regeneration would run the whole slow set.
+      - name: Check for skip checks
+        id: skip
+        run: |
+          set -euo pipefail
+          MSG=$(gh api "repos/${{ github.repository }}/commits/${{ steps.ref.outputs.sha }}" --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping acceptance tests because [skip checks] was found in the commit message."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark commit status pending
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ steps.ref.outputs.sha }}" \
+            -f state=pending \
+            -f context="acceptance" \
+            -f description="Acceptance tests running" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  acceptance:
+    name: Acceptance (${{ matrix.arch }}, py${{ matrix.python-version }}, ${{ matrix.label }})
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ${{ matrix.runner }}
+
+    # This is the only job that executes PR-head code -- pytest runs conftest.py
+    # on collection and `uv sync` runs build backends, so a fork PR has
+    # arbitrary code execution here by design. It therefore drops the
+    # workflow-level `statuses: write` / `pull-requests: write`: an
+    # `issue_comment` run carries the BASE repo's token, and a maintainer typing
+    # `/test-acceptance` on a hostile fork would otherwise hand that write token
+    # to the fork's code. `resolve` and `report` keep the write scopes; neither
+    # checks out the PR.
+    permissions:
+      contents: read
+
+    env:
+      NUMBA_CACHE_DIR: /tmp/numba-cache
+      # See ci.yml: ducc0 is compiled from sdist on arm and its CMakeLists
+      # defaults to -march=native, which is not reproducible across runner
+      # revisions.
+      CMAKE_ARGS: ${{ matrix.cmake_args }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+            python-version: "3.12"
+            extras: "--extra all"
+            label: all
+            cmake_args: ""
+
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            python-version: "3.12"
+            extras: "--extra full"
+            label: full-only
+            cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+          # Defence in depth beside the read-only token above: checkout's
+          # default leaves a usable credential in .git/config, which the PR's
+          # own test code can read. Nothing here pushes.
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install aarch64 build dependencies
+        if: matrix.arch == 'aarch64'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          activate-environment: true
+
+      - name: Restore repo times
+        uses: chetan/git-restore-mtime-action@v2
+
+      - name: Create Key and Numba Cache Directory
+        id: numba-key
+        run: |
+          mkdir -p ${{ env.NUMBA_CACHE_DIR }}
+          echo "timestamp=$(/bin/date -u '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Cache Numba Kernels
+        uses: actions/cache@v6
+        with:
+          key: numba-cache-${{ matrix.arch }}-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
+          restore-keys: numba-cache-${{ matrix.arch }}-${{ matrix.python-version }}-
+          path: ${{ env.NUMBA_CACHE_DIR }}
+
+      # Shares ci.yml's cache key so the measures data is fetched once for the
+      # whole repository, not once per workflow.
+      - name: Load cached CASA Measures Data
+        if: contains(matrix.extras, 'all')
+        id: load-cached-casa-measures
+        uses: actions/cache@v6
+        with:
+          key: casa-measures-v1
+          path: |
+            ~/measures
+            ~/.casarc
+
+      - name: Download and install CASA Measures Data
+        if: contains(matrix.extras, 'all') && steps.load-cached-casa-measures.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/measures
+          for i in {1..3}; do
+            if curl -sS --disable-epsv --max-time 300 \
+                 ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar \
+                 --output WSRT_Measures.ztar; then
+              break
+            elif [ $i -eq 3 ]; then
+              echo "::error::Could not fetch WSRT_Measures.ztar from ftp.astron.nl after 3 attempts."
+              exit 1
+            else
+              echo "Retrying download ($i/3)..."; sleep 5
+            fi
+          done
+          tar xzf WSRT_Measures.ztar -C ~/measures
+          echo "measures.directory: ~/measures" > ~/.casarc
+
+      - name: Cache source builds (aarch64)
+        if: matrix.arch == 'aarch64'
+        uses: actions/cache@v6
+        with:
+          key: aarch64-builds-${{ matrix.python-version }}-${{ matrix.label }}-${{ hashFiles('uv.lock') }}
+          restore-keys: aarch64-builds-${{ matrix.python-version }}-${{ matrix.label }}-
+          path: ~/.cache/uv
+
+      - name: Install pfb-imaging
+        run: uv sync ${{ matrix.extras }} --group dev --frozen
+
+      # `-m slow` overrides the `-m "not slow"` in pyproject's addopts (pytest
+      # keeps a single value, last wins). The fast set is ci.yml's job; running
+      # it again here would pay for it a third time per push.
+      - name: Run acceptance tests
+        run: uv run --frozen pytest -v -m slow tests/
+
+  report:
+    name: Report result
+    needs: [resolve, acceptance]
+    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Post commit status and PR comment
+        run: |
+          set -euo pipefail
+          state=success
+          [ "${{ needs.acceptance.result }}" = "success" ] || state=failure
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ needs.resolve.outputs.sha }}" \
+            -f state="$state" \
+            -f context="acceptance" \
+            -f description="Acceptance tests $state" \
+            -f target_url="$run_url"
+
+          pr="${{ needs.resolve.outputs.pr }}"
+          if [ -n "$pr" ]; then
+            if [ "$state" = "success" ]; then
+              body="✅ Acceptance tests passed — [logs]($run_url)"
+            else
+              body="❌ Acceptance tests failed — [logs]($run_url)"
+            fi
+            gh api -X POST "repos/${{ github.repository }}/issues/$pr/comments" -f body="$body"
+          fi

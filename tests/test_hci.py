@@ -676,7 +676,16 @@ def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
 
 
 @pmp("wgt_mode", ("l2", "minvar"))
-def test_hci_writes_cube(wgt_mode, ms_name, tmp_path):
+def test_hci_writes_cube(wgt_mode, ms_name, sky_truth, tmp_path):
+    """`sky_truth` is requested because this test asserts the image is not dead,
+    and the sky it images is *written into the shared MS* by that fixture.
+
+    It used to be omitted, and the test passed only because a slow test earlier
+    in the session injected the sky as a side effect. Running the fast set on
+    its own (#338) made that ordering go away and the test correctly imaged an
+    empty DATA column, failing on `abs(imaged).max() > 0` -- the same trap
+    documented in tests/test_imager_precision.py's `precision_trees`.
+    """
     outname = str(tmp_path / f"test_hci_{wgt_mode}.zarr")
 
     hci_core(
