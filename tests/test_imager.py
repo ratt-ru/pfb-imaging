@@ -729,3 +729,101 @@ def test_imager_effective_freq_uneven_bands(ms_name, tmp_path):
         w = np.array([np.asarray(p.attrs["wsum"]).sum() for p in parts])
         f = np.array([p.attrs["freq_out"] for p in parts])
         assert_allclose(dt[name].ds.attrs["freq_out"], (w * f).sum() / w.sum(), rtol=1e-10)
+
+
+def test_baseline_groups_refuses_non_meerkat_before_ray_init(ms_name, tmp_path, monkeypatch):
+    """A non-MeerKAT array is rejected up front: we have no group beam for it.
+
+    The monkeypatch is the real assertion -- the guard must fire before a Ray
+    cluster is stood up, the way deconv's --psf guard does.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="vla"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="L",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_without_beam_model_skips_the_telescope_guard(ms_name, tmp_path, monkeypatch):
+    """With no beam model there is no group beam to get wrong, so the split is
+    pure data partitioning and is telescope-agnostic (spec §4 ruling)."""
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise RuntimeError("reached init_ray")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(RuntimeError, match="reached init_ray"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            antenna_groups="vla-0*,vla-[12]*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_refuses_katbeam(ms_name, tmp_path, monkeypatch):
+    """katbeam has no MeerKAT+ model and gives only power beams."""
+    import pfb_imaging.core.imager as imager_mod
+
+    monkeypatch.setattr(imager_mod, "init_ray", lambda *a, **kw: None)
+
+    with pytest.raises(ValueError, match="katbeam"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="katbeam",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_baseline_groups_refuses_non_l_band(ms_name, tmp_path, monkeypatch):
+    """meerkat-beams serves groups for L band only (its design-decisions D15)."""
+    import pfb_imaging.core.imager as imager_mod
+
+    monkeypatch.setattr(imager_mod, "init_ray", lambda *a, **kw: None)
+
+    with pytest.raises(ValueError, match="L band"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            beam_model="UHF",
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
+def test_bad_antenna_groups_spec_is_refused_early(ms_name, tmp_path, monkeypatch):
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(ValueError, match="exactly two"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            baseline_groups=True,
+            antenna_groups="m*",
+            overwrite=True,
+            keep_ray_alive=True,
+        )

@@ -22,6 +22,7 @@ from xarray_ms.errors import (
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.baselines import check_telescope_is_meerkat, parse_antenna_groups
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.misc import (
     fitcleanbeam,
@@ -376,6 +377,80 @@ def _grid_image(
     return {"timeid": meta["timeid"], "psf": psf_sum, "wsum": wsum_sum, "mem": mem}
 
 
+# meerkat-beams serves baseline-group beams for L band only (its
+# design-decisions D15 -- no matched MeerKAT counterpart exists for MKE's S3
+# product). Keep this in sync with meerkat_beams.cache.
+_GROUP_BANDS = ("L",)
+
+
+def _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups):
+    """Validate a --baseline-groups request before any Ray cluster exists.
+
+    Opens each MS once to read antenna_xds.attrs["overall_telescope_name"].
+    That attr is broadcast from OBSERVATION::TELESCOPE_NAME, so it identifies
+    the array (it cannot discriminate dishes -- that is dish diameter's job).
+
+    The telescope and band checks are conditioned on a beam model being
+    requested: with no beam model there is no group beam to get wrong, and the
+    split degenerates to pure data partitioning whose summation is algebraically
+    identical to not splitting. See wiki design-decisions D47.
+
+    Args:
+        ms: resolved MS paths.
+        partition_columns: MSv2 partition schema override, as passed to imager.
+        beam_model: the --beam-model value, or None.
+        antenna_groups: the --antenna-groups value, or None.
+
+    Returns:
+        The parsed (meerkat_pattern, meerkat_plus_pattern) override, or None.
+
+    Raises:
+        ValueError: on a bad override, a non-MeerKAT array, katbeam, or a band
+            for which meerkat-beams has no group beams.
+    """
+    override = None
+    if antenna_groups is not None:
+        try:
+            override = parse_antenna_groups(antenna_groups)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    if beam_model is None:
+        return override
+
+    if str(beam_model).lower() == "katbeam":
+        log.error_and_raise(
+            "--baseline-groups needs per-group MeerKAT beams; katbeam has no MeerKAT+ "
+            "model and gives power beams only. Pass --beam-model L instead.",
+            ValueError,
+        )
+    if str(beam_model).upper() not in _GROUP_BANDS:
+        log.error_and_raise(
+            f"meerkat-beams serves baseline-group beams for {', '.join(_GROUP_BANDS)} band "
+            f"only; --beam-model {beam_model!r} has no group products. The MdV-2026 group "
+            f"beams also need staging by hand -- see meerkat-beams scripts/stage_group_cache.py.",
+            ValueError,
+        )
+
+    for ms_name in ms:
+        dt_kwargs = get_engine(ms_name, partition_columns)
+        path = ms_name.replace("file://", "") if "file://" in ms_name else ms_name
+        dt = xr.open_datatree(path, **dt_kwargs)
+        try:
+            node = next(iter(dt.children.values()))
+            telescope = node["antenna_xds"].ds.attrs["overall_telescope_name"]
+        finally:
+            dt.close()
+            del dt
+            gc.collect()
+        try:
+            check_telescope_is_meerkat(telescope, path)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    return override
+
+
 def imager(
     ms: list[Path],
     output_filename: str,
@@ -398,6 +473,8 @@ def imager(
     bda_decorr: float = 1.0,
     max_field_of_view: float = 3.0,
     beam_model: str | None = None,
+    baseline_groups: bool = False,
+    antenna_groups: str | None = None,
     phase_dir: str | None = None,
     target: str | None = None,
     chan_average: int = 1,
@@ -464,6 +541,10 @@ def imager(
         msnames += matches
     ms = msnames
     opts_dict["ms"] = ms
+
+    antenna_group_override = None
+    if baseline_groups:
+        antenna_group_override = _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
 
     if gain_table is not None:
         gainnames = []
