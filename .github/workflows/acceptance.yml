@@ -42,8 +42,15 @@ permissions:
   pull-requests: write
 
 # One run per PR / branch; a second `/test-acceptance` supersedes the first.
+# `github.event.inputs.pr` is in the key because a dispatch is identified by the
+# ref it was launched FROM, not the PR it targets: without it, dispatching for
+# PR B from main cancels an in-flight run for PR A and strands A's `acceptance`
+# status at pending, because a concurrency-cancelled run never reaches `report`.
+# It is empty on every other event, so those fall through to the ref.
 concurrency:
-  group: acceptance-${{ github.event_name == 'issue_comment' && github.event.issue.number || github.ref }}
+  group: >-
+    acceptance-${{ github.event_name == 'issue_comment' && github.event.issue.number
+    || github.event.inputs.pr || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -135,6 +142,17 @@ jobs:
     if: needs.resolve.outputs.skip != 'true'
     runs-on: ${{ matrix.runner }}
 
+    # This is the only job that executes PR-head code -- pytest runs conftest.py
+    # on collection and `uv sync` runs build backends, so a fork PR has
+    # arbitrary code execution here by design. It therefore drops the
+    # workflow-level `statuses: write` / `pull-requests: write`: an
+    # `issue_comment` run carries the BASE repo's token, and a maintainer typing
+    # `/test-acceptance` on a hostile fork would otherwise hand that write token
+    # to the fork's code. `resolve` and `report` keep the write scopes; neither
+    # checks out the PR.
+    permissions:
+      contents: read
+
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
       # See ci.yml: ducc0 is compiled from sdist on arm and its CMakeLists
@@ -166,6 +184,10 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
+          # Defence in depth beside the read-only token above: checkout's
+          # default leaves a usable credential in .git/config, which the PR's
+          # own test code can read. Nothing here pushes.
+          persist-credentials: false
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
