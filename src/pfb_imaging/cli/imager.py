@@ -398,10 +398,10 @@ def imager(
     epsilon: Annotated[
         float,
         typer.Option(
-            help="Gridder accuracy.",
+            help="Gridder accuracy. Needs at least 1e-6 at single precision and 1e-12 at double.",
             rich_help_panel="Imaging",
         ),
-    ] = 1e-07,
+    ] = 1e-05,
     do_wgridding: Annotated[
         bool,
         typer.Option(

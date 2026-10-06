@@ -399,6 +399,11 @@ GT_IMAGER_KW = dict(
     fits_cubes=False,
     overwrite=True,
     keep_ray_alive=True,
+    # Pinned, and must match GT_DECONV_KW's epsilon: the ground-truth tests
+    # compare an imager gridding against a deconv re-gridding, so a mismatch
+    # between the two shows up as a tolerance failure in test_deconv.py. The
+    # CLI default moved to 1e-5 in #340; these tests assert tighter than that.
+    epsilon=1e-7,
 )
 
 GT_DECONV_KW = dict(

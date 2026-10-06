@@ -344,8 +344,9 @@ cabs:
       epsilon:
         info:
           Gridder accuracy.
+          Needs at least 1e-6 at single precision and 1e-12 at double.
         dtype: float
-        default: 1.0e-07
+        default: 1.0e-05
         metadata:
           rich_help_panel: Imaging
       do-wgridding:

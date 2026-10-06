@@ -11,6 +11,8 @@ must not leak into the stored dtypes.
 regardless of the visibility precision.
 """
 
+import importlib
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +20,7 @@ import pytest
 import xarray as xr
 
 from pfb_imaging.core.imager import imager as imager_core
+from pfb_imaging.utils.misc import check_gridder_epsilon
 
 # ducc takes these as f8 whatever the vis precision; MASK is a uint8 flag array
 DTYPE_EXCEPTIONS = {"UVW": np.float64, "FREQ": np.float64, "MASK": np.uint8}
@@ -114,3 +117,51 @@ def test_single_precision_matches_double(precision_trees):
             assert err < 1e-4, f"{name}/{var}: single differs from double by {err:.2e} of peak"
         wsum_err = np.abs(bands["single"].WSUM.values / bands["double"].WSUM.values - 1.0).max()
         assert wsum_err < 1e-5, f"{name}: WSUM differs by {wsum_err:.2e}"
+
+
+# ---------------------------------------------------------------------------
+# --epsilon / --precision coupling (#340)
+#
+# ducc0's wgridder picks its gridding kernel from (epsilon, dtype). There is no
+# float32 kernel below ~1e-6, so a float32 run with the old 1e-7 default died on
+# a C++ assertion -- in pass 2, after pass 1 had written the whole scratch store.
+# Measured floors, by bisecting vis2dirty over epsilon (ducc0 0.39):
+#
+#     float32: 1e-6 works, 5e-7 fails
+#     float64: 1e-12 works, 1e-14 fails
+# ---------------------------------------------------------------------------
+
+
+def test_epsilon_floor_refuses_single_below_ducc_kernel_limit():
+    """--precision single with an unreachable --epsilon is refused, naming the option."""
+    with pytest.raises(ValueError, match="--epsilon"):
+        check_gridder_epsilon("single", 1e-7)
+
+
+def test_epsilon_floor_allows_double_at_the_old_default():
+    """1e-7 is perfectly reachable in float64; the guard must not touch it."""
+    check_gridder_epsilon("double", 1e-7)
+
+
+@pytest.mark.parametrize("precision,epsilon", [("single", 1e-6), ("double", 1e-12)])
+def test_epsilon_floor_admits_what_ducc_admits(precision, epsilon):
+    """The floors are the measured ducc limits, not a round number above them."""
+    check_gridder_epsilon(precision, epsilon)
+
+
+def test_epsilon_floor_refuses_double_below_float64_limit():
+    with pytest.raises(ValueError, match="--epsilon"):
+        check_gridder_epsilon("double", 1e-14)
+
+
+@pytest.mark.parametrize("command", ["imager", "deconv", "degrid", "hci"])
+def test_cli_epsilon_default_is_reachable_in_single_precision(command):
+    """Every command's --epsilon default must work at either --precision.
+
+    This is the regression gate for #340: the default used to be 1e-7, which is
+    below ducc0's float32 kernel limit, so `--precision single` could not run at
+    all without also passing --epsilon.
+    """
+    module = importlib.import_module(f"pfb_imaging.cli.{command}")
+    default = inspect.signature(getattr(module, command)).parameters["epsilon"].default
+    check_gridder_epsilon("single", default)

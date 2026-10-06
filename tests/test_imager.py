@@ -864,6 +864,9 @@ def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
         fits_cubes=False,
         overwrite=True,
         keep_ray_alive=True,
+        # Pinned, not inherited from the default: the tolerance below is tied to
+        # this value, and the default moved to 1e-5 in #340.
+        epsilon=1e-7,
     )
 
     plain = str(tmp_path / "plain")
@@ -900,9 +903,9 @@ def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
         # DIRTY/PSF are compared against the image peak, not per pixel: summing
         # three partial griddings is algebraically identical but not bitwise
         # associative, and a relative tolerance would be dominated by pixels
-        # near zero. The bound is the wgridder's OWN accuracy target
-        # (epsilon=1e-7, operators/gridder.py) with a 10x margin -- comparing
-        # tighter than epsilon compares beyond what the gridder promises.
+        # near zero. The bound is the wgridder's OWN accuracy target -- the
+        # epsilon=1e-7 pinned above -- with a 10x margin; comparing tighter than
+        # epsilon compares beyond what the gridder promises.
         # Measured worst-pixel agreement here: 7.8e-8 relative, 6.7e-8 of peak.
         assert_allclose(gd, rd, rtol=0, atol=1e-6 * np.abs(rd).max())
         assert_allclose(gp, rp, rtol=0, atol=1e-6 * np.abs(rp).max())

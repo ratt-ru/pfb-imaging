@@ -31,6 +31,7 @@ from pfb_imaging.utils.baselines import (
 )
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.misc import (
+    check_gridder_epsilon,
     fitcleanbeam,
     parse_sky_coords,
     radec_barycentre,
@@ -185,7 +186,7 @@ def _grid_image(
     filter_counts_level=5.0,
     npix_super=0,
     nthreads=1,
-    epsilon=1e-7,
+    epsilon=1e-5,
     do_wgridding=True,
     double_accum=True,
     do_psf=True,
@@ -521,7 +522,7 @@ def imager(
     psf_oversize: float = 1.4,
     filter_counts_level: float = 5.0,
     npix_super: int = 0,
-    epsilon: float = 1e-7,
+    epsilon: float = 1e-5,
     do_wgridding: bool = True,
     double_accum: bool = True,
     keep_scratch: bool = True,
@@ -559,6 +560,14 @@ def imager(
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
+
+    # Before init_ray and before pass 1: ducc only refuses an unreachable
+    # epsilon when it is handed data, which in the imager is pass 2 -- after the
+    # expensive half has run and written the scratch store (#340).
+    try:
+        check_gridder_epsilon(precision, epsilon)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     msnames = []
     for ms_path in ms:

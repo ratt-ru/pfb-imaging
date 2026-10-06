@@ -22,6 +22,41 @@ fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
 
 
+# Lowest --epsilon ducc0's wgridder has a kernel for, per gridding precision.
+# Bisected over vis2dirty with ducc0 0.39: float32 accepts 1e-6 and refuses
+# 5e-7; float64 accepts 1e-12 and refuses 1e-14. Below the floor ducc raises a
+# bare C++ assertion ("No appropriate kernel found"), which reaches the user
+# through a RayTaskError naming neither --epsilon nor --precision -- and, in the
+# imager, only in pass 2, after pass 1 has written the whole scratch store
+# (#340). Hence the up-front check.
+GRIDDER_EPSILON_FLOOR = {"single": 1e-6, "double": 1e-12}
+
+
+def check_gridder_epsilon(precision: str, epsilon: float) -> None:
+    """Raise unless ducc0 can grid to `epsilon` at `precision`.
+
+    Args:
+        precision: "single" or "double", as taken by --precision.
+        epsilon: the requested gridder accuracy, as taken by --epsilon.
+
+    Raises:
+        ValueError: if `precision` is unknown, or `epsilon` is below the floor
+            for it.
+    """
+    try:
+        floor = GRIDDER_EPSILON_FLOOR[precision]
+    except KeyError:
+        raise ValueError(
+            f"Unknown --precision {precision!r}; expected one of {sorted(GRIDDER_EPSILON_FLOOR)}."
+        ) from None
+    if epsilon < floor:
+        raise ValueError(
+            f"--epsilon {epsilon:g} is unreachable at --precision {precision}: ducc0's "
+            f"wgridder has no {precision}-precision kernel below {floor:g}. "
+            f"Raise --epsilon to at least {floor:g}, or use --precision double."
+        )
+
+
 def to_unix_time(times):
     # MJD_UNIX_OFFSET = 3506716800.0
     return times - 3506716800.0

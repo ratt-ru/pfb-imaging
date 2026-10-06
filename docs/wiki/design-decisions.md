@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-06T09:18:06Z
-last_verified_commit: 7096abf
+timestamp: 2026-10-06T12:00:00Z
+last_verified_commit: b8cfe61
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -667,7 +667,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   and ~2e-6 on `PSF` at `--epsilon 1e-5`, with `WSUM` matching to 4e-8 — well inside the
   gridding accuracy that `epsilon` already concedes.
 - **Consequences:** `--precision single` halves the tree on disk and in every downstream
-  read. Single precision needs `--epsilon >~ 1e-5` (ducc's f4 kernels); the FITS path is
+  read. Single precision needs `--epsilon >= 1e-6` (ducc's f4 kernels, D48); the FITS path is
   unaffected because `save_fits` casts to f4 anyway. **The deconv consumer is not yet
   single-precision safe** (debt below): `residual_from_partitions` sizes its buffers from
   the band `DIRTY` while the model cube arrives f8, so the same assertion fires at
@@ -1453,6 +1453,48 @@ update it (and this page's `last_verified_commit`) in the same session.
   heterogeneous array. On that same MS `STATION` duplicates `NAME`, and `MOUNT`
   and `TYPE` are uniform, so `ANTENNA_DISH_DIAMETER` is the **only** per-antenna
   discriminator MSv2 carries. See `docs/msv4_issues.md`.
+
+### D48 — one `--epsilon` default for both precisions, checked up front
+
+- **Context:** ducc0's wgridder picks its gridding kernel from
+  `(epsilon, dtype)` and has no float32 kernel below ~1e-6, so the old
+  `--epsilon 1e-7` default made `--precision single` impossible: every run died
+  on a bare C++ assertion ("No appropriate kernel found"). In the imager it died
+  in **pass 2**, after pass 1 had written the whole scratch store, relayed
+  through a `RayTaskError` that named neither `--epsilon` nor `--precision`
+  (#340).
+- **Decision:** the default is `1e-5` for every command (`imager`, `deconv`,
+  `degrid`, `hci`), rather than branching the default on `--precision`. An
+  explicit `--epsilon` is additionally checked against the measured per-dtype
+  floor by `utils/misc.check_gridder_epsilon`, called before `init_ray` in both
+  `core/imager` and `core/hci`.
+- **Rationale:** a precision-dependent default makes the same command line mean
+  two different accuracies, which is worse than one honest number — and 1e-5 is
+  already the accuracy every single-precision run in this repo asked for. The
+  floors are measured, not derived: bisecting `vis2dirty` over epsilon (ducc0
+  0.39) gives float32 accepting 1e-6 and refusing 5e-7, float64 accepting 1e-12
+  and refusing 1e-14. Note that float32's floor is ~8x **above** `np.finfo(f4).eps`
+  (1.1920929e-07), so "below float32 resolution" is the right intuition but the
+  wrong number — the kernel table, not the representable epsilon, is the limit.
+- **Consequences:** double-precision runs grid two orders of magnitude less
+  accurately than before unless they pass `--epsilon` explicitly. That is the
+  trade the default change buys, and it is well inside what every pipeline here
+  tolerates — but any test whose tolerance is tied to the gridder's accuracy
+  must now **pin** epsilon rather than inherit it. Three did not and failed
+  under `-m ""`: `test_baseline_groups_sum_to_the_ungrouped_image`,
+  `conftest.GT_IMAGER_KW` (whose imager gridding is compared against a deconv
+  re-gridding that pins 1e-7) and `test_degrid_writes_the_whole_ms` (whose
+  reference is `utils/degrid.degrid_region`). The library-level kwarg defaults
+  in `operators/` and `utils/` deliberately stay at 1e-7 -- the driver always
+  passes epsilon explicitly, so they are only ever seen by a test that calls a
+  helper directly, and that test should state the accuracy it asserts. Single
+  precision now works out of the box and costs ~30% less peak memory in pass 2
+  (4.06-5.18 GB double vs 3.05-3.62 GB single, nx=ny=2560, 4 bands,
+  `--nworkers 2`), which is the reach when a large image will not fit (#339).
+- **Source:** `src/pfb_imaging/utils/misc.py`
+  (`GRIDDER_EPSILON_FLOOR`, `check_gridder_epsilon`);
+  `src/pfb_imaging/core/imager.py`, `src/pfb_imaging/core/hci.py` (the guards);
+  `tests/test_imager_precision.py`; issue #340.
 
 ## Known debt
 

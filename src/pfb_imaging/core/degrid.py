@@ -240,7 +240,7 @@ class Degridder:
         masks: Multiton,
         columns: Sequence[str],
         accumulate: bool = False,
-        epsilon: float = 1e-7,
+        epsilon: float = 1e-5,
         do_wgridding: bool = True,
         nthreads: int = 1,
     ):
@@ -387,7 +387,7 @@ def degrid(
     integrations_per_chunk: int = -1,
     accumulate: bool = False,
     region_file: str | None = None,
-    epsilon: float = 1e-7,
+    epsilon: float = 1e-5,
     do_wgridding: bool = True,
     ray_address: str = "local",
     nworkers: int = 1,

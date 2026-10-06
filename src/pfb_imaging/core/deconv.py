@@ -131,7 +131,7 @@ def deconv(
     nthreads: int = 2,
     nworkers: int = 1,
     ray_address: str = "local",
-    epsilon: float = 1e-7,
+    epsilon: float = 1e-5,
     do_wgridding: bool = True,
     double_accum: bool = True,
     pd_tol: float = 0.0003,
