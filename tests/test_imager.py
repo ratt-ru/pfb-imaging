@@ -1115,3 +1115,41 @@ def test_antenna_groups_without_baseline_groups_is_refused(ms_name, tmp_path, mo
             overwrite=True,
             keep_ray_alive=True,
         )
+
+
+def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, monkeypatch):
+    """Building a wizard for an absent group would stage beams nothing uses.
+
+    The MdV-2026 group products need hand-staging, so an eager wizard for a
+    group with no baselines kills the run in meerkat_beams.cache for a beam no
+    task would ever consume.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    built = []
+
+    class _FakeWizard:
+        def __init__(self, band=None, group=None):
+            built.append((band, group))
+
+    monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
+    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+
+    def _stop(*a, **kw):
+        raise RuntimeError("stop after beam construction")
+
+    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+
+    with pytest.raises(RuntimeError, match="stop after beam construction"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "onegroup"),
+            baseline_groups=True,
+            antenna_groups="vla-*,nosuchantenna*",
+            beam_model="L",
+            field_of_view=1.0,
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+    assert [g for _, g in built] == ["MM"], f"built wizards for absent groups: {built}"

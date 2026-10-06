@@ -169,3 +169,21 @@ def test_telescope_check_refuses_other_arrays_naming_what_it_found():
 def test_telescope_check_names_the_ms():
     with pytest.raises(ValueError, match="to.ms"):
         check_telescope_is_meerkat("vla", "/path/to.ms")
+
+
+def test_refuses_non_finite_diameters():
+    """A NaN diameter must not silently classify as the smaller dish class.
+
+    [13.5, 15.0, nan] yields two clean classes and `nan - 13.5 > tol` is False,
+    so the NaN antenna would land in MeerKAT; the m/e cross-check only catches
+    it when that antenna happens to be e-named.
+    """
+    diams = np.array([13.5, 13.5, np.nan, 15.0, 15.0])
+    with pytest.raises(ValueError, match="m002"):
+        classify_antennas(NAMES, diams)
+
+
+def test_non_finite_diameter_error_mentions_the_override():
+    diams = np.array([13.5, 13.5, np.nan, 15.0, 15.0])
+    with pytest.raises(ValueError, match="antenna-groups"):
+        classify_antennas(NAMES, diams)

@@ -810,6 +810,36 @@ def imager(
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
 
+    # Baseline-group masks, one dict per selected node. Computed here rather
+    # than inside the dispatch loop so the set of groups that actually exist is
+    # known before any BeamWizard is built -- an eager wizard for an absent
+    # group would stage MdV-2026 products for a beam no task consumes.
+    # Still strictly per node: different scans/SPWs can carry different antenna
+    # subsets, so baseline_id indices are only valid for their own node.
+    node_masks_list = []
+    for _ims, node, _f, _t, _c, _r in selected:
+        if not baseline_groups:
+            node_masks_list.append({"all": None})
+            continue
+        ant_xds = node["antenna_xds"].ds
+        ant_names = ant_xds.antenna_name.values
+        diam = ant_xds.ANTENNA_DISH_DIAMETER.values if "ANTENNA_DISH_DIAMETER" in ant_xds.data_vars else None
+        try:
+            is_ext = classify_antennas(ant_names, diam, override=antenna_group_override)
+            node_masks_list.append(
+                baseline_group_masks(
+                    is_ext,
+                    ant_names,
+                    node.ds.baseline_antenna1_name.values,
+                    node.ds.baseline_antenna2_name.values,
+                )
+            )
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+    if baseline_groups:
+        present_groups = sorted({g for m in node_masks_list for g in m}, key=GROUP_LABELS.index)
+        log.info("Baseline groups present: " + ", ".join(present_groups))
+
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
     beam_refs = None
@@ -820,8 +850,8 @@ def imager(
             # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
             # file-backed) and pass 1 emits hundreds of tasks, so passing it by
             # value per task would serialise it hundreds of times.
-            log.info("Initialising one BeamWizard per baseline group")
-            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in GROUP_LABELS}
+            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
         else:
             log.info("Assuming MeerKAT data and initialising BeamWizard")
             # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
@@ -838,29 +868,8 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
-    for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
+    for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
         scan_name = np.unique(node.ds.scan_name.load().values).item()
-        # Baseline-group masks are per node: different scans/SPWs can carry
-        # different antenna subsets, so baseline_id indices are only valid for
-        # the node they were computed from (issue #335).
-        if baseline_groups:
-            ant_xds = node["antenna_xds"].ds
-            ant_names = ant_xds.antenna_name.values
-            diam = ant_xds.ANTENNA_DISH_DIAMETER.values if "ANTENNA_DISH_DIAMETER" in ant_xds.data_vars else None
-            try:
-                is_ext = classify_antennas(ant_names, diam, override=antenna_group_override)
-                node_masks = baseline_group_masks(
-                    is_ext,
-                    ant_names,
-                    node.ds.baseline_antenna1_name.values,
-                    node.ds.baseline_antenna2_name.values,
-                )
-            except ValueError as e:
-                log.error_and_raise(str(e), ValueError)
-            log.info(f"Baseline groups for {scan_name}: " + ", ".join(f"{k}={v.size}" for k, v in node_masks.items()))
-        else:
-            # one unsplit partition, exactly as before
-            node_masks = {"all": None}
         nchan_node = freqs_node.size
         ntimes_node = times_node.size
         if integrations_per_image in (0, None, -1):

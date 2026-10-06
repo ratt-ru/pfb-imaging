@@ -121,6 +121,16 @@ def classify_antennas(antenna_names, dish_diameters, override=None):
         )
 
     diam = np.asarray(dish_diameters, dtype=float)
+    # Refuse non-finite diameters rather than let them fall through. A NaN
+    # survives the clustering below (`nan - x > tol` is False) and would be
+    # classified as the SMALLER dish class in silence; the m/e cross-check only
+    # catches that when the antenna happens to be e-named.
+    if not np.isfinite(diam).all():
+        bad = antenna_names[~np.isfinite(diam)]
+        raise ValueError(
+            f"non-finite ANTENNA_DISH_DIAMETER for {bad.tolist()}; cannot classify these "
+            f"antennas. Name the two groups explicitly with --antenna-groups 'm*,e*'."
+        )
     # Cluster diameters that agree to within DIAMETER_TOL.
     classes = []
     for d in np.sort(np.unique(diam)):
