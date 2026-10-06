@@ -176,8 +176,8 @@ def imager(
         list[URI] | None,
         typer.Option(
             parser=parse_upath,
-            help="Path to Quartical gain table containing NET gains. "
-            "There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.",
+            help="Not implemented for imager and refused if set. "
+            "Image a corrected-data column, or use hci, which does apply gains.",
             rich_help_panel="Input",
         ),
     ] = None,
