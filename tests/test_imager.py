@@ -827,3 +827,151 @@ def test_bad_antenna_groups_spec_is_refused_early(ms_name, tmp_path, monkeypatch
             overwrite=True,
             keep_ray_alive=True,
         )
+
+
+def _total_rows(dt_path):
+    """Total vis rows across every partition of every band."""
+    dt = xr.open_datatree(dt_path, engine="zarr", chunks=None)
+    return sum(dt[b][p].ds.sizes["row"] for b in dt.children if b.startswith("band") for p in dt[b].children)
+
+
+def _summed_band_products(dt_path):
+    """Per-band summed DIRTY/PSF/WSUM, keyed by band node name."""
+    dt = xr.open_datatree(dt_path, engine="zarr", chunks=None)
+    out = {}
+    for name in sorted(n for n in dt.children if n.startswith("band")):
+        band = dt[name].ds
+        out[name] = (band.DIRTY.values, band.PSF.values, band.WSUM.values)
+    return out
+
+
+@pytest.mark.slow
+def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
+    """Summing the three groups reproduces the ungrouped image exactly.
+
+    Imaging weights are reduced per band, not per partition, so both runs see
+    identical weights; gridding is then linear in rows, so the split is
+    algebraically a no-op. The two patterns cover 10 and 17 of the MS's 27
+    antennas -- exhaustive, no overlap.
+    """
+    common = dict(
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    plain = str(tmp_path / "plain")
+    imager_core([Path(ms_name)], plain, **common)
+
+    grouped = str(tmp_path / "grouped")
+    imager_core(
+        [Path(ms_name)],
+        grouped,
+        baseline_groups=True,
+        antenna_groups="vla-0*,vla-[12]*",
+        **common,
+    )
+
+    # The equivalence below is vacuous unless the split actually happened: an
+    # unsplit "grouped" run is the plain run, and would match trivially.
+    gdt = xr.open_datatree(grouped + "_I.dt", engine="zarr", chunks=None)
+    gband = gdt[sorted(n for n in gdt.children if n.startswith("band"))[0]]
+    assert sorted(gband[p].ds.attrs["baseline_group"] for p in gband.children) == ["MM", "MPM", "MPMP"]
+
+    # Rows are partitioned, not duplicated or dropped: the masks must index the
+    # node's own baseline axis (Review Focus 3).
+    assert _total_rows(grouped + "_I.dt") == _total_rows(plain + "_I.dt")
+
+    ref = _summed_band_products(plain + "_I.dt")
+    got = _summed_band_products(grouped + "_I.dt")
+    assert set(ref) == set(got), "grouped run produced different band nodes"
+
+    for name in ref:
+        rd, rp, rw = ref[name]
+        gd, gp, gw = got[name]
+        # wsum is a plain sum of weights and must agree to roundoff.
+        assert_allclose(gw, rw, rtol=1e-10, atol=0)
+        # DIRTY/PSF are compared against the image peak, not per pixel: summing
+        # three partial griddings is algebraically identical but not bitwise
+        # associative, and a relative tolerance would be dominated by pixels
+        # near zero. The bound is the wgridder's OWN accuracy target
+        # (epsilon=1e-7, operators/gridder.py) with a 10x margin -- comparing
+        # tighter than epsilon compares beyond what the gridder promises.
+        # Measured worst-pixel agreement here: 7.8e-8 relative, 6.7e-8 of peak.
+        assert_allclose(gd, rd, rtol=0, atol=1e-6 * np.abs(rd).max())
+        assert_allclose(gp, rp, rtol=0, atol=1e-6 * np.abs(rp).max())
+
+
+@pytest.mark.slow
+def test_baseline_groups_write_three_partitions_with_the_right_row_counts(ms_name, tmp_path):
+    """Three partitions per band, each sliced on its own node's baseline axis."""
+    outname = str(tmp_path / "grouped")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        baseline_groups=True,
+        antenna_groups="vla-0*,vla-[12]*",
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    band = dt[sorted(n for n in dt.children if n.startswith("band"))[0]]
+
+    labels = sorted(band[p].ds.attrs["baseline_group"] for p in band.children)
+    assert labels == ["MM", "MPM", "MPMP"]
+
+    # Every group must carry data. Exact row counts are NOT ntime*nbl: pass 1
+    # drops fully-flagged rows, and flagging is not uniform across baselines.
+    # Row conservation across the split is pinned in the equivalence test.
+    rows = {band[p].ds.attrs["baseline_group"]: band[p].ds.sizes["row"] for p in band.children}
+    assert set(rows) == {"MM", "MPM", "MPMP"}
+    assert all(v > 0 for v in rows.values()), f"a group carries no rows: {rows}"
+    # 10 vs 17 antennas: MM has the fewest baselines (45), MPM the most (170).
+    assert rows["MM"] < rows["MPMP"] < rows["MPM"], f"group sizes look wrong: {rows}"
+
+    # Review Focus 2: no partition may be written with zero wsum -- the band
+    # BEAM is a wsum-weighted mean and would divide by zero.
+    for p in band.children:
+        assert np.all(np.asarray(band[p].ds.attrs["wsum"]) > 0)
+    assert np.isfinite(band.ds.BEAM.values).all()
+    assert np.isfinite(band.ds.BDIRTY.values).all()
+
+
+@pytest.mark.slow
+def test_single_class_array_writes_one_partition_not_three(ms_name, tmp_path):
+    """Review Focus 1: an empty group must not become an empty partition."""
+    outname = str(tmp_path / "onegroup")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        baseline_groups=True,
+        antenna_groups="vla-*,nosuchantenna*",
+    )
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    band = dt[sorted(n for n in dt.children if n.startswith("band"))[0]]
+    assert len(band.children) == 1
+    assert band[next(iter(band.children))].ds.attrs["baseline_group"] == "MM"

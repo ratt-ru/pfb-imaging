@@ -22,7 +22,12 @@ from xarray_ms.errors import (
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.baselines import check_telescope_is_meerkat, parse_antenna_groups
+from pfb_imaging.utils.baselines import (
+    baseline_group_masks,
+    check_telescope_is_meerkat,
+    classify_antennas,
+    parse_antenna_groups,
+)
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.misc import (
     fitcleanbeam,
@@ -794,6 +799,27 @@ def imager(
     created_parents = set()
     for ims, node, freqs_node, times_node, chan0, _field_radec in selected:
         scan_name = np.unique(node.ds.scan_name.load().values).item()
+        # Baseline-group masks are per node: different scans/SPWs can carry
+        # different antenna subsets, so baseline_id indices are only valid for
+        # the node they were computed from (issue #335).
+        if baseline_groups:
+            ant_xds = node["antenna_xds"].ds
+            ant_names = ant_xds.antenna_name.values
+            diam = ant_xds.ANTENNA_DISH_DIAMETER.values if "ANTENNA_DISH_DIAMETER" in ant_xds.data_vars else None
+            try:
+                is_ext = classify_antennas(ant_names, diam, override=antenna_group_override)
+                node_masks = baseline_group_masks(
+                    is_ext,
+                    ant_names,
+                    node.ds.baseline_antenna1_name.values,
+                    node.ds.baseline_antenna2_name.values,
+                )
+            except ValueError as e:
+                log.error_and_raise(str(e), ValueError)
+            log.info(f"Baseline groups for {scan_name}: " + ", ".join(f"{k}={v.size}" for k, v in node_masks.items()))
+        else:
+            # one unsplit partition, exactly as before
+            node_masks = {"all": None}
         nchan_node = freqs_node.size
         ntimes_node = times_node.size
         if integrations_per_image in (0, None, -1):
@@ -829,39 +855,41 @@ def imager(
                     scratch_root.require_group(parent)
                     created_parents.add(parent)
 
-                fut = safe_stokes_vis.remote(
-                    dc1=dc1,
-                    dc2=dc2,
-                    operator=operator,
-                    node_dt=subdt,
-                    scratch_store=scratch_url,
-                    bandid=bandid,
-                    timeid=timeid,
-                    msid=ims,
-                    freq_nominal=band_centres[bandid],
-                    precision=precision,
-                    sigma_column=sigma_column,
-                    weight_column=weight_column,
-                    product=product,
-                    chan_average=chan_average,
-                    bda_decorr=bda_decorr,
-                    max_field_of_view=max_field_of_view,
-                    beam_model=beam_model,
-                    wgt_mode=wgt_mode,
-                    max_blength=max_blength,
-                    max_freq=max_freq,
-                    nx_pad=nx_pad,
-                    ny_pad=ny_pad,
-                    cell_rad=cell_rad,
-                    baseline_group="all",
-                    data_group=data_group,
-                    radec_new=radec_new,
-                    target=target,
-                    nx=nx,
-                    ny=ny,
-                    nthreads=nthreads,
-                )
-                tasks.append(fut)
+                for bg, bl_idx in node_masks.items():
+                    subdt_bg = subdt if bl_idx is None else subdt.isel(baseline_id=bl_idx)
+                    fut = safe_stokes_vis.remote(
+                        dc1=dc1,
+                        dc2=dc2,
+                        operator=operator,
+                        node_dt=subdt_bg,
+                        scratch_store=scratch_url,
+                        bandid=bandid,
+                        timeid=timeid,
+                        msid=ims,
+                        freq_nominal=band_centres[bandid],
+                        precision=precision,
+                        sigma_column=sigma_column,
+                        weight_column=weight_column,
+                        product=product,
+                        chan_average=chan_average,
+                        bda_decorr=bda_decorr,
+                        max_field_of_view=max_field_of_view,
+                        beam_model=beam_model,
+                        wgt_mode=wgt_mode,
+                        max_blength=max_blength,
+                        max_freq=max_freq,
+                        nx_pad=nx_pad,
+                        ny_pad=ny_pad,
+                        cell_rad=cell_rad,
+                        baseline_group=bg,
+                        data_group=data_group,
+                        radec_new=radec_new,
+                        target=target,
+                        nx=nx,
+                        ny=ny,
+                        nthreads=nthreads,
+                    )
+                    tasks.append(fut)
 
     nds = len(tasks)
     ncomplete = 0
