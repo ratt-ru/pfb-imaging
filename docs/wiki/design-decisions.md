@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-05T17:07:34Z
-last_verified_commit: 08e1daf
+timestamp: 2026-10-06T09:18:06Z
+last_verified_commit: 7096abf
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1381,6 +1381,59 @@ update it (and this page's `last_verified_commit`) in the same session.
   intended. `--durations=10` is in `addopts` so a genuinely newly-slow test surfaces in the fast
   loop's own output rather than rotting there.
 - **Source:** PR #336; `.claude/rules/testing-and-ci.md` §1.
+
+### D46 — the cross-group beam is stored as `Re(B)`
+
+- **Context:** On a mixed MeerKAT / MeerKAT+ array the primary beam depends on
+  which pair of dishes forms a baseline. `meerkat-beams` serves `MM`, `MPM` and
+  `MPMP` beams, but a mixed baseline has no single Jones matrix, so `MPM`'s
+  Stokes variables come back **complex64** (its `jones`/`njones` are absent
+  entirely). The stored `.dt` `BEAM` is real everywhere, and
+  `H = Σ_p B_pᵀ G_pᵀ W_p G_p B_p`, `BDIRTY = Σ_p B_p·dirty_p` and the beam FITS
+  path all assume a real `B`.
+- **Decision:** store `Re(B)` for the cross group. `utils/stokes2vis_msv4.real_beam_maps`
+  takes the real part explicitly and records `max|Im|/max|Re|` in the partition
+  attr `beam_imre_ratio`.
+- **Rationale:** the imaginary part is the antisymmetric response, which
+  integrates to zero for a real sky over conjugate baseline orderings. Taking
+  it keeps every image-space operator, the uniform-`--precision` invariant (D27)
+  and the `B/n` convention (D22) exactly as they are. The alternatives were
+  worse: `|B|` discards the sign of a genuinely negative off-axis response,
+  precisely in the far-sidelobe regime that motivates per-group beams; a complex
+  `BEAM` end to end breaks D27 and touches every image-space operator; and
+  dropping cross-group baselines costs a large fraction of the array's uv
+  coverage.
+- **Consequences:** this is an approximation, not a derivation. The explicit
+  `np.real` is load-bearing — numpy assigns complex into a float array with only
+  a `ComplexWarning` (verified, numpy 2.4.6), so the same result would otherwise
+  be reached by accident and `beam_imre_ratio` would never be computed. **Watch
+  that attr on real MeerKAT+ data**; a large ratio means this decision needs
+  revisiting. Unexercised so far: `meerkat-beams` group support is unreleased,
+  so no complex beam has yet reached this code outside unit tests.
+
+### D47 — the baseline-group telescope guard keys on the beam model
+
+- **Context:** `--baseline-groups` needs per-group MeerKAT beams, which exist
+  only for MeerKAT, only for L band, and only from staged MdV-2026 products. A
+  non-MeerKAT array has no group beam at all.
+- **Decision:** the telescope and band guards fire when a group-capable
+  `BeamWizard` is required — i.e. whenever `--beam-model` is set — not on
+  `--baseline-groups` alone. They run in `_preflight_baseline_groups` **before**
+  `init_ray`, so a bad request never stands up a cluster.
+- **Rationale:** with no beam model there is no group beam to get wrong, and the
+  split degenerates to pure data partitioning whose summation is algebraically
+  identical to not splitting (imaging weights are reduced per band, not per
+  partition, so both runs see identical weights and gridding is linear in rows).
+  That is also what lets the grouped-equals-ungrouped equivalence test run on
+  the VLA test MS on every CI leg, with no MS mutation and no python-casacore.
+- **Consequences:** a non-MeerKAT user passing `--baseline-groups` with no beam
+  model gets a pointless-but-harmless three-way split instead of an error. The
+  guard reads `antenna_xds.attrs["overall_telescope_name"]`, which xarray-ms
+  broadcasts from `OBSERVATION::TELESCOPE_NAME` — it identifies the array but
+  **cannot** discriminate dishes, which is what `ANTENNA_DISH_DIAMETER` is for.
+  Verified on real MeerKAT+ data: `overall_telescope_name` is `"MeerKAT"` and
+  `ANTENNA_DISH_DIAMETER` is 15.0 m for the `e` dishes against 13.5 m for the
+  `m` dishes, with the name prefix agreeing throughout.
 
 ## Known debt
 
