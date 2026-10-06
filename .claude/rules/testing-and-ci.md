@@ -86,12 +86,12 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 789 passed + 1 skipped, ~106 s -- run THIS
+uv run pytest tests/          # 790 passed + 1 skipped, ~115 s -- run THIS
 ```
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
 costs ~465 s and `uv run pytest -m "" tests/` costs ~9.6 min, and CI already runs the whole suite
-(834 collected: 833 passed + 1 skipped) on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
+(835 collected: 834 passed + 1 skipped) on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
 `--extra all` and `--extra full`. Reproducing one leg locally costs more than a push and covers
 less. Run fast, push, read the result.
 

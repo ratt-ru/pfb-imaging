@@ -32,10 +32,10 @@ SEARCH_GLOBS = (
 # is written with and without a space before the unit ("~108 s" vs "~108s") and a
 # literal-substring check silently misses the other spelling.
 VOLATILE = (
-    r"\b789\b",
-    r"\b833\b",
+    r"\b790\b",
     r"\b834\b",
-    r"~?106\s*s\b",
+    r"\b835\b",
+    r"~?115\s*s\b",
     r"~?465\s*s\b",
     r"9\.6\s*min",
 )

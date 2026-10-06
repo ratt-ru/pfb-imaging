@@ -1435,9 +1435,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   guard reads `antenna_xds.attrs["overall_telescope_name"]`, which xarray-ms
   broadcasts from `OBSERVATION::TELESCOPE_NAME` — it identifies the array but
   **cannot** discriminate dishes, which is what `ANTENNA_DISH_DIAMETER` is for.
-  Verified on real MeerKAT+ data: `overall_telescope_name` is `"MeerKAT"` and
-  `ANTENNA_DISH_DIAMETER` is 15.0 m for the `e` dishes against 13.5 m for the
-  `m` dishes, with the name prefix agreeing throughout.
+  That is not an xarray-ms bug and there is nothing to file: checked with
+  python-casacore on a real MeerKAT+ MS, `OBSERVATION` has one row whose
+  `TELESCOPE_NAME` is `"MeerKAT"` (correct — in MSv2 the telescope names the
+  *observation*), and the MSv2 `ANTENNA` table has **no** telescope column at
+  all (`DISH_DIAMETER, FLAG_ROW, MOUNT, NAME, OFFSET, POSITION, STATION, TYPE`).
+  MSv4's per-antenna `telescope_name` has no MSv2 source, so broadcasting is the
+  only available imputation — it is just a confidently-wrong one on a
+  heterogeneous array. On that same MS `STATION` duplicates `NAME`, and `MOUNT`
+  and `TYPE` are uniform, so `ANTENNA_DISH_DIAMETER` is the **only** per-antenna
+  discriminator MSv2 carries. See `docs/msv4_issues.md`.
 
 ## Known debt
 

@@ -22,11 +22,6 @@ GROUP_LABELS = ("MM", "MPM", "MPMP")
 # discriminate dishes -- that is what dish diameter is for.
 MEERKAT_TELESCOPE_NAMES = frozenset({"meerkat", "meerkat+"})
 
-# Dish diameters are floats read from the MS; cluster them rather than
-# comparing exactly. MeerKAT is 13.5 m, the Extension dishes are SKA-Mid 15 m,
-# so anything below this tolerance is the same class.
-DIAMETER_TOL = 0.5
-
 
 def check_telescope_is_meerkat(telescope_name: str, ms_path: str) -> None:
     """Raise unless `telescope_name` names a MeerKAT array.
@@ -120,6 +115,11 @@ def classify_antennas(antenna_names, dish_diameters, override=None):
             "Name the two groups explicitly with --antenna-groups 'm*,e*'."
         )
 
+    # Compared exactly, with no clustering tolerance. MSv2 stores the nominal
+    # value (verified on MeerKAT+ data: exactly 13.5 and 15.0 m), and a
+    # tolerance would silently merge two genuinely distinct dish classes whose
+    # diameters happen to fall close together. Float noise would instead split
+    # one class in two, which the m/e cross-check below catches.
     diam = np.asarray(dish_diameters, dtype=float)
     # Refuse non-finite diameters rather than let them fall through. A NaN
     # survives the clustering below (`nan - x > tol` is False) and would be
@@ -131,11 +131,7 @@ def classify_antennas(antenna_names, dish_diameters, override=None):
             f"non-finite ANTENNA_DISH_DIAMETER for {bad.tolist()}; cannot classify these "
             f"antennas. Name the two groups explicitly with --antenna-groups 'm*,e*'."
         )
-    # Cluster diameters that agree to within DIAMETER_TOL.
-    classes = []
-    for d in np.sort(np.unique(diam)):
-        if not classes or d - classes[-1] > DIAMETER_TOL:
-            classes.append(d)
+    classes = np.unique(diam)
     if len(classes) == 1:
         raise ValueError(
             f"all antennas report a single dish diameter ({classes[0]:.2f} m), so this "
@@ -149,7 +145,7 @@ def classify_antennas(antenna_names, dish_diameters, override=None):
             f"for exactly two dish classes. Use --antenna-groups to name them."
         )
 
-    is_ext = diam - classes[0] > DIAMETER_TOL
+    is_ext = diam == classes[-1]
 
     # Corroborate against the m/e naming convention. A disagreement means one of
     # the two signals is wrong and we have no way to tell which.

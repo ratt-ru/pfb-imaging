@@ -187,3 +187,17 @@ def test_non_finite_diameter_error_mentions_the_override():
     diams = np.array([13.5, 13.5, np.nan, 15.0, 15.0])
     with pytest.raises(ValueError, match="antenna-groups"):
         classify_antennas(NAMES, diams)
+
+
+def test_two_close_but_distinct_diameters_are_two_classes():
+    """Diameters are compared exactly: no clustering tolerance.
+
+    A tolerance would silently merge two genuinely different dish classes whose
+    diameters happen to be close. Real MSs store exact nominal values (verified
+    on MeerKAT+ data: exactly 13.5 and 15.0), so exact comparison is what the
+    data supports. Names here carry no m/e prefix, so the corroboration step is
+    skipped and the diameter decision stands alone.
+    """
+    names = np.array(["ant0", "ant1", "ant2"])
+    is_ext = classify_antennas(names, np.array([13.5, 13.5, 13.8]))
+    assert is_ext.tolist() == [False, False, True]
