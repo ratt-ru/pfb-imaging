@@ -1412,8 +1412,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   a `ComplexWarning` (verified, numpy 2.4.6), so the same result would otherwise
   be reached by accident and `beam_imre_ratio` would never be computed. **Watch
   that attr on real MeerKAT+ data**; a large ratio means this decision needs
-  revisiting. Unexercised so far: `meerkat-beams` group support is unreleased,
-  so no complex beam has yet reached this code outside unit tests.
+  revisiting.
+- **Measured (meerkat-beams 0.1.0, staged MdV-2026 products, real MeerKAT+ MS):**
+  `MM` and `MPMP` come back real (`float32` `nstokes`, `jones`/`njones` present);
+  `MPM` is `complex64` with `jones`/`njones` absent, exactly as upstream
+  documents. At 1.28 GHz the discarded part is **`max|Im|/max|Re| = 2.1e-2`** —
+  about 2% of peak, not a rounding error. A full `pfb imager --baseline-groups
+  --beam-model L` run over a 20 MHz slice of a 37-antenna MeerKAT+ observation
+  wrote `beam_imre_ratio` 0.0 / 2.1287e-02 / 0.0 for `MM` / `MPM` / `MPMP`, and
+  the band `BEAM` stayed finite and within [0.738, 1]. So the approximation is
+  now quantified rather than assumed, and 2% is the number to argue about.
 
 ### D47 — the baseline-group telescope guard keys on the beam model
 
@@ -1495,6 +1503,14 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Recurring gotchas
 
+- **`pfb` repoints the meerkat-beams cache, so hand-staged beams go missing.**
+  `pfb_imaging/__init__.py` sets `MBEAMS_CACHE_DIR=/tmp/mbeams-cache-<uid>` by
+  `setdefault` (#270: Ray workers and containers need a shared, mountable path).
+  meerkat-beams' own default is `~/.cache/meerkat-beams`, so MdV-2026 group
+  products staged by hand land where `pfb` will not look, and `imager` dies with
+  "beam product 'MeerKAT_L_mdv2026' is not yet published" even though the files
+  are on disk. Stage into `/tmp/mbeams-cache-<uid>`, or export an explicit
+  `MBEAMS_CACHE_DIR` (the `setdefault` means an explicit value always wins).
 - **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
   to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
   rather than where it came from. Always pass `region` explicitly, and only slices — an

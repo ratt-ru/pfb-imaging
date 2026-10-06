@@ -1153,3 +1153,59 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
         )
 
     assert [g for _, g in built] == ["MM"], f"built wizards for absent groups: {built}"
+
+
+@pytest.mark.slow
+def test_real_group_beams_are_complex_only_for_the_cross_group():
+    """D46 rests on MPM being complex and MM/MPMP being real. Check that against
+    the actual meerkat-beams group datasets rather than a mock.
+
+    The MdV-2026 products are unpublished (placeholder gdrive IDs in
+    meerkat_beams.cache), so they cannot be downloaded and CI never runs this --
+    it skips unless they have been staged by hand into MBEAMS_CACHE_DIR, which
+    pfb points at /tmp/mbeams-cache-<uid> (see pfb_imaging/__init__.py), NOT at
+    meerkat-beams' own ~/.cache default.
+
+    Measured on staged products at 1.28 GHz: max|Im|/max|Re| = 2.1e-2.
+    """
+    from pathlib import Path as _Path
+
+    cache = pytest.importorskip("meerkat_beams.cache")
+    for product in ("MeerKAT_L_mdv2026", "MKE_L"):
+        if not _Path(cache.bds_path_for_product(product)).exists():
+            pytest.skip(f"group beam product {product!r} not staged under {cache.cache_root()}")
+
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.time import Time
+    from meerkat_beams.utils import BeamWizard
+
+    from pfb_imaging.utils.stokes2vis_msv4 import real_beam_maps
+
+    lm = np.linspace(-1.0, 1.0, 32)
+    times = Time(np.array([60000.0]), format="mjd")
+    ratios = {}
+    for group in ("MM", "MPM", "MPMP"):
+        bw = BeamWizard(band="L", group=group)
+        bw.set_field_centre(SkyCoord(ra=0.0 * u.rad, dec=-0.5 * u.rad))
+        bmap, _ = bw.get_rotation_averaged_beam(
+            l=lm,
+            m=lm,
+            times=times,
+            freq=np.atleast_1d(1.28e9),
+            time_stepping=1,
+            pixel_stepping=1,
+            var="nstokes",
+            i="I",
+            j="I",
+            verbose=0,
+        )
+        maps, ratio = real_beam_maps([bmap])
+        assert maps.dtype == np.float64
+        assert np.isfinite(maps).all()
+        ratios[group] = ratio
+
+    assert ratios["MM"] == 0.0, "MeerKAT-MeerKAT beam should be real"
+    assert ratios["MPMP"] == 0.0, "MeerKAT+-MeerKAT+ beam should be real"
+    # the cross group has no single Jones matrix, so its Stokes beam is complex
+    assert 0.0 < ratios["MPM"] < 0.1, f"unexpected cross-group |Im|/|Re|: {ratios['MPM']}"

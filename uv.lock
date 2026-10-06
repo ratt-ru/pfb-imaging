@@ -1568,21 +1568,20 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
     { name = "libcst" },
     { name = "pyyaml" },
     { name = "ruff" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "universal-pathlib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/22/dab3c8dfa5cc3f8e8145d658433e1d0b4ef126b18e8d8276d8448b491aaf/hip_cargo-0.3.0.tar.gz", hash = "sha256:1fbfc848c1a38dcd584d5cf91652e45d1c95f866ec4b10c79b21f186cdd2dfc1", size = 124229, upload-time = "2026-07-24T21:53:26.017Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/60/40340800369673b76d135b5f991ee3c23bb38ac05a0e5c8ca580feb5cf38/hip_cargo-0.4.0.tar.gz", hash = "sha256:a4cb2ad39ac2eaec064885344bd91f3c1e02a278d007984dfc8593756055696d", size = 92979, upload-time = "2026-09-23T14:57:23.233Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/cb/808927ce51fe94d0661f2128162bfe7ae371a9d07eb4be2f1f21431d69a1/hip_cargo-0.3.0-py3-none-any.whl", hash = "sha256:f9601675ec78f4e3a4a2ff79e69ad4a863437d4eb39feb36825eae50706fcd3b", size = 145807, upload-time = "2026-07-24T21:53:24.492Z" },
+    { url = "https://files.pythonhosted.org/packages/05/67/529d7a58c8bb624f1567bb27f9b9f66c878634b641f254b52bd9c0144c02/hip_cargo-0.4.0-py3-none-any.whl", hash = "sha256:cdb5756485ec31acbe76e4f5998b881a52886a91fd11733c54a1189499a8bdb5", size = 105858, upload-time = "2026-09-23T14:57:21.821Z" },
 ]
 
 [[package]]
@@ -2541,21 +2540,23 @@ wheels = [
 
 [[package]]
 name = "meerkat-beams"
-version = "0.0.1"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/62/2d50e8c0c5eb051effdcbb68de1d2f908a84117b170a7944ebe17849d5ab/meerkat_beams-0.0.1.tar.gz", hash = "sha256:9131ddea31f1fc1a9fa2eaba7ca1ca5a1f9fe28cc83eb9dedcd39b88e987a2d7", size = 25052, upload-time = "2026-07-27T13:32:20.716Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/24/0b5fb05b2f2e81fa2ce5d14fe2c28c6feea9b338608ddca25e407bab25bb/meerkat_beams-0.1.0.tar.gz", hash = "sha256:b65005f05fa63164190d3e6158ea442af23e2b1d77f2ed6ce2ab33824757445e", size = 41352, upload-time = "2026-10-06T12:57:51.056Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/00/02a2c789f5de43d584c0259e46f8305f66a3f9b57aee0a885820338efeda/meerkat_beams-0.0.1-py3-none-any.whl", hash = "sha256:81c902cc2ba3245f911378b73a7879b1ee7a6971fefb6b2031432f7973c39a1f", size = 34976, upload-time = "2026-07-27T13:32:19.231Z" },
+    { url = "https://files.pythonhosted.org/packages/df/ff/f7d159bbe176e7d58f1a789630783e938a7880a771429962faf8b8203a0a/meerkat_beams-0.1.0-py3-none-any.whl", hash = "sha256:1ecb65a62f93a388e5c2064f4090c650920f130f996bb0b715d6e7b2388661b1", size = 51641, upload-time = "2026-10-06T12:57:49.788Z" },
 ]
 
 [package.optional-dependencies]
 full = [
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "dask", marker = "python_full_version >= '3.11'" },
     { name = "dask-ms", extra = ["s3", "xarray", "zarr"], marker = "python_full_version >= '3.11'" },
     { name = "gdown", marker = "python_full_version >= '3.11'" },
+    { name = "katbeam", marker = "python_full_version >= '3.11'" },
     { name = "matplotlib", marker = "python_full_version >= '3.11'" },
     { name = "numcodecs", version = "0.15.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -3645,13 +3646,13 @@ requires-dist = [
     { name = "codex-africanus", extras = ["python-casacore"], marker = "extra == 'casacore'", specifier = ">=0.4.4" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr", "katdal"], marker = "extra == 'casacore'", specifier = ">=0.2.31" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", specifier = ">=0.3.0" },
+    { name = "hip-cargo", specifier = ">=0.4.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.1" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.0.1" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.1.0" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.1.0" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },

@@ -258,14 +258,14 @@ def hci(
         ),
     ] = "double",
     beam_model: Annotated[
-        Literal["meerkat-beams"],
+        Literal["meerkat-beams"] | None,
         typer.Option(
             help="Which beam model to use.",
             rich_help_panel="Input",
         ),
     ] = None,
     primary_beam_band: Annotated[
-        Literal["U", "L", "S0", "S4"],
+        Literal["U", "L", "S0", "S4"] | None,
         typer.Option(
             help="Which band to use.",
             rich_help_panel="Input",

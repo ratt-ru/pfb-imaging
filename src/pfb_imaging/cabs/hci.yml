@@ -140,7 +140,7 @@ cabs:
           Number of channels per image for gridding resolution.
           Default of (-1, 0, None) implies a single dataset per spw.
         dtype: int
-        default: '-1'
+        default: -1
         metadata:
           rich_help_panel: Imaging
       channels-per-bin:
@@ -150,7 +150,7 @@ cabs:
           Default of -1 results in one bin per output image.
           Bins are collapsed via a weighted sum.
         dtype: int
-        default: '-1'
+        default: -1
         metadata:
           rich_help_panel: Imaging
       precision:

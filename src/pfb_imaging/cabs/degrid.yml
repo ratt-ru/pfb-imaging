@@ -130,7 +130,7 @@ cabs:
           Default -1 degrids the whole partition in one chunk.
           This is a memory and parallelism knob only.
         dtype: int
-        default: '-1'
+        default: -1
         metadata:
           rich_help_panel: Chunking
       accumulate:

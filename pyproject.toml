@@ -20,7 +20,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "hip-cargo>=0.3.0",
+    # >=0.4.0: meerkat-beams 0.1.0 requires it, so it is already in the
+    # resolution; stating it here keeps the lightweight install honest. 0.4.0
+    # also generates `X | None` for options defaulting to None, which
+    # tests/test_roundtrip.py enforces against the committed CLI sources.
+    "hip-cargo>=0.4.0",
 ]
 
 [project.urls]
@@ -78,7 +82,7 @@ full = [
     # party's constraint. It costs a numcodecs source build on aarch64
     # (numcodecs only gained aarch64 wheels at 0.16.0, and zarr 2.18 pins
     # numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
-    "meerkat-beams>=0.0.1 ; python_version >= '3.11'",
+    "meerkat-beams>=0.1.0 ; python_version >= '3.11'",
     "xarray",
     "xarray-fits",
     "zarr<3",
@@ -156,7 +160,7 @@ x86 = [
 all = [
     "pfb-imaging[full]",
     # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
-    "meerkat-beams[full]>=0.0.1 ; python_version >= '3.11'",
+    "meerkat-beams[full]>=0.1.0 ; python_version >= '3.11'",
     "pfb-imaging[casacore]",
     "pfb-imaging[x86]",
 ]

@@ -94,8 +94,8 @@ counts, which `scripts/check_docs.py` measures and checks — pass/skip totals a
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 44 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
-already runs all 835 on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
+runs the 45 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+already runs all 836 on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64, each with
 `--extra all` and `--extra full`. Reproducing one leg locally costs more than a push and covers
 less. Run fast, push, read the result.
 
