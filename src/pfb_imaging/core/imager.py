@@ -23,6 +23,7 @@ from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
+    GROUP_LABELS,
     baseline_group_masks,
     check_telescope_is_meerkat,
     classify_antennas,
@@ -781,10 +782,20 @@ def imager(
 
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    beam_refs = None
     if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        log.info("Assuming MeerKAT data and initialising BeamWizard")
-        # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
-        beam_model = BeamWizard(band=beam_model)
+        if baseline_groups:
+            # One wizard per baseline group. ray.put is load-bearing, not
+            # tidiness: a group wizard holds an IN-MEMORY cross-multiplied
+            # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
+            # file-backed) and pass 1 emits hundreds of tasks, so passing it by
+            # value per task would serialise it hundreds of times.
+            log.info("Initialising one BeamWizard per baseline group")
+            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in GROUP_LABELS}
+        else:
+            log.info("Assuming MeerKAT data and initialising BeamWizard")
+            # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
+            beam_model = BeamWizard(band=beam_model)
 
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
@@ -874,7 +885,7 @@ def imager(
                         chan_average=chan_average,
                         bda_decorr=bda_decorr,
                         max_field_of_view=max_field_of_view,
-                        beam_model=beam_model,
+                        beam_model=beam_model if beam_refs is None else beam_refs[bg],
                         wgt_mode=wgt_mode,
                         max_blength=max_blength,
                         max_freq=max_freq,

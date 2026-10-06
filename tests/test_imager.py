@@ -975,3 +975,39 @@ def test_single_class_array_writes_one_partition_not_three(ms_name, tmp_path):
     band = dt[sorted(n for n in dt.children if n.startswith("band"))[0]]
     assert len(band.children) == 1
     assert band[next(iter(band.children))].ds.attrs["baseline_group"] == "MM"
+
+
+def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypatch):
+    """Three groups -> three wizards, each constructed with its own group label."""
+    import pfb_imaging.core.imager as imager_mod
+
+    built = []
+
+    class _FakeWizard:
+        def __init__(self, band=None, group=None):
+            built.append((band, group))
+
+    monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
+    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+
+    def _stop(*a, **kw):
+        raise RuntimeError("stop after beam construction")
+
+    # zarr.open_group is the first call after the beam block; set_image_size
+    # runs BEFORE it and would stop too early to observe the wizards.
+    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+
+    with pytest.raises(RuntimeError, match="stop after beam construction"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "beams"),
+            baseline_groups=True,
+            antenna_groups="vla-0*,vla-[12]*",
+            beam_model="L",
+            field_of_view=1.0,
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+    assert sorted(g for _, g in built) == ["MM", "MPM", "MPMP"]
+    assert {b for b, _ in built} == {"L"}

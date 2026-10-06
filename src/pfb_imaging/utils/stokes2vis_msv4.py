@@ -77,6 +77,42 @@ def safe_stokes_vis(*args, **kwargs):
     return ret, mem
 
 
+def real_beam_maps(maps):
+    """Stack per-correlation beam maps as real float64, reporting max|Im|/max|Re|.
+
+    meerkat-beams returns complex Stokes beams for the MeerKAT-MeerKAT+ cross
+    group: a mixed baseline has no single Jones matrix. We store Re(B) -- the
+    imaginary part is the antisymmetric response, which integrates to zero for a
+    real sky over conjugate baseline orderings (wiki D46) -- and keep every
+    downstream operator, the beam FITS path and the uniform-precision invariant
+    (D27) real.
+
+    The conversion is explicit on purpose. Assigning a complex array into a
+    float array discards the imaginary part with only a ComplexWarning, so the
+    decision would otherwise happen by accident and the ratio below -- the only
+    evidence that Re(B) is a safe approximation on real data -- would never be
+    computed.
+
+    Args:
+        maps: one 2D beam map per correlation, real or complex.
+
+    Returns:
+        (stacked float64 array of shape (ncorr, ny, nx), max|Im|/max|Re| over
+        correlations; 0.0 when every map is real).
+    """
+    ratio = 0.0
+    real_maps = []
+    for m in maps:
+        m = np.asarray(m)
+        if np.iscomplexobj(m):
+            denom = np.abs(m.real).max()
+            if denom > 0:
+                ratio = max(ratio, float(np.abs(m.imag).max() / denom))
+            m = m.real
+        real_maps.append(np.asarray(m, dtype=np.float64))
+    return np.stack(real_maps, axis=0), ratio
+
+
 def stokes_vis(
     dc1=None,
     dc2=None,
@@ -504,6 +540,7 @@ def stokes_vis(
     yy_abs, xx_abs = np.meshgrid(y_abs, x_abs, indexing="ij")  # (ny, nx)
     nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
 
+    beam_imre_ratio = 0.0
     if beam_model is None:
         # no aperture beam: the stored response is 1/n (compresses well in zarr)
         beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
@@ -522,12 +559,13 @@ def stokes_vis(
             m_beam = np.linspace(m_beam.min(), m_beam.max(), 1024)
             # D13: MSv4 time is unix seconds; astropy Time wants MJD days
             t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
-            beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
-            for i, p in enumerate(corr):
+            raw_maps = []
+            for p in corr:
                 # returns (Y, X)-ordered maps (docs/wiki/image-and-beam-orientation.md);
                 # signature kept stable so meerkat-beams can grow weighted
-                # time/freq averaging underneath (#281)
-                beam_small[i], _ = beam_model.get_rotation_averaged_beam(
+                # time/freq averaging underneath (#281). Complex for the MPM
+                # cross group -- real_beam_maps takes Re and reports the ratio.
+                bmap, _ = beam_model.get_rotation_averaged_beam(
                     l=l_beam,
                     m=m_beam,
                     times=t_beam,
@@ -539,6 +577,8 @@ def stokes_vis(
                     j=p,
                     verbose=0,
                 )
+                raw_maps.append(bmap)
+            beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
         elif str(beam_model).lower() == "katbeam":
             # NB: the evaluation grid is sized at the critically-sampled
             # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
@@ -677,6 +717,10 @@ def stokes_vis(
         # the stored BEAM is the effective image-plane response B/n, NOT the
         # bare primary beam (wiki design-decisions D22)
         "beam_includes_n": True,
+        # max|Im|/max|Re| of the evaluated beam. Non-zero only for the MPM
+        # cross group, where the stored BEAM is Re(B) (wiki D46). Watch it on
+        # real data: this is the evidence that Re(B) is a safe approximation.
+        "beam_imre_ratio": float(beam_imre_ratio),
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
