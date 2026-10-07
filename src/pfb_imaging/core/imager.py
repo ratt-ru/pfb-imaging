@@ -284,6 +284,9 @@ def _grid_image_body(
             do_wgridding=do_wgridding,
             double_accum=double_accum,
             do_psf=do_psf,
+            # part is this task's own concat (or loaded piece), and only the
+            # imaging weights are stored: reuse its WEIGHT buffer (#339)
+            overwrite_weight=True,
         )
 
         part_vars = {

@@ -307,3 +307,37 @@ def test_pass1_load_does_not_pin_data_on_the_task_argument(ms_name):
     finally:
         dt.close()
     assert held < loaded / 4, f"{held / loaded:.2f} of the read still held by the node"
+
+
+@pytest.mark.parametrize("robustness", [-2.0, None])
+def test_grid_partition_can_overwrite_the_weights_it_owns(robustness):
+    """With overwrite_weight the imaging weights reuse part.WEIGHT's buffer (#339).
+
+    The copy is a vis-sized array (2.1 GiB at the pass-2 peak on real data);
+    pass 2 owns the partition it grids, so it can let the weights be written
+    in place. The result must not depend on the choice.
+    """
+    part = _synth_partition()
+    nx_pad = ny_pad = 32
+    counts = _compute_counts(
+        part.UVW.values,
+        part.FREQ.values,
+        part.MASK.values,
+        part.WEIGHT.values,
+        nx_pad,
+        ny_pad,
+        1.0e-6,
+        1.0e-6,
+        part.WEIGHT.values.dtype,
+        usign=-1.0,
+        vsign=1.0,
+    )
+    kw = dict(nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=robustness, nx_pad=nx_pad, ny_pad=ny_pad)
+    natural = part.WEIGHT.values.copy()
+    ref = grid_partition(part, counts, **kw)
+    np.testing.assert_array_equal(part.WEIGHT.values, natural)  # the default never touches the input
+
+    out = grid_partition(part, counts, overwrite_weight=True, **kw)
+    assert np.shares_memory(out["WEIGHT"], part.WEIGHT.values)
+    for key in ("WEIGHT", "DIRTY", "PSF", "WSUM"):
+        np.testing.assert_array_equal(out[key], ref[key])
