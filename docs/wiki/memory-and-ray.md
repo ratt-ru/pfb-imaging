@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: fd87b77
+last_verified_commit: 755c551
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -129,7 +129,11 @@ Reading it:
 
 To see *what* is allocated, set `PFB_MEMRAY_DIR` (memray capture per Ray
 task) and summarise with `scripts/memray_report.py`, whose docstring also
-covers profiling the driver with `memray run`.
+covers profiling the driver with `memray run`. Attribute with memray, but
+take timings and peaks from a run without it: native tracking slows
+everything, and one local run under it hit 26.7 GiB RSS in a pass-1 task with
+2.8 GiB tracked -- allocations memray cannot hook (Arrow's mimalloc, most
+likely) -- where the same code without memray peaked at 3.5 GB.
 
 Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch

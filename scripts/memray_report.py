@@ -59,6 +59,14 @@ For each capture it prints:
 
 and a one-line-per-capture summary at the end.
 
+Use memray captures to attribute memory, never to time a run or to judge a
+peak on their own: native tracking slows every allocation, and in one local
+MK+ run a pass-1 task under it reached 26.7 GiB RSS with 2.8 GiB of tracked
+heap -- memory allocated where memray has no hooks (most likely Arrow's
+mimalloc pool inside arcae, of which memray sees only the reservation) --
+which the same code without memray never approached (3.5 GB peak). Check
+peaks against the progress-line telemetry of a run without memray.
+
 Heap counts *reserved* address space, not only touched pages. In a driver
 capture the row ``init_ray`` / ``plasma::ClientMmapTableEntry`` is the Ray
 object store's mapping (sized to the store, so often the largest row) and is
