@@ -102,6 +102,34 @@ def _partition_fits(
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
 
 
+def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
+    """Write one partition node into the ``.dt`` store, a row slab at a time.
+
+    zarr encodes every chunk of a ``to_zarr`` call before an fsspec store
+    writes any of them, so one call holds encoded copies of everything it
+    writes -- 7.4 GiB at the pass-2 peak of a 5120^2 UHF run, for the
+    vis-space variables (#339). The first call writes the non-row variables
+    and the first slab of rows; the rest are appended along ``row``, so the
+    transient is about one slab. The stored arrays are identical either way.
+
+    Args:
+        ds: the partition Dataset (vis-space variables on ``row``).
+        store: the ``.dt`` store URL.
+        group: the node path, ``band####_time####/part####``.
+        slab_bytes: target size of the row variables written per call.
+    """
+    nrow = ds.sizes.get("row", 0)
+    row_vars = [v for v in ds.data_vars if "row" in ds[v].dims]
+    row_bytes = sum(ds[v].nbytes for v in row_vars) / max(nrow, 1)
+    step = max(1, int(slab_bytes // max(row_bytes, 1)))
+    # consolidated=False: each pass-2 worker owns a distinct image_name node,
+    # but they share the store root; the driver consolidates once at the end
+    ds.isel(row=slice(0, step)).to_zarr(store, group=group, mode="a", consolidated=False)
+    for start in range(step, nrow, step):
+        slab = ds[row_vars].isel(row=slice(start, start + step))
+        slab.to_zarr(store, group=group, mode="a", append_dim="row", consolidated=False)
+
+
 def _load_piece(node):
     """Load one scratch piece into memory, minus its COUNTS.
 
@@ -326,9 +354,7 @@ def _grid_image_body(
                 "wsum": prod["WSUM"].tolist(),
             },
         )
-        # consolidated=False: each pass-2 worker owns a distinct image_name node,
-        # but they share the store root; the driver consolidates once at the end
-        part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
+        _write_partition(part_out, dt_store, f"{out_name}/part{pid:04d}")
         beam_imre_max = max(beam_imre_max, float(part.attrs.get("beam_imre_ratio", 0.0)))
 
         if part_fits_dir is not None:
