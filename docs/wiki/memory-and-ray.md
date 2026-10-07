@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: 836832f
+last_verified_commit: 1e57c04
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -166,6 +166,15 @@ peaks are memray (`PFB_MEMRAY_DIR`, `scripts/memray_report.py`).
 | MFS PSFs read from the `.dt` | 2.46 -> 2.59 GB (shm 0) | 4.31 GB | 3.35 | 2.05 | 2.64 |
 | bounded-window `fitcleanbeam` | 2.64 -> 2.78 GB | 3.36 GB | 2.21 | 2.05 | 1.60 |
 | single-grid `_compute_counts` | (pass 1 only) | pass-1 peak 2.74 -> 1.90 GB | 2.21 | 1.09 | -- |
+
+A last fix needs multi-piece images to show (`integrations_per_image=10`, 6
+pieces per image, same setup): `.load()` on a Dataset taken from a tree fills
+the tree's own Variables, so loaded pieces stayed reachable from the open
+scratch tree into the next task. `_load_piece` detaches them with a shallow
+copy: still allocated at task end 0.67 -> 0.004 GiB, pass-2 heap peak 2.9 ->
+2.4 GiB, worker peak after 4 bands 4.56 -> 3.48 GB. On real data the pieces
+are vis-sized. **Any `.load()` of a Dataset obtained from an open tree pins
+the data on that tree**; detach with `.copy(deep=False)` first.
 
 Imaging weights stayed bitwise identical throughout; DIRTY/PSF/PSFPARSN moved
 by <= 2.2e-13 relative, which is the run-to-run noise of ducc's threaded
