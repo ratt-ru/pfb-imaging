@@ -39,7 +39,7 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
-from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
@@ -106,13 +106,10 @@ def _load_piece(node):
     """Load one scratch piece into memory, minus its COUNTS.
 
     COUNTS is only consumed by the driver's weight reduction, which has
-    already happened, and it is by far the largest piece variable.
-
-    The shallow copy is load bearing: ``.load()`` fills the Variables a Dataset
-    shares with its tree, so without it every loaded piece stays reachable from
-    the open scratch tree -- through its concat, past ``del plist``, and into
-    the worker's next task, since the tree sits in a reference cycle until the
-    next gc (#339).
+    already happened, and it is by far the largest piece variable. Loaded
+    detached from the open scratch tree (see ``load_detached``), or every piece
+    would stay reachable from it -- through its concat, past ``del plist`` and
+    into the worker's next task.
 
     Args:
         node: the piece's node in the scratch DataTree.
@@ -120,7 +117,7 @@ def _load_piece(node):
     Returns:
         The piece as an in-memory Dataset.
     """
-    return node.ds.drop_vars("COUNTS", errors="ignore").copy(deep=False).load()
+    return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
 
 
 def _concat_pieces(plist):

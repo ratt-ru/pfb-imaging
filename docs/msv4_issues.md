@@ -35,6 +35,7 @@ xarray-ms 0.4.0a12 / arcae 0.4.0a14 are the floors that carry the fixes for issu
 | 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | **Fixed** with 2; not reproduced on a14 |
 | 4 | Every `MSv2Structure` build retains ~1.5 MB | arcae | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed** by ska-sa/arcae#244 (0.4.0a13); 0.0185 MB/build on a14 |
 | 5 | No public way to evict xarray-ms's own table cache | rarg-python-patterns | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed**: keyed `Multiton.clear_cache` in 0.0.5 (via xarray-ms 0.4.0a12) |
+| 6 | `open_datatree` ignores `cache`, so every load is cached on the tree | xarray-ms | not yet | Worked around by `utils.msv4.load_detached` |
 
 ---
 
@@ -204,6 +205,29 @@ wipe that destroys *every* consumer's Multitons as collateral.
   available, and it also forces the structure rebuild that issue 4 makes expensive.
 
 ---
+
+### 6. `open_datatree` ignores `cache`, so every load is cached on the tree — NOT YET FILED
+
+xarray wraps a backend variable in a `MemoryCachedArray` when `cache=True`, its default without
+`chunks`. xarray-ms opens each partition with that default and does not forward the caller's
+`cache`, so passing `cache=False` removes only xarray's *outer* wrapper:
+
+```
+cache=True : MemoryCachedArray > CopyOnWriteArray > MemoryCachedArray > CopyOnWriteArray > LazilyIndexedArray > MainMSv2Array
+cache=False:                     CopyOnWriteArray > MemoryCachedArray > CopyOnWriteArray > LazilyIndexedArray > MainMSv2Array
+```
+
+The first load of a variable then stores the whole read inside the node, whichever Dataset did
+the loading: the node itself, `node.ds[names]`, or a shallow copy (they share the wrapper).
+`scripts/msv4_issues/datatree_cache_ignored.py` shows 1.00 x VISIBILITY still held by the
+node after the loaded copy is dropped, with either setting (xarray-ms 0.4.0a12).
+
+**Why it matters to us.** Pass 1 receives its node as a Ray task argument and loads
+`node.ds[needed]`; the read stayed alive on the argument until the next gc, i.e. through the
+next task's peak — ~1.7 GiB per task on a 5120² UHF run (pfb-imaging#339). Worked around by
+`utils.msv4.load_detached`: indexing a `MemoryCachedArray` returns a new wrapper instead of
+populating it, so a full-slice `isel` before `.load()` gives the load private wrappers
+(0.00 x held). The ask upstream: forward `cache` (and `chunks`) to the per-partition opens.
 
 ## Retested, not reproduced
 

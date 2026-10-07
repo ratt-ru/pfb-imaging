@@ -278,3 +278,32 @@ def test_loaded_piece_does_not_pin_data_on_the_scratch_tree(tmp_path):
     held, _ = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert held < loaded / 4, f"{held / loaded:.2f} of the piece still held by the open tree"
+
+
+def test_pass1_load_does_not_pin_data_on_the_task_argument(ms_name):
+    """Pass 1's selective load leaves its Ray-argument node unloaded (#339).
+
+    `node.ds[needed].load()` fills the Variables the Dataset shares with the
+    node Ray deserialised as the task argument. On real data that kept ~1.7 GiB
+    of read buffers per worker alive into the next task.
+    """
+    import gc
+    import tracemalloc
+
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import get_engine, load_detached
+
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    node = next(iter(dt.children.values()))
+    try:
+        tracemalloc.start()
+        ds = load_detached(node.ds[["VISIBILITY", "FLAG", "UVW"]])
+        loaded = ds.VISIBILITY.nbytes
+        del ds
+        gc.collect()
+        held, _ = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    finally:
+        dt.close()
+    assert held < loaded / 4, f"{held / loaded:.2f} of the read still held by the node"

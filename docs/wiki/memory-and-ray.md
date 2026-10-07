@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: 1e57c04
+last_verified_commit: fd87b77
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -168,13 +168,22 @@ peaks are memray (`PFB_MEMRAY_DIR`, `scripts/memray_report.py`).
 | single-grid `_compute_counts` | (pass 1 only) | pass-1 peak 2.74 -> 1.90 GB | 2.21 | 1.09 | -- |
 
 A last fix needs multi-piece images to show (`integrations_per_image=10`, 6
-pieces per image, same setup): `.load()` on a Dataset taken from a tree fills
-the tree's own Variables, so loaded pieces stayed reachable from the open
-scratch tree into the next task. `_load_piece` detaches them with a shallow
-copy: still allocated at task end 0.67 -> 0.004 GiB, pass-2 heap peak 2.9 ->
-2.4 GiB, worker peak after 4 bands 4.56 -> 3.48 GB. On real data the pieces
-are vis-sized. **Any `.load()` of a Dataset obtained from an open tree pins
-the data on that tree**; detach with `.copy(deep=False)` first.
+pieces per image, same setup): loaded pieces stayed reachable from the open
+scratch tree into the next task. Detaching them: still allocated at task end
+0.67 -> 0.004 GiB, pass-2 heap peak 2.9 -> 2.4 GiB, worker peak after 4 bands
+4.56 -> 3.48 GB. On real data the pieces are vis-sized.
+
+**Never `.load()` a Dataset taken from an open tree; use
+`utils.msv4.load_detached`.** A Dataset from `node.ds` / `node.ds[names]`
+shares its lazy-array wrappers with the node, and loading caches the data in
+them -- in place for `.load()`, and inside any `MemoryCachedArray` in the
+chain even for a shallow copy, so `.copy(deep=False).load()` is *not* enough.
+xarray-ms opens every partition with xarray's default `cache=True` and does
+not forward `cache`, so MSv4 variables always carry such a layer
+(`docs/msv4_issues.md` 6). In pass 1 that pinned each task's read on its Ray
+argument until the next gc -- ~1.7 GiB per task on a 5120² UHF run, alive
+through the next task's peak. `load_detached` indexes with a full-slice
+`isel` first; indexing a wrapper returns a new one instead of populating it.
 
 Imaging weights stayed bitwise identical throughout; DIRTY/PSF/PSFPARSN moved
 by <= 2.2e-13 relative, which is the run-to-run noise of ducc's threaded

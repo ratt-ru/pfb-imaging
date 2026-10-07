@@ -19,6 +19,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.memprof import memray_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
+from pfb_imaging.utils.msv4 import load_detached
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
 
 
@@ -161,7 +162,7 @@ def stokes_vis(
         if name in node_dt.ds.data_vars:
             needed.append(name)
     needed = list(dict.fromkeys(needed))
-    ds = node_dt.ds[needed].load()
+    ds = load_detached(node_dt.ds[needed])
     field_name = np.unique(ds.field_name.values).item()
     spw_name = ds.frequency.attrs["spectral_window_name"]
     scan_name = np.unique(ds.scan_name.values).item()
