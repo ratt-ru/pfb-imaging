@@ -1,5 +1,3 @@
-import concurrent.futures as cf
-
 import numba
 import numpy as np
 import xarray as xr
@@ -9,7 +7,6 @@ from rarg_numba_patterns import load_data
 from scipy.constants import c as lightspeed
 from scipy.ndimage import uniform_filter
 
-from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.stokes import stokes_expr_funcs
 
 ifftshift = np.fft.ifftshift
@@ -36,53 +33,15 @@ def _es_kernel(x, y, xkern, ykern, betak):
             ykern[i] = 0.0
 
 
-def compute_counts(dsl, nx, ny, cell_size_x, cell_size_y, tbid=0, nthreads=1):
+@njit(nogil=True, cache=True)
+def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
+    """Nearest-cell sum of the weights on the (folded, v >= 0) padded uv grid.
+
+    Serial on purpose: per-thread grids plus their sum held nthreads + 1 padded
+    grids (1.6 GiB at 3840^2 with 4 threads) and, measured on 1.3M-27M samples
+    on a 6528^2 grid, were no faster -- zeroing and summing whole grids costs
+    more than the scatter they parallelise (#339).
     """
-    Sum the weights on the grid over all datasets
-    """
-
-    if isinstance(dsl, str):
-        dsl = [dsl]
-
-    dsl = xds_from_list(dsl, nthreads=nthreads, drop_vars=("VIS", "BEAM"))
-
-    nds = len(dsl)
-    maxw = np.minimum(nthreads, nds)
-    if nthreads > nds:  # this is not perfect
-        ngrid = np.maximum(nthreads // nds, 1)
-    else:
-        ngrid = 1
-
-    counts = np.zeros((nx, ny), dtype=dsl[0].WEIGHT.dtype)
-    with cf.ThreadPoolExecutor(max_workers=maxw) as executor:
-        futures = []
-        for ds in dsl:
-            fut = executor.submit(
-                _compute_counts,
-                ds.UVW.values,
-                ds.FREQ.values,
-                ds.MASK.values,
-                ds.WEIGHT.values,
-                nx,
-                ny,
-                cell_size_x,
-                cell_size_y,
-                ds.WEIGHT.dtype,
-                ngrid=ngrid,
-            )
-            futures.append(fut)
-
-        for fut in cf.as_completed(futures):
-            # sum over number of datasets
-            counts += fut.result().sum(axis=0)
-
-    return counts, tbid
-
-
-@njit(nogil=True, cache=True, parallel=True)
-def _compute_counts(
-    uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, ngrid=1, usign=1.0, vsign=-1.0
-):  # support hardcoded for now
     # ufreq
     u_cell = 1 / (nx * cell_size_x)
     # factor of 2 because -umax/2 <= u < umax
@@ -94,51 +53,42 @@ def _compute_counts(
 
     ncorr, nrow, nchan = wgt.shape
 
-    # initialise array to store counts
-    # the additional axis is to allow chunking over row
-    counts = np.zeros((ngrid, ncorr, nx, ny), dtype=dtype)
+    counts = np.zeros((ncorr, nx, ny), dtype=dtype)
 
-    # accumulate counts
-    bin_counts = [nrow // ngrid + (1 if x < nrow % ngrid else 0) for x in range(ngrid)]
-    bin_idx = np.zeros(ngrid, dtype=np.int64)
-    bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
-    bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
+    for r in range(nrow):
+        uvw_row = uvw[r]
+        wgt_row = wgt[:, r]
+        mask_row = mask[r]
+        for f in range(nchan):
+            if not mask_row[f]:
+                continue
+            # current uv coords
+            chan_normfreq = freq[f] / lightspeed
+            u_tmp = uvw_row[0] * chan_normfreq * usign
+            v_tmp = uvw_row[1] * chan_normfreq * vsign
+            if v_tmp < 0:
+                u_tmp = -u_tmp
+                v_tmp = -v_tmp
+            # pixel coordinates
+            ug = (u_tmp + umax) / u_cell
+            vg = (v_tmp + vmax) / v_cell
+            # indices
+            u_idx = np.int32(np.floor(ug))
+            v_idx = np.int32(np.floor(vg))
 
-    for g in prange(ngrid):
-        for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
-            uvw_row = uvw[r]
-            wgt_row = wgt[:, r]
-            mask_row = mask[r]
-            for f in range(nchan):
-                if not mask_row[f]:
-                    continue
-                # current uv coords
-                chan_normfreq = freq[f] / lightspeed
-                u_tmp = uvw_row[0] * chan_normfreq * usign
-                v_tmp = uvw_row[1] * chan_normfreq * vsign
-                if v_tmp < 0:
-                    u_tmp = -u_tmp
-                    v_tmp = -v_tmp
-                # pixel coordinates
-                ug = (u_tmp + umax) / u_cell
-                vg = (v_tmp + vmax) / v_cell
-                # indices
-                u_idx = np.int32(np.floor(ug))
-                v_idx = np.int32(np.floor(vg))
+            # corr weights
+            wrf = wgt_row[:, f]
 
-                # corr weights
-                wrf = wgt_row[:, f]
+            # LB - is there an easier check for this?
+            if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
+                # out of bounds so continue.
+                # raising an error means we can't grid at sub-Nyquist
+                continue
 
-                # LB - is there an easier check for this?
-                if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
-                    # out of bounds so continue.
-                    # raising an error means we can't grid at sub-Nyquist
-                    continue
+            # nearest neighbour
+            counts[:, u_idx, v_idx] += wrf
 
-                # nearest neighbour
-                counts[g, :, u_idx, v_idx] += wrf
-
-    return counts.sum(axis=0)
+    return counts
 
 
 @njit(**JIT_OPTIONS)

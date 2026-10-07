@@ -98,7 +98,6 @@ def test_grid_partition_robust_reweights():
         1.0e-6,
         1.0e-6,
         part.WEIGHT.values.dtype,
-        ngrid=1,
         usign=-1.0,
         vsign=1.0,
     )

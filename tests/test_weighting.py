@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+import textwrap
 import tracemalloc
 
 import numpy as np
@@ -99,7 +103,7 @@ def test_counts(ms_meta, srf, fov):
     wgt = np.exp(np.random.randn(ncorr, nrow, nchan))
 
     counts = _compute_counts(
-        uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad, dtype=np.float64, ngrid=1, usign=usign, vsign=vsign
+        uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad, dtype=np.float64, usign=usign, vsign=vsign
     )
 
     # convert counts to imaging weights
@@ -119,7 +123,6 @@ def test_counts(ms_meta, srf, fov):
         cell_rad,
         cell_rad,
         dtype=np.float64,
-        ngrid=1,
         usign=usign,
         vsign=vsign,
     )
@@ -266,3 +269,80 @@ def test_write_group_counts_streams(tmp_path):
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < 4 * grid_bytes, f"peak {peak / grid_bytes:.1f} grids for {npiece} pieces"
+
+
+def _counts_reference(uvw, freq, mask, wgt, nx, ny, cell, usign, vsign):
+    """Plain-python nearest-cell accumulation with _compute_counts' conventions."""
+    from scipy.constants import c as lightspeed
+
+    u_cell, umax = 1 / (nx * cell), abs(1 / cell / 2)
+    v_cell, vmax = 1 / (ny * cell), abs(1 / cell / 2)
+    out = np.zeros((wgt.shape[0], nx, ny))
+    for r in range(uvw.shape[0]):
+        for f in range(freq.size):
+            if not mask[r, f]:
+                continue
+            u = uvw[r, 0] * freq[f] / lightspeed * usign
+            v = uvw[r, 1] * freq[f] / lightspeed * vsign
+            if v < 0:
+                u, v = -u, -v
+            iu = int(np.floor((u + umax) / u_cell))
+            iv = int(np.floor((v + vmax) / v_cell))
+            if 0 <= iu < nx and 0 <= iv < ny:
+                out[:, iu, iv] += wgt[:, r, f]
+    return out
+
+
+@pmp("usign,vsign", [(1.0, -1.0), (-1.0, 1.0)])
+def test_compute_counts_matches_reference(usign, vsign):
+    rng = np.random.default_rng(3)
+    nrow, nchan, n = 300, 3, 64
+    cell = np.deg2rad(20 / 3600)
+    # some baselines fall off the grid on purpose; a third of the samples are flagged
+    uvw = rng.uniform(-6000, 6000, (nrow, 3))
+    freq = np.linspace(1.0e9, 1.4e9, nchan)
+    mask = (rng.random((nrow, nchan)) > 0.33).astype(np.uint8)
+    wgt = rng.random((2, nrow, nchan))
+    got = _compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, np.float64, usign=usign, vsign=vsign)
+    np.testing.assert_allclose(got, _counts_reference(uvw, freq, mask, wgt, n, n, cell, usign, vsign), rtol=1e-12)
+
+
+@pytest.mark.slow
+def test_compute_counts_holds_one_grid():
+    """Counts accumulate into the returned grid alone (#339).
+
+    Per-thread grids plus their sum held nthreads + 1 padded grids (1.6 GiB at
+    3840^2 with 4 threads) and were slower than one grid at realistic sizes.
+    Numba's allocations are invisible to tracemalloc, so measure peak RSS in a
+    fresh process.
+    """
+    script = textwrap.dedent(
+        """
+        import numpy as np
+        from pfb_imaging.utils.weighting import _compute_counts
+
+        def hwm():
+            for line in open("/proc/self/status"):
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+
+        rng = np.random.default_rng(0)
+        nrow, nchan, n = 20000, 4, 4096
+        uvw = rng.uniform(-2000, 2000, (nrow, 3))
+        freq = np.linspace(1.0e9, 1.4e9, nchan)
+        mask = np.ones((nrow, nchan), np.uint8)
+        wgt = np.ones((1, nrow, nchan))
+        cell = np.deg2rad(1 / 3600)
+        _compute_counts(uvw[:8], freq, mask[:8], wgt[:, :8], 16, 16, cell, cell, np.float64)
+        # reset the high-water mark to current RSS, so import/JIT peaks do not mask the call
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5")
+        base = hwm()
+        c = _compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, np.float64)
+        print((hwm() - base) / c.nbytes)
+        """
+    )
+    env = {**os.environ, "PFB_NUMBA_THREADING_LAYER": "workqueue"}
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True, env=env)
+    grids = float(out.stdout.strip().splitlines()[-1])
+    assert grids < 1.5, f"peak {grids:.2f} grids"

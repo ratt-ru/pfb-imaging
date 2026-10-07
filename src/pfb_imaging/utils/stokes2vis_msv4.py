@@ -623,7 +623,6 @@ def stokes_vis(
         cell_rad,
         cell_rad,
         wgt_cf.dtype,
-        ngrid=nthreads,
         usign=1.0 if flip_u else -1.0,
         vsign=1.0 if flip_v else -1.0,
     )

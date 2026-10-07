@@ -86,7 +86,7 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 822 tests, ~115 s -- run THIS
+uv run pytest tests/          # 824 tests, ~115 s -- run THIS
 ```
 
 (One of those skips without the `[casacore]` extra; the rest pass. Counts here are *collected*
@@ -94,7 +94,7 @@ counts, which `scripts/check_docs.py` measures and checks — pass/skip totals a
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 48 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+runs the 49 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
 already runs the fast set on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64,
 each with `--extra all` and `--extra full` — and the slow set separately (see below).
 Reproducing one leg locally costs more than a push and covers less. Run fast, push, read the
@@ -116,7 +116,7 @@ Which workflow passes what is the whole design:
 | `acceptance.yml` | `-m slow` | push to `main`; `/test-acceptance` on a PR; `workflow_dispatch` |
 | `publish.yml` | `-m ""` | version tags — a release is gated on the whole suite |
 
-The slow set is 48 of the 870 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 49 of the 873 collected tests and ~80% of the suite's wall time, so running it
 on all six legs of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters

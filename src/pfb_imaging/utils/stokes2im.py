@@ -545,7 +545,6 @@ def stokes_image(
             cell_rad,
             cell_rad,
             real_type,
-            ngrid=1,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0,
         )
