@@ -242,3 +242,39 @@ def test_concat_pieces_rejects_mismatched_freq():
     b = _synth_piece(1.0e9, 1.0, 1.0).assign(FREQ=(("chan",), np.array([2.0e9])))
     with pytest.raises(AssertionError):
         _concat_pieces([a, b])
+
+
+def test_loaded_piece_does_not_pin_data_on_the_scratch_tree(tmp_path):
+    """Dropping a loaded piece frees it while the scratch tree is still open (#339).
+
+    `.load()` fills the Variables a Dataset shares with its tree, so a piece
+    loaded straight off the tree stayed reachable from it -- and the tree sits
+    in a reference cycle that survives into the worker's next task, carrying
+    vis-sized pieces with it.
+    """
+    import gc
+    import tracemalloc
+
+    import xarray as xr
+
+    from pfb_imaging.core.imager import _load_piece
+
+    store = str(tmp_path / "s.scratch")
+    nrow = 2**18  # 4 MiB of complex128 VIS
+    xr.Dataset(
+        {
+            "VIS": (("corr", "row", "chan"), np.ones((1, nrow, 2), dtype=np.complex128)),
+            "COUNTS": (("corr", "u", "v"), np.ones((1, 8, 8))),
+        }
+    ).to_zarr(store, group="band0000_time0000/p0", consolidated=False)
+    dt = xr.open_datatree(store, engine="zarr", chunks=None, cache=False, consolidated=False)
+
+    tracemalloc.start()
+    ds = _load_piece(dt["band0000_time0000/p0"])
+    assert "COUNTS" not in ds
+    loaded = ds.VIS.nbytes
+    del ds
+    gc.collect()
+    held, _ = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert held < loaded / 4, f"{held / loaded:.2f} of the piece still held by the open tree"

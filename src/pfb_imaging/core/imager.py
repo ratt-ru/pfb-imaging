@@ -102,6 +102,27 @@ def _partition_fits(
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
 
 
+def _load_piece(node):
+    """Load one scratch piece into memory, minus its COUNTS.
+
+    COUNTS is only consumed by the driver's weight reduction, which has
+    already happened, and it is by far the largest piece variable.
+
+    The shallow copy is load bearing: ``.load()`` fills the Variables a Dataset
+    shares with its tree, so without it every loaded piece stays reachable from
+    the open scratch tree -- through its concat, past ``del plist``, and into
+    the worker's next task, since the tree sits in a reference cycle until the
+    next gc (#339).
+
+    Args:
+        node: the piece's node in the scratch DataTree.
+
+    Returns:
+        The piece as an in-memory Dataset.
+    """
+    return node.ds.drop_vars("COUNTS", errors="ignore").copy(deep=False).load()
+
+
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
@@ -207,15 +228,14 @@ def _grid_image_body(
     only -- returning it would put an image per task in the Ray object store.
     """
     resize_thread_pool(nthreads)
-    # cache=False: the tree outlives the task in a reference cycle until the
-    # next gc, and a cached COUNTS read would ride along with it (#339)
+    # cache=False: otherwise the counts read below is memoised on the tree,
+    # which outlives the task in a reference cycle until the next gc (#339).
+    # Pieces are detached from the tree by _load_piece for the same reason.
     dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
     groups = {}
     for sn in src_names:
         for _, child in dt[sn].children.items():
-            # COUNTS is only consumed by the driver's weight reduction; happened already (counts passed in)
-            # it is by far the largest piece variable; don't read it here
-            ds = child.ds.drop_vars("COUNTS", errors="ignore").load()
+            ds = _load_piece(child)
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
 
@@ -393,7 +413,8 @@ def _grid_image_body(
 
     # break the reference cycles holding the loaded pieces so a reused Ray
     # worker doesn't accumulate them across tasks (see safe_stokes_vis)
-    del groups, part
+    dt.close()
+    del groups, part, dt
     gc.collect()
 
     # post-gc memory telemetry (see safe_stokes_vis for interpretation)
