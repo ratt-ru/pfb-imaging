@@ -34,7 +34,7 @@ from zarr import ProcessSynchronizer
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import resolve_target_radec
-from pfb_imaging.utils.misc import construct_mappings, set_image_size
+from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, set_image_size
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
@@ -92,7 +92,7 @@ def hci(
     npix_super: int = 0,
     min_padding: float = 2.0,
     phase_dir: str | None = None,
-    epsilon: float = 1e-07,
+    epsilon: float = 1e-05,
     do_wgridding: bool = True,
     double_accum: bool = True,
     nworkers: int = 1,
@@ -168,6 +168,13 @@ def hci(
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
+
+    # ducc only refuses an unreachable epsilon when it is handed data; say so up
+    # front instead (#340).
+    try:
+        check_gridder_epsilon(precision, epsilon, do_wgridding=do_wgridding)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     msnames = []
     for ms_name in map(str, ms):

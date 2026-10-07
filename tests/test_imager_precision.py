@@ -11,6 +11,8 @@ must not leak into the stored dtypes.
 regardless of the visibility precision.
 """
 
+import importlib
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +20,7 @@ import pytest
 import xarray as xr
 
 from pfb_imaging.core.imager import imager as imager_core
+from pfb_imaging.utils.misc import GRIDDER_EPSILON_FLOOR, check_gridder_epsilon
 
 # ducc takes these as f8 whatever the vis precision; MASK is a uint8 flag array
 DTYPE_EXCEPTIONS = {"UVW": np.float64, "FREQ": np.float64, "MASK": np.uint8}
@@ -114,3 +117,124 @@ def test_single_precision_matches_double(precision_trees):
             assert err < 1e-4, f"{name}/{var}: single differs from double by {err:.2e} of peak"
         wsum_err = np.abs(bands["single"].WSUM.values / bands["double"].WSUM.values - 1.0).max()
         assert wsum_err < 1e-5, f"{name}: WSUM differs by {wsum_err:.2e}"
+
+
+# ---------------------------------------------------------------------------
+# --epsilon / --precision coupling (#340)
+#
+# ducc0's wgridder picks its gridding kernel from (epsilon, dtype, kernel
+# dimension), where the dimension is 3 with w-gridding on and 2 with it off.
+# `utils.misc.GRIDDER_EPSILON_FLOOR` holds the exact boundary for each of the
+# four combinations; the first test below is what makes them trustworthy, by
+# asserting each value is accepted and the next representable double beneath it
+# is not. A ducc upgrade that moves the table fails there, with the real number
+# in the failure, rather than silently making the guard wrong in one direction.
+#
+# Getting this wrong in the *refusing* direction is what the old 1e-7 default
+# did: float32 has no kernel there, so --precision single always died on a C++
+# assertion -- in pass 2, after pass 1 had written the whole scratch store.
+# Getting it wrong the other way, as the first cut of this guard did by treating
+# 1e-6/1e-12 as the floor, refuses accuracy ducc would have delivered.
+# ---------------------------------------------------------------------------
+
+
+def _can_grid(epsilon, precision, do_wgridding):
+    """True if ducc0 accepts this (epsilon, precision, kernel) combination."""
+    from ducc0.wgridder.experimental import vis2dirty
+
+    complex_type = PRECISIONS[precision][1]
+    rng = np.random.default_rng(0)
+    try:
+        vis2dirty(
+            uvw=rng.normal(size=(64, 3)) * 100.0,
+            freq=np.linspace(1e9, 1.1e9, 2),
+            vis=np.ones((64, 2), dtype=complex_type),
+            npix_x=32,
+            npix_y=32,
+            pixsize_x=1e-5,
+            pixsize_y=1e-5,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            nthreads=1,
+        )
+        return True
+    except RuntimeError:
+        return False
+
+
+@pytest.mark.parametrize("key", sorted(GRIDDER_EPSILON_FLOOR))
+def test_gridder_epsilon_floor_is_duccs_boundary(key):
+    """Each floor is exactly ducc's limit: it works, one representable step below does not.
+
+    The floors are measured constants, so this is the test that keeps them
+    honest across a ducc0 upgrade. It is deliberately two-sided -- a floor that
+    is merely *safe* would pass a one-sided check while refusing valid work.
+    """
+    precision, do_wgridding = key
+    floor = GRIDDER_EPSILON_FLOOR[key]
+
+    assert _can_grid(floor, precision, do_wgridding), f"ducc0 refuses the floor {floor!r} for {key}"
+    below = np.nextafter(floor, 0.0)
+    assert not _can_grid(below, precision, do_wgridding), f"ducc0 accepts {below!r}, below the floor for {key}"
+
+
+def test_the_2d_kernel_reaches_lower_than_the_3d_one():
+    """--do-wgridding off selects a 2-D kernel with its own, lower limit.
+
+    Keying the guard on precision alone would refuse this epsilon outright,
+    although ducc serves it perfectly well with w-gridding off.
+    """
+    for precision in PRECISIONS:
+        floor_2d = GRIDDER_EPSILON_FLOOR[(precision, False)]
+        floor_3d = GRIDDER_EPSILON_FLOOR[(precision, True)]
+        assert floor_2d < floor_3d
+
+        check_gridder_epsilon(precision, floor_2d, do_wgridding=False)
+        with pytest.raises(ValueError, match="--epsilon"):
+            check_gridder_epsilon(precision, floor_2d, do_wgridding=True)
+
+
+def test_epsilon_floor_refuses_single_below_ducc_kernel_limit():
+    """--precision single with an unreachable --epsilon is refused, naming the option."""
+    with pytest.raises(ValueError, match="--epsilon"):
+        check_gridder_epsilon("single", 1e-7)
+
+
+def test_epsilon_floor_allows_double_at_the_old_default():
+    """1e-7 is perfectly reachable in float64; the guard must not touch it."""
+    check_gridder_epsilon("double", 1e-7)
+
+
+def test_epsilon_floor_refuses_double_below_float64_limit():
+    with pytest.raises(ValueError, match="--epsilon"):
+        check_gridder_epsilon("double", 1e-14)
+
+
+@pytest.mark.parametrize("epsilon", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_epsilon_is_refused(epsilon):
+    """NaN must be rejected before the floor comparison, not by it.
+
+    Every comparison against NaN is False, so `epsilon < floor` waves a NaN
+    through and ducc fails late -- the exact failure this guard replaces.
+    """
+    with pytest.raises(ValueError, match="finite"):
+        check_gridder_epsilon("single", epsilon)
+
+
+def test_unknown_precision_is_refused():
+    with pytest.raises(ValueError, match="--precision"):
+        check_gridder_epsilon("quadruple", 1e-5)
+
+
+@pytest.mark.parametrize("command", ["imager", "deconv", "degrid", "hci"])
+@pytest.mark.parametrize("do_wgridding", [True, False])
+def test_cli_epsilon_default_is_reachable_in_single_precision(command, do_wgridding):
+    """Every command's --epsilon default must work at either --precision.
+
+    This is the regression gate for #340: the default used to be 1e-7, which is
+    below ducc0's float32 kernel limit, so `--precision single` could not run at
+    all without also passing --epsilon.
+    """
+    module = importlib.import_module(f"pfb_imaging.cli.{command}")
+    default = inspect.signature(getattr(module, command)).parameters["epsilon"].default
+    check_gridder_epsilon("single", default, do_wgridding=do_wgridding)

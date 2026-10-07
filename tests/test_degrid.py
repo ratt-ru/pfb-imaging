@@ -700,6 +700,11 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path, pctable):
         nthreads=1,
         progressbar=False,
         log_directory=str(tmp_path / "logs"),
+        # Match `degrid_region`'s own default below: the reference and the
+        # driver must grid to the same accuracy or the rtol=1e-6 comparison is
+        # measuring the epsilon difference. The CLI default moved to 1e-5 (#340)
+        # while the library helper's default stayed at 1e-7.
+        epsilon=1e-7,
     )
 
     dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
