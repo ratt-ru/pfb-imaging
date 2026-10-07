@@ -565,7 +565,7 @@ def imager(
     # epsilon when it is handed data, which in the imager is pass 2 -- after the
     # expensive half has run and written the scratch store (#340).
     try:
-        check_gridder_epsilon(precision, epsilon)
+        check_gridder_epsilon(precision, epsilon, do_wgridding=do_wgridding)
     except ValueError as e:
         log.error_and_raise(str(e), ValueError)
 

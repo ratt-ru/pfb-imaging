@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-06T12:00:00Z
-last_verified_commit: b8cfe61
+timestamp: 2026-10-07T09:00:00Z
+last_verified_commit: fec41f5
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -667,7 +667,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   and ~2e-6 on `PSF` at `--epsilon 1e-5`, with `WSUM` matching to 4e-8 — well inside the
   gridding accuracy that `epsilon` already concedes.
 - **Consequences:** `--precision single` halves the tree on disk and in every downstream
-  read. Single precision needs `--epsilon >= 1e-6` (ducc's f4 kernels, D48); the FITS path is
+  read. Single precision needs `--epsilon >= 8.09e-7` (ducc's f4 3-D kernels, D48); the FITS path is
   unaffected because `save_fits` casts to f4 anyway. **The deconv consumer is not yet
   single-precision safe** (debt below): `residual_from_partitions` sizes its buffers from
   the band `DIRTY` while the model cube arrives f8, so the same assertion fires at
@@ -1465,17 +1465,35 @@ update it (and this page's `last_verified_commit`) in the same session.
   (#340).
 - **Decision:** the default is `1e-5` for every command (`imager`, `deconv`,
   `degrid`, `hci`), rather than branching the default on `--precision`. An
-  explicit `--epsilon` is additionally checked against the measured per-dtype
-  floor by `utils/misc.check_gridder_epsilon`, called before `init_ray` in both
+  explicit `--epsilon` is additionally checked against the measured floor by
+  `utils/misc.check_gridder_epsilon`, called before `init_ray` in both
   `core/imager` and `core/hci`.
 - **Rationale:** a precision-dependent default makes the same command line mean
   two different accuracies, which is worse than one honest number — and 1e-5 is
   already the accuracy every single-precision run in this repo asked for. The
-  floors are measured, not derived: bisecting `vis2dirty` over epsilon (ducc0
-  0.39) gives float32 accepting 1e-6 and refusing 5e-7, float64 accepting 1e-12
-  and refusing 1e-14. Note that float32's floor is ~8x **above** `np.finfo(f4).eps`
+  floors are measured, not derived, and they are **exact boundaries rather than
+  safe round numbers** — each is accepted and the next representable double
+  beneath it is refused. ducc indexes its kernel table by dtype *and* kernel
+  dimension, which is 3 with w-gridding on and 2 with it off, so the guard is
+  keyed on `(precision, do_wgridding)`. Bisected over `vis2dirty` against
+  **ducc0 0.41.0**, independent of npix, nrow and nchan:
+
+  | | 3-D (`--do-wgridding`) | 2-D |
+  |---|---|---|
+  | float32 | 8.0898294e-07 | 4.4514883e-07 |
+  | float64 | 1.6277483e-14 | 7.1866641e-15 |
+
+  Note that float32's floor is ~6.8x **above** `np.finfo(f4).eps`
   (1.1920929e-07), so "below float32 resolution" is the right intuition but the
   wrong number — the kernel table, not the representable epsilon, is the limit.
+  The first cut of this guard used the first known-good probe point (1e-6 /
+  1e-12) as the floor, which refused accuracy ducc would have delivered;
+  `tests/test_imager_precision.py::test_gridder_epsilon_floor_is_duccs_boundary`
+  pins each value in both directions so a ducc upgrade that moves the table
+  fails loudly with the real number instead of leaving the guard quietly wrong
+  in one direction. A non-finite `--epsilon` is rejected *before* the
+  comparison, because every comparison against NaN is False and a NaN would
+  otherwise sail through to the late failure the guard exists to replace.
 - **Consequences:** double-precision runs grid two orders of magnitude less
   accurately than before unless they pass `--epsilon` explicitly. That is the
   trade the default change buys, and it is well inside what every pipeline here

@@ -22,38 +22,61 @@ fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
 
 
-# Lowest --epsilon ducc0's wgridder has a kernel for, per gridding precision.
-# Bisected over vis2dirty with ducc0 0.39: float32 accepts 1e-6 and refuses
-# 5e-7; float64 accepts 1e-12 and refuses 1e-14. Below the floor ducc raises a
-# bare C++ assertion ("No appropriate kernel found"), which reaches the user
-# through a RayTaskError naming neither --epsilon nor --precision -- and, in the
-# imager, only in pass 2, after pass 1 has written the whole scratch store
-# (#340). Hence the up-front check.
-GRIDDER_EPSILON_FLOOR = {"single": 1e-6, "double": 1e-12}
+# Smallest --epsilon ducc0's wgridder has a kernel for, keyed on the two things
+# its kernel table is indexed by: the data type (--precision) and the kernel
+# dimension, which is 3 when w-gridding is on and 2 when it is off.
+#
+# These are EXACT boundaries, not safe round numbers: each value is accepted and
+# the next representable double below it is refused, bisected over vis2dirty
+# against ducc0 0.41.0 and pinned in both directions by
+# tests/test_imager_precision.py::test_gridder_epsilon_floor_is_duccs_boundary,
+# which fails if a ducc upgrade moves them. An earlier version of this table
+# used the first known-good probe point (1e-6 / 1e-12) as the floor, which
+# refused requests ducc would have served.
+#
+# Below the floor ducc raises a bare C++ assertion ("No appropriate kernel
+# found") which reaches the user through a RayTaskError naming neither
+# --epsilon nor --precision -- and, in the imager, only in pass 2, after pass 1
+# has written the whole scratch store (#340). Hence the up-front check.
+GRIDDER_EPSILON_FLOOR = {
+    ("single", True): 8.0898294e-07,
+    ("single", False): 4.4514883e-07,
+    ("double", True): 1.6277483e-14,
+    ("double", False): 7.1866641e-15,
+}
+
+GRIDDER_PRECISIONS = ("single", "double")
 
 
-def check_gridder_epsilon(precision: str, epsilon: float) -> None:
+def check_gridder_epsilon(precision: str, epsilon: float, do_wgridding: bool = True) -> None:
     """Raise unless ducc0 can grid to `epsilon` at `precision`.
 
     Args:
         precision: "single" or "double", as taken by --precision.
         epsilon: the requested gridder accuracy, as taken by --epsilon.
+        do_wgridding: whether w-gridding is on, as taken by --do-wgridding. It
+            selects a 3-D kernel rather than a 2-D one, and the two have
+            different limits -- the 2-D one reaches roughly 2x lower.
 
     Raises:
-        ValueError: if `precision` is unknown, or `epsilon` is below the floor
-            for it.
+        ValueError: if `precision` is unknown, or `epsilon` is not finite, or
+            `epsilon` is below the floor for this (precision, kernel) pair.
     """
-    try:
-        floor = GRIDDER_EPSILON_FLOOR[precision]
-    except KeyError:
-        raise ValueError(
-            f"Unknown --precision {precision!r}; expected one of {sorted(GRIDDER_EPSILON_FLOOR)}."
-        ) from None
+    if precision not in GRIDDER_PRECISIONS:
+        raise ValueError(f"Unknown --precision {precision!r}; expected one of {list(GRIDDER_PRECISIONS)}.")
+    # Before the comparison, because every comparison against NaN is False: a
+    # NaN epsilon would sail through the floor check and fail late inside ducc,
+    # which is the exact failure this guard exists to replace. inf is refused
+    # for the same reason it is meaningless.
+    if not np.isfinite(epsilon):
+        raise ValueError(f"--epsilon must be a finite positive number, got {epsilon!r}.")
+    floor = GRIDDER_EPSILON_FLOOR[(precision, bool(do_wgridding))]
     if epsilon < floor:
+        kernel = "3-D (w-gridding on)" if do_wgridding else "2-D (w-gridding off)"
         raise ValueError(
             f"--epsilon {epsilon:g} is unreachable at --precision {precision}: ducc0's "
-            f"wgridder has no {precision}-precision kernel below {floor:g}. "
-            f"Raise --epsilon to at least {floor:g}, or use --precision double."
+            f"wgridder has no {precision}-precision {kernel} kernel below {floor:.6g}. "
+            f"Raise --epsilon to at least {floor:.6g}, or use --precision double."
         )
 
 
