@@ -15,8 +15,8 @@ uv run python scripts/msv4_issues/<script>.py tests/data/test_ascii_1h60.0s.MS [
 
 | | pinned in `pyproject.toml` | installed | latest alpha | latest stable |
 |---|---|---|---|---|
-| xarray-ms | `>=0.4.0a11,<0.5.0` | 0.4.0a11 | 0.4.0a11 | 0.5.11 |
-| arcae | `>=0.4.0a11,<0.5.0` | 0.4.0a11 | 0.4.0a11 | 0.5.5 |
+| xarray-ms | `>=0.4.0a12,<0.5.0` | 0.4.0a12 | 0.4.0a12 | 0.5.12 |
+| arcae | `>=0.4.0a14,<0.5.0` | 0.4.0a14 | 0.4.0a14 | 0.5.7 |
 
 The `<0.5.0` ceiling is deliberate and must stay: write support ships only on the
 `0.4.0-alpha` line, which is cut from *later* commits than the 0.5.x line. Version numbers
@@ -24,16 +24,17 @@ do not order by capability here (wiki D14, ratt-ru/xarray-ms#170).
 
 The floors are load bearing, not just currency: 0.4.0a8 is what lets `sync_msv2` create
 canonical MAIN columns, which is what allowed the `_create_missing_columns` fallback to go.
+xarray-ms 0.4.0a12 / arcae 0.4.0a14 are the floors that carry the fixes for issues 2-5 below.
 
 ## Status
 
 | # | Issue | Repo | Filed | Status |
 |---|---|---|---|---|
 | 1 | `sync_msv2` skips a canonical MAIN column that is absent | xarray-ms | [#171](https://github.com/ratt-ru/xarray-ms/issues/171) | **Fixed** in 0.4.0a8; verified on a11 |
-| 2 | `addcols` then read is answered by a stale table instance | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Present a7 → a11 |
-| 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | Same root cause as 2; blocks our a11 bump |
-| 4 | Every `MSv2Structure` build retains ~1.5 MB | xarray-ms | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | Filed with issue 5 |
-| 5 | No public way to evict xarray-ms's own table cache | xarray-ms | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | Filed with issue 4 |
+| 2 | `addcols` then read is answered by a stale table instance | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | **Fixed** in 0.4.0a13; not reproduced on a14 |
+| 3 | `addcols` poisons table handles already open in the same process | arcae | [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241) | **Fixed** with 2; not reproduced on a14 |
+| 4 | Every `MSv2Structure` build retains ~1.5 MB | arcae | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed** by ska-sa/arcae#244 (0.4.0a13); 0.0185 MB/build on a14 |
+| 5 | No public way to evict xarray-ms's own table cache | rarg-python-patterns | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed**: keyed `Multiton.clear_cache` in 0.0.5 (via xarray-ms 0.4.0a12) |
 
 ---
 
@@ -49,7 +50,11 @@ following `to_msv2` had nowhere to write — no error, no warning.
 silently write nothing. Reproducer:
 [`sync_msv2_canonical_column.py`](../scripts/msv4_issues/sync_msv2_canonical_column.py).
 
-### 2. `addcols` then read is answered by a stale table instance — FILED
+### 2. `addcols` then read is answered by a stale table instance — FIXED
+
+**2026-10-07, arcae 0.4.0a14:** `addcols_multi_instance_race.py` passes at 8 and 1 instances
+(200/200 `columns()` calls, idle and busy). arcae 0.4.0a13 refreshes sibling instances after
+`AddColumns` and stale instances on next use.
 
 Filed together with issue 3 as [ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241), "Adding a column leaves other open table handles
 unable to resync": they are the same behaviour, once between sibling instances of one
@@ -77,7 +82,10 @@ after `addcols` to verify creation, so it can fail against its own write.
 - This matters more from 0.4.0a8 on, because issue 1's fix routes canonical columns
   (i.e. the default `MODEL_DATA`) through the same `addcols` path.
 
-### 3. `addcols` poisons table handles already open in the same process — FILED ([ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241))
+### 3. `addcols` poisons table handles already open in the same process — FIXED ([ska-sa/arcae#241](https://github.com/ska-sa/arcae/issues/241))
+
+**2026-10-07, arcae 0.4.0a14:** `addcols_poisons_open_handles.py` reports "NOT reproduced" --
+the pre-existing handle reads after the change, first time and retried.
 
 The same underlying behaviour as issue 2, but across handles rather than instances: a
 DataTree left open across a column creation cannot be read afterwards, even though both
@@ -120,7 +128,11 @@ handles are in one process and one of them made the change.
   processes that open after the driver closes. It bites any in-process pipeline that reads
   the MS both before and after degridding.
 
-### 4. Every `MSv2Structure` build retains ~1.5 MB — FILED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
+### 4. Every `MSv2Structure` build retains ~1.5 MB — FIXED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
+
+**2026-10-07, arcae 0.4.0a14:** `structure_rebuild_rss.py`, 200 builds: 145.9 -> 159.4 MB,
+last-quarter slope **+0.0185 MB/build** (was +1.53). The leak was a reference leak in
+arcae's `merge_np_partitions` (ska-sa/arcae#244), merged into the alpha line for 0.4.0a13.
 
 Repeatedly opening, reading and closing a DataTree grows post-`gc.collect()` RSS linearly
 with **no plateau**. Re-measured on an idle machine, 2000 iterations, xarray-ms 0.4.0a11 +
@@ -164,7 +176,13 @@ task that calls it pays a rebuild — and therefore ~1.5 MB — on its next open
 imager run that is the same shape as the pass-1 pathology this discipline was built to avoid
 (wiki memory-and-ray).
 
-### 5. No public way to evict xarray-ms's own table cache — FILED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
+### 5. No public way to evict xarray-ms's own table cache — FIXED ([ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177))
+
+**Resolution:** rarg-python-patterns 0.0.5 (ratt-ru/rarg-python-patterns#11) adds
+`Multiton.clear_cache(instance_type=None, *, where=None)`, a filtered eviction that matches
+on the cached instance, so a consumer can evict one MS's arcae tables and leave everyone
+else's Multitons alone. xarray-ms 0.4.0a12 requires it. Whether pfb still needs to evict at
+all is tracked in pfb-imaging#325.
 
 xarray-ms creates `Multiton`s internally for its arcae tables and exposes no way to release
 them. `Multiton.release()` is a clean per-key eviction, but only for keys you hold, so the

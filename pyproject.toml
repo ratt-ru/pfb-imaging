@@ -93,13 +93,16 @@ full = [
     # LATER than 0.5.x -- these version numbers do not order by capability.
     # NEVER raise the <0.5.0 ceilings: 0.5.x has no write support at all.
     # See wiki design-decisions D14 and ratt-ru/xarray-ms#170.
-    # The a11 floors are load bearing: 0.4.0a8 made sync_msv2 create canonical
+    # The floors are load bearing: xarray-ms 0.4.0a8 made sync_msv2 create canonical
     # MAIN columns (ratt-ru/xarray-ms#171), which is what removed our
-    # _create_missing_columns fallback, and a11 is the combination we test.
-    # Both are aarch64-clean: xarray-ms is pure python, and arcae 0.4.0a11 has
-    # manylinux_2_28_aarch64 wheels for cp311-cp314 (it vendors casacore).
-    "xarray-ms>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
-    "arcae>=0.4.0a11,<0.5.0 ; python_version >= '3.11'",
+    # _create_missing_columns fallback. xarray-ms 0.4.0a12 / arcae 0.4.0a14 carry
+    # the ratt-ru/xarray-ms#177 fixes: arcae#244 stops each MSv2Structure build
+    # leaking ~1.5 MB, and rarg-python-patterns 0.0.5 adds keyed
+    # Multiton.clear_cache. Both are aarch64-clean: xarray-ms is pure python, and
+    # arcae 0.4.0a14 has manylinux_2_28_aarch64 wheels for cp311-cp314 (it
+    # vendors casacore).
+    "xarray-ms>=0.4.0a12,<0.5.0 ; python_version >= '3.11'",
+    "arcae>=0.4.0a14,<0.5.0 ; python_version >= '3.11'",
     "msv4-utils>=0.0.3 ; python_version >= '3.11'",
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
