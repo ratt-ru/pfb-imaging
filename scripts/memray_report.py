@@ -8,9 +8,12 @@ capture file, so there are two ways to capture -- use either or both.
    memray cannot be wrapped around them from the command line. Instead set
    ``PFB_MEMRAY_DIR``: ``pfb_imaging.utils.memprof.memray_task`` then opens a
    ``memray.Tracker`` around each task body, writing one file per task named
-   ``<task>-<pid>-<seq>.bin`` (several files share a pid when a worker runs
-   several tasks; seq orders them). Native C/C++ frames are recorded unless
-   ``PFB_MEMRAY_NATIVE=0`` (cheaper, Python frames only)::
+   ``<task>-<host>-<pid>-<seq>-<token>.bin`` (several files share a host and
+   pid when a worker runs several tasks; seq orders them; the random token keeps
+   reruns into one directory from colliding). Native C/C++ frames are recorded
+   unless ``PFB_MEMRAY_NATIVE=0`` (cheaper, Python frames only). memray must be
+   installed wherever the workers run -- it is in the dev group, so a container
+   image needs ``pip install memray``; the driver refuses to start without it::
 
        PFB_MEMRAY_DIR=/scratch/mem pfb imager --ms ... --output-filename ...
 

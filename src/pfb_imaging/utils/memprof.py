@@ -15,6 +15,8 @@ import contextlib
 import itertools
 import os
 import resource
+import socket
+import uuid
 
 MEMRAY_DIR_ENV = "PFB_MEMRAY_DIR"
 MEMRAY_NATIVE_ENV = "PFB_MEMRAY_NATIVE"
@@ -56,17 +58,35 @@ def format_memory(mem: dict) -> str:
 
 
 def memray_env() -> dict:
-    """The memray switches to forward to Ray workers, if set in this process."""
-    return {k: os.environ[k] for k in (MEMRAY_DIR_ENV, MEMRAY_NATIVE_ENV) if k in os.environ}
+    """The memray switches to forward to Ray workers, if set in this process.
+
+    Raises:
+        ImportError: ``PFB_MEMRAY_DIR`` is set but memray is not importable --
+            raised here, in the driver, rather than in every task.
+    """
+    env = {k: os.environ[k] for k in (MEMRAY_DIR_ENV, MEMRAY_NATIVE_ENV) if k in os.environ}
+    if env.get(MEMRAY_DIR_ENV):
+        try:
+            # deferred: optional diagnostic dependency, imported only when profiling
+            import memray  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                f"{MEMRAY_DIR_ENV} is set but memray is not installed in this environment "
+                "(it is in the dev group; in a container, pip install memray)"
+            ) from e
+    return env
 
 
 @contextlib.contextmanager
 def memray_task(name: str):
     """Track allocations made inside the block when ``PFB_MEMRAY_DIR`` is set.
 
-    Writes ``<dir>/<name>-<pid>-<seq>.bin`` in memray's aggregated format,
-    which keeps the high-water mark, the allocations still live at exit and
-    the RSS/heap snapshots. Native stacks are recorded unless
+    Writes ``<dir>/<name>-<host>-<pid>-<seq>-<token>.bin`` in memray's
+    aggregated format, which keeps the high-water mark, the allocations still
+    live at exit and the RSS/heap snapshots. Host and a random token are in the
+    name because pids repeat across container nodes and reruns into one
+    directory, and memray refuses to overwrite a capture -- an error that would
+    kill the run. Native stacks are recorded unless
     ``PFB_MEMRAY_NATIVE=0``; report on the machine that ran the capture, since
     native symbols resolve against its shared libraries.
 
@@ -81,7 +101,8 @@ def memray_task(name: str):
     import memray
 
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"{name}-{os.getpid()}-{next(_task_seq):04d}.bin")
+    stem = f"{name}-{socket.gethostname()}-{os.getpid()}-{next(_task_seq):04d}-{uuid.uuid4().hex[:8]}"
+    path = os.path.join(out_dir, f"{stem}.bin")
     native = os.environ.get(MEMRAY_NATIVE_ENV, "1") != "0"
     with memray.Tracker(path, native_traces=native, file_format=memray.FileFormat.AGGREGATED_ALLOCATIONS):
         yield

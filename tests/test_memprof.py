@@ -30,3 +30,36 @@ def test_memray_task_writes_one_capture(tmp_path, monkeypatch):
     (cap,) = tmp_path.glob("unit-*.bin")
     reader = memray.FileReader(str(cap))
     assert reader.metadata.peak_memory >= 8 * 2**20
+
+
+def test_memray_task_survives_a_rerun_into_the_same_directory(tmp_path, monkeypatch):
+    """Pids repeat across container nodes and reruns; a capture must never collide.
+
+    memray refuses to overwrite an existing capture, and that OSError would
+    escape the Ray task and kill the run.
+    """
+    pytest.importorskip("memray")
+    import itertools
+
+    from pfb_imaging.utils import memprof
+
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(MEMRAY_NATIVE_ENV, "0")
+    for _ in range(2):
+        # a fresh worker process with the same pid restarts its sequence
+        monkeypatch.setattr(memprof, "_task_seq", itertools.count())
+        with memray_task("rerun"):
+            np.ones(1000)
+    assert len(list(tmp_path.glob("rerun-*.bin"))) == 2
+
+
+def test_memray_env_fails_fast_without_memray(monkeypatch, tmp_path):
+    """Asking for captures where memray is not installed fails in the driver, not per task."""
+    import sys
+
+    from pfb_imaging.utils.memprof import memray_env
+
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    monkeypatch.setitem(sys.modules, "memray", None)
+    with pytest.raises(ImportError, match="memray"):
+        memray_env()
