@@ -731,6 +731,32 @@ def test_imager_effective_freq_uneven_bands(ms_name, tmp_path):
         assert_allclose(dt[name].ds.attrs["freq_out"], (w * f).sum() / w.sum(), rtol=1e-10)
 
 
+def test_gain_table_is_refused_before_ray_init(ms_name, tmp_path, monkeypatch):
+    """--gain-table is refused, not silently ignored (#333).
+
+    The MSv4 imager never carried the MSv2 path's gain application across, so a
+    calibrated-imaging run produced uncalibrated images with nothing in the log
+    to say so. Refusing is the interim contract until the gains are threaded
+    into `stokes_vis`; the monkeypatch pins that it happens before a cluster is
+    stood up, so the failure costs nothing.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+    with pytest.raises(NotImplementedError, match="--gain-table"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            gain_table=[Path(tmp_path / "gains.qc")],
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+
+
 def test_baseline_groups_refuses_non_meerkat_before_ray_init(ms_name, tmp_path, monkeypatch):
     """A non-MeerKAT array is rejected up front: we have no group beam for it.
 

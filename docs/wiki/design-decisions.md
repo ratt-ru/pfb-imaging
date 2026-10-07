@@ -1516,6 +1516,19 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ## Known debt
 
+- **`imager` does not apply gains.** The MSv4 rewrite never carried the MSv2
+  `stokes2vis` gain application across: `--gain-table` was validated, globbed and
+  logged into the options block and then dropped, so a calibrated-imaging run
+  produced uncalibrated images with nothing in the log to say so (#333). It is now
+  refused outright at the top of `imager()` -- an explicit `NotImplementedError`
+  before `init_ray` -- which fixes the silence but not the gap. Implementing it
+  means threading gains into `utils/stokes2vis_msv4.stokes_vis` the way
+  `utils/stokes2im` does for `hci`; note that reading QuartiCal output currently
+  goes through `daskms.experimental.zarr.xds_from_zarr`, which would put
+  python-casacore back on the `imager` path, so the MSv4-native route is to read
+  the gain store with xarray/zarr directly (#330 narrowed `[casacore]` to `hci`,
+  rephasing and `--target`).
+
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch
   allocates a fresh `out` and leaves `x0` untouched; the coupled branch hands `x0` to
   `pcg_numba`, which mutates it in place, so the returned array *is* `x0`. The one caller

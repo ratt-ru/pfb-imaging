@@ -592,14 +592,18 @@ def imager(
         )
 
     if gain_table is not None:
-        gainnames = []
-        for gt in gain_table:
-            matches = glob_uris(gt)
-            if not matches:
-                log.error_and_raise(f"No gain table at {gt}", ValueError)
-            gainnames += matches
-        gain_table = gainnames
-        opts_dict["gain_table"] = gain_table
+        # The MSv4 imager never carried the MSv2 path's gain application across:
+        # the option was validated, globbed and logged, and then dropped, so a
+        # calibrated-imaging run produced uncalibrated images silently (#333).
+        # Refuse until the gains are threaded into `stokes_vis` -- `pfb hci`
+        # does apply them, and is the MSv2-era path that still works.
+        log.error_and_raise(
+            "--gain-table is not implemented for pfb imager: the MSv4 path does not apply "
+            "gains, and accepting the option would produce uncalibrated images with no "
+            "warning (issue #333). Image a corrected-data column instead, or use pfb hci, "
+            "which does apply gains.",
+            NotImplementedError,
+        )
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/imager_{timestamp}.log"
@@ -634,15 +638,6 @@ def imager(
     scratch_fs.makedirs(scratch_url, exist_ok=True)
 
     log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
-
-    if gain_table is not None:
-
-        def tmpf(x):
-            return "::".join(x.rsplit("/", 1))
-
-        gain_names = list(map(tmpf, gain_table))
-    else:
-        gain_names = None
 
     if freq_range is not None and len(freq_range):
         fmin, fmax = freq_range.strip(" ").split(":")

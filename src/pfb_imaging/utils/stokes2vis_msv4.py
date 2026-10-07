@@ -333,7 +333,8 @@ def stokes_vis(
     tbin_idx = np.arange(ntime) * nbl
     tbin_counts = np.full(ntime, nbl)
 
-    # apply gains and convert to Stokes
+    # Convert to Stokes. No gains are applied on this path -- the MSv2 stokes2vis
+    # did, and `imager --gain-table` is refused rather than silently ignored (#333).
     data = data.reshape(nrow, nchan, ncorr)
 
     # rephase to the common phase centre (mosaic tangent point) BEFORE
