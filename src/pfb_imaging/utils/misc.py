@@ -807,11 +807,7 @@ def fitcleanbeam(
     if yx_order:
         psf = psf.transpose(0, 2, 1)
     nband, nx, ny = psf.shape
-
-    # pixel coordinates
-    x = -(nx // 2) + np.arange(nx)
-    y = -(ny // 2) + np.arange(ny)
-    xx, yy = np.meshgrid(x, y, indexing="ij")
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
 
     gausspars = []
     for v in range(nband):
@@ -819,49 +815,81 @@ def fitcleanbeam(
         if not psf[v].any():
             gausspars.append([np.nan, np.nan, np.nan])
             continue
-        psfv = psf[v] / psf[v].max()
-        # find regions where psf is above level
-        mask = np.where(psfv > level, 1.0, 0)
+        peak = psf[v].max()
 
-        # label all islands and find center
-        islands = label(mask)
-        ncenter = islands[nx // 2, ny // 2]
+        # Work on a centred window instead of the whole grid: every temporary
+        # below would otherwise be grid-sized (~7 PSF copies, #339). The window
+        # doubles until it holds the whole main lobe and the full nsigma fit
+        # disc, so the fit sees exactly the points the full grid would give,
+        # in the same order; it falls back to the full grid when it must.
+        hw = 64
+        while True:
+            x0, x1 = max(nx // 2 - hw, 0), min(nx // 2 + hw, nx)
+            y0, y1 = max(ny // 2 - hw, 0), min(ny // 2 + hw, ny)
+            full = x0 == 0 and y0 == 0 and x1 == nx and y1 == ny
+            # pixel coordinates of the window (full-grid offsets from centre)
+            xx, yy = np.meshgrid(-(nx // 2) + np.arange(x0, x1), -(ny // 2) + np.arange(y0, y1), indexing="ij")
+            psfv = psf[v, x0:x1, y0:y1] / peak
 
-        # get extend of main lobe
-        x = xx[islands == ncenter]
-        y = yy[islands == ncenter]
+            # find regions where psf is above level
+            mask = np.where(psfv > level, 1.0, 0)
 
-        # initial guess for pa via weighted second moments
-        psftmp = psfv[islands == ncenter]
-        wsum = psftmp.sum()
-        dx = x - np.sum(psftmp * x) / wsum
-        dy = y - np.sum(psftmp * y) / wsum
-        mxx = np.sum(psftmp * dx**2) / wsum
-        myy = np.sum(psftmp * dy**2) / wsum
-        mxy = np.sum(psftmp * dx * dy) / wsum
-        pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
-        # ensure pa is in (0, pi)
-        pa0 = float(np.clip(pa0, 0.0, np.pi))
+            # label all islands and find center
+            islands = label(mask)
+            ncenter = islands[nx // 2 - x0, ny // 2 - y0]
+            lobe = islands == ncenter
 
-        # rotate main lobe coordinates to estimate axis extents.
-        # PA is anticlockwise from the positive y-axis so the major axis
-        # is at angle (pi/2 + pa0) from the positive x-axis. Rotating
-        # by -(pi/2 + pa0) aligns the major axis with the x-axis.
-        t = np.pi / 2 + pa0
-        ct, st = np.cos(t), np.sin(t)
-        dx_rot = ct * dx + st * dy
-        dy_rot = -st * dx + ct * dy
-        # bounding box in the rotated frame gives FWHM estimates
-        emaj0 = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
-        emin0 = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
+            # get extend of main lobe
+            x = xx[lobe]
+            y = yy[lobe]
 
-        # select psf in fit region out to nsigma standard deviations.
-        # the main lobe above level extends to ~FWHM/2 from center,
-        # so use emaj0 as a proxy for the FWHM of the major axis
-        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-        sigma_est = emaj0 / fwhm_conv
-        rrsq = xx**2 + yy**2
-        idxs = rrsq < (nsigma * sigma_est) ** 2
+            # initial guess for pa via weighted second moments
+            psftmp = psfv[lobe]
+            wsum = psftmp.sum()
+            dx = x - np.sum(psftmp * x) / wsum
+            dy = y - np.sum(psftmp * y) / wsum
+            mxx = np.sum(psftmp * dx**2) / wsum
+            myy = np.sum(psftmp * dy**2) / wsum
+            mxy = np.sum(psftmp * dx * dy) / wsum
+            pa0 = np.pi / 2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
+            # ensure pa is in (0, pi)
+            pa0 = float(np.clip(pa0, 0.0, np.pi))
+
+            # rotate main lobe coordinates to estimate axis extents.
+            # PA is anticlockwise from the positive y-axis so the major axis
+            # is at angle (pi/2 + pa0) from the positive x-axis. Rotating
+            # by -(pi/2 + pa0) aligns the major axis with the x-axis.
+            t = np.pi / 2 + pa0
+            ct, st = np.cos(t), np.sin(t)
+            dx_rot = ct * dx + st * dy
+            dy_rot = -st * dx + ct * dy
+            # bounding box in the rotated frame gives FWHM estimates
+            emaj0 = np.maximum(dx_rot.max() - dx_rot.min(), 1.0)
+            emin0 = np.maximum(dy_rot.max() - dy_rot.min(), 1.0)
+
+            # the fit region extends nsigma standard deviations from the
+            # center; the main lobe above level extends to ~FWHM/2, so use
+            # emaj0 as a proxy for the FWHM of the major axis
+            sigma_est = emaj0 / fwhm_conv
+            if full:
+                break
+            # a window edge that is not a grid edge must not cut the main lobe
+            # (a cut lobe would be a different island) or the fit disc (whose
+            # pixels satisfy |x|, |y| < nsigma * sigma_est <= hw). A centre
+            # below level (ncenter == 0, the background) only the full grid
+            # reproduces.
+            cut = (
+                (x0 > 0 and lobe[0].any())
+                or (x1 < nx and lobe[-1].any())
+                or (y0 > 0 and lobe[:, 0].any())
+                or (y1 < ny and lobe[:, -1].any())
+            )
+            if ncenter != 0 and not cut and nsigma * sigma_est <= hw:
+                break
+            hw *= 2
+
+        # select psf in fit region out to nsigma standard deviations
+        idxs = xx**2 + yy**2 < (nsigma * sigma_est) ** 2
         psfv = psfv[idxs]
         x = xx[idxs]
         y = yy[idxs]
