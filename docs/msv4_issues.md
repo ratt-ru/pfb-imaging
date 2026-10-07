@@ -114,16 +114,18 @@ handles are in one process and one of them made the change.
   an in-process chain. Closing it would remove the need for the eviction below — but it cannot
   simply be closed after selection, because the dispatch loop still reads `node.ds` and slices
   it for the workers. It would have to be closed after dispatch. Deliberately **not** fixed in
-  the degrid PR; tracked in ratt-ru/pfb-imaging#325, which already owns the question of
-  retiring `_release_ms_caches`.
+  the degrid PR; tracked in ratt-ru/pfb-imaging#325. With arcae 0.4.0a13+ resyncing those
+  handles, an unclosed tree is no longer poisoned, so this is now hygiene only.
 - **Closing is not a complete answer.** A tree dropped *without* closing leaves cache entries
   that nothing can close: measured, `del dt` plus `gc.collect()` leaves 12 entries held with no
   Python reference to call `close()` on, persisting until the 300 s inactivity TTL. That is the
   case upstream's close-and-reopen advice does not reach, and the reason the eviction hook in
   ratt-ru/xarray-ms#177 is worth asking for.
-- **Fixed on our side:** `core/degrid.degrid` calls `_release_ms_caches()` once
-  after the column-creation loop — *not* per work item, which is what made it reload the model
-  every chunk (see wiki memory-and-ray). The test passes on a11 with it.
+- **Was worked around on our side** by `core/degrid.degrid` calling `_release_ms_caches()`
+  once after the column-creation loop — *not* per work item, which is what made it reload the
+  model every chunk (see wiki memory-and-ray). Removed 2026-10 (#325) on arcae 0.4.0a14;
+  `tests/test_degrid.py::test_handles_open_before_a_column_is_added_still_read` pins the
+  upstream fix and fails on a11.
 - Production impact is narrower than the test suggests: degrid's replicas are separate
   processes that open after the driver closes. It bites any in-process pipeline that reads
   the MS both before and after degridding.
@@ -171,7 +173,7 @@ and the rate is a third of that. The residual is a different problem, and the ea
 better, maybe a bounded cache" reading on this page was taken under load and over too few
 iterations to see that it never flattens.
 
-**Why it matters to us.** `_release_ms_caches()` drops the structure factory, so every Ray
+**Why it mattered to us** (the helper was retired 2026-10, #325). `_release_ms_caches()` dropped the structure factory, so every Ray
 task that calls it pays a rebuild — and therefore ~1.5 MB — on its next open. Over a long
 imager run that is the same shape as the pass-1 pathology this discipline was built to avoid
 (wiki memory-and-ray).
@@ -197,7 +199,7 @@ wipe that destroys *every* consumer's Multitons as collateral.
 - [`1b4ca7d8`](https://github.com/ratt-ru/xarray-ms/commit/1b4ca7d8) (a9, "Only release
   derived factories from the store that owns them") is adjacent — it stops a write store
   evicting factories it borrowed — but adds no consumer-facing hook.
-- Our helper is `utils/stokes2vis_msv4._release_ms_caches`, flagged for deletion once a hook
+- Our helper was `utils/stokes2vis_msv4._release_ms_caches` (retired 2026-10, #325), flagged for deletion once a hook
   exists. Filed together with issue 4 as [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177): the wholesale wipe is the only eviction
   available, and it also forces the structure rebuild that issue 4 makes expensive.
 

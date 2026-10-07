@@ -45,7 +45,6 @@ from pfb_imaging.utils.degrid import (
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import glob_uris, set_output_names
-from pfb_imaging.utils.stokes2vis_msv4 import _release_ms_caches
 
 log = pfb_logging.get_logger("DEGRID_MSV4")
 
@@ -321,15 +320,11 @@ class Degridder:
                 write_map={c: c for c in self._columns},
             )
         finally:
-            # No _release_ms_caches() here. That helper clears the *whole*
-            # class-level Multiton cache, which since this deployment began
-            # keying its model and masks on Multitons would evict them too and
-            # reload a 633 MB .mds on every work item. It is also no longer
-            # buying anything: xarray-ms >= 0.5.8 (its PR #169) bounds both the
-            # tiled storage-manager caches and the table caches via
-            # driver_kwargs={"cache_size": 256}, and clearing measurably does
-            # not change post-gc RSS growth (wiki memory-and-ray). Reference
-            # cycles in deserialised xarray objects still need the collect.
+            # Never wipe xarray-ms's class-level Multiton cache here: this
+            # deployment keys its model and masks on Multitons, and a wholesale
+            # clear reloaded a 633 MB .mds on every work item (wiki
+            # memory-and-ray). Reference cycles in deserialised xarray objects
+            # still need the collect.
             gc.collect()
 
         return {
@@ -550,13 +545,9 @@ def degrid(
     if not selected:
         raise ValueError("Selection matched no data")
 
-    # Creating a column leaves every table handle that was already open on that
-    # MS unable to resync -- any later read through one raises "another process
-    # changed the number of columns" (ska-sa/arcae#241). Handles opened after
-    # the change are fine, so drop the process-wide cache here and let the next
-    # reader rebuild. This is once per run, NOT per work item: the same call in
-    # `Degridder.degrid` reloaded the model every chunk (wiki memory-and-ray).
-    _release_ms_caches()
+    # No cache eviction after creating columns: arcae >= 0.4.0a13 resyncs table
+    # handles that were already open when a column was added (ska-sa/arcae#241,
+    # pinned by test_handles_open_before_a_column_is_added_still_read).
 
     # --- distribute -----------------------------------------------------
     # model_ds and masks are dead once the guards above have run, and since the

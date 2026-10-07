@@ -180,6 +180,43 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
         assert np.asarray(tab.getcol("MODEL_DATA1")).shape == (21060, 8, 4)
 
 
+def test_handles_open_before_a_column_is_added_still_read(degrid_ms):
+    """A tree opened before ensure_model_columns keeps reading afterwards.
+
+    Adding a column used to leave every table handle already cached in the
+    process unable to resync ("another process changed the number of
+    columns", ska-sa/arcae#241), so degrid wiped xarray-ms's whole Multiton
+    cache after creating its columns. arcae >= 0.4.0a13 refreshes those
+    handles itself, which is what let that eviction go (#325).
+    """
+    import xarray as xr
+
+    from pfb_imaging.utils.degrid import ensure_model_columns
+    from pfb_imaging.utils.msv4 import get_engine
+
+    before = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        node = next(iter(before.children.values()))
+        first = node.ds.VISIBILITY.isel(time=0).values
+
+        writer = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
+        try:
+            ensure_model_columns(degrid_ms, writer, ["MODEL_DATA1"])
+        finally:
+            writer.close()
+
+        again = node.ds.VISIBILITY.isel(time=0).values
+        np.testing.assert_array_equal(again, first)
+    finally:
+        before.close()
+
+    after = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        assert next(iter(after.children.values())).ds.VISIBILITY.isel(time=1).values.size
+    finally:
+        after.close()
+
+
 def test_get_engine_can_pin_a_single_main_instance(degrid_ms):
     """Column creation needs a tree with one MAIN instance (see get_engine).
 
