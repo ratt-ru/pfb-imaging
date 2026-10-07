@@ -2,6 +2,7 @@ import concurrent.futures as cf
 
 import numba
 import numpy as np
+import xarray as xr
 from numba import literally, njit, prange
 from numba.extending import overload, register_jitable
 from rarg_numba_patterns import load_data
@@ -466,6 +467,49 @@ def nb_weight_data_impl(
             return (vis, wgt)
 
     return _impl
+
+
+def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
+    """Reduce pass-1 piece COUNTS into one applied grid per weighting group, on disk.
+
+    Streams: each piece grid is read, added and released, so the caller holds
+    one accumulator and one piece grid whatever the number of pieces. The tree
+    is opened with ``cache=False`` because xarray's default memoises every
+    ``.values`` read on an open tree, which kept every piece's grid alive in the
+    imager driver (#339). The applied grid (``filter_extreme_counts`` then
+    ``box_sum_counts``) is written once per group, so pass-2 workers read it from
+    the store instead of receiving a copy per task through the Ray object store.
+
+    Args:
+        store: scratch store URL holding the pass-1 pieces.
+        sources: weighting-group key -> scratch node paths of the group's pieces.
+        filter_level: ``filter_extreme_counts`` level.
+        npix_super: ``box_sum_counts`` half-width (0 = standard uniform).
+
+    Returns:
+        weighting-group key -> node path (``counts/group####``) of its applied
+        ``COUNTS`` grid in ``store``.
+    """
+    dt = xr.open_datatree(store, engine="zarr", chunks=None, cache=False)
+    out = {}
+    try:
+        for gi, key in enumerate(sorted(sources)):
+            acc = None
+            for path in sources[key]:
+                da = dt[path].ds.COUNTS
+                if acc is None:
+                    dims = da.dims
+                    acc = da.values
+                else:
+                    acc += da.values
+            acc = box_sum_counts(filter_extreme_counts(acc, level=filter_level), npix_super)
+            group = f"counts/group{gi:04d}"
+            xr.Dataset({"COUNTS": (dims, acc)}).to_zarr(store, group=group, mode="w", consolidated=False)
+            out[key] = group
+            del acc
+    finally:
+        dt.close()
+    return out
 
 
 def reduce_counts(counts, grouping):

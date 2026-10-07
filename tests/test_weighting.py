@@ -1,8 +1,18 @@
+import tracemalloc
+
 import numpy as np
 import pytest
+import xarray as xr
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, reduce_counts
+from pfb_imaging.utils.weighting import (
+    _compute_counts,
+    box_sum_counts,
+    counts_to_weights,
+    filter_extreme_counts,
+    reduce_counts,
+    write_group_counts,
+)
 
 pmp = pytest.mark.parametrize
 
@@ -205,3 +215,54 @@ def test_as_contiguous_readonly_view_flags():
     w = as_contiguous_readonly_view(b)
     assert w.flags["C_CONTIGUOUS"] and not w.flags["WRITEABLE"]
     assert not np.shares_memory(b, w)
+
+
+def _write_piece(store, path, grid):
+    xr.Dataset({"COUNTS": (("corr", "u", "v"), grid)}).to_zarr(store, group=path, mode="a", consolidated=False)
+
+
+def _sparse_grid(rng, n, fill):
+    # uv counts are mostly empty cells: a few occupied ones, as in pass 1
+    g = np.zeros((1, n, n))
+    idx = rng.integers(0, n, size=(2, n * 4))
+    g[0, idx[0], idx[1]] = fill + rng.random(idx.shape[1])
+    return g
+
+
+@pmp("npix_super", [0, 1])
+def test_write_group_counts_matches_in_memory_reduction(tmp_path, npix_super):
+    rng = np.random.default_rng(0)
+    store = str(tmp_path / "s.scratch")
+    grids = {f"band{b:04d}_time0000/p{i}": _sparse_grid(rng, 64, b + 1) for b in range(2) for i in range(3)}
+    for path, g in grids.items():
+        _write_piece(store, path, g)
+    sources = {(b,): [p for p in grids if p.startswith(f"band{b:04d}")] for b in range(2)}
+
+    out = write_group_counts(store, sources, filter_level=5.0, npix_super=npix_super)
+
+    assert set(out) == set(sources)
+    dt = xr.open_datatree(store, engine="zarr", chunks=None, consolidated=False)
+    for key, paths in sources.items():
+        ref = box_sum_counts(filter_extreme_counts(sum(grids[p] for p in paths), level=5.0), npix_super)
+        np.testing.assert_array_equal(dt[out[key]].ds.COUNTS.values, ref)
+
+
+def test_write_group_counts_streams(tmp_path):
+    """The driver holds O(1) counts grids, not one per piece (#339).
+
+    xarray's default cache=True memoises every .values read on an open tree,
+    which kept every piece's grid alive for the rest of the run.
+    """
+    rng = np.random.default_rng(1)
+    store = str(tmp_path / "s.scratch")
+    n, npiece = 512, 12
+    paths = [f"band0000_time{t:04d}/p0" for t in range(npiece)]
+    for p in paths:
+        _write_piece(store, p, _sparse_grid(rng, n, 1.0))
+    grid_bytes = n * n * 8
+
+    tracemalloc.start()
+    write_group_counts(store, {(0,): paths}, filter_level=5.0, npix_super=0)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 4 * grid_bytes, f"peak {peak / grid_bytes:.1f} grids for {npiece} pieces"

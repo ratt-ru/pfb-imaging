@@ -42,7 +42,7 @@ from pfb_imaging.utils.misc import (
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
-from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
+from pfb_imaging.utils.weighting import write_group_counts
 
 warnings.filterwarnings("ignore", category=IrregularGridWarning)
 warnings.filterwarnings("ignore", category=MissingMetadataWarning)
@@ -178,7 +178,7 @@ def _grid_image_body(
     dt_store,
     src_names,
     out_name,
-    counts,
+    counts_group,
     nx,
     ny,
     nx_psf,
@@ -189,8 +189,6 @@ def _grid_image_body(
     robustness=None,
     nx_pad=None,
     ny_pad=None,
-    filter_counts_level=5.0,
-    npix_super=0,
     nthreads=1,
     epsilon=1e-5,
     do_wgridding=True,
@@ -208,7 +206,9 @@ def _grid_image_body(
     light summary (``timeid``/``psf``/``wsum``) for MFS beam-parameter fitting.
     """
     resize_thread_pool(nthreads)
-    dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None)
+    # cache=False: the tree outlives the task in a reference cycle until the
+    # next gc, and a cached COUNTS read would ride along with it (#339)
+    dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
     groups = {}
     for sn in src_names:
         for _, child in dt[sn].children.items():
@@ -218,10 +218,9 @@ def _grid_image_body(
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
 
-    # filter/box the reduced counts once per image (grid_partition copies before use)
-    if robustness is not None:
-        counts = filter_extreme_counts(counts.copy(), level=filter_counts_level)
-        counts = box_sum_counts(counts, npix_super)
+    # the applied (filtered, box-summed) group counts, written once by the driver
+    # (write_group_counts); grid_partition copies before use
+    counts = dt[counts_group].ds.COUNTS.values if robustness is not None else None
 
     first = next(iter(groups.values()))[0]
     corr = first.corr.values
@@ -1012,29 +1011,23 @@ def imager(
     scratch_dt = xr.open_datatree(scratch_url, engine="zarr", chunks=None)
     # per-scratch-node summary: (bandid, timeid, ra, dec, time_out)
     node_info = {}
-    # one counts grid per applied-weighting group -- accumulating at the
-    # grouping granularity (rather than per (band,time) node) bounds driver
-    # memory at ngroups grids instead of nband*ntime
-    group_counts = {}
+    # applied-weighting group -> its pieces' node paths; the counts themselves
+    # are streamed by write_group_counts below, never held per piece
+    counts_sources = {}
     ncorr = None
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
-        pieces = [child.ds for _, child in scratch_dt[name].children.items()]
+        children = scratch_dt[name].children
+        pieces = [child.ds for child in children.values()]
         if not pieces:
             continue
         ncorr = pieces[0].corr.size
         bandid = int(pieces[0].attrs["bandid"])
         timeid = int(pieces[0].attrs["timeid"])
-        # natural weighting (robustness None) never touches counts; skip the reads
+        # natural weighting (robustness None) never touches counts
         if robustness is not None:
-            key = counts_key(bandid, timeid)
-            for ds in pieces:
-                c = ds.COUNTS.values
-                if key in group_counts:
-                    group_counts[key] += c
-                else:
-                    group_counts[key] = c.copy()
+            counts_sources.setdefault(counts_key(bandid, timeid), []).extend(f"{name}/{c}" for c in children)
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1082,7 +1075,17 @@ def imager(
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
-    log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")
+
+    # one applied counts grid per weighting group, streamed into the scratch
+    # store; pass-2 workers read their group's grid from there (#339)
+    counts_groups = {}
+    if robustness is not None:
+        counts_groups = write_group_counts(
+            scratch_url, counts_sources, filter_level=filter_counts_level, npix_super=npix_super
+        )
+        # the counts groups were written after pass 1's consolidation
+        zarr.consolidate_metadata(scratch_url)
+    log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(counts_groups)} group(s)")
 
     # ---- initialise the .dt store root ----
     dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
@@ -1126,7 +1129,7 @@ def imager(
             out_name,
             # None under natural weighting (robustness None); grid_partition
             # ignores counts in that case
-            group_counts.get(counts_key(meta["bandid"], meta["timeid"])),
+            counts_groups.get(counts_key(meta["bandid"], meta["timeid"])),
             nx,
             ny,
             nx_psf,
@@ -1137,8 +1140,6 @@ def imager(
             robustness=robustness,
             nx_pad=nx_pad,
             ny_pad=ny_pad,
-            filter_counts_level=filter_counts_level,
-            npix_super=npix_super,
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,

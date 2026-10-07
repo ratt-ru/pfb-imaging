@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: 0643c05
+last_verified_commit: 02cd842
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -277,7 +277,19 @@ Check before killing anything.
   MJD→unix shift twice put FITS `DATE-OBS` in 1909 — ERFA "dubious year"
   warnings are the symptom, `utils/fits.set_wcs(time_is_unix=...)` is the
   switch.
-- Driver-side counts are accumulated **at the applied `weight_grouping`
-  granularity** (`counts_key` in `core/imager`), never per `(band,time)`
-  node, bounding driver memory at `ngroups` grids; natural weighting
-  (`robustness=None`) skips counts entirely.
+- Driver-side counts are reduced **at the applied `weight_grouping`
+  granularity** (`counts_key` in `core/imager`), one group at a time by
+  `utils/weighting.write_group_counts`, which holds one accumulator and one
+  piece grid and writes each group's grid to `.scratch` for pass 2 to read;
+  natural weighting (`robustness=None`) skips counts entirely. **Open a zarr
+  tree whose arrays you read with `.values` using `cache=False`**: xarray's
+  default memoises every such read on the open tree. The driver's counts loop
+  did this and held every piece's grid to the end of the run (7.62 GiB for 24
+  pieces at 3840²; driver peak 12.40 -> 3.71 GiB once fixed, #339), and a
+  pass-2 worker's tree, which survives into the next task in a reference
+  cycle, would carry its counts grid along. Explicit `.load()` is unaffected.
+- **Large arrays never travel as Ray task arguments or return values** in
+  the imager: each is a copy in the object store, the pages show up as `shm`
+  in every process that touched them, and arguments are copied per call even
+  when every task gets the same array. Write them to the store and pass the
+  path (counts: #339; the band workers' inputs: D10).
