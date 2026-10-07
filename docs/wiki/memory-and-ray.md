@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: 02cd842
+last_verified_commit: 978e5c4
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -292,4 +292,8 @@ Check before killing anything.
   the imager: each is a copy in the object store, the pages show up as `shm`
   in every process that touched them, and arguments are copied per call even
   when every task gets the same array. Write them to the store and pass the
-  path (counts: #339; the band workers' inputs: D10).
+  path (counts: #339; the band workers' inputs: D10). Results likewise: pass-2
+  tasks return only scalars and telemetry, and the driver reads the band PSFs
+  back from the `.dt` for the MFS beam fit. With both gone, a pass-2 worker's
+  post-gc `shm` stays at zero and its RSS is flat across bands (3840², 4 bands,
+  one worker: lifetime peak 6.21 -> 4.31 GB).

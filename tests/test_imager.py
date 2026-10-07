@@ -1238,3 +1238,57 @@ def test_real_group_beams_are_complex_only_for_the_cross_group():
     assert ratios["MPMP"] == 0.0, "MeerKAT+-MeerKAT+ beam should be real"
     # the cross group has no single Jones matrix, so its Stokes beam is complex
     assert 0.0 < ratios["MPM"] < 0.1, f"unexpected cross-group |Im|/|Re|: {ratios['MPM']}"
+
+
+@pytest.mark.slow
+def test_pass2_returns_no_images_and_mfs_beam_matches_dt(ms_name, tmp_path, monkeypatch):
+    """Pass-2 results stay light, and the MFS beam is fitted to the .dt's PSFs (#339).
+
+    Image-sized task returns sit in the Ray object store and are counted in
+    every process that touched them, so the driver reads band PSFs from the
+    .dt instead. The FITS assertion pins the MFS beam to that source.
+    """
+    import ray
+    from astropy.io import fits as afits
+
+    import pfb_imaging.core.imager as core_imager
+    from pfb_imaging.utils.misc import fitcleanbeam
+
+    results = []
+    real_get = ray.get
+
+    def spy(refs, *args, **kwargs):
+        out = real_get(refs, *args, **kwargs)
+        if isinstance(out, dict) and "timeid" in out:
+            results.append(out)
+        return out
+
+    monkeypatch.setattr(core_imager.ray, "get", spy)
+    outname = str(tmp_path / "img")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=2,
+        product="I",
+        field_of_view=1.0,
+        robustness=0.0,
+        fits_mfs=True,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+
+    assert results, "spy saw no pass-2 results"
+    for res in results:
+        big = [k for k, v in res.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
+        assert not big, f"pass-2 result carries image arrays {big}"
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    bands = [b for b in dt.children if b.startswith("band")]
+    psf = sum(dt[b].ds.PSF.values for b in bands)
+    wsum = sum(dt[b].ds.WSUM.values for b in bands)
+    want = fitcleanbeam(psf / wsum[:, None, None], yx_order=True)[0]
+    cell_deg = np.rad2deg(dt.attrs["cell_rad"])
+    (mfs,) = glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
+    hdr = afits.getheader(mfs)
+    assert_allclose([hdr["BMAJ"], hdr["BMIN"]], want[:2] * cell_deg, rtol=1e-6)

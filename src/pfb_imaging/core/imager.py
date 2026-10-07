@@ -203,7 +203,8 @@ def _grid_image_body(
     baseline_group)``, concatenates scans along ``row``, grids each partition with
     :func:`grid_partition`, sums the image-space products into the band node, and
     writes the band node + ``part####`` children into the ``.dt`` store. Returns a
-    light summary (``timeid``/``psf``/``wsum``) for MFS beam-parameter fitting.
+    light summary (``timeid``/``wsum``/telemetry); the band PSF goes to the ``.dt``
+    only -- returning it would put an image per task in the Ray object store.
     """
     resize_thread_pool(nthreads)
     # cache=False: the tree outlives the task in a reference cycle until the
@@ -399,7 +400,6 @@ def _grid_image_body(
     mem = task_memory()
     return {
         "timeid": meta["timeid"],
-        "psf": psf_sum,
         "wsum": wsum_sum,
         "mem": mem,
         "beam_imre_ratio": beam_imre_max,
@@ -1014,7 +1014,6 @@ def imager(
     # applied-weighting group -> its pieces' node paths; the counts themselves
     # are streamed by write_group_counts below, never held per piece
     counts_sources = {}
-    ncorr = None
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
@@ -1022,7 +1021,6 @@ def imager(
         pieces = [child.ds for child in children.values()]
         if not pieces:
             continue
-        ncorr = pieces[0].corr.size
         bandid = int(pieces[0].attrs["bandid"])
         timeid = int(pieces[0].attrs["timeid"])
         # natural weighting (robustness None) never touches counts
@@ -1150,8 +1148,6 @@ def imager(
         )
         tasks.append(fut)
 
-    psf_mfs = {}
-    wsum_mfs = {}
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1161,13 +1157,6 @@ def imager(
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
-            tid = res["timeid"]
-            if res["psf"] is not None:
-                # accumulate at the precision the workers gridded in (see _grid_image)
-                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf), dtype=res["psf"].dtype))
-                psf_mfs[tid] += res["psf"]
-                wsum_mfs.setdefault(tid, np.zeros(ncorr, dtype=res["wsum"].dtype))
-                wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
@@ -1190,10 +1179,32 @@ def imager(
     # workers have finished (they wrote with consolidated=False; see _grid_image)
     zarr.consolidate_metadata(dt_url)
 
-    # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
+    # MFS beam parameters per time chunk, from the wsum-normalised sum of the band
+    # PSFs. Read back from the .dt one band at a time rather than returned by the
+    # pass-2 tasks, which put an image per task in the object store (#339);
+    # summed at the precision the workers gridded in (see _grid_image).
+    psf_mfs = {}
+    wsum_mfs = {}
+    if psf:
+        dt_out = xr.open_datatree(dt_url, engine="zarr", chunks=None, cache=False)
+        try:
+            for out_name, _, meta in work:
+                node = dt_out[out_name].ds
+                tid = meta["timeid"]
+                band_psf = node.PSF.values
+                if tid in psf_mfs:
+                    psf_mfs[tid] += band_psf
+                    wsum_mfs[tid] += node.WSUM.values
+                else:
+                    psf_mfs[tid] = band_psf
+                    wsum_mfs[tid] = node.WSUM.values
+                del band_psf, node
+        finally:
+            dt_out.close()
     psfparsn = {}
     for tid in psf_mfs:
         psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
+    del psf_mfs
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:
