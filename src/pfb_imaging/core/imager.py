@@ -1,6 +1,5 @@
 import gc
 import os
-import resource
 import time
 import warnings
 from pathlib import Path
@@ -30,6 +29,7 @@ from pfb_imaging.utils.baselines import (
     parse_antenna_groups,
 )
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
+from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
 from pfb_imaging.utils.misc import (
     check_gridder_epsilon,
     fitcleanbeam,
@@ -167,7 +167,13 @@ def _concat_pieces(plist):
 
 
 @ray.remote
-def _grid_image(
+def _grid_image(*args, **kwargs):
+    """Ray entry point for :func:`_grid_image_body` (opt-in memray tracking)."""
+    with memray_task("grid_image"):
+        return _grid_image_body(*args, **kwargs)
+
+
+def _grid_image_body(
     scratch_store,
     dt_store,
     src_names,
@@ -391,11 +397,7 @@ def _grid_image(
     gc.collect()
 
     # post-gc memory telemetry (see safe_stokes_vis for interpretation)
-    mem = {
-        "pid": os.getpid(),
-        "rss_gb": psutil.Process().memory_info().rss / 2**30,
-        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-    }
+    mem = task_memory()
     return {
         "timeid": meta["timeid"],
         "psf": psf_sum,
@@ -618,7 +620,7 @@ def imager(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": env_vars,
+            "env_vars": {**env_vars, **memray_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
@@ -966,8 +968,7 @@ def imager(
                 # retention below Python (C-level caches/arenas); peak is the
                 # worker's lifetime high-water mark
                 print(
-                    f"Completed: {ncomplete} / {nds} "
-                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]",
                     end="\n",
                     flush=True,
                 )
@@ -1170,8 +1171,7 @@ def imager(
             if progressbar:
                 mem = res["mem"]
                 print(
-                    f"Gridded: {ncomplete} / {nds} "
-                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]",
                     end="\n",
                     flush=True,
                 )

@@ -1,11 +1,8 @@
 import gc
-import os
-import resource
 from datetime import datetime, timezone
 
 import numexpr as ne
 import numpy as np
-import psutil
 import ray
 import xarray as xr
 from africanus.averaging import bda, time_and_channel
@@ -20,6 +17,7 @@ from scipy.constants import c as lightspeed
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.memprof import memray_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
 
@@ -60,21 +58,17 @@ def safe_stokes_vis(*args, **kwargs):
     # each completed task would otherwise leave its fully loaded node behind
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
-    try:
-        ret = stokes_vis(*args, **kwargs)
-    finally:
-        _release_ms_caches()
-        gc.collect()
-    # Per-task memory telemetry, measured *after* the collect: a post-gc RSS
-    # that ratchets up across a worker's sequential tasks indicates retention
-    # below Python (arcae/casacore caches, allocator arenas), which gc cannot
-    # touch. ru_maxrss is the process lifetime high-water mark (kB on Linux).
-    mem = {
-        "pid": os.getpid(),
-        "rss_gb": psutil.Process().memory_info().rss / 2**30,
-        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-    }
-    return ret, mem
+    with memray_task("stokes_vis"):
+        try:
+            ret = stokes_vis(*args, **kwargs)
+        finally:
+            _release_ms_caches()
+            gc.collect()
+    # Per-task memory telemetry, measured *after* the collect: a post-gc anon
+    # RSS that ratchets up across a worker's sequential tasks indicates
+    # retention below Python (arcae/casacore caches, allocator arenas), which
+    # gc cannot touch; shm growth is Ray object-store pages (see memprof).
+    return ret, task_memory()
 
 
 def real_beam_maps(maps):

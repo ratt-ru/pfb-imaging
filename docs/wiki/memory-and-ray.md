@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-25T12:30:00Z
-last_verified_commit: 15b5a9e
+timestamp: 2026-10-07T12:00:00Z
+last_verified_commit: 0643c05
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -96,21 +96,38 @@ Not yet reported upstream.
 
 ## The diagnostic that separates the layers
 
-Pass-1/2 tasks (and the deconv band workers via `get_mem`) return
-`{pid, rss_gb, peak_gb}` measured **after** the task's `gc.collect()`. The
-imager prints them in its progress lines; the deconv driver logs them
-per-worker once per major cycle at `verbosity > 1`:
+Pass-1/2 tasks return `utils/memprof.task_memory()` -- `{pid, rss_gb,
+anon_gb, shmem_gb, peak_gb}` measured **after** the task's `gc.collect()` --
+and the imager prints it in its progress lines. (The deconv band workers'
+`get_mem` still returns the older `{pid, rss_gb, peak_gb}`; the deconv driver
+logs it per-worker once per major cycle at `verbosity > 1`.)
 
-    Completed: 5 / 80 [pid 615627 rss 3.12 GB peak 11.40 GB]
+    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]
+
+`anon` is `RssAnon` (the process's private heap); `shm` is `RssShmem`, which
+for a Ray worker is **Ray object-store pages** it has touched: every large
+task argument it read zero-copy and every large value it returned. Those
+pages are shared with the driver and the store, stay counted against the
+worker after the objects die, and are not retention in the worker -- so the
+two must be read separately. `peak` is `ru_maxrss` and counts both.
 
 Reading it:
 
-- **post-gc `rss` flat per pid, `peak` high** → footprint is per-task
+- **post-gc `anon` flat per pid, `peak` high** → footprint is per-task
   transients (look at conversion copies, concat doubling, counts grids).
-- **post-gc `rss` ratcheting linearly per pid** → retention *below Python*
+- **post-gc `anon` ratcheting linearly per pid** → retention *below Python*
   (C-level caches, allocator arenas); more gc changes nothing — find the
   cache holding strong references.
+- **post-gc `shm` ratcheting per pid** → large arrays travelling through the
+  object store as task arguments or return values. The fix is to stop
+  shipping them (read/write them through the zarr stores, as D10 does for
+  the band workers), not to collect harder. #339 was this: +0.533 GiB/task
+  at 3840², exactly one uv-counts argument plus one returned PSF.
 - **OOMs late in a run** → accumulation across tasks, not per-task size.
+
+To see *what* is allocated, set `PFB_MEMRAY_DIR` (memray capture per Ray
+task) and summarise with `scripts/memray_report.py`, whose docstring also
+covers profiling the driver with `memray run`.
 
 Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
