@@ -4,7 +4,7 @@ title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
 timestamp: 2026-10-07T12:00:00Z
-last_verified_commit: 964f261
+last_verified_commit: 836832f
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -149,6 +149,31 @@ when tasks span different partitions (as on real data).
 | + layer 3 eviction | 2:24 | **87 GB** | ~0 |
 
 Legacy `init`+`grid` reference on the same data: 5:22, 36 GB peak.
+
+### #339 (2026-10): image-size scaling
+
+A different axis from the table above: memory that scales with the *image*
+(padded uv grids, PSFs) and with the number of bands per worker, not with the
+data. Local, `tests/data/test_ascii_1h60.0s.MS`, 3840² (PSF 5376², padded grid
+6528²), 4 bands, Stokes I, double, robust -0.5, `--nworkers 1`, `nthreads=4`.
+Worker figures are the post-gc progress-line telemetry and `ru_maxrss`; heap
+peaks are memray (`PFB_MEMRAY_DIR`, `scripts/memray_report.py`).
+
+| change | worker post-gc rss, bands 1->4 | worker peak after 4 bands | pass-2 heap peak | pass-1 heap peak | driver peak |
+|---|---|---|---|---|---|
+| before | 2.75 -> 4.49 GB (shm +0.533/band) | 6.21 GB | 3.35 GiB | 2.05 GiB | 12.40 GiB (24 pieces) |
+| counts via `.scratch`, `cache=False` | 2.76 -> 3.41 GB (shm +0.215/band) | 5.24 GB | 3.35 | 2.05 | 3.71 |
+| MFS PSFs read from the `.dt` | 2.46 -> 2.59 GB (shm 0) | 4.31 GB | 3.35 | 2.05 | 2.64 |
+| bounded-window `fitcleanbeam` | 2.64 -> 2.78 GB | 3.36 GB | 2.21 | 2.05 | 1.60 |
+| single-grid `_compute_counts` | (pass 1 only) | pass-1 peak 2.74 -> 1.90 GB | 2.21 | 1.09 | -- |
+
+Imaging weights stayed bitwise identical throughout; DIRTY/PSF/PSFPARSN moved
+by <= 2.2e-13 relative, which is the run-to-run noise of ducc's threaded
+summation. Not yet re-measured at cluster scale. What is left at the pass-2
+peak is essential per-image state (counts grid, PSF + PSFHAT, the band sums)
+plus zarr encode copies of whatever `to_zarr` is writing (~2.7x the arrays);
+for `part####` writes that includes VIS/WEIGHT, so on real data it scales
+with the visibilities -- the next thing to measure.
 
 ## The deconv band workers
 
