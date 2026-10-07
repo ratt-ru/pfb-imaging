@@ -742,7 +742,9 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
     transpose of a 3-axis cube, which always raises -- inside a bare
     `except Exception` that logged at INFO. So **no run of deconv had ever
     written a .mds**, and the centre bug below was unreachable. The guard
-    against that returning is simply that this test opens the file.
+    against that returning is simply that this test opens the file: get the
+    inbound transpose wrong and model_to_ds raises, nothing is written, and
+    this fails on FileNotFoundError.
 
     `radec` in the .mds is the *tangent point*; `center_x`/`center_y` are what
     carry the offset of the image centre from it (D21, D37). deconv used the
@@ -786,11 +788,67 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
     # the tangent point is NOT moved: the offset lives in center_x/center_y
     assert float(mds.ra) == 0.0 and float(mds.dec) == 0.0
 
-    # the re-rendered cube is handed back to the next major cycle, so it must
-    # come back in the imager's (nband, ny, nx) order -- the old `.T` reversed
-    # all three axes.
     dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
     bands = sorted(n for n in dt.children if n.startswith("band"))
     for n in bands:
         assert dt[n].ds.MODEL.shape == (1, 32, 32)
         assert np.isfinite(dt[n].ds.MODEL.values).all()
+
+
+@pytest.mark.slow
+def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
+    """The .mds fit is an output. Its re-rendered cube must not reach the loop.
+
+    `solver.backward()` returns `solver._model` itself, so assigning
+    model_to_ds's return value to `model` -- which is what the original,
+    never-executing code did -- would detach the two: the residual would be
+    computed from the fitted cube while the next cycle's `forward()` builds
+    xtilde from the raw one, and the solver's own model, the reweighting and
+    the stored MODEL would disagree. Beyond the inconsistency, the fit is a
+    lossy Legendre series over frequency, so feeding it back makes the
+    iteration's fixed point depend on the component-model parametrisation.
+
+    Two major cycles, because a one-cycle run cannot observe anything about
+    what the next cycle consumes. The stand-in returns a cube that is
+    impossible to confuse with a real model, so any path that feeds it back
+    shows up immediately.
+    """
+    import pfb_imaging.core.deconv as deconv_mod
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    sentinel = 1.0e6
+    calls = []
+
+    def fake_model_to_ds(*args, **kwargs):
+        calls.append(kwargs.get("nbasisf"))
+        model = args[3]
+        return np.full_like(np.asarray(model, dtype=np.float64), sentinel)
+
+    monkeypatch.setattr(deconv_mod, "model_to_ds", fake_model_to_ds)
+
+    rng = np.random.default_rng(98)
+    output_filename = str(tmp_path / "nofeedback")
+    _write_synthetic_dt(f"{output_filename}_I.dt", 32, 32, 64, 1, rng)
+
+    deconv_core(
+        output_filename,
+        product="I",
+        niter=2,
+        nthreads=1,
+        bases=["self", "db1"],
+        nlevels=2,
+        fits_mfs=False,
+        fits_cubes=False,
+        log_directory=str(tmp_path),
+    )
+
+    assert len(calls) == 2, f"expected one model fit per major cycle, got {len(calls)}"
+
+    dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
+    for n in sorted(n for n in dt.children if n.startswith("band")):
+        ds = dt[n].ds
+        for var in ("MODEL", "RESIDUAL", "UPDATE"):
+            peak = np.abs(ds[var].values).max()
+            assert peak < sentinel / 100.0, (
+                f"{n}/{var} peaks at {peak:.3e}: the fitted cube reached the deconvolution loop"
+            )

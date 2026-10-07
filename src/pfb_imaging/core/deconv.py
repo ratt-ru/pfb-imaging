@@ -435,11 +435,23 @@ def deconv(
             # faithfully turns into sources displaced by (l0, m0) (#326).
             flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
             # the .mds stays x-major (degrid/model2comps convention; see the
-            # pfb-model-spec migration in #277) -- model_to_ds re-evaluates the
-            # fit at every band internally, the transpose stays in pfb-imaging
-            # until we formally update the spec version. `model` is
-            # (nband, ny, nx) here and the spec wants (nband, nx, ny), both ways.
-            model = model_to_ds(
+            # pfb-model-spec migration in #277) -- the transpose stays in
+            # pfb-imaging until we formally update the spec version. `model` is
+            # (nband, ny, nx) here and the spec wants (nband, nx, ny).
+            #
+            # The return value -- model_to_ds re-renders the fit at every band
+            # -- is DELIBERATELY DISCARDED. The fit is a lossy representation
+            # (a Legendre series over frequency with nbasisf terms), so feeding
+            # it back would make the iteration's fixed point depend on the
+            # component-model parametrisation, which is an algorithmic choice
+            # and not something to acquire as a side effect of writing a file.
+            # Assigning it to `model` here cannot work in any case:
+            # `solver.backward()` returns `solver._model` itself, so rebinding
+            # this name leaves the solver's own model at the pre-fit array --
+            # the residual below would be computed from the fitted cube while
+            # the next cycle's `forward()` builds xtilde from the raw one.
+            # Pinned by test_the_model_fit_does_not_re_enter_the_solver.
+            model_to_ds(
                 time_out,
                 freq_out,
                 fsel,
@@ -458,7 +470,7 @@ def deconv(
                 product,
                 pfb_version,
                 nbasisf=nbasisf,
-            ).transpose(0, 2, 1)
+            )
         except Exception as e:
             # Not fatal: the deconvolution itself is unaffected and the band
             # products are already written. It IS worth shouting about, because

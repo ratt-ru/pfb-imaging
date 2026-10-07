@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-07T09:00:00Z
-last_verified_commit: 61e5ba0
+timestamp: 2026-10-07T11:00:00Z
+last_verified_commit: 8643bf6
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1514,34 +1514,47 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/core/imager.py`, `src/pfb_imaging/core/hci.py` (the guards);
   `tests/test_imager_precision.py`; issue #340.
 
-### D49 — `deconv`'s `.mds` write was dead code, and reviving it feeds the fit back into the loop
+### D49 — `deconv`'s `.mds` write was dead code; the fit is an output, not an input
 
 - **Context:** `core/deconv.py` writes the component model each major cycle with
   `model_to_ds`, whose input and output are both x-major `(nband, nx, ny)` while
   pfb-imaging's cube is `(nband, ny, nx)`. The call transposed in with
   `model.transpose(0, 1, 3, 2)` — a four-axis transpose of a three-axis array,
-  which raises unconditionally — and out with `.T`, which reverses all three
-  axes rather than swapping the last two. The whole block sat inside a bare
-  `except Exception` logging at INFO.
-- **Decision:** fix both transposes to `(0, 2, 1)`, pass the real `(l0, m0)` to
-  `wgridder_conventions` (#326), and log the swallowed exception at **warning**
-  naming the consequence ("no .mds written this cycle").
+  which raises unconditionally — and assigned the result back to `model` through
+  a `.T` that reverses all three axes rather than swapping the last two. The
+  whole block sat inside a bare `except Exception` logging at INFO, so **no run
+  of `pfb deconv` had ever written a `.mds`**.
+- **Decision:** fix the inbound transpose to `(0, 2, 1)`, pass the real
+  `(l0, m0)` to `wgridder_conventions` (#326), log the swallowed exception at
+  **warning** naming the consequence ("no .mds written this cycle"), and
+  **discard `model_to_ds`'s return value**: the fit is an output of the cycle,
+  never an input to the next one.
 - **Rationale:** the symptom of the raise was a *missing file*, which no test
   asserted and no log line made conspicuous, so it survived the pfb-model-spec
   migration (#277) unnoticed. #326 was reported as a wrong `center_x`; it was
-  really a wrong `center_x` in code that never ran.
-- **Consequences:** **this changes deconvolution results.** `model` is now
-  reassigned from `model_to_ds`'s re-rendered cube, so every major cycle after
-  the first starts from the smooth component-model representation of the
-  backward solution rather than the raw solution — which is what the original
-  `model = model_to_ds(...).T` intended, and was silently not happening. The
-  ground-truth flux recovery test still passes at its ±20% box-flux bound, and
-  the whole suite is green, but any numbers recorded from a `deconv` run before
-  this commit were produced on the other path. `pfb degrid` and
-  `pfbspec model2comps` consumers get a `.mds` at all for the first time.
+  really a wrong `center_x` in code that never ran. Reviving the assignment is
+  not a neutral act, for two separate reasons. First it cannot work:
+  `PFBSolver.backward()` returns `self._model` *itself*, so rebinding the
+  driver's `model` name leaves the solver's own model at the pre-fit array — the
+  residual, the stored `MODEL`, the `eps` convergence metric and `best_model`
+  would all come off the fitted cube while the next cycle's `forward()` builds
+  `xtilde`, and `reg.update_weights`, off the raw one. Second, even done
+  correctly (an in-place mutation or a solver setter) it changes the algorithm:
+  the fit is a lossy Legendre series over frequency with `nbasisf` terms, so
+  feeding it back makes the iteration's fixed point depend on the component-model
+  parametrisation. That is a deliberate choice to make on its own evidence, not
+  one to acquire as a side effect of fixing a transpose.
+- **Consequences:** deconvolution results are **unchanged** — the loop sees
+  exactly the model it saw before, and the only new behaviour is that the file
+  exists. `pfb degrid` and `pfbspec model2comps` consumers get a `.mds` at all
+  for the first time, carrying the correct grid centre. The open question left
+  on the table is whether the stored `MODEL` *should* be the re-rendered fit, so
+  that what `deconv` reports matches what `degrid` will predict from the `.mds`;
+  that is the case for feeding it back, and it needs its own measurement.
 - **Source:** `src/pfb_imaging/core/deconv.py` (the `model_to_ds` block);
-  `tests/test_deconv.py::test_mds_is_written_with_the_image_centre_offset`;
-  issues #326, #277.
+  `src/pfb_imaging/deconv/pfb.py` (`backward` returning `self._model`);
+  `tests/test_deconv.py::test_mds_is_written_with_the_image_centre_offset`,
+  `::test_the_model_fit_does_not_re_enter_the_solver`; issues #326, #277.
 
 ## Known debt
 
