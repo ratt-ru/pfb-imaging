@@ -94,7 +94,7 @@ def test_deconv_groundtruth(sky_truth, gt_deconv_dt):
     np.testing.assert_allclose(img, ref, rtol=0, atol=1e-5 * np.abs(ref).max())
 
 
-def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
+def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1), l0=0.0, m0=0.0):
     """Build a minimal synthetic 2-band .dt store matching what core/deconv.py reads.
 
     No MS / imager pipeline involved -- just the native DataTree groups the
@@ -102,6 +102,8 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
     ``parts_per_band`` sets the number of ``part####`` children per band --
     bands legitimately carry different partition counts when a field's chunk
     is fully flagged (stokes_vis writes no scratch piece for it).
+    ``l0``/``m0`` are the in-plane offset of the image centre from the tangent
+    point, as a ``--target`` run writes them onto both the band and its parts.
     """
     nx_psf, ny_psf = 2 * nx, 2 * ny
     xo2 = nx + 1
@@ -129,17 +131,19 @@ def _write_synthetic_dt(store, nx, ny, nrow, nchan, rng, parts_per_band=(1, 1)):
                 "dec": 0.0,
                 "cell_rad": 2.5e-6,
                 "niters": 0,
+                "l0": l0,
+                "m0": m0,
             },
         )
         band_ds.to_zarr(store, group=bandname, mode="a")
 
         for pid in range(parts_per_band[b]):
             uvw = rng.uniform(-50.0, 50.0, size=(nrow, 3))
-            part_ds = _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, parts_per_band[b])
+            part_ds = _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, parts_per_band[b], l0=l0, m0=m0)
             part_ds.to_zarr(store, group=f"{bandname}/part{pid:04d}", mode="a")
 
 
-def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts):
+def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts, l0=0.0, m0=0.0):
     return xr.Dataset(
         data_vars={
             # delta-function PSF -> Fourier-domain magnitude is all ones
@@ -156,8 +160,8 @@ def _make_part(uvw, nrow, nchan, nx, ny, ny_psf, xo2, freq, nparts):
         },
         attrs={
             "wsum": [1.0 / nparts],
-            "l0": 0.0,
-            "m0": 0.0,
+            "l0": l0,
+            "m0": m0,
             "msid": 0,
             "field_name": "f0",
             "spw_name": "s0",
@@ -727,3 +731,124 @@ def test_mop_uses_the_data_gradient_not_the_eta_corrected_one(tmp_path):
         assert not np.allclose(ds.MODEL_MOPPED.values, ds.MODEL.values), "mop was a no-op"
 
     np.testing.assert_allclose(mopped[False], mopped[True], rtol=0, atol=0)
+
+
+@pytest.mark.slow
+def test_mds_is_written_with_the_image_centre_offset(tmp_path):
+    """deconv writes a .mds, and it carries the grid's in-plane offset (#326).
+
+    Two bugs in one block, the second hiding the first. `model` is
+    (nband, ny, nx) and the write did `model.transpose(0, 1, 3, 2)` -- a 4-axis
+    transpose of a 3-axis cube, which always raises -- inside a bare
+    `except Exception` that logged at INFO. So **no run of deconv had ever
+    written a .mds**, and the centre bug below was unreachable. The guard
+    against that returning is simply that this test opens the file: get the
+    inbound transpose wrong and model_to_ds raises, nothing is written, and
+    this fails on FileNotFoundError.
+
+    `radec` in the .mds is the *tangent point*; `center_x`/`center_y` are what
+    carry the offset of the image centre from it (D21, D37). deconv used the
+    real (l0, m0) for every FITS header it wrote but passed (0.0, 0.0) to
+    `wgridder_conventions` when writing the component model, so a `--target`
+    run produced an .mds claiming a grid centred on the tangent point while its
+    pixels were centred on the target. A consumer does what it is told: the
+    legacy degrid reads center_x/center_y straight into `dirty2vis`, so every
+    predicted source came out displaced by (l0, m0) -- silently, because the
+    visibilities are perfectly well-formed.
+    """
+    import xarray as xr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+    from pfb_imaging.operators.gridder import wgridder_conventions
+
+    l0, m0 = 1.5e-4, -2.5e-4
+
+    rng = np.random.default_rng(97)
+    output_filename = str(tmp_path / "offset")
+    _write_synthetic_dt(f"{output_filename}_I.dt", 32, 32, 64, 1, rng, l0=l0, m0=m0)
+
+    deconv_core(
+        output_filename,
+        product="I",
+        niter=1,
+        nthreads=1,
+        bases=["self", "db1"],
+        nlevels=2,
+        fits_mfs=False,
+        fits_cubes=False,
+        log_directory=str(tmp_path),
+    )
+
+    mds = xr.open_zarr(f"{output_filename}_I_main.mds", chunks=None)
+    _, _, _, x0, y0 = wgridder_conventions(l0, m0)
+    assert float(mds.center_x) == pytest.approx(x0)
+    assert float(mds.center_y) == pytest.approx(y0)
+    # and the offset is what makes this test non-vacuous
+    assert x0 != 0.0 and y0 != 0.0
+    # the tangent point is NOT moved: the offset lives in center_x/center_y
+    assert float(mds.ra) == 0.0 and float(mds.dec) == 0.0
+
+    dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
+    bands = sorted(n for n in dt.children if n.startswith("band"))
+    for n in bands:
+        assert dt[n].ds.MODEL.shape == (1, 32, 32)
+        assert np.isfinite(dt[n].ds.MODEL.values).all()
+
+
+@pytest.mark.slow
+def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
+    """The .mds fit is an output. Its re-rendered cube must not reach the loop.
+
+    `solver.backward()` returns `solver._model` itself, so assigning
+    model_to_ds's return value to `model` -- which is what the original,
+    never-executing code did -- would detach the two: the residual would be
+    computed from the fitted cube while the next cycle's `forward()` builds
+    xtilde from the raw one, and the solver's own model, the reweighting and
+    the stored MODEL would disagree. Beyond the inconsistency, the fit is a
+    lossy Legendre series over frequency, so feeding it back makes the
+    iteration's fixed point depend on the component-model parametrisation.
+
+    Two major cycles, because a one-cycle run cannot observe anything about
+    what the next cycle consumes. The stand-in returns a cube that is
+    impossible to confuse with a real model, so any path that feeds it back
+    shows up immediately.
+    """
+    import pfb_imaging.core.deconv as deconv_mod
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    sentinel = 1.0e6
+    calls = []
+
+    def fake_model_to_ds(*args, **kwargs):
+        calls.append(kwargs.get("nbasisf"))
+        model = args[3]
+        return np.full_like(np.asarray(model, dtype=np.float64), sentinel)
+
+    monkeypatch.setattr(deconv_mod, "model_to_ds", fake_model_to_ds)
+
+    rng = np.random.default_rng(98)
+    output_filename = str(tmp_path / "nofeedback")
+    _write_synthetic_dt(f"{output_filename}_I.dt", 32, 32, 64, 1, rng)
+
+    deconv_core(
+        output_filename,
+        product="I",
+        niter=2,
+        nthreads=1,
+        bases=["self", "db1"],
+        nlevels=2,
+        fits_mfs=False,
+        fits_cubes=False,
+        log_directory=str(tmp_path),
+    )
+
+    assert len(calls) == 2, f"expected one model fit per major cycle, got {len(calls)}"
+
+    dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
+    for n in sorted(n for n in dt.children if n.startswith("band")):
+        ds = dt[n].ds
+        for var in ("MODEL", "RESIDUAL", "UPDATE"):
+            peak = np.abs(ds[var].values).max()
+            assert peak < sentinel / 100.0, (
+                f"{n}/{var} peaks at {peak:.3e}: the fitted cube reached the deconvolution loop"
+            )

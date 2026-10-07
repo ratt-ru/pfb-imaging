@@ -73,10 +73,13 @@ def check_gridder_epsilon(precision: str, epsilon: float, do_wgridding: bool = T
     floor = GRIDDER_EPSILON_FLOOR[(precision, bool(do_wgridding))]
     if epsilon < floor:
         kernel = "3-D (w-gridding on)" if do_wgridding else "2-D (w-gridding off)"
+        # Only single precision has somewhere to escape to; telling a double
+        # run to "use --precision double" is advice it has already taken.
+        escape = " or use --precision double" if precision == "single" else ""
         raise ValueError(
             f"--epsilon {epsilon:g} is unreachable at --precision {precision}: ducc0's "
             f"wgridder has no {precision}-precision {kernel} kernel below {floor:.6g}. "
-            f"Raise --epsilon to at least {floor:.6g}, or use --precision double."
+            f"Raise --epsilon to at least {floor:.6g}{escape}."
         )
 
 
