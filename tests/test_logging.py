@@ -79,3 +79,16 @@ def test_exception_record_is_kept_off_the_console():
     assert console[0].filter(record)
     setattr(record, pfb_logging.FILE_ONLY, True)
     assert not console[0].filter(record)
+
+
+def test_progress_telemetry_survives_the_console_markup():
+    # the console handler renders Rich markup; without NO_MARKUP the bracketed
+    # telemetry is parsed as a style tag and vanishes from the terminal
+    log = pfb_logging.get_logger("TEST")
+    line = "Gridded: 2 / 4 [pid 7 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]"
+    with pfb_logging.rich_console.capture() as plain:
+        log.info(line)
+    with pfb_logging.rich_console.capture() as verbatim:
+        log.info(line, extra=pfb_logging.NO_MARKUP)
+    assert "[pid 7" not in plain.get()  # the failure mode this guards against
+    assert "[pid 7 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]" in " ".join(verbatim.get().split())

@@ -657,7 +657,8 @@ def degrid(
                     # retention below Python; peak is the lifetime high-water
                     log.info(
                         f"Completed: {ncomplete} / {len(items)} "
-                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]"
+                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                        extra=pfb_logging.NO_MARKUP,
                     )
 
         for item in items:

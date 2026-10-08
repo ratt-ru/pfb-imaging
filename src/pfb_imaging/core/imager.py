@@ -1014,7 +1014,7 @@ def imager(
                 # post-gc rss ratcheting up for a pid across tasks indicates
                 # retention below Python (C-level caches/arenas); peak is the
                 # worker's lifetime high-water mark
-                log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]")
+                log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
 
     ntime = len(set(timeids_out))
     nband_out = len(set(bandids_out))
@@ -1204,7 +1204,7 @@ def imager(
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
-                log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]")
+                log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).

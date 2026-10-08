@@ -27,6 +27,12 @@ install_rich_traceback(console=rich_console, show_locals=False)
 FILE_ONLY = "file_only"
 
 
+# The console handler renders Rich markup, so a message with literal square
+# brackets -- the progress telemetry, `[pid ... peak ... GB]` -- loses them as an
+# unknown style tag. Pass this as `extra=` to print such a message verbatim.
+NO_MARKUP = {"markup": False}
+
+
 def _not_file_only(record: logging.LogRecord) -> bool:
     return not getattr(record, FILE_ONLY, False)
 
