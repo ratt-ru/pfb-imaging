@@ -1,11 +1,8 @@
 import gc
-import os
-import resource
 from datetime import datetime, timezone
 
 import numexpr as ne
 import numpy as np
-import psutil
 import ray
 import xarray as xr
 from africanus.averaging import bda, time_and_channel
@@ -20,36 +17,10 @@ from scipy.constants import c as lightspeed
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.memprof import memray_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
+from pfb_imaging.utils.msv4 import load_detached
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
-
-
-def _release_ms_caches():
-    """Evict xarray-ms's process-level arcae Table cache.
-
-    xarray-ms keeps every opened arcae Table in a class-level Multiton cache
-    with a 300 s *inactivity* TTL. Sequential Ray tasks each open their own
-    partition selection under a distinct cache key, and a busy worker never
-    goes idle long enough for entries to expire, so post-gc worker RSS
-    ratchets by ~the task's read footprint per task (observed +3.5 GB/task
-    to ~39 GB/worker on an 8-band 10-scan run) and the retained tables then
-    sit there for the whole of pass 2. The cache holds strong references --
-    gc cannot reclaim it -- so evict it explicitly between tasks; the next
-    task reconstructs its own tables anyway. Private API by necessity:
-    degrade gracefully if the pattern package changes. A public, per-MS
-    eviction hook is asked for in ratt-ru/xarray-ms#177, which also covers the
-    ~1.5 MB every structure rebuild this forces costs -- delete this helper
-    when that lands.
-    """
-    try:
-        # deferred: private xarray-ms internals; degrade gracefully if absent
-        from rarg_python_patterns.multiton import Multiton
-
-        with Multiton._INSTANCE_LOCK:
-            Multiton._INSTANCE_CACHE.clear()
-            Multiton._EXPIRY_HEAP.clear()
-    except Exception:
-        pass
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -60,21 +31,16 @@ def safe_stokes_vis(*args, **kwargs):
     # each completed task would otherwise leave its fully loaded node behind
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
-    try:
-        ret = stokes_vis(*args, **kwargs)
-    finally:
-        _release_ms_caches()
-        gc.collect()
-    # Per-task memory telemetry, measured *after* the collect: a post-gc RSS
-    # that ratchets up across a worker's sequential tasks indicates retention
-    # below Python (arcae/casacore caches, allocator arenas), which gc cannot
-    # touch. ru_maxrss is the process lifetime high-water mark (kB on Linux).
-    mem = {
-        "pid": os.getpid(),
-        "rss_gb": psutil.Process().memory_info().rss / 2**30,
-        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-    }
-    return ret, mem
+    with memray_task("stokes_vis"):
+        try:
+            ret = stokes_vis(*args, **kwargs)
+        finally:
+            gc.collect()
+    # Per-task memory telemetry, measured *after* the collect: a post-gc anon
+    # RSS that ratchets up across a worker's sequential tasks indicates
+    # retention below Python (arcae/casacore caches, allocator arenas), which
+    # gc cannot touch; shm growth is Ray object-store pages (see memprof).
+    return ret, task_memory()
 
 
 def real_beam_maps(maps):
@@ -196,7 +162,7 @@ def stokes_vis(
         if name in node_dt.ds.data_vars:
             needed.append(name)
     needed = list(dict.fromkeys(needed))
-    ds = node_dt.ds[needed].load()
+    ds = load_detached(node_dt.ds[needed])
     field_name = np.unique(ds.field_name.values).item()
     spw_name = ds.frequency.attrs["spectral_window_name"]
     scan_name = np.unique(ds.scan_name.values).item()
@@ -658,7 +624,6 @@ def stokes_vis(
         cell_rad,
         cell_rad,
         wgt_cf.dtype,
-        ngrid=nthreads,
         usign=1.0 if flip_u else -1.0,
         vsign=1.0 if flip_v else -1.0,
     )

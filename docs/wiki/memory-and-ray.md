@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-09-25T12:30:00Z
-last_verified_commit: 15b5a9e
+timestamp: 2026-10-07T12:00:00Z
+last_verified_commit: 755c551
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -59,58 +59,81 @@ end of the run. Telemetry showed post-gc RSS ratcheting **+3.55 GB/task,
 perfectly linearly, identically on all 8 workers** to ~39.5 GB each — the
 349 GB machine peak. Strong references: `gc.collect()` cannot touch them.
 
-**Fix (pass 1):** `_release_ms_caches()` in `utils/stokes2vis_msv4.py` clears
-`Multiton._INSTANCE_CACHE` between tasks (measured cost ~7 MB/task of subtable
-re-open churn vs ~3.5 GB/task retained). Private API by necessity.
+**Fix, 2026-07:** a `_release_ms_caches()` helper in pass 1 cleared the private
+`Multiton._INSTANCE_CACHE` between tasks (cost ~7 MB/task of subtable re-open
+churn vs ~3.5 GB/task retained).
 
-**This helper is on its way out, and `degrid` no longer calls it.** Two
-things changed:
+**Retired, 2026-10 (#325).** Upstream fixed the layer underneath it, and the
+helper is gone from pass 1 and from `degrid`:
 
-1. **Upstream bounded the caches.** xarray-ms 0.5.8 (its PR #169) upgraded to
-   arcae 0.5.4, which bounds the previously unbounded tiled storage-manager
-   caches, and added `driver_kwargs`, defaulting to `{"cache_size": 256}`,
-   which bounds the main-table and subtable caches. Both are already in the
-   `0.4.0a7` alpha the repo pins. xarray-ms 0.5.9 (#172) additionally closes
-   subtable handles. Measured on `tests/data/test_ascii_1h60.0s.MS`, 120
-   open/read/close iterations, post-gc RSS: **clearing 971.9 MB vs keeping
-   965.9 MB** (slopes +5.24 vs +4.83 MB/iter) — i.e. the clear buys nothing
-   distinguishable from noise. Caveat: that MS has a *single* small partition,
-   so it does not reproduce the per-partition-key accumulation that motivated
-   the helper. **Removing it from pass 1 needs a cluster-scale imager run
-   first**; this page's +3.55 GB/task figure has not been re-measured against
-   the bounded caches.
-2. **It is not a keyed eviction.** `Multiton._INSTANCE_CACHE.clear()` wipes the
-   **whole class-level cache**, every key, every consumer — so any Multiton the
-   *caller* owns is collateral damage. `degrid` keys its `.mds` and region
-   masks on Multitons so replicas rebuild rather than receive them, and the
-   clear was evicting those too, reloading a 633 MB `.mds` on **every work
-   item** (measured: 6 work items produced 7 `_load_model` calls; 2 after the
-   fix). `Multiton.release()` is a clean per-key eviction, but xarray-ms
-   creates its Multitons internally and exposes no hook to release them, which
-   is why the wholesale clear was the only lever. That gap is the upstream ask.
-
-The independent residual: even with no clearing at all, repeated
-open/read/close of a datatree ratchets ~5-8 MB/iter with no plateau over 120
-iterations, and **~4.5 MB/iter of that is open/close alone** with no data read.
-Not yet reported upstream.
+1. **The caches are bounded and keyed per MS, not per selection.** xarray-ms
+   0.5.8 (its #169) bounded arcae's tiled storage-manager caches and its table
+   caches (`driver_kwargs={"cache_size": 256}`); 0.5.9 (#172) closes subtable
+   handles. Measured with `scripts/msv4_issues/release_ms_caches_multipartition.py`
+   (xarray-ms 0.4.0a12 / arcae 0.4.0a14), which mimics pass 1 exactly --
+   imager partition schema, 30 partitions sliced into 120 `isel` task
+   arguments, each pickle-roundtripped as Ray does, 240 tasks in one process:
+   **post-gc RssAnon 211.2 -> 211.2 MB without any eviction (slope 0.000
+   MB/task), and the Multiton cache never above 6 entries.** The per-task keys
+   that made the 2026-07 ratchet no longer exist. The +3.55 GB/task figure is
+   kept above as history; it has not recurred.
+2. **Eviction no longer costs a leak.** Every `MSv2Structure` rebuild a clear
+   forced retained ~1.5 MB (an arcae reference leak, ska-sa/arcae#244), and
+   open/read/close ratcheted 4.5-8 MB/iter with no plateau. On arcae 0.4.0a14:
+   +0.0185 MB/build and +0.03-0.07 MB/iter (`docs/msv4_issues.md` 4).
+3. **A keyed eviction exists if one is ever needed again.** The helper was a
+   wholesale `_INSTANCE_CACHE.clear()`, so every Multiton the *caller* owned
+   was collateral damage: `degrid` keys its `.mds` and region masks on
+   Multitons, and the clear reloaded a 633 MB `.mds` on **every work item**
+   (6 items, 7 `_load_model` calls). rarg-python-patterns 0.0.5 adds
+   `Multiton.clear_cache(instance_type=None, *, where=None)`, which matches on
+   the cached instance -- evict one MS's arcae tables and nothing else. Use
+   that, never a wholesale clear.
+4. **`degrid`'s once-per-run eviction after creating columns** worked around
+   handles already open on the MS failing to resync after `addcols`
+   (ska-sa/arcae#241). arcae 0.4.0a13 refreshes them;
+   `tests/test_degrid.py::test_handles_open_before_a_column_is_added_still_read`
+   pins it (it fails on arcae 0.4.0a11 with "another process changed the
+   number of columns").
 
 ## The diagnostic that separates the layers
 
-Pass-1/2 tasks (and the deconv band workers via `get_mem`) return
-`{pid, rss_gb, peak_gb}` measured **after** the task's `gc.collect()`. The
-imager prints them in its progress lines; the deconv driver logs them
-per-worker once per major cycle at `verbosity > 1`:
+Pass-1/2 tasks return `utils/memprof.task_memory()` -- `{pid, rss_gb,
+anon_gb, shmem_gb, peak_gb}` measured **after** the task's `gc.collect()` --
+and the imager prints it in its progress lines. (The deconv band workers'
+`get_mem` still returns the older `{pid, rss_gb, peak_gb}`; the deconv driver
+logs it per-worker once per major cycle at `verbosity > 1`.)
 
-    Completed: 5 / 80 [pid 615627 rss 3.12 GB peak 11.40 GB]
+    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]
+
+`anon` is `RssAnon` (the process's private heap); `shm` is `RssShmem`, which
+for a Ray worker is **Ray object-store pages** it has touched: every large
+task argument it read zero-copy and every large value it returned. Those
+pages are shared with the driver and the store, stay counted against the
+worker after the objects die, and are not retention in the worker -- so the
+two must be read separately. `peak` is `ru_maxrss` and counts both.
 
 Reading it:
 
-- **post-gc `rss` flat per pid, `peak` high** → footprint is per-task
+- **post-gc `anon` flat per pid, `peak` high** → footprint is per-task
   transients (look at conversion copies, concat doubling, counts grids).
-- **post-gc `rss` ratcheting linearly per pid** → retention *below Python*
+- **post-gc `anon` ratcheting linearly per pid** → retention *below Python*
   (C-level caches, allocator arenas); more gc changes nothing — find the
   cache holding strong references.
+- **post-gc `shm` ratcheting per pid** → large arrays travelling through the
+  object store as task arguments or return values. The fix is to stop
+  shipping them (read/write them through the zarr stores, as D10 does for
+  the band workers), not to collect harder. #339 was this: +0.533 GiB/task
+  at 3840², exactly one uv-counts argument plus one returned PSF.
 - **OOMs late in a run** → accumulation across tasks, not per-task size.
+
+To see *what* is allocated, set `PFB_MEMRAY_DIR` (memray capture per Ray
+task) and summarise with `scripts/memray_report.py`, whose docstring also
+covers profiling the driver with `memray run`. Attribute with memray, but
+take timings and peaks from a run without it: native tracking slows
+everything, and one local run under it hit 26.7 GiB RSS in a pass-1 task with
+2.8 GiB tracked -- allocations memray cannot hook (Arrow's mimalloc, most
+likely) -- where the same code without memray peaked at 3.5 GB.
 
 Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
@@ -130,6 +153,49 @@ when tasks span different partitions (as on real data).
 | + layer 3 eviction | 2:24 | **87 GB** | ~0 |
 
 Legacy `init`+`grid` reference on the same data: 5:22, 36 GB peak.
+
+### #339 (2026-10): image-size scaling
+
+A different axis from the table above: memory that scales with the *image*
+(padded uv grids, PSFs) and with the number of bands per worker, not with the
+data. Local, `tests/data/test_ascii_1h60.0s.MS`, 3840² (PSF 5376², padded grid
+6528²), 4 bands, Stokes I, double, robust -0.5, `--nworkers 1`, `nthreads=4`.
+Worker figures are the post-gc progress-line telemetry and `ru_maxrss`; heap
+peaks are memray (`PFB_MEMRAY_DIR`, `scripts/memray_report.py`).
+
+| change | worker post-gc rss, bands 1->4 | worker peak after 4 bands | pass-2 heap peak | pass-1 heap peak | driver peak |
+|---|---|---|---|---|---|
+| before | 2.75 -> 4.49 GB (shm +0.533/band) | 6.21 GB | 3.35 GiB | 2.05 GiB | 12.40 GiB (24 pieces) |
+| counts via `.scratch`, `cache=False` | 2.76 -> 3.41 GB (shm +0.215/band) | 5.24 GB | 3.35 | 2.05 | 3.71 |
+| MFS PSFs read from the `.dt` | 2.46 -> 2.59 GB (shm 0) | 4.31 GB | 3.35 | 2.05 | 2.64 |
+| bounded-window `fitcleanbeam` | 2.64 -> 2.78 GB | 3.36 GB | 2.21 | 2.05 | 1.60 |
+| single-grid `_compute_counts` | (pass 1 only) | pass-1 peak 2.74 -> 1.90 GB | 2.21 | 1.09 | -- |
+
+A last fix needs multi-piece images to show (`integrations_per_image=10`, 6
+pieces per image, same setup): loaded pieces stayed reachable from the open
+scratch tree into the next task. Detaching them: still allocated at task end
+0.67 -> 0.004 GiB, pass-2 heap peak 2.9 -> 2.4 GiB, worker peak after 4 bands
+4.56 -> 3.48 GB. On real data the pieces are vis-sized.
+
+**Never `.load()` a Dataset taken from an open tree; use
+`utils.msv4.load_detached`.** A Dataset from `node.ds` / `node.ds[names]`
+shares its lazy-array wrappers with the node, and loading caches the data in
+them -- in place for `.load()`, and inside any `MemoryCachedArray` in the
+chain even for a shallow copy, so `.copy(deep=False).load()` is *not* enough.
+xarray-ms opens every partition with xarray's default `cache=True` and does
+not forward `cache`, so MSv4 variables always carry such a layer
+(`docs/msv4_issues.md` 6). In pass 1 that pinned each task's read on its Ray
+argument until the next gc -- ~1.7 GiB per task on a 5120² UHF run, alive
+through the next task's peak. `load_detached` indexes with a full-slice
+`isel` first; indexing a wrapper returns a new one instead of populating it.
+
+Imaging weights stayed bitwise identical throughout; DIRTY/PSF/PSFPARSN moved
+by <= 2.2e-13 relative, which is the run-to-run noise of ducc's threaded
+summation. Not yet re-measured at cluster scale. What is left at the pass-2
+peak is essential per-image state (counts grid, PSF + PSFHAT, the band sums)
+plus zarr encode copies of whatever `to_zarr` is writing (~2.7x the arrays);
+for `part####` writes that includes VIS/WEIGHT, so on real data it scales
+with the visibilities -- the next thing to measure.
 
 ## The deconv band workers
 
@@ -167,10 +233,9 @@ and exact-residual inputs. Its memory/scheduling rules:
 `pfb degrid` (#278) is the repo's first Ray **Serve** deployment: one
 `Degridder` replica per worker, each degridding a `(time, frequency)` region
 and writing that region straight back to the MS (wiki D38). It inherits the
-same rules as pass 1, with one deliberate exception — `Degridder.degrid` calls
-`gc.collect()` in a `finally` but **not** `_release_ms_caches()` (see layer 3:
-the wholesale clear would evict the deployment's own model/mask Multitons), and
-returns the same `{pid, rss_gb, peak_gb}` telemetry the imager prints. The
+same rules as pass 1: `Degridder.degrid` calls `gc.collect()` in a `finally`
+and must never wipe the class-level Multiton cache (see layer 3: a wholesale
+clear evicts the deployment's own model/mask Multitons), and returns the same `{pid, rss_gb, peak_gb}` telemetry the imager prints. The
 replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.
@@ -260,7 +325,23 @@ Check before killing anything.
   MJD→unix shift twice put FITS `DATE-OBS` in 1909 — ERFA "dubious year"
   warnings are the symptom, `utils/fits.set_wcs(time_is_unix=...)` is the
   switch.
-- Driver-side counts are accumulated **at the applied `weight_grouping`
-  granularity** (`counts_key` in `core/imager`), never per `(band,time)`
-  node, bounding driver memory at `ngroups` grids; natural weighting
-  (`robustness=None`) skips counts entirely.
+- Driver-side counts are reduced **at the applied `weight_grouping`
+  granularity** (`counts_key` in `core/imager`), one group at a time by
+  `utils/weighting.write_group_counts`, which holds one accumulator and one
+  piece grid and writes each group's grid to `.scratch` for pass 2 to read;
+  natural weighting (`robustness=None`) skips counts entirely. **Open a zarr
+  tree whose arrays you read with `.values` using `cache=False`**: xarray's
+  default memoises every such read on the open tree. The driver's counts loop
+  did this and held every piece's grid to the end of the run (7.62 GiB for 24
+  pieces at 3840²; driver peak 12.40 -> 3.71 GiB once fixed, #339), and a
+  pass-2 worker's tree, which survives into the next task in a reference
+  cycle, would carry its counts grid along. Explicit `.load()` is unaffected.
+- **Large arrays never travel as Ray task arguments or return values** in
+  the imager: each is a copy in the object store, the pages show up as `shm`
+  in every process that touched them, and arguments are copied per call even
+  when every task gets the same array. Write them to the store and pass the
+  path (counts: #339; the band workers' inputs: D10). Results likewise: pass-2
+  tasks return only scalars and telemetry, and the driver reads the band PSFs
+  back from the `.dt` for the MFS beam fit. With both gone, a pass-2 worker's
+  post-gc `shm` stays at zero and its RSS is flat across bands (3840², 4 bands,
+  one worker: lifetime peak 6.21 -> 4.31 GB).

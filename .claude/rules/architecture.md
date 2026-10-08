@@ -137,11 +137,14 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
     processing (`stokes_vis` is the template).
   * `gc.collect()` in a `try/finally` at every Ray-task boundary: deserialised xarray objects
     sit in reference cycles that refcounting cannot free.
-  * Evict xarray-ms's process-level Multiton table cache between tasks
-    (`stokes2vis_msv4._release_ms_caches`).
-  * Read the per-task post-gc RSS telemetry in the progress lines before theorising:
-    ratcheting post-gc rss per pid = below-Python retention; flat rss with high peak =
-    per-task transients.
+  * Never wipe xarray-ms's class-level Multiton cache: it is bounded and keyed per MS
+    upstream, and a wholesale clear evicts every other Multiton in the process (`degrid`'s
+    model). If an eviction is ever needed, use the keyed `Multiton.clear_cache(where=...)`.
+  * Large arrays never travel as Ray task arguments or return values -- write them to the
+    store and pass the path (D10; #339). They land in the object store and show as `shm`.
+  * Read the per-task post-gc telemetry in the progress lines before theorising:
+    ratcheting post-gc `anon` per pid = below-Python retention; ratcheting `shm` = arrays
+    shipped through the object store; flat with a high peak = per-task transients.
 * **Deconvolution operators.** `HessianTree` is PSF-convolution only;
   `gridder.residual_from_partitions` owns the exact degrid/grid path and **never recomputes
   the PSF**; `BandWorkerPool` workers claim nominal (1e-2) CPUs because a real claim can

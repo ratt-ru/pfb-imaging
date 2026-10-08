@@ -1209,8 +1209,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   whose gRPC cap is **512 MiB**; a real model (8.8M components = 633 MB) plus an all-ones 6720²
   mask (361 MB) exceeds it and the run dies before degridding anything. Two consequences: paths
   must be absolute before binding (a Ray worker's cwd is its own session directory), and
-  `Degridder.degrid` must **not** call `_release_ms_caches()` — that clears the whole class-level
-  Multiton cache and would reload the `.mds` per work item (`memory-and-ray.md`, layer 3).
+  nothing in a replica may wipe the whole class-level Multiton cache (the retired
+  `_release_ms_caches()` did) — it would reload the `.mds` per work item (`memory-and-ray.md`,
+  layer 3); use the keyed `Multiton.clear_cache(where=...)` if an eviction is ever needed.
 - **Amendment (772f216) — the replica method is `async def` on a one-thread executor.** Serve runs
   a *sync* method on the replica's asyncio loop (`RAY_SERVE_RUN_SYNC_IN_THREADPOOL` defaults to
   `"0"`), and its watchdog kills a replica whose loop misses three 300 s probes — which a
@@ -1581,9 +1582,6 @@ update it (and this page's `last_verified_commit`) in the same session.
 - `opt/primal_dual.py::primal_dual_numba` contains two `pdb.set_trace()` breakpoints
   (zero-model and NaN-eps paths) — hangs unattended runs if triggered. Kept because the
   function is a frozen oracle; remove if it ever stops being one.
-- `stokes2vis_msv4._release_ms_caches` clears xarray-ms's private
-  `Multiton._INSTANCE_CACHE` (see `memory-and-ray.md` layer 3). Needs an upstream
-  xarray-ms TTL/eviction knob; delete the helper when one exists.
 - Very large nband on small clusters: band-worker claims (1e-2 each) plus the
   `num_cpus = max(nworkers, nband+1)` sizing are untested beyond ~tens of bands;
   revisit scheduling at nband ≳ 50.

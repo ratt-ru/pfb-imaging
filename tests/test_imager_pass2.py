@@ -98,7 +98,6 @@ def test_grid_partition_robust_reweights():
         1.0e-6,
         1.0e-6,
         part.WEIGHT.values.dtype,
-        ngrid=1,
         usign=-1.0,
         vsign=1.0,
     )
@@ -243,3 +242,155 @@ def test_concat_pieces_rejects_mismatched_freq():
     b = _synth_piece(1.0e9, 1.0, 1.0).assign(FREQ=(("chan",), np.array([2.0e9])))
     with pytest.raises(AssertionError):
         _concat_pieces([a, b])
+
+
+def test_loaded_piece_does_not_pin_data_on_the_scratch_tree(tmp_path):
+    """Dropping a loaded piece frees it while the scratch tree is still open (#339).
+
+    `.load()` fills the Variables a Dataset shares with its tree, so a piece
+    loaded straight off the tree stayed reachable from it -- and the tree sits
+    in a reference cycle that survives into the worker's next task, carrying
+    vis-sized pieces with it.
+    """
+    import gc
+    import tracemalloc
+
+    import xarray as xr
+
+    from pfb_imaging.core.imager import _load_piece
+
+    store = str(tmp_path / "s.scratch")
+    nrow = 2**18  # 4 MiB of complex128 VIS
+    xr.Dataset(
+        {
+            "VIS": (("corr", "row", "chan"), np.ones((1, nrow, 2), dtype=np.complex128)),
+            "COUNTS": (("corr", "u", "v"), np.ones((1, 8, 8))),
+        }
+    ).to_zarr(store, group="band0000_time0000/p0", consolidated=False)
+    dt = xr.open_datatree(store, engine="zarr", chunks=None, cache=False, consolidated=False)
+
+    tracemalloc.start()
+    ds = _load_piece(dt["band0000_time0000/p0"])
+    assert "COUNTS" not in ds
+    loaded = ds.VIS.nbytes
+    del ds
+    gc.collect()
+    held, _ = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert held < loaded / 4, f"{held / loaded:.2f} of the piece still held by the open tree"
+
+
+def test_pass1_load_does_not_pin_data_on_the_task_argument(ms_name):
+    """Pass 1's selective load leaves its Ray-argument node unloaded (#339).
+
+    `node.ds[needed].load()` fills the Variables the Dataset shares with the
+    node Ray deserialised as the task argument. On real data that kept ~1.7 GiB
+    of read buffers per worker alive into the next task.
+    """
+    import gc
+    import tracemalloc
+
+    import xarray as xr
+
+    from pfb_imaging.utils.msv4 import get_engine, load_detached
+
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    node = next(iter(dt.children.values()))
+    try:
+        tracemalloc.start()
+        ds = load_detached(node.ds[["VISIBILITY", "FLAG", "UVW"]])
+        loaded = ds.VISIBILITY.nbytes
+        del ds
+        gc.collect()
+        held, _ = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    finally:
+        dt.close()
+    assert held < loaded / 4, f"{held / loaded:.2f} of the read still held by the node"
+
+
+@pytest.mark.parametrize("robustness", [-2.0, None])
+def test_grid_partition_can_overwrite_the_weights_it_owns(robustness):
+    """With overwrite_weight the imaging weights reuse part.WEIGHT's buffer (#339).
+
+    The copy is a vis-sized array (2.1 GiB at the pass-2 peak on real data);
+    pass 2 owns the partition it grids, so it can let the weights be written
+    in place. The result must not depend on the choice.
+    """
+    part = _synth_partition()
+    nx_pad = ny_pad = 32
+    counts = _compute_counts(
+        part.UVW.values,
+        part.FREQ.values,
+        part.MASK.values,
+        part.WEIGHT.values,
+        nx_pad,
+        ny_pad,
+        1.0e-6,
+        1.0e-6,
+        part.WEIGHT.values.dtype,
+        usign=-1.0,
+        vsign=1.0,
+    )
+    kw = dict(nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=robustness, nx_pad=nx_pad, ny_pad=ny_pad)
+    natural = part.WEIGHT.values.copy()
+    ref = grid_partition(part, counts, **kw)
+    np.testing.assert_array_equal(part.WEIGHT.values, natural)  # the default never touches the input
+
+    out = grid_partition(part, counts, overwrite_weight=True, **kw)
+    assert np.shares_memory(out["WEIGHT"], part.WEIGHT.values)
+    for key in ("WEIGHT", "DIRTY", "PSF", "WSUM"):
+        np.testing.assert_array_equal(out[key], ref[key])
+
+
+def _vis_partition(nrow, nchan=16, seed=0):
+    rng = np.random.default_rng(seed)
+    return xr.Dataset(
+        {
+            "VIS": (
+                ("corr", "row", "chan"),
+                rng.normal(size=(1, nrow, nchan)) + 1j * rng.normal(size=(1, nrow, nchan)),
+            ),
+            "WEIGHT": (("corr", "row", "chan"), rng.random((1, nrow, nchan))),
+            "MASK": (("row", "chan"), (rng.random((nrow, nchan)) > 0.1).astype(np.uint8)),
+            "UVW": (("row", "three"), rng.normal(size=(nrow, 3))),
+            "FREQ": (("chan",), np.linspace(1e9, 1.1e9, nchan)),
+            "BEAM": (("corr", "y", "x"), rng.random((1, 32, 32))),
+        },
+        coords={"corr": ["I"]},
+        attrs={"wsum": [1.0], "field_name": "f"},
+    )
+
+
+@pytest.mark.parametrize("nrow", [1, 999, 4096])
+def test_write_partition_reads_back_identically(tmp_path, nrow):
+    from pfb_imaging.core.imager import _write_partition
+
+    ds = _vis_partition(nrow)
+    store = f"file://{tmp_path}/x.dt"  # an fsspec store, as uri_and_fs gives the imager
+    # a slab smaller than one row's worth still writes every row exactly once
+    _write_partition(ds, store, "band0000_time0000/part0000", slab_bytes=64 * 1024)
+    got = xr.open_datatree(store, engine="zarr", chunks=None, consolidated=False)["band0000_time0000/part0000"].ds
+    for v in ds.data_vars:
+        np.testing.assert_array_equal(got[v].values, ds[v].values)
+    assert got.attrs == ds.attrs
+
+
+def test_write_partition_bounds_the_encode_transient(tmp_path):
+    """Writing a partition costs about one slab of encode buffers, not the vis (#339).
+
+    zarr encodes every chunk of a to_zarr call before storing any; on a 5120^2
+    UHF run writing part#### held 7.4 GiB of encode copies at the pass-2 peak.
+    """
+    import tracemalloc
+
+    from pfb_imaging.core.imager import _write_partition
+
+    ds = _vis_partition(2**17)  # VIS 32 MiB, ~50 MiB of row variables in all
+    data = sum(ds[v].nbytes for v in ("VIS", "WEIGHT", "MASK", "UVW"))
+    store = f"file://{tmp_path}/x.dt"  # an fsspec store, as uri_and_fs gives the imager
+    tracemalloc.start()
+    _write_partition(ds, store, "band0000_time0000/part0000", slab_bytes=4 * 2**20)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < data / 4, f"write peak {peak / data:.2f} x the row data"

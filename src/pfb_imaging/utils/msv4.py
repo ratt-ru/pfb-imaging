@@ -215,3 +215,29 @@ def select_vis_nodes(
             )
         )
     return out
+
+
+def load_detached(ds: xr.Dataset) -> xr.Dataset:
+    """Load ``ds`` into memory without caching the data on the tree it came from.
+
+    A Dataset taken from a tree node (``node.ds``, ``node.ds[names]``) shares
+    its Variables' lazy-array wrappers with that node, and loading caches the
+    data in them: in place for ``.load()``, and inside any ``MemoryCachedArray``
+    in the chain even for a shallow copy. xarray-ms opens every MSv4 partition
+    with xarray's default ``cache=True`` and does not forward the caller's
+    ``cache``, so its variables always carry such a layer (docs/msv4_issues.md
+    6). A load pinned on the tree lives as long as the tree: a Ray task
+    argument until it is collected -- the next gc, after the next task has
+    peaked -- or an open store until it is closed (#339: ~1.7 GiB per pass-1
+    task on real data; every scratch piece in pass 2).
+
+    Indexing a wrapper returns a new one rather than populating it, so a
+    full-slice ``isel`` gives the load private wrappers to fill.
+
+    Args:
+        ds: a Dataset taken from an open DataTree node.
+
+    Returns:
+        An in-memory Dataset that nothing else references.
+    """
+    return ds.isel({dim: slice(None) for dim in ds.dims}).load()

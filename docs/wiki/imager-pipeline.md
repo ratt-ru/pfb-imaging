@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-06T09:18:06Z
-last_verified_commit: 7096abf
+timestamp: 2026-10-07T14:00:00Z
+last_verified_commit: 02cd842
 ---
 
 # MSv4 DataTree imager pipeline
@@ -120,9 +120,15 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 2. **Counts reduction** (driver, between passes): `COUNTS` is a first-class reducible
    intermediate. The driver streams per-piece counts into **one grid per applied
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
-   time), `per-band` (sum over time), `per-time` — holding `ngroups` grids, never
-   `nband*ntime` (`counts_key` in `core/imager.imager`; semantics in
-   `utils/weighting.reduce_counts`). Summing counts across pieces is valid because the
+   time), `per-band` (sum over time), `per-time` (`counts_key` in
+   `core/imager.imager`; semantics in `utils/weighting.reduce_counts`).
+   `utils/weighting.write_group_counts` does it one group at a time — one
+   accumulator plus one piece grid resident, whatever the number of pieces — applies
+   `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result
+   to `.scratch` as `counts/group####` (`COUNTS (corr, u, v)`). Pass-2 tasks receive
+   that node path and read the grid themselves: a counts grid is `(ncorr, nx_pad,
+   ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
+   in the object store (#339). Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
    Natural weighting is `robustness None` or `> 2`: counts are skipped entirely.
    Counts are reduced per `weight_grouping` group, **not** per partition, so
@@ -135,8 +141,8 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
    pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
    along `row`; `BEAM` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
-   differ in both, so piece 0's beam is *not* representative, D28), apply
-   `counts_to_weights` per partition, grid each partition with
+   differ in both, so piece 0's beam is *not* representative, D28), read the image's
+   `counts/group####` grid and apply `counts_to_weights` per partition, grid each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
    (including the band's `freq_out` as the imaging-wsum-weighted mean of the partition
    frequencies), write the `.dt`. Each `(band, part)` is an independent zarr group path,

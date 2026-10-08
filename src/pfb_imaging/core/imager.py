@@ -1,6 +1,5 @@
 import gc
 import os
-import resource
 import time
 import warnings
 from pathlib import Path
@@ -30,6 +29,7 @@ from pfb_imaging.utils.baselines import (
     parse_antenna_groups,
 )
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
+from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
 from pfb_imaging.utils.misc import (
     check_gridder_epsilon,
     fitcleanbeam,
@@ -39,10 +39,10 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
-from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
-from pfb_imaging.utils.weighting import box_sum_counts, filter_extreme_counts
+from pfb_imaging.utils.weighting import write_group_counts
 
 warnings.filterwarnings("ignore", category=IrregularGridWarning)
 warnings.filterwarnings("ignore", category=MissingMetadataWarning)
@@ -100,6 +100,52 @@ def _partition_fits(
         hdr = mk_hdr(nx_im, ny_im, "")
         hdr["BEAMINCN"] = (True, "beam includes the wgridder n-term (D22)")
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
+
+
+def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
+    """Write one partition node into the ``.dt`` store, a row slab at a time.
+
+    zarr encodes every chunk of a ``to_zarr`` call before an fsspec store
+    writes any of them, so one call holds encoded copies of everything it
+    writes -- 7.4 GiB at the pass-2 peak of a 5120^2 UHF run, for the
+    vis-space variables (#339). The first call writes the non-row variables
+    and the first slab of rows; the rest are appended along ``row``, so the
+    transient is about one slab. The stored arrays are identical either way.
+
+    Args:
+        ds: the partition Dataset (vis-space variables on ``row``).
+        store: the ``.dt`` store URL.
+        group: the node path, ``band####_time####/part####``.
+        slab_bytes: target size of the row variables written per call.
+    """
+    nrow = ds.sizes.get("row", 0)
+    row_vars = [v for v in ds.data_vars if "row" in ds[v].dims]
+    row_bytes = sum(ds[v].nbytes for v in row_vars) / max(nrow, 1)
+    step = max(1, int(slab_bytes // max(row_bytes, 1)))
+    # consolidated=False: each pass-2 worker owns a distinct image_name node,
+    # but they share the store root; the driver consolidates once at the end
+    ds.isel(row=slice(0, step)).to_zarr(store, group=group, mode="a", consolidated=False)
+    for start in range(step, nrow, step):
+        slab = ds[row_vars].isel(row=slice(start, start + step))
+        slab.to_zarr(store, group=group, mode="a", append_dim="row", consolidated=False)
+
+
+def _load_piece(node):
+    """Load one scratch piece into memory, minus its COUNTS.
+
+    COUNTS is only consumed by the driver's weight reduction, which has
+    already happened, and it is by far the largest piece variable. Loaded
+    detached from the open scratch tree (see ``load_detached``), or every piece
+    would stay reachable from it -- through its concat, past ``del plist`` and
+    into the worker's next task.
+
+    Args:
+        node: the piece's node in the scratch DataTree.
+
+    Returns:
+        The piece as an in-memory Dataset.
+    """
+    return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
 
 
 def _concat_pieces(plist):
@@ -167,12 +213,18 @@ def _concat_pieces(plist):
 
 
 @ray.remote
-def _grid_image(
+def _grid_image(*args, **kwargs):
+    """Ray entry point for :func:`_grid_image_body` (opt-in memray tracking)."""
+    with memray_task("grid_image"):
+        return _grid_image_body(*args, **kwargs)
+
+
+def _grid_image_body(
     scratch_store,
     dt_store,
     src_names,
     out_name,
-    counts,
+    counts_group,
     nx,
     ny,
     nx_psf,
@@ -183,8 +235,6 @@ def _grid_image(
     robustness=None,
     nx_pad=None,
     ny_pad=None,
-    filter_counts_level=5.0,
-    npix_super=0,
     nthreads=1,
     epsilon=1e-5,
     do_wgridding=True,
@@ -199,23 +249,24 @@ def _grid_image(
     baseline_group)``, concatenates scans along ``row``, grids each partition with
     :func:`grid_partition`, sums the image-space products into the band node, and
     writes the band node + ``part####`` children into the ``.dt`` store. Returns a
-    light summary (``timeid``/``psf``/``wsum``) for MFS beam-parameter fitting.
+    light summary (``timeid``/``wsum``/telemetry); the band PSF goes to the ``.dt``
+    only -- returning it would put an image per task in the Ray object store.
     """
     resize_thread_pool(nthreads)
-    dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None)
+    # cache=False: otherwise the counts read below is memoised on the tree,
+    # which outlives the task in a reference cycle until the next gc (#339).
+    # Pieces are detached from the tree by _load_piece for the same reason.
+    dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
     groups = {}
     for sn in src_names:
         for _, child in dt[sn].children.items():
-            # COUNTS is only consumed by the driver's weight reduction; happened already (counts passed in)
-            # it is by far the largest piece variable; don't read it here
-            ds = child.ds.drop_vars("COUNTS", errors="ignore").load()
+            ds = _load_piece(child)
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
 
-    # filter/box the reduced counts once per image (grid_partition copies before use)
-    if robustness is not None:
-        counts = filter_extreme_counts(counts.copy(), level=filter_counts_level)
-        counts = box_sum_counts(counts, npix_super)
+    # the applied (filtered, box-summed) group counts, written once by the driver
+    # (write_group_counts); grid_partition copies before use
+    counts = dt[counts_group].ds.COUNTS.values if robustness is not None else None
 
     first = next(iter(groups.values()))[0]
     corr = first.corr.values
@@ -261,6 +312,9 @@ def _grid_image(
             do_wgridding=do_wgridding,
             double_accum=double_accum,
             do_psf=do_psf,
+            # part is this task's own concat (or loaded piece), and only the
+            # imaging weights are stored: reuse its WEIGHT buffer (#339)
+            overwrite_weight=True,
         )
 
         part_vars = {
@@ -300,9 +354,7 @@ def _grid_image(
                 "wsum": prod["WSUM"].tolist(),
             },
         )
-        # consolidated=False: each pass-2 worker owns a distinct image_name node,
-        # but they share the store root; the driver consolidates once at the end
-        part_out.to_zarr(dt_store, group=f"{out_name}/part{pid:04d}", mode="a", consolidated=False)
+        _write_partition(part_out, dt_store, f"{out_name}/part{pid:04d}")
         beam_imre_max = max(beam_imre_max, float(part.attrs.get("beam_imre_ratio", 0.0)))
 
         if part_fits_dir is not None:
@@ -387,18 +439,14 @@ def _grid_image(
 
     # break the reference cycles holding the loaded pieces so a reused Ray
     # worker doesn't accumulate them across tasks (see safe_stokes_vis)
-    del groups, part
+    dt.close()
+    del groups, part, dt
     gc.collect()
 
     # post-gc memory telemetry (see safe_stokes_vis for interpretation)
-    mem = {
-        "pid": os.getpid(),
-        "rss_gb": psutil.Process().memory_info().rss / 2**30,
-        "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-    }
+    mem = task_memory()
     return {
         "timeid": meta["timeid"],
-        "psf": psf_sum,
         "wsum": wsum_sum,
         "mem": mem,
         "beam_imre_ratio": beam_imre_max,
@@ -618,7 +666,7 @@ def imager(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": env_vars,
+            "env_vars": {**env_vars, **memray_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
@@ -966,8 +1014,7 @@ def imager(
                 # retention below Python (C-level caches/arenas); peak is the
                 # worker's lifetime high-water mark
                 print(
-                    f"Completed: {ncomplete} / {nds} "
-                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]",
                     end="\n",
                     flush=True,
                 )
@@ -1011,29 +1058,21 @@ def imager(
     scratch_dt = xr.open_datatree(scratch_url, engine="zarr", chunks=None)
     # per-scratch-node summary: (bandid, timeid, ra, dec, time_out)
     node_info = {}
-    # one counts grid per applied-weighting group -- accumulating at the
-    # grouping granularity (rather than per (band,time) node) bounds driver
-    # memory at ngroups grids instead of nband*ntime
-    group_counts = {}
-    ncorr = None
+    # applied-weighting group -> its pieces' node paths; the counts themselves
+    # are streamed by write_group_counts below, never held per piece
+    counts_sources = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
-        pieces = [child.ds for _, child in scratch_dt[name].children.items()]
+        children = scratch_dt[name].children
+        pieces = [child.ds for child in children.values()]
         if not pieces:
             continue
-        ncorr = pieces[0].corr.size
         bandid = int(pieces[0].attrs["bandid"])
         timeid = int(pieces[0].attrs["timeid"])
-        # natural weighting (robustness None) never touches counts; skip the reads
+        # natural weighting (robustness None) never touches counts
         if robustness is not None:
-            key = counts_key(bandid, timeid)
-            for ds in pieces:
-                c = ds.COUNTS.values
-                if key in group_counts:
-                    group_counts[key] += c
-                else:
-                    group_counts[key] = c.copy()
+            counts_sources.setdefault(counts_key(bandid, timeid), []).extend(f"{name}/{c}" for c in children)
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1081,7 +1120,17 @@ def imager(
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
-    log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(group_counts)} group(s)")
+
+    # one applied counts grid per weighting group, streamed into the scratch
+    # store; pass-2 workers read their group's grid from there (#339)
+    counts_groups = {}
+    if robustness is not None:
+        counts_groups = write_group_counts(
+            scratch_url, counts_sources, filter_level=filter_counts_level, npix_super=npix_super
+        )
+        # the counts groups were written after pass 1's consolidation
+        zarr.consolidate_metadata(scratch_url)
+    log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(counts_groups)} group(s)")
 
     # ---- initialise the .dt store root ----
     dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
@@ -1125,7 +1174,7 @@ def imager(
             out_name,
             # None under natural weighting (robustness None); grid_partition
             # ignores counts in that case
-            group_counts.get(counts_key(meta["bandid"], meta["timeid"])),
+            counts_groups.get(counts_key(meta["bandid"], meta["timeid"])),
             nx,
             ny,
             nx_psf,
@@ -1136,8 +1185,6 @@ def imager(
             robustness=robustness,
             nx_pad=nx_pad,
             ny_pad=ny_pad,
-            filter_counts_level=filter_counts_level,
-            npix_super=npix_super,
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
@@ -1148,8 +1195,6 @@ def imager(
         )
         tasks.append(fut)
 
-    psf_mfs = {}
-    wsum_mfs = {}
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1159,19 +1204,11 @@ def imager(
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
-            tid = res["timeid"]
-            if res["psf"] is not None:
-                # accumulate at the precision the workers gridded in (see _grid_image)
-                psf_mfs.setdefault(tid, np.zeros((ncorr, ny_psf, nx_psf), dtype=res["psf"].dtype))
-                psf_mfs[tid] += res["psf"]
-                wsum_mfs.setdefault(tid, np.zeros(ncorr, dtype=res["wsum"].dtype))
-                wsum_mfs[tid] += res["wsum"]
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
                 print(
-                    f"Gridded: {ncomplete} / {nds} "
-                    f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
+                    f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]",
                     end="\n",
                     flush=True,
                 )
@@ -1189,10 +1226,32 @@ def imager(
     # workers have finished (they wrote with consolidated=False; see _grid_image)
     zarr.consolidate_metadata(dt_url)
 
-    # MFS beam parameters per time chunk (from the wsum-normalised MFS PSF)
+    # MFS beam parameters per time chunk, from the wsum-normalised sum of the band
+    # PSFs. Read back from the .dt one band at a time rather than returned by the
+    # pass-2 tasks, which put an image per task in the object store (#339);
+    # summed at the precision the workers gridded in (see _grid_image).
+    psf_mfs = {}
+    wsum_mfs = {}
+    if psf:
+        dt_out = xr.open_datatree(dt_url, engine="zarr", chunks=None, cache=False)
+        try:
+            for out_name, _, meta in work:
+                node = dt_out[out_name].ds
+                tid = meta["timeid"]
+                band_psf = node.PSF.values
+                if tid in psf_mfs:
+                    psf_mfs[tid] += band_psf
+                    wsum_mfs[tid] += node.WSUM.values
+                else:
+                    psf_mfs[tid] = band_psf
+                    wsum_mfs[tid] = node.WSUM.values
+                del band_psf, node
+        finally:
+            dt_out.close()
     psfparsn = {}
     for tid in psf_mfs:
         psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
+    del psf_mfs
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:

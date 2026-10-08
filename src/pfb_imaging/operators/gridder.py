@@ -42,6 +42,7 @@ def grid_partition(
     do_wgridding=True,
     double_accum=True,
     do_psf=True,
+    overwrite_weight=False,
 ):
     """Grid one data partition's image-space products with ducc0 (casacore-free).
 
@@ -66,6 +67,9 @@ def grid_partition(
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
         do_psf: skip the PSF/PSFHAT/PSFPARSN products entirely when False
             (quicklook mode).
+        overwrite_weight: compute the imaging weights in ``part.WEIGHT``'s own
+            buffer instead of a copy -- for callers that own ``part`` and do
+            not need its natural weights afterwards. Saves a vis-sized array.
 
     Returns:
         dict with ``DIRTY`` ``(corr,ny,nx)``, ``BEAM`` ``(corr,ny,nx)``,
@@ -79,7 +83,9 @@ def grid_partition(
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
     uvw = part.UVW.values
     vis = part.VIS.values
-    wgt = part.WEIGHT.values.copy()
+    wgt = part.WEIGHT.values
+    if not (overwrite_weight and wgt.flags.writeable):
+        wgt = wgt.copy()
     mask = part.MASK.values
     freq = part.FREQ.values
     ncorr = part.corr.size
