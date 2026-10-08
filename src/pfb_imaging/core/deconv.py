@@ -94,6 +94,7 @@ def _grad_with_prior(residual, bresidual, model, hess):
     return residual - kinv_m, bresidual - kinv_m
 
 
+@pfb_logging.log_exceptions
 def deconv(
     output_filename: str,
     suffix: str = "main",

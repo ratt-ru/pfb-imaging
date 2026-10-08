@@ -527,6 +527,7 @@ def _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups
     return override
 
 
+@pfb_logging.log_exceptions
 def imager(
     ms: list[Path],
     output_filename: str,
@@ -1013,11 +1014,7 @@ def imager(
                 # post-gc rss ratcheting up for a pid across tasks indicates
                 # retention below Python (C-level caches/arenas); peak is the
                 # worker's lifetime high-water mark
-                print(
-                    f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]",
-                    end="\n",
-                    flush=True,
-                )
+                log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]")
 
     ntime = len(set(timeids_out))
     nband_out = len(set(bandids_out))
@@ -1207,11 +1204,7 @@ def imager(
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
-                print(
-                    f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]",
-                    end="\n",
-                    flush=True,
-                )
+                log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]")
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).

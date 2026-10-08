@@ -589,7 +589,13 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
         fits_cubes=False,
         overwrite=True,
         keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
     )
+
+    # the per-task progress telemetry reaches the log file, not just the terminal (#348)
+    (logname,) = glob.glob(str(tmp_path / "logs" / "imager_*.log"))
+    text = Path(logname).read_text()
+    assert "Completed: " in text and "Gridded: " in text
 
     dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
     bands = [n for n in dt.children if n.startswith("band")]

@@ -364,6 +364,7 @@ def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_c
             )
 
 
+@pfb_logging.log_exceptions
 def degrid(
     ms: list[Path],
     output_filename: str,
@@ -422,7 +423,7 @@ def degrid(
         ray_address: Ray cluster address, or `"local"` for a private one.
         nworkers: Maximum `Degridder` replicas.
         nthreads: ducc threads per replica. Defaults to half the logical CPUs.
-        progressbar: Print per-item progress with memory telemetry.
+        progressbar: Log per-item progress with memory telemetry.
         log_directory: Directory for the run log.
 
     Raises:
@@ -654,11 +655,9 @@ def degrid(
                 if progressbar:
                     # a post-gc rss that ratchets for a pid across items means
                     # retention below Python; peak is the lifetime high-water
-                    print(
+                    log.info(
                         f"Completed: {ncomplete} / {len(items)} "
-                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
-                        end="\n",
-                        flush=True,
+                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]"
                     )
 
         for item in items:
