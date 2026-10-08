@@ -600,6 +600,11 @@ def imager(
     opts_dict["fits_output_folder"] = fits_output_folder
     opts_dict["log_directory"] = log_directory
 
+    # before any validation that reads data, so log_exceptions has a file (#348)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{str(log_directory)}/imager_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
+
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
@@ -653,10 +658,6 @@ def imager(
             "which does apply gains.",
             NotImplementedError,
         )
-
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/imager_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
 
     log.log_options_dict(opts_dict, title="IMAGER options")
 
