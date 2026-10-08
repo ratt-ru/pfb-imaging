@@ -47,9 +47,18 @@ permissions:
 # PR B from main cancels an in-flight run for PR A and strands A's `acceptance`
 # status at pending, because a concurrency-cancelled run never reaches `report`.
 # It is empty on every other event, so those fall through to the ref.
+#
+# Every comment on a PR starts a run, and concurrency is resolved before the
+# `resolve` job's `if:` skips the ones without the command. So only a comment
+# carrying `/test-acceptance` joins the PR's group; any other comment gets a
+# group of its own and cannot cancel a real run (#349). The `contains` here must
+# stay in step with `resolve`'s `if:`.
 concurrency:
   group: >-
-    acceptance-${{ github.event_name == 'issue_comment' && github.event.issue.number
+    acceptance-${{ github.event_name == 'issue_comment'
+    && (contains(github.event.comment.body, '/test-acceptance')
+        && format('{0}', github.event.issue.number)
+        || format('noop-{0}', github.event.comment.id))
     || github.event.inputs.pr || github.ref }}
   cancel-in-progress: true
 
