@@ -92,3 +92,18 @@ def test_progress_telemetry_survives_the_console_markup():
         log.info(line, extra=pfb_logging.NO_MARKUP)
     assert "[pid 7" not in plain.get()  # the failure mode this guards against
     assert "[pid 7 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]" in " ".join(verbatim.get().split())
+
+
+def test_ray_worker_hook_quiets_meerkat_beams():
+    # Ray forwards worker stdout to the driver; meerkat-beams' INFO lines were
+    # printed once per pass-1 task
+    from meerkat_beams import utils as mb_utils
+
+    from pfb_imaging import setup_ray_worker
+
+    before = mb_utils.CONSOLE.level
+    try:
+        setup_ray_worker()
+        assert mb_utils.CONSOLE.level == logging.WARNING
+    finally:
+        mb_utils.set_console_logging_level(before)
