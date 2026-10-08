@@ -181,7 +181,8 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
 
 def setup_ray_worker():
     logger = pfb_logging.get_logger("RAY_WORKER")
-    logger.setLevel(logging.ERROR)
+    # WARNING, not ERROR: this logger exists for the TBB warning below
+    logger.setLevel(logging.WARNING)
     # meerkat-beams logs at INFO to its own stdout handler, and Ray forwards
     # every worker's stdout to the driver, so each pass-1 task printed its
     # "field centre set to ..." lines. The driver keeps them; workers warn only.

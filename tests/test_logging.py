@@ -107,3 +107,20 @@ def test_ray_worker_hook_quiets_meerkat_beams():
         assert mb_utils.CONSOLE.level == logging.WARNING
     finally:
         mb_utils.set_console_logging_level(before)
+
+
+def test_ray_worker_hook_reports_a_missing_tbb(monkeypatch):
+    # the hook's logger sat at ERROR, so this warning was never shown
+    from meerkat_beams import utils as mb_utils
+
+    import pfb_imaging
+
+    monkeypatch.setattr(pfb_imaging, "_default_threading_layer", lambda: "tbb")
+    monkeypatch.setattr(pfb_imaging, "_load_tbb", lambda *a, **kw: None)
+    before = mb_utils.CONSOLE.level
+    try:
+        with pfb_logging.rich_console.capture() as out:
+            pfb_imaging.setup_ray_worker()
+    finally:
+        mb_utils.set_console_logging_level(before)
+    assert "Could not initialise the TBB threading layer" in " ".join(out.get().split())
