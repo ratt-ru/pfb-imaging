@@ -94,10 +94,8 @@ os.environ.setdefault(
     "NUMBA_CACHE_DIR",
     f"/tmp/numba-cache-{os.getuid()}",
 )
-os.environ.setdefault(
-    "MBEAMS_CACHE_DIR",
-    f"/tmp/mbeams-cache-{os.getuid()}",
-)
+MBEAMS_CACHE_DEFAULT = f"/tmp/mbeams-cache-{os.getuid()}"
+os.environ.setdefault("MBEAMS_CACHE_DIR", MBEAMS_CACHE_DEFAULT)
 
 
 def set_envs(nthreads, ncpu, log=None):

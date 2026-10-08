@@ -1028,6 +1028,8 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
     monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+    # the fake wizard needs no staged beams
+    monkeypatch.setattr(imager_mod, "_missing_group_beams", lambda *a, **kw: None)
 
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
@@ -1169,6 +1171,8 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
     monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+    # the fake wizard needs no staged beams
+    monkeypatch.setattr(imager_mod, "_missing_group_beams", lambda *a, **kw: None)
 
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
@@ -1298,3 +1302,49 @@ def test_pass2_returns_no_images_and_mfs_beam_matches_dt(ms_name, tmp_path, monk
     (mfs,) = glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
     hdr = afits.getheader(mfs)
     assert_allclose([hdr["BMAJ"], hdr["BMIN"]], want[:2] * cell_deg, rtol=1e-6)
+
+
+@pytest.fixture
+def beam_caches(tmp_path, monkeypatch):
+    """An empty beam cache in use, and meerkat-beams' usual cache elsewhere."""
+    from meerkat_beams import cache
+
+    in_use, usual = tmp_path / "in_use", tmp_path / "xdg" / "meerkat-beams"
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(in_use))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    # pin the MdV-2026 products as unpublished whatever meerkat-beams ships
+    monkeypatch.setattr(
+        cache, "MDV2026_GDRIVE_IDS", dict.fromkeys(cache.MDV2026_GDRIVE_IDS, cache.PLACEHOLDER_GDRIVE_ID)
+    )
+    return in_use, usual
+
+
+def test_missing_group_beam_points_at_the_cache_that_has_it(beam_caches):
+    from pfb_imaging.core.imager import _missing_group_beams
+
+    in_use, usual = beam_caches
+    (in_use / "bds" / "MeerKAT_L_mdv2026.bds.zarr").mkdir(parents=True)
+    (usual / "inputs" / "MKE_L.zarr").mkdir(parents=True)
+    msg = _missing_group_beams("L", ["MM", "MPM", "MPMP"])
+    assert "MKE_L" in msg and "MeerKAT_L_mdv2026" not in msg
+    assert f"MBEAMS_CACHE_DIR={in_use}" in msg
+    assert f"export MBEAMS_CACHE_DIR={usual}" in msg
+
+
+def test_missing_group_beam_says_where_to_stage_it(beam_caches):
+    from pfb_imaging.core.imager import _missing_group_beams
+
+    in_use, _ = beam_caches
+    msg = _missing_group_beams("L", ["MM"])
+    assert "MeerKAT_L_mdv2026" in msg and "MKE_L" not in msg  # MM needs MeerKAT beams only
+    assert f"{in_use / 'inputs'}/<product>.zarr" in msg
+    assert "export" not in msg
+
+
+def test_staged_group_beams_need_no_message(beam_caches):
+    from pfb_imaging.core.imager import _missing_group_beams
+
+    in_use, _ = beam_caches
+    (in_use / "bds" / "MeerKAT_L_mdv2026.bds.zarr").mkdir(parents=True)
+    (in_use / "inputs" / "MKE_L.zarr").mkdir(parents=True)
+    assert _missing_group_beams("L", ["MM", "MPM", "MPMP"]) is None

@@ -1620,10 +1620,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   `pfb_imaging/__init__.py` sets `MBEAMS_CACHE_DIR=/tmp/mbeams-cache-<uid>` by
   `setdefault` (#270: Ray workers and containers need a shared, mountable path).
   meerkat-beams' own default is `~/.cache/meerkat-beams`, so MdV-2026 group
-  products staged by hand land where `pfb` will not look, and `imager` dies with
-  "beam product 'MeerKAT_L_mdv2026' is not yet published" even though the files
-  are on disk. Stage into `/tmp/mbeams-cache-<uid>`, or export an explicit
-  `MBEAMS_CACHE_DIR` (the `setdefault` means an explicit value always wins).
+  products staged by hand land where `pfb` will not look. `/tmp` is also RAM-backed
+  on many hosts, so even products staged there are gone after a reboot. `imager`
+  now checks the products the data's groups need before building any wizard
+  (`core/imager._missing_group_beams`) and says which are missing, from which
+  cache, and -- if they are in meerkat-beams' own default -- the `export` that
+  fixes it; before that it died inside meerkat-beams with "beam product ... is not
+  yet published". Export a persistent `MBEAMS_CACHE_DIR` (the `setdefault` means an
+  explicit value always wins), e.g. `~/.cache/meerkat-beams`.
 - **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
   to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
   rather than where it came from. Always pass `region` explicitly, and only slices — an
