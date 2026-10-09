@@ -414,6 +414,12 @@ def _grid_image_body(
     # templates every array on one type), and the accumulation below must not
     # upcast it back to f8 (--double-accum is a wgridder-internal control only).
     real_type = first.VIS.values.real.dtype
+    # Neither may outlive this point: `first` is a piece, and for a one-piece
+    # partition _concat_pieces returns it as the partition itself, so holding
+    # it pins that partition's VIS/WEIGHT/UVW/MASK/BEAM through the transfer
+    # sweep; `ds` is the loop's last piece. `first` existing means the loop
+    # bound `ds` (next() raises on an empty `groups`).
+    del first, ds
     dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
@@ -521,8 +527,9 @@ def _grid_image_body(
         wsum_sum += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
     # release the last partition's vis-space data now: the transfer residual
-    # below re-reads each partition from the store (#339)
-    del part, part_out, prod
+    # below re-reads each partition from the store (#339). part_vars holds the
+    # same VIS/WEIGHT/MASK/UVW buffers as part, so it must go too.
+    del part, part_vars, part_out, prod
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
