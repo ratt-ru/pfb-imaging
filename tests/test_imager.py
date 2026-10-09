@@ -607,6 +607,16 @@ def test_imager_no_psf_quicklook(ms_name, tmp_path):
             for v in ("PSF", "PSFHAT", "PSFPARSN"):
                 assert v not in pds, f"{b}/{p} has {v} despite psf=False"
 
+    # sampling bounds for the .mds (#327): nominal band edges, padded time extent
+    fbs = sorted(tuple(dt[b].ds.attrs["freq_bounds"]) for b in bands)
+    for (lo, hi), b in zip(fbs, sorted(bands)):
+        assert lo < float(dt[b].ds.attrs["freq_out"]) < hi
+    for (_, hi), (lo, _) in zip(fbs[:-1], fbs[1:]):
+        assert hi == pytest.approx(lo)  # contiguous, no gaps or overlaps
+    for b in bands:
+        tlo, thi = dt[b].ds.attrs["time_bounds"]
+        assert tlo < float(dt[b].ds.attrs["time_out"]) < thi
+
     # dirty FITS still written, no psf FITS (glob on _psf_ to avoid the outname)
     assert glob.glob(str(tmp_path / "fits" / "*dirty*mfs.fits"))
     assert not glob.glob(str(tmp_path / "fits" / "*_psf_*")), "psf FITS written despite psf=False"

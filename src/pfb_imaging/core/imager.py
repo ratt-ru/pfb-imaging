@@ -149,6 +149,28 @@ def _load_piece(node):
     return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
 
 
+def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
+    """Nominal band edges and padded time extent of one output image (#327).
+
+    Stored on the band node so `deconv` can hand them to the `.mds`, where
+    `degrid` derives its chunking from them. The band edges are the nominal
+    ones that assigned channels to the band, not the flagged data's extent.
+
+    Args:
+        infos: The image's per-scratch-node summaries (`time_min`, `time_max`, `int_time`).
+        band_lo: Lower band edge in Hz.
+        band_hi: Upper band edge in Hz.
+
+    Returns:
+        `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
+    """
+    half = max(i["int_time"] for i in infos) / 2
+    return {
+        "freq_bounds": [float(band_lo), float(band_hi)],
+        "time_bounds": [min(i["time_min"] for i in infos) - half, max(i["time_max"] for i in infos) + half],
+    }
+
+
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
@@ -401,6 +423,8 @@ def _grid_image_body(
         "freq_out": freq_eff,
         "freq_nominal": float(freq_nominal),
         "time_out": meta["time_out"],
+        "freq_bounds": meta.get("freq_bounds"),
+        "time_bounds": meta.get("time_bounds"),
         "ra": meta["ra"],
         "dec": meta["dec"],
         "l0": meta.get("l0", 0.0),
@@ -1133,6 +1157,9 @@ def imager(
             "ra": float(pieces[0].attrs["ra"]),
             "dec": float(pieces[0].attrs["dec"]),
             "time_out": float(np.mean([ds.attrs["time_out"] for ds in pieces])),
+            "time_min": float(min(ds.attrs["time_min"] for ds in pieces)),
+            "time_max": float(max(ds.attrs["time_max"] for ds in pieces)),
+            "int_time": float(max(ds.attrs.get("int_time", 0.0) for ds in pieces)),
         }
     if not node_info:
         log.error_and_raise("Pass 1 produced no output images (all data flagged?)", RuntimeError)
@@ -1163,6 +1190,7 @@ def imager(
                         "l0": l0,
                         "m0": m0,
                         "time_out": time_out,
+                        **_sampling_bounds(infos, band_edges[bandid], band_edges[bandid + 1]),
                     },
                 )
             )
@@ -1171,6 +1199,7 @@ def imager(
             l0, m0 = target_offset(info["time_out"])
             meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
             meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
+            meta.update(_sampling_bounds([info], band_edges[info["bandid"]], band_edges[info["bandid"] + 1]))
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})

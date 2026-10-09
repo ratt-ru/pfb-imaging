@@ -670,6 +670,9 @@ def stokes_vis(
         "time_out": time_out,
         "time_min": utime.min(),
         "time_max": utime.max(),
+        # half of it pads the image's time_bounds (#327); the per-row
+        # `interval` resolved above, so irregular grids are handled
+        "int_time": float(np.nanmedian(interval)),
         "timeid": timeid,
         "product": product,
         "utc": utc,
