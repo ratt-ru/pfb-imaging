@@ -1274,8 +1274,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D41 — `--product` must match the model's `stokes` attr, and may name only one product
 
-- **Superseded by D51** (#347): the model now has a Stokes axis and the rule is subset, not
-  equality. Kept for the reasoning on silent wrong output.
+- **Historical, superseded by D51** (#347): the rule below no longer holds; the model now has a
+  Stokes axis and the rule is subset, not equality. Kept as the record, and for the reasoning on
+  silent wrong output.
 - **Context:** the `genesis` `.mds` spec stores a single Stokes plane, but `--product` is a
   free-form string.
 - **Decision:** refuse `len(product) > 1`, and refuse a product that disagrees with the
@@ -1565,14 +1566,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   chunk (D53) and the imager transfer needs the frequency coverage (D52).
 - **Decision:** pfb-model-spec 0.1 adds optional `freq_bounds (f, bound)`, `time_bounds (t,
   bound)`, `weights (stokes, t, f)` and the attr `flux_scale`, read back with `model_sampling`.
-  `deconv` writes them from the `.dt` (band `freq_bounds`/`time_bounds` attrs, wsum weights,
+  `deconv` writes them from the `.dt` (band `freq_bounds`/`time_bounds` attrs, `weights` as the
+  per-band wsum fractions `wsums / wsum`,
   `flux_scale="intrinsic"`) and omits the bounds for a `.dt` that predates them. Provenance (which
   `.dt`, which run) stays out of the `.mds`. The imager writes no `.mds`.
 - **Rationale:** two writers would couple their naming and the fit would be refitted lossily
   from a model that was itself already a fit. One writer keeps the file a pure output of the
   solve.
 - **Consequences:** an older `.mds` has no bounds; `degrid` then refuses its default chunk (D53)
-  and the transfer coverage check cannot run.
+  and the transfer coverage check falls back to the min/max of the fitted frequencies, which
+  understates the sampled extent.
 - **Source:** `src/pfb_imaging/core/deconv.py`, `src/pfb_imaging/core/imager.py` (band
   attrs), commits `49be858`, `7e22638`; issue #327; landmanbester/pfb-model-spec#31.
 
@@ -1599,8 +1602,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   frequencies fall outside the model's `freq_bounds` (the fit is extrapolated).
 - **Rationale:** refining is conservative; coarsening is wrong until a flux-conserving regrid
   exists. Checks run before pass 1 so a bad request costs no gridding.
-- **Consequences:** lifted by the flux-conserving-regrid follow-up. The coverage check needs
-  `freq_bounds` (D50).
+- **Consequences:** lifted by the flux-conserving-regrid follow-up. The coverage check uses
+  `freq_bounds` when present and otherwise the fitted frequencies' extent (D50).
 - **Source:** `src/pfb_imaging/core/imager.py` (the upfront checks), `tests/test_imager_transfer.py`;
   issue #309.
 
