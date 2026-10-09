@@ -845,6 +845,7 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
             path="/p",
             chan0=0,
             nchan=8,
+            chan_width=1.0e6,
             ntime=60,
             field_name="f",
             spw_name="s",
@@ -1115,7 +1116,11 @@ def _vis_node(nchan, ncorr=4, *, name="spw0", freqs=None):
         coords={
             "time": np.array([1.62e9, 1.62e9 + 8.0]),
             "baseline_id": np.arange(3),
-            "frequency": ("frequency", np.asarray(freqs), {"spectral_window_name": name}),
+            "frequency": (
+                "frequency",
+                np.asarray(freqs),
+                {"spectral_window_name": name, "channel_width": {"data": np.full(nchan, 1.0e6)}},
+            ),
             "polarization": np.array(["XX", "XY", "YX", "YY"][:ncorr]),
         },
         attrs={
@@ -1585,3 +1590,56 @@ def test_imager_degrid_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_path)
     assert peak < 0.05 * dirty_peak, (
         f"residual peak {peak:.3e} vs dirty peak {dirty_peak:.3e} -- the degridded model did not subtract"
     )
+
+
+@pytest.mark.parametrize(
+    "chan_width, expected",
+    [(1.0e7, 10), (-5.0e6, 20), (2.0e8, 1), (3.0e7, 3)],  # descending SPW; channel wider than a band
+)
+def test_default_channels_per_chunk(chan_width, expected):
+    from pfb_imaging.utils.degrid import default_channels_per_chunk
+
+    fb = np.array([[1.0e9, 1.1e9], [1.1e9, 1.2e9]])
+    assert default_channels_per_chunk(fb, chan_width) == expected
+
+
+def test_flux_scale_warning():
+    from pfb_imaging.utils.degrid import flux_scale_warning
+
+    assert "primary beam" in flux_scale_warning("intrinsic")
+    assert flux_scale_warning("apparent") is None
+    assert flux_scale_warning(None) is None
+
+
+def test_degrid_refuses_a_model_without_freq_bounds_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    import pfb_imaging.core.degrid as degrid_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(degrid_mod, "init_ray", _boom)
+    _, ds = simple_mds
+    bare = str(tmp_path / "bare.mds")
+    ds.drop_vars("freq_bounds").to_zarr(bare, mode="w")
+    with pytest.raises(ValueError, match="freq_bounds"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=bare,
+            product="I",
+            nworkers=1,
+            nthreads=1,
+            progressbar=False,
+            log_directory=str(tmp_path / "logs"),
+        )
+
+
+def test_selected_nodes_carry_a_positive_channel_width(ms_name):
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name, None))
+    try:
+        nodes = select_vis_nodes(dt)
+    finally:
+        dt.close()
+    assert nodes and all(n.chan_width > 0 for n in nodes)

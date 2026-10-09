@@ -62,16 +62,15 @@ def degrid(
         ),
     ],
     channels_per_chunk: Annotated[
-        int,
+        int | None,
         typer.Option(
-            ...,
             help="Number of channels per degridding chunk. "
-            "Required. "
+            "Defaults to the channels spanning one imaging band, from the model's freq_bounds. "
             "The model is re-rendered once per chunk so this sets how finely the model spectrum is sampled. "
             "Narrower chunks cost more FFTs at the same visibility count.",
             rich_help_panel="Chunking",
         ),
-    ],
+    ] = None,
     suffix: Annotated[
         str,
         typer.Option(
@@ -318,7 +317,7 @@ def degrid(
             degrid_core(
                 ms,
                 output_filename,
-                channels_per_chunk,
+                channels_per_chunk=channels_per_chunk,
                 suffix=suffix,
                 mds=mds,
                 model_column=model_column,

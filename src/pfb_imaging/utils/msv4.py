@@ -119,6 +119,7 @@ class SelectedNode:
             Derived from matching channel indices, not a label slice, so it is
             correct for a descending spectral window.
         nchan: Number of selected channels.
+        chan_width: Absolute channel width in Hz, from the `frequency` coord's `channel_width` attr.
         ntime: Number of times on the node (never trimmed).
         field_name: The node's single field name.
         spw_name: The node's spectral window name.
@@ -130,6 +131,7 @@ class SelectedNode:
     path: str
     chan0: int
     nchan: int
+    chan_width: float
     ntime: int
     field_name: str
     spw_name: str
@@ -206,6 +208,7 @@ def select_vis_nodes(
                 path=node.path,
                 chan0=chan0,
                 nchan=int(ds.frequency.size),
+                chan_width=float(np.nanmin(np.abs(np.atleast_1d(node.ds.frequency.attrs["channel_width"]["data"])))),
                 ntime=int(node.ds.sizes["time"]),
                 field_name=str(field_name),
                 spw_name=str(spw_name),

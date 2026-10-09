@@ -29,7 +29,7 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from pfb_model_spec.utils.degrid import model_geometry
+from pfb_model_spec.utils.degrid import model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
 
@@ -41,8 +41,10 @@ from pfb_imaging.utils.degrid import (
     build_region_masks,
     check_stokes_subset,
     check_writable_backend,
+    default_channels_per_chunk,
     degrid_region,
     ensure_model_columns,
+    flux_scale_warning,
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import glob_uris, set_output_names
@@ -351,7 +353,7 @@ def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_c
 def degrid(
     ms: list[Path],
     output_filename: str,
-    channels_per_chunk: int,
+    channels_per_chunk: int | None = None,
     suffix: str = "main",
     mds: str | None = None,
     model_column: str = "MODEL_DATA",
@@ -380,10 +382,8 @@ def degrid(
         ms: Measurement sets to write to.
         output_filename: Output basename; only used for naming and the default
             `.mds` location -- nothing image-space is written.
-        channels_per_chunk: Channels per degridding chunk. Required, and must
-            be positive: it also sets how finely the model's spectrum is
-            sampled, so there is no defensible default while the `.mds` does
-            not record the imaging run's channelisation (#327).
+        channels_per_chunk: Channels per degridding chunk. Defaults to the
+            channels spanning one imaging band, from the model's `freq_bounds`.
         mds: Path to the component model. Defaults to whichever of
             `{output_filename}_{suffix}.mds` (what `deconv` writes) or
             `{output_filename}_{suffix}_model.mds` (what `pfbspec model2comps`
@@ -424,13 +424,8 @@ def degrid(
         raise ValueError(
             f"integrations-per-chunk must be -1 (whole partition), 0 (same) or positive, got {integrations_per_chunk}"
         )
-    if int(channels_per_chunk) <= 0:
-        raise ValueError(
-            "channels-per-chunk must be positive. There is no "
-            "defensible default while the .mds does not record the imaging "
-            "run's channelisation (see issue #327); it also sets how finely "
-            "the model's spectrum is sampled, so it is a science choice."
-        )
+    if channels_per_chunk is not None and int(channels_per_chunk) <= 0:
+        raise ValueError(f"channels-per-chunk must be positive, got {channels_per_chunk}")
 
     output_filename, _, log_directory, _ = set_output_names(output_filename, product, log_directory=log_directory)
     opts_dict["output_filename"] = output_filename
@@ -480,6 +475,14 @@ def degrid(
         f"Model grid {geom['nx']}x{geom['ny']} at {np.rad2deg(geom['cell_rad']) * 3600:.4e} arcsec, "
         f"stokes {geom['stokes']}"
     )
+    sampling = model_sampling(model_ds)
+    if channels_per_chunk is None and sampling["freq_bounds"] is None:
+        raise ValueError(
+            "channels-per-chunk was not given and the model records no freq_bounds to derive it "
+            "from. Pass --channels-per-chunk, or regenerate the .mds with a current pfb deconv."
+        )
+    if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
+        log.warning(msg)
 
     freq_min, freq_max = -np.inf, np.inf
     if freq_range:
@@ -601,8 +604,17 @@ def degrid(
     )
     # build the work list before standing the app up, so a bad chunk spec
     # cannot leave a Serve deployment running with nothing to shut it down
+
+    def node_fstep(node) -> int:
+        if channels_per_chunk is not None:
+            return int(channels_per_chunk)
+        return default_channels_per_chunk(sampling["freq_bounds"], node.chan_width)
+
+    if channels_per_chunk is None:
+        derived = sorted({node_fstep(node) for _, node in selected})
+        log.info(f"Derived channels-per-chunk {derived} from the model's band width")
     items = [
-        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, channels_per_chunk)
+        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, node_fstep(node))
     ]
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 

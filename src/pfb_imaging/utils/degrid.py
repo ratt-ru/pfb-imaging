@@ -531,3 +531,41 @@ def degrid_region(
     # to_msv2 writes every data variable it is handed, so hand it only ours.
     # drop_vars/assign preserve ds.encoding, which the MSv2 store needs.
     return ds.drop_vars(set(ds.data_vars)).assign(assigned)
+
+
+def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> int:
+    """Channels per degridding chunk that span one imaging band (#327).
+
+    The `.mds` records band edges in Hz rather than a channel count, so an MS
+    with channels half as wide gets twice as many per chunk and every chunk
+    covers the bandwidth the model was fitted over.
+
+    Args:
+        freq_bounds: The model's `(nband, 2)` band edges in Hz.
+        chan_width: The node's channel width in Hz (sign ignored).
+
+    Returns:
+        A positive channel count; at least 1 when a channel is wider than a band.
+    """
+    band_width = float(np.min(freq_bounds[:, 1] - freq_bounds[:, 0]))
+    return max(1, int(round(band_width / abs(chan_width))))
+
+
+def flux_scale_warning(flux_scale: str | None) -> str | None:
+    """The warning to log for a model's flux scale, if any.
+
+    `degrid` applies no primary beam, so an intrinsic model yields intrinsic
+    visibilities -- correct only where the beam is close to 1.
+
+    Args:
+        flux_scale: The `.mds` `flux_scale`, from `model_sampling`.
+
+    Returns:
+        The message, or `None` when nothing needs saying.
+    """
+    if flux_scale != "intrinsic":
+        return None
+    return (
+        "The model is in intrinsic flux and degrid applies no primary beam, so the model "
+        "visibilities are only correct where the beam is close to 1."
+    )

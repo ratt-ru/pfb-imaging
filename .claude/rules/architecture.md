@@ -82,7 +82,7 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 
 **`degrid`'s option contract is MSv4-native and is not the MSv2 command's.** Selection is by
 **name** — `--scan-names`/`--spw-names`/`--field-names`, not integer ids; chunking is
-`--integrations-per-chunk`/`--channels-per-chunk`; the cluster is `--ray-address`. The MSv2
+`--integrations-per-chunk`/`--channels-per-chunk` (the latter defaults to one imaging band's width in Hz from the `.mds` `freq_bounds`, converted per MS); the cluster is `--ray-address`. The MSv2
 `degrid` was retired outright in #330 (D43), so an old recipe fails with an unrecognised-option
 error rather than silently doing something else.
 
