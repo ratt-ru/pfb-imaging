@@ -253,6 +253,7 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
         radec = (float(dt[nodes[0]].ds.attrs["ra"]), float(dt[nodes[0]].ds.attrs["dec"]))
         wsum = sum(float(dt[n].ds.WSUM.values[0]) for n in nodes)
         dirty_peak = float(np.abs(sum(dt[n].ds.DIRTY[0] for n in nodes).values).max() / wsum)
+        bdirty_peak = float(np.abs(sum(dt[n].ds.BDIRTY[0] for n in nodes).values).max() / wsum)
     finally:
         dt.close()
 
@@ -297,9 +298,15 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
             assert band.MODEL.dtype == band.DIRTY.dtype
         residual = sum(dt[n].ds.RESIDUAL[0] for n in nodes).values
         peak = float(np.abs(residual).max() / wsum)
+        bresidual = sum(dt[n].ds.BRESIDUAL[0] for n in nodes).values
+        bpeak = float(np.abs(bresidual).max() / wsum)
     finally:
         dt.close()
     assert peak < 0.05 * dirty_peak, f"residual peak {peak:.3e} vs dirty peak {dirty_peak:.3e}"
+    # BRESIDUAL = BDIRTY - sum_p B_p G_p^T W_p G_p (B_p model) is the beam-attenuated
+    # gradient; deconv normalises it by the same total wsum as RESIDUAL. Its model-free
+    # term is BDIRTY, not DIRTY, so BDIRTY's peak is the like-for-like reference.
+    assert bpeak < 0.05 * bdirty_peak, f"bresidual peak {bpeak:.3e} vs bdirty peak {bdirty_peak:.3e}"
 
     # deconv resumes from the transferred tree without the "MODEL but no BRESIDUAL" refusal
     from pfb_imaging.core.deconv import deconv as deconv_core
