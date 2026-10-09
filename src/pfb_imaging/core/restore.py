@@ -35,6 +35,7 @@ from pfb_imaging.utils.restoration import (
 log = pfb_logging.get_logger("RESTORE")
 
 
+@pfb_logging.log_exceptions
 def restore(
     output_filename: str,
     model_name: str = "MODEL",

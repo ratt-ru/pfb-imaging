@@ -17,6 +17,10 @@ from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
 
+from pfb_imaging.utils import logging as pfb_logging
+
+log = pfb_logging.get_logger("MISC")
+
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 JIT_OPTIONS = {"nogil": True, "cache": True}
@@ -903,7 +907,7 @@ def fitcleanbeam(
             factr=1e7,
         )
         if d["warnflag"] != 0:
-            print("WARNING - warning flag raised during psf fit")
+            log.warning(f"Clean beam fit did not converge cleanly: {d['task']}")
 
         if p[0] >= p[1]:  # major and minor axes correct
             emaj = p[0]

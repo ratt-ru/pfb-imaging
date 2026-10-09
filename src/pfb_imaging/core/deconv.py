@@ -94,6 +94,7 @@ def _grad_with_prior(residual, bresidual, model, hess):
     return residual - kinv_m, bresidual - kinv_m
 
 
+@pfb_logging.log_exceptions
 def deconv(
     output_filename: str,
     suffix: str = "main",
@@ -172,6 +173,10 @@ def deconv(
     opts_dict["output_filename"] = output_filename
     opts_dict["fits_output_folder"] = fits_output_folder
     opts_dict["log_directory"] = log_directory
+    # before the .dt is opened and validated, so log_exceptions has a file (#348)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{str(log_directory)}/deconv_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
 
     # Lazy load at the outset because we need nband to set default worker count
     # unlike the legacy .dds (which the `suffix` convention comes from),
@@ -229,9 +234,6 @@ def deconv(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/deconv_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
     log.log_options_dict(opts_dict, title="DECONV options")
 
     # every deconv worker claims a nominal CPU (they are thread-pool-bound,

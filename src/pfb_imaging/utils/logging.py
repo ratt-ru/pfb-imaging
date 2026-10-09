@@ -5,10 +5,11 @@ This module provides a drop-in replacement for pyscilog with enhanced
 formatting using the Rich library for better console output.
 """
 
+import functools
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, TypeVar, Union
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -20,6 +21,20 @@ from rich.traceback import install as install_rich_traceback
 rich_console = Console()
 
 install_rich_traceback(console=rich_console, show_locals=False)
+
+# A record carrying this attribute goes to the log files only. Used for
+# tracebacks the interpreter is about to print to the terminal anyway.
+FILE_ONLY = "file_only"
+
+
+# The console handler renders Rich markup, so a message with literal square
+# brackets -- the progress telemetry, `[pid ... peak ... GB]` -- loses them as an
+# unknown style tag. Pass this as `extra=` to print such a message verbatim.
+NO_MARKUP = {"markup": False}
+
+
+def _not_file_only(record: logging.LogRecord) -> bool:
+    return not getattr(record, FILE_ONLY, False)
 
 
 class PFBLogger(logging.Logger):
@@ -105,6 +120,7 @@ class LoggingManager:
             fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         console_handler.setFormatter(formatter)
+        console_handler.addFilter(_not_file_only)
 
         self._root_logger.addHandler(console_handler)
 
@@ -252,6 +268,43 @@ def get_log_files() -> Dict[str, str]:
 def close_log_files() -> None:
     """Close all file handlers."""
     _logging_manager.close_log_files()
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def log_exceptions(func: F) -> F:
+    """Write any exception escaping ``func`` to the log files, then re-raise it.
+
+    Without this an exception that is not raised through ``error_and_raise`` --
+    one from xarray, zarr or ducc, or a Ray task failure re-raised by
+    ``ray.get`` -- reaches only the terminal, and the log file just stops
+    (#348). The record is file-only because the interpreter prints the
+    traceback to the terminal when the exception propagates. A ``RayTaskError``
+    carries the remote traceback in its message, so that lands in the file too.
+
+    Args:
+        func: A front-end entry point that calls ``log_to_file``.
+
+    Returns:
+        The wrapped function.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            # an entry point called from another one logs the exception once
+            if not getattr(e, "_pfb_logged", False):
+                _logging_manager._root_logger.error(f"{func.__name__} failed", exc_info=e, extra={FILE_ONLY: True})
+                try:
+                    e._pfb_logged = True
+                except AttributeError:  # exception types with __slots__
+                    pass
+            raise
+
+    return wrapper  # type: ignore[return-value]
 
 
 def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "Options") -> None:

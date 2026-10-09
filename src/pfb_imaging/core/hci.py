@@ -48,6 +48,7 @@ _FITS_AXIS_KEYWORDS = ("CTYPE", "CRVAL", "CRPIX", "CDELT", "CUNIT", "NAXIS")
 _STOKES_FITS_INDEX = {"I": 1, "Q": 2, "U": 3, "V": 4}
 
 
+@pfb_logging.log_exceptions
 def hci(
     ms: list[Path],
     output_dataset: str,

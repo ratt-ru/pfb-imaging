@@ -10,6 +10,7 @@ import ray
 import xarray as xr
 import zarr
 from ducc0.misc import resize_thread_pool
+from meerkat_beams import cache as mbeams_cache
 from meerkat_beams.utils import BeamWizard
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
@@ -18,7 +19,7 @@ from xarray_ms.errors import (
     MissingMetadataWarning,
 )
 
-from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import MBEAMS_CACHE_DEFAULT, init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
@@ -527,6 +528,59 @@ def _preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups
     return override
 
 
+def _missing_group_beams(band: str, groups: list[str]) -> str | None:
+    """Explain group beams that meerkat-beams can neither find nor download.
+
+    The MdV-2026 group products are not published yet, so meerkat-beams can
+    only use them once someone has staged them in its cache by hand. Its own
+    error names the path it looked in, not why that path is empty or where the
+    beams might already be. pfb points the cache at ``MBEAMS_CACHE_DEFAULT`` in
+    ``/tmp``, which is RAM-backed on many hosts and lost on reboot, while a
+    previous ``meerkat-beams`` run may have staged them in its own default.
+
+    Args:
+        band: the --beam-model band.
+        groups: the baseline groups present in the data.
+
+    Returns:
+        An error message, or None when every needed product is staged or
+        downloadable.
+    """
+
+    def staged(root: Path, product: str) -> bool:
+        return (root / "bds" / f"{product}.bds.zarr").exists() or (root / "inputs" / f"{product}.zarr").exists()
+
+    root = mbeams_cache.cache_root()
+    needed = dict.fromkeys(p for g in groups for p in mbeams_cache.GROUP_PRODUCTS[(band, g)])
+    missing = [
+        p
+        for p in needed
+        if mbeams_cache.product_gdrive_id(p) == mbeams_cache.PLACEHOLDER_GDRIVE_ID and not staged(root, p)
+    ]
+    if not missing:
+        return None
+
+    msg = (
+        f"--baseline-groups needs the beam product(s) {', '.join(missing)}. meerkat-beams cannot "
+        f"download them yet, and they are not staged in the beam cache MBEAMS_CACHE_DIR={root}."
+    )
+    if str(root) == MBEAMS_CACHE_DEFAULT:
+        msg += " That is pfb's default cache, which is lost on reboot wherever /tmp is RAM-backed."
+    # meerkat-beams' own default, which an earlier standalone run may have filled
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    usual = Path(xdg) / "meerkat-beams" if xdg else Path.home() / ".cache" / "meerkat-beams"
+    if usual != root and all(staged(usual, p) for p in missing):
+        msg += f" They are staged in {usual}: run export MBEAMS_CACHE_DIR={usual} and retry."
+    else:
+        msg += (
+            f" Copy each product's MdV mean-beam zarr to {root / 'inputs'}/<product>.zarr, or set "
+            f"MBEAMS_CACHE_DIR to a directory where they are already staged "
+            f"(see meerkat-beams scripts/stage_group_cache.py)."
+        )
+    return msg
+
+
+@pfb_logging.log_exceptions
 def imager(
     ms: list[Path],
     output_filename: str,
@@ -599,6 +653,11 @@ def imager(
     opts_dict["fits_output_folder"] = fits_output_folder
     opts_dict["log_directory"] = log_directory
 
+    # before any validation that reads data, so log_exceptions has a file (#348)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{str(log_directory)}/imager_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
+
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
@@ -652,10 +711,6 @@ def imager(
             "which does apply gains.",
             NotImplementedError,
         )
-
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/imager_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
 
     log.log_options_dict(opts_dict, title="IMAGER options")
 
@@ -902,6 +957,9 @@ def imager(
             # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
             # file-backed) and pass 1 emits hundreds of tasks, so passing it by
             # value per task would serialise it hundreds of times.
+            missing = _missing_group_beams(str(beam_model).upper(), present_groups)
+            if missing:
+                log.error_and_raise(missing, RuntimeError)
             log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
             beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
         else:
@@ -1013,11 +1071,7 @@ def imager(
                 # post-gc rss ratcheting up for a pid across tasks indicates
                 # retention below Python (C-level caches/arenas); peak is the
                 # worker's lifetime high-water mark
-                print(
-                    f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]",
-                    end="\n",
-                    flush=True,
-                )
+                log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
 
     ntime = len(set(timeids_out))
     nband_out = len(set(bandids_out))
@@ -1207,11 +1261,7 @@ def imager(
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
-                print(
-                    f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]",
-                    end="\n",
-                    flush=True,
-                )
+                log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).

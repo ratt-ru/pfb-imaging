@@ -94,10 +94,8 @@ os.environ.setdefault(
     "NUMBA_CACHE_DIR",
     f"/tmp/numba-cache-{os.getuid()}",
 )
-os.environ.setdefault(
-    "MBEAMS_CACHE_DIR",
-    f"/tmp/mbeams-cache-{os.getuid()}",
-)
+MBEAMS_CACHE_DEFAULT = f"/tmp/mbeams-cache-{os.getuid()}"
+os.environ.setdefault("MBEAMS_CACHE_DIR", MBEAMS_CACHE_DEFAULT)
 
 
 def set_envs(nthreads, ncpu, log=None):
@@ -183,7 +181,18 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
 
 def setup_ray_worker():
     logger = pfb_logging.get_logger("RAY_WORKER")
-    logger.setLevel(logging.ERROR)
+    # WARNING, not ERROR: this logger exists for the TBB warning below
+    logger.setLevel(logging.WARNING)
+    # meerkat-beams logs at INFO to its own stdout handler, and Ray forwards
+    # every worker's stdout to the driver, so each pass-1 task printed its
+    # "field centre set to ..." lines. The driver keeps them; workers warn only.
+    try:
+        # deferred: this module is imported by the lightweight CLI install
+        from meerkat_beams.utils import set_console_logging_level
+    except ImportError:  # meerkat-beams needs Python >= 3.11
+        pass
+    else:
+        set_console_logging_level(logging.WARNING)
     # TBB is optional now that it lives behind the [x86] extra (and cannot be
     # installed at all off x86_64). Warn rather than raise: numba falls back to
     # its OpenMP layer on its own, and a worker that threads through libgomp is

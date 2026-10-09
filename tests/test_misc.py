@@ -1,8 +1,10 @@
+import logging
 import tracemalloc
 
 import numpy as np
 import pytest
 
+from pfb_imaging.utils import misc
 from pfb_imaging.utils.misc import fitcleanbeam
 
 pmp = pytest.mark.parametrize
@@ -45,3 +47,15 @@ def test_fitcleanbeam_memory_is_bounded():
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < big.nbytes, f"peak {peak / big.nbytes:.1f} x the PSF"
+
+
+def test_fitcleanbeam_fit_warning_is_logged(monkeypatch, caplog):
+    # it was a bare print, so it never reached the log file (#348)
+    def flagged(func, x0, **kwargs):
+        return x0, 0.0, {"warnflag": 2, "task": "ABNORMAL"}
+
+    monkeypatch.setattr(misc, "fmin_l_bfgs_b", flagged)
+    monkeypatch.setattr(misc.log, "propagate", True)  # the app logger stops propagation at "pfb"
+    with caplog.at_level(logging.WARNING, logger="pfb.MISC"):
+        fitcleanbeam(_gauss_psf(64, 3.0))
+    assert any("ABNORMAL" in r.getMessage() and r.name == "pfb.MISC" for r in caplog.records)
