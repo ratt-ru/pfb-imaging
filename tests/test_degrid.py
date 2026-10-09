@@ -962,6 +962,55 @@ def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_
 
 
 @pytest.mark.slow
+def test_degrid_runs_with_the_derived_channel_chunk(degrid_ms, simple_mds, tmp_path, pctable, monkeypatch):
+    """Omitting --channels-per-chunk derives one band's worth of channels from the model's freq_bounds (#327).
+
+    The unit test pins `default_channels_per_chunk`; this pins that the driver
+    actually feeds it to the work list and runs to completion with it. On the
+    test MS (100 MHz channels, 100 MHz model bands) the derived chunk is 1.
+    """
+    import arcae
+
+    import pfb_imaging.core.degrid as degrid_mod
+    from pfb_imaging.utils.degrid import default_channels_per_chunk
+
+    mds_path, mds_ds = simple_mds
+    assert "freq_bounds" in mds_ds
+
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+    with arcae.table(f"{degrid_ms}::SPECTRAL_WINDOW") as spw:
+        chan_width = float(np.asarray(spw.getcol("CHAN_WIDTH")).squeeze()[0])
+    expected = default_channels_per_chunk(mds_ds.freq_bounds.values, chan_width)
+
+    fsteps = []
+    work_items = degrid_mod._work_items
+
+    def spy(ms_index, node, integrations_per_chunk, channels_per_chunk):
+        fsteps.append(channels_per_chunk)
+        return work_items(ms_index, node, integrations_per_chunk, channels_per_chunk)
+
+    monkeypatch.setattr(degrid_mod, "_work_items", spy)
+
+    degrid_mod.degrid(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        integrations_per_chunk=-1,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+
+    assert fsteps and set(fsteps) == {expected}
+    with pctable(degrid_ms, ack=False) as tab:
+        col = np.asarray(tab.getcol("MODEL_DATA"))
+    assert np.any(col != 0), "nothing was written"
+
+
+@pytest.mark.slow
 def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path, pctable):
     """`--freq-range` must write to the selected channels and no others.
 
