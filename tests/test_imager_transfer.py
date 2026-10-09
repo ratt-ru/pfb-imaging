@@ -142,3 +142,132 @@ def test_transfer_path_is_resolved_to_absolute(ms_name, tmp_path, monkeypatch):
             keep_ray_alive=True,
             log_directory=str(tmp_path / "logs"),
         )
+
+
+def test_transfer_planes_follow_the_band_corr():
+    from pfb_imaging.core.imager import _transfer_planes
+
+    assert _transfer_planes(["I", "Q", "U", "V"], ["I"]) == [0]
+    assert _transfer_planes(["I", "V"], ["V", "I"]) == [1, 0]
+
+
+def test_iter_parts_keeps_the_phase_centre_attrs(tmp_path):
+    """A --target run's residual needs each part's l0/m0 (residual_from_partitions reads them)."""
+    import xarray as xr
+
+    from pfb_imaging.core.imager import _iter_parts
+
+    store = str(tmp_path / "x.dt")
+    part = xr.Dataset(
+        {
+            "UVW": (("row", "three"), np.zeros((2, 3))),
+            "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1))),
+            "MASK": (("row", "chan"), np.ones((2, 1), np.uint8)),
+            "FREQ": (("chan",), np.array([1e9])),
+            "BEAM": (("corr", "y", "x"), np.ones((1, 4, 4))),
+            "VIS": (("corr", "row", "chan"), np.zeros((1, 2, 1), np.complex64)),
+        },
+        attrs={"l0": 1.5e-4, "m0": -2.5e-4},
+    )
+    part.to_zarr(store, group="band0000_time0000/part0000", mode="w", consolidated=False)
+    (got,) = list(_iter_parts(store, "band0000_time0000", 1))
+    assert got.attrs["l0"] == 1.5e-4 and got.attrs["m0"] == -2.5e-4
+    assert "VIS" not in got and got.WEIGHT.shape == (1, 2, 1)
+
+
+@pytest.mark.slow
+def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_path):
+    """Transfer the injected sky; pass 2's RESIDUAL must be ~0 and deconv must resume.
+
+    Same construction as test_imager_degrid_nulls_the_residual, but the
+    subtraction happens in the imager's pass 2 instead of via degrid.
+    """
+    import xarray as xr
+    from pfb_model_spec.utils.io import model_to_ds
+
+    from pfb_imaging.operators.gridder import wgridder_conventions
+
+    common = dict(
+        channels_per_image=4,
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=0.0,
+        psf=True,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    first = str(tmp_path / "first")
+    imager_core([Path(ms_name)], first, **common)
+    dt = xr.open_datatree(first + "_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
+        time_out = np.array([float(dt[nodes[0]].ds.attrs["time_out"])])
+        radec = (float(dt[nodes[0]].ds.attrs["ra"]), float(dt[nodes[0]].ds.attrs["dec"]))
+        wsum = sum(float(dt[n].ds.WSUM.values[0]) for n in nodes)
+        dirty_peak = float(np.abs(sum(dt[n].ds.DIRTY[0] for n in nodes).values).max() / wsum)
+    finally:
+        dt.close()
+
+    nx, ny = sky_truth.nx, sky_truth.ny
+    model = np.zeros((freq_out.size, 1, ny, nx))
+    for b, f in enumerate(freq_out):
+        for s in range(sky_truth.lpix.size):
+            ix = nx // 2 - int(sky_truth.lpix[s])
+            iy = ny // 2 + int(sky_truth.mpix[s])
+            model[b, 0, iy, ix] = sky_truth.ref_flux[s] * (f / ms_meta.freq0) ** sky_truth.alpha[s]
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    mds_path = str(tmp_path / "truth.mds")
+    model_to_ds(
+        time=time_out,
+        freq=freq_out,
+        fsel=np.ones(freq_out.size, dtype=bool),
+        model=model,
+        wgt=np.ones((freq_out.size, 1)),
+        mds_name=mds_path,
+        cell_rad=sky_truth.cell_rad,
+        nx=nx,
+        ny=ny,
+        x0=x0,
+        y0=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
+        radec=radec,
+        stokes=["I"],
+        writer_version="test",
+    )
+
+    second = str(tmp_path / "second")
+    imager_core([Path(ms_name)], second, transfer_model_from=mds_path, **common)
+    dt = xr.open_datatree(second + "_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        for n in nodes:
+            band = dt[n].ds
+            assert {"MODEL", "RESIDUAL", "BRESIDUAL"} <= set(band.data_vars)
+            assert band.attrs["transferred_from"] == mds_path
+            assert band.MODEL.dtype == band.DIRTY.dtype
+        residual = sum(dt[n].ds.RESIDUAL[0] for n in nodes).values
+        peak = float(np.abs(residual).max() / wsum)
+    finally:
+        dt.close()
+    assert peak < 0.05 * dirty_peak, f"residual peak {peak:.3e} vs dirty peak {dirty_peak:.3e}"
+
+    # deconv resumes from the transferred tree without the "MODEL but no BRESIDUAL" refusal
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    deconv_core(
+        second,
+        product="I",
+        niter=1,
+        nthreads=1,
+        fits_mfs=False,
+        fits_cubes=False,
+        log_directory=str(tmp_path / "logs"),
+    )

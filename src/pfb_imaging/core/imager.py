@@ -12,8 +12,9 @@ import zarr
 from ducc0.misc import resize_thread_pool
 from meerkat_beams import cache as mbeams_cache
 from meerkat_beams.utils import BeamWizard
-from pfb_model_spec.utils.degrid import model_geometry, model_sampling
+from pfb_model_spec.utils.degrid import model_geometry, model_sampling, render_model_region
 from pfb_model_spec.utils.spec import open_mds
+from rarg_python_patterns.multiton import Multiton
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
     FrameConversionWarning,
@@ -22,7 +23,7 @@ from xarray_ms.errors import (
 )
 
 from pfb_imaging import MBEAMS_CACHE_DEFAULT, init_ray, pfb_version, set_envs, setup_ray_worker
-from pfb_imaging.operators.gridder import grid_partition
+from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
@@ -150,6 +151,33 @@ def _load_piece(node):
         The piece as an in-memory Dataset.
     """
     return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
+
+
+def _load_transfer_model(path: str) -> xr.Dataset:
+    """Open and load a `--transfer-model-from` `.mds`. Module level so a `Multiton` can pickle it."""
+    return open_mds(path).load()
+
+
+def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
+    """Indices of the model's Stokes planes, in the band's `corr` order (#309)."""
+    return [list(model_stokes).index(str(c)) for c in corr]
+
+
+def _iter_parts(dt_store: str, out_name: str, npart: int):
+    """Stream one image's partitions back from the `.dt`, one at a time (#309).
+
+    Only the variables `residual_from_partitions` reads, plus the attrs (its
+    l0/m0 set the phase centre). Reading back rather than holding the
+    partitions keeps the pass-2 task at one partition's vis data at a time.
+    """
+    for pid in range(npart):
+        ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
+        try:
+            sub = ds[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+            sub.attrs = dict(ds.attrs)
+        finally:
+            ds.close()
+        yield sub
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
@@ -314,6 +342,8 @@ def _grid_image_body(
     do_psf=True,
     part_fits_dir=None,
     part_fits_beam=True,
+    transfer_model=None,
+    transfer_path=None,
 ):
     """Pass-2 worker for one output image.
 
@@ -323,6 +353,10 @@ def _grid_image_body(
     writes the band node + ``part####`` children into the ``.dt`` store. Returns a
     light summary (``timeid``/``wsum``/telemetry); the band PSF goes to the ``.dt``
     only -- returning it would put an image per task in the Ray object store.
+
+    ``transfer_model`` is a ``Multiton`` over ``_load_transfer_model``, or ``None``;
+    ``transfer_path`` is its path, recorded on the band node. With a model, the
+    band node also gets ``MODEL``/``RESIDUAL``/``BRESIDUAL`` (#309).
     """
     resize_thread_pool(nthreads)
     # cache=False: otherwise the counts read below is memoised on the tree,
@@ -360,6 +394,7 @@ def _grid_image_body(
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
 
+    npart = len(groups)
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
         part = _concat_pieces(plist)
@@ -485,8 +520,8 @@ def _grid_image_body(
     band_attrs = {k: v for k, v in band_attrs.items() if v is not None}
     # band-level BEAM: wsum-weighted mean of the partition beams -- the
     # linear-mosaic response (still the effective B/n of wiki D22).
-    # RESIDUAL is only computed once a model input exists (deconv falls back
-    # to DIRTY when it is absent).
+    # RESIDUAL/BRESIDUAL are only computed here with --transfer-model-from
+    # (deconv falls back to DIRTY/BDIRTY otherwise).
     with np.errstate(invalid="ignore", divide="ignore"):
         beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
     band_vars = {
@@ -504,10 +539,39 @@ def _grid_image_body(
             np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
         )
         band_coords["bpar"] = bpar
+    if transfer_model is not None:
+        # Render at the band's effective frequency, known only now that the
+        # partitions are gridded (D28), then take the exact residual over the
+        # partitions just written -- the same path deconv uses (#309).
+        model_ds = transfer_model.instance  # one load per worker process
+        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
+        rendered = render_model_region(
+            model_ds, time=meta["time_out"], freq_out=freq_eff, nx=nx, ny=ny, cell_rad=cell_rad, x0=x0, y0=y0
+        )
+        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
+        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
+        del rendered
+        residual, bresidual = residual_from_partitions(
+            dirty_sum,
+            _iter_parts(dt_store, out_name, npart),
+            model,
+            cell_rad,
+            nthreads=nthreads,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            bdirty=bdirty_sum,
+        )
+        band_vars["MODEL"] = (("corr", "y", "x"), model)
+        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
+        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))
+        band_attrs_extra = {"transferred_from": transfer_path}
+    else:
+        band_attrs_extra = {}
     band_ds = xr.Dataset(
         band_vars,
         coords=band_coords,
-        attrs=band_attrs,
+        attrs={**band_attrs, **band_attrs_extra},
     )
     band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
 
@@ -1322,6 +1386,8 @@ def imager(
         log.info(f"Per-partition FITS will be written to {part_fits_dir}")
 
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
+    # per-worker cached model: one load per process, not per task (degrid's pattern)
+    transfer = Multiton(_load_transfer_model, transfer_model_from) if transfer_model_from else None
     tasks = []
     for out_name, src_names, meta in work:
         fut = _grid_image.remote(
@@ -1349,6 +1415,8 @@ def imager(
             do_psf=psf,
             part_fits_dir=part_fits_dir,
             part_fits_beam=beam,
+            transfer_model=transfer,
+            transfer_path=transfer_model_from,
         )
         tasks.append(fut)
 
