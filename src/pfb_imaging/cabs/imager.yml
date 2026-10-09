@@ -118,6 +118,14 @@ cabs:
         dtype: Optional[List[URI]]
         metadata:
           rich_help_panel: Input
+      transfer-model-from:
+        info:
+          Component model (.mds) to start from, for example from an earlier deconv run.
+          It is rendered onto this run's grid and the exact residual is computed in pass 2.
+          The grid must share the model's tangent point and must not be coarser than the model's.
+        dtype: Optional[Directory]
+        metadata:
+          rich_help_panel: Input
       integrations-per-image:
         info:
           Number of time integrations per image.

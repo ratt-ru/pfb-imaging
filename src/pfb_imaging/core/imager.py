@@ -12,6 +12,8 @@ import zarr
 from ducc0.misc import resize_thread_pool
 from meerkat_beams import cache as mbeams_cache
 from meerkat_beams.utils import BeamWizard
+from pfb_model_spec.utils.degrid import model_geometry, model_sampling
+from pfb_model_spec.utils.spec import open_mds
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
     FrameConversionWarning,
@@ -29,6 +31,7 @@ from pfb_imaging.utils.baselines import (
     classify_antennas,
     parse_antenna_groups,
 )
+from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
 from pfb_imaging.utils.misc import (
@@ -40,7 +43,7 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
-from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes
+from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
@@ -169,6 +172,52 @@ def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
         "freq_bounds": [float(band_lo), float(band_hi)],
         "time_bounds": [min(i["time_min"] for i in infos) - half, max(i["time_max"] for i in infos) + half],
     }
+
+
+def check_transfer_geometry(model_ds, *, grid_radec, cell_rad, band_centres) -> list[str]:
+    """Refuse a transfer model the pass-2 render cannot place correctly (#309).
+
+    Args:
+        model_ds: The opened `--transfer-model-from` `.mds`.
+        grid_radec: This run's tangent point `(ra, dec)` in radians.
+        cell_rad: This run's cell size in radians.
+        band_centres: This run's nominal band centres in Hz.
+
+    Returns:
+        Warnings to log (empty when there is nothing to say).
+
+    Raises:
+        ValueError: If the tangent points differ (in-plane offsets are handled
+            by x0/y0, a different tangent point needs reprojection), or the run's
+            cell is coarser than the model's -- resampling to a coarser grid
+            inflates flux by the pixel-area ratio (pfb-model-spec#23).
+    """
+    model_radec = np.array([float(model_ds.attrs["ra"]), float(model_ds.attrs["dec"])])
+    sep = wrapped_angle_diff(np.asarray(grid_radec, dtype=np.float64), model_radec)
+    if np.any(sep > 1e-9):
+        raise ValueError(
+            f"Tangent point mismatch: this run is centred on (ra, dec) = {np.rad2deg(grid_radec)} deg, "
+            f"the transfer model on {np.rad2deg(model_radec)} deg. Transferring a model to a different "
+            "tangent point needs reprojection, which is not supported."
+        )
+    model_cell = float(model_ds.attrs["cell_rad_x"])
+    if cell_rad > model_cell * (1 + 1e-9):
+        raise ValueError(
+            f"This run's cell ({np.rad2deg(cell_rad) * 3600:.4e} arcsec) is coarser than the transfer "
+            f"model's ({np.rad2deg(model_cell) * 3600:.4e} arcsec). Rendering a .mds onto a coarser grid "
+            "inflates flux by the pixel-area ratio (pfb-model-spec#23). Image at the model's cell size "
+            "or finer."
+        )
+    fb = model_sampling(model_ds)["freq_bounds"]
+    lo, hi = (fb.min(), fb.max()) if fb is not None else (float(model_ds.freqs.min()), float(model_ds.freqs.max()))
+    band_centres = np.asarray(band_centres)
+    outside = band_centres[(band_centres < lo) | (band_centres > hi)]
+    if outside.size:
+        return [
+            f"Band centres {outside / 1e6} MHz lie outside the transfer model's {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz; "
+            "the model's frequency fit is being extrapolated there."
+        ]
+    return []
 
 
 def _concat_pieces(plist):
@@ -620,6 +669,7 @@ def imager(
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
+    transfer_model_from: str | Path | None = None,
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
     concat_row: bool = True,
@@ -735,6 +785,19 @@ def imager(
             "which does apply gains.",
             NotImplementedError,
         )
+
+    transfer_ds = None
+    if transfer_model_from is not None:
+        # absolute before any Ray worker (with its own cwd) sees it
+        transfer_model_from = str(Path(transfer_model_from).resolve())
+        opts_dict["transfer_model_from"] = transfer_model_from
+        if not Path(transfer_model_from).exists():
+            log.error_and_raise(f"No .mds at {transfer_model_from}", ValueError)
+        transfer_ds = open_mds(transfer_model_from)
+        try:
+            check_stokes_subset(product, model_geometry(transfer_ds)["stokes"])
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
 
     log.log_options_dict(opts_dict, title="IMAGER options")
 
@@ -940,6 +1003,17 @@ def imager(
     ny_pad = int(np.ceil(min_padding * ny))
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+
+    if transfer_ds is not None:
+        try:
+            for msg in check_transfer_geometry(
+                transfer_ds, grid_radec=grid_radec, cell_rad=cell_rad, band_centres=band_centres
+            ):
+                log.warning(msg)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+        # workers load their own copy (Task 7); the driver holds none during the passes
+        del transfer_ds
 
     # Baseline-group masks, one dict per selected node. Computed here rather
     # than inside the dispatch loop so the set of groups that actually exist is

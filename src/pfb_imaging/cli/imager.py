@@ -181,6 +181,16 @@ def imager(
             rich_help_panel="Input",
         ),
     ] = None,
+    transfer_model_from: Annotated[
+        Directory | None,
+        typer.Option(
+            parser=parse_upath,
+            help="Component model (.mds) to start from, for example from an earlier deconv run. "
+            "It is rendered onto this run's grid and the exact residual is computed in pass 2. "
+            "The grid must share the model's tangent point and must not be coarser than the model's.",
+            rich_help_panel="Input",
+        ),
+    ] = None,
     integrations_per_image: Annotated[
         int,
         typer.Option(
@@ -536,6 +546,7 @@ def imager(
                     sigma_column=sigma_column,
                     flag_column=flag_column,
                     gain_table=gain_table,
+                    transfer_model_from=transfer_model_from,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
                     concat_row=concat_row,
@@ -597,6 +608,7 @@ def imager(
                 sigma_column=sigma_column,
                 flag_column=flag_column,
                 gain_table=gain_table,
+                transfer_model_from=transfer_model_from,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
                 concat_row=concat_row,
@@ -667,6 +679,7 @@ def imager(
             sigma_column=sigma_column,
             flag_column=flag_column,
             gain_table=gain_table,
+            transfer_model_from=transfer_model_from,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
             concat_row=concat_row,
