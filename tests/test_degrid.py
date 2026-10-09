@@ -97,7 +97,6 @@ def test_select_vis_nodes_filters_and_reports_geometry(ms_name):
     offset the caller adds. Verified against the shipped test MS, which has a
     single partition of 60 times x 351 baselines x 8 channels x 4 correlations.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 
@@ -134,7 +133,6 @@ def test_ensure_model_columns_creates_a_canonical_column(degrid_ms):
     default `--model-column MODEL_DATA` silently fails on any MS lacking it.
     """
     import arcae
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
@@ -165,7 +163,6 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
     the wrapper does not get in its way.
     """
     import arcae
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
@@ -190,7 +187,6 @@ def test_handles_open_before_a_column_is_added_still_read(degrid_ms):
     cache after creating its columns. arcae >= 0.4.0a13 refreshes those
     handles itself, which is what let that eviction go (#325).
     """
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
@@ -227,7 +223,6 @@ def test_get_engine_can_pin_a_single_main_instance(degrid_ms):
     timing dependent, so pin the plumbing instead: the override must reach
     xarray-ms and must not drop its default `cache_size` bound.
     """
-    import xarray as xr
     from xarray_ms.backend.msv2.entrypoint_utils import DEFAULT_DRIVER_KWARGS
 
     from pfb_imaging.utils.msv4 import get_engine
@@ -246,7 +241,6 @@ def test_get_engine_can_pin_a_single_main_instance(degrid_ms):
 def test_ensure_model_columns_is_idempotent(degrid_ms, pctable):
     """The common case is an MS that already has MODEL_DATA. Must be a no-op."""
     import arcae
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import ensure_model_columns
     from pfb_imaging.utils.msv4 import get_engine
@@ -274,7 +268,6 @@ def test_ensure_model_columns_does_not_read_the_visibility_column():
     implementation uses a zero-strided `np.broadcast_to` view instead; this
     asserts the placeholder really is one.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import MODEL_DIMS, make_column_placeholder
 
@@ -352,44 +345,83 @@ def test_build_region_masks_refuses_overlapping_regions(simple_mds, tmp_path):
         build_region_masks(ds, str(region_file))
 
 
-def test_degrid_region_selects_the_requested_planes(simple_mds):
-    """An I+V model degridded as V must produce only the V correlations."""
+def test_degrid_region_selects_the_requested_planes(degrid_ms, simple_mds):
+    """Planes are picked by name from a multi-Stokes model, not by position.
+
+    The model carries I and V = 0.5 I on the same component. Degridded as
+    `["I"]` it must match the I-only model exactly; degridded as `["V"]` it
+    must put 0.5x the I visibilities into the V-carrying correlations and
+    nothing into the I combination. Taking the wrong plane, or labelling the
+    right plane with the model's full Stokes list, fails one of the two.
+    """
+    from pfb_model_spec.utils.degrid import stokes_vis_to_corr
     from pfb_model_spec.utils.io import build_mds_dataset
 
-    from pfb_imaging.utils.degrid import build_region_masks, check_stokes_subset
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
-    _, ds_i = simple_mds
-    coeffs = ds_i.coefficients.values  # (1, npar, ncomps)
-    two = build_mds_dataset(
-        np.concatenate([coeffs, 0.5 * coeffs]),
-        ds_i.location_y.values,
-        ds_i.location_x.values,
-        ds_i.attrs["parametrisation"],
-        list(ds_i.params.values),
-        ds_i.attrs["texpr"],
-        ds_i.attrs["fexpr"],
-        ds_i.times.values,
-        ds_i.freqs.values,
-        float(ds_i.cell_rad_x),
-        int(ds_i.npix_x),
-        int(ds_i.npix_y),
-        float(ds_i.center_x),
-        float(ds_i.center_y),
-        bool(ds_i.flip_u),
-        bool(ds_i.flip_v),
-        bool(ds_i.flip_w),
-        (float(ds_i.ra), float(ds_i.dec)),
-        ["I", "V"],
-        "test",
-    )
-    assert check_stokes_subset("V", ["I", "V"]) == ["V"]
-    masks = build_region_masks(two, None)
-    assert masks[0].mask.shape == (32, 64)  # (ny, nx)
+    dt, node_ds, node, ds_i = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        coeffs = ds_i.coefficients.values  # (1, npar, ncomps)
+        two = build_mds_dataset(
+            np.concatenate([coeffs, 0.5 * coeffs]),
+            ds_i.location_y.values,
+            ds_i.location_x.values,
+            ds_i.attrs["parametrisation"],
+            list(ds_i.params.values),
+            ds_i.attrs["texpr"],
+            ds_i.attrs["fexpr"],
+            ds_i.times.values,
+            ds_i.freqs.values,
+            float(ds_i.cell_rad_x),
+            int(ds_i.npix_x),
+            int(ds_i.npix_y),
+            float(ds_i.center_x),
+            float(ds_i.center_y),
+            bool(ds_i.flip_u),
+            bool(ds_i.flip_v),
+            bool(ds_i.flip_w),
+            (float(ds_i.ra), float(ds_i.dec)),
+            ["I", "V"],
+            "test",
+        )
+        corr = tuple(node.corr_types)
+        kw = dict(
+            region={"time": slice(0, 4), "frequency": slice(0, 4)},
+            columns=["MODEL_DATA"],
+            corr_types=corr,
+        )
+
+        def run(model_ds, stokes):
+            masks = build_region_masks(model_ds, None)
+            return degrid_region(node_ds, model_ds=model_ds, masks=masks, stokes=stokes, **kw).MODEL_DATA.values
+
+        i_only = run(ds_i, ["I"])
+        np.testing.assert_array_equal(run(two, ["I"]), i_only)
+
+        # which correlations carry I and V, from the same mapping degrid uses
+        unit = np.ones((1, 1, 1))
+        carries_i = np.abs(stokes_vis_to_corr(unit, ["I"], corr)[0, 0]) > 0
+        carries_v = np.abs(stokes_vis_to_corr(unit, ["V"], corr)[0, 0]) > 0
+        assert carries_i.any() and carries_v.any()
+
+        # recover the I Stokes visibilities from a correlation with unit I weight
+        c_i = int(np.flatnonzero(carries_i)[0])
+        ntime, nbl, nchan, ncorr = i_only.shape
+        vis_i = i_only[..., c_i].reshape(1, ntime * nbl, nchan)
+        assert np.abs(vis_i).max() > 0
+        expected = stokes_vis_to_corr(0.5 * vis_i, ["V"], corr).reshape(ntime, nbl, nchan, ncorr)
+
+        v_only = run(two, ["V"])
+        np.testing.assert_allclose(v_only, expected, rtol=1e-6, atol=1e-6 * np.abs(expected).max())
+        assert np.abs(v_only[..., carries_v]).max() > 0
+        # the I combination (mean over the I-carrying correlations) is empty
+        np.testing.assert_allclose(v_only[..., carries_i].mean(axis=-1), 0, atol=1e-6 * np.abs(expected).max())
+    finally:
+        dt.close()
 
 
 def _node_and_mds(ms_path, mds_tuple):
     """Open the MS's single visibility node and the model dataset."""
-    import xarray as xr
 
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 
@@ -639,7 +671,6 @@ def test_assert_writable_rejects_a_dataset_without_store_encoding():
     without them `to_msv2` raises `MissingEncodingError` at write time, after
     the work is done. Fail earlier and say what happened.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import assert_writable
 
@@ -705,7 +736,7 @@ def test_check_stokes_subset_accepts(product, model_stokes, expected):
 
 @pytest.mark.parametrize(
     "product, model_stokes, match",
-    [("Q", ["I"], "missing"), ("II", ["I"], "repeats"), ("XX", ["I"], "not yet supported")],
+    [("Q", ["I"], "missing"), ("II", ["I"], "repeats"), ("XX", ["I"], "not yet supported"), ("", ["I"], "empty")],
 )
 def test_check_stokes_subset_refuses(product, model_stokes, match):
     from pfb_imaging.utils.degrid import check_stokes_subset
@@ -844,7 +875,6 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path, pctable):
     at the start of the array. Comparing against a chunk-matched
     `degrid_region` over the whole node catches exactly that.
     """
-    import xarray as xr
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
@@ -939,7 +969,6 @@ def test_degrid_honours_freq_range(degrid_ms, simple_mds, tmp_path, pctable):
     shifted by `SelectedNode.chan0`. Drop the shift and the right numbers land
     on the wrong channels -- which looks entirely plausible in a FITS image.
     """
-    import xarray as xr
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine
@@ -1071,7 +1100,6 @@ def test_degrid_refuses_a_mismatched_tangent_point(degrid_ms, tmp_path):
 
 def _vis_node(nchan, ncorr=4, *, name="spw0", freqs=None):
     """A minimal correlated-data node: just what the code under test reads."""
-    import xarray as xr
 
     if freqs is None:
         freqs = np.linspace(1.0e9, 1.1e9, nchan)
@@ -1111,7 +1139,6 @@ def test_ensure_model_columns_refuses_heterogeneous_partition_shapes(tmp_path):
     moved below the write, the failure would be about the missing table
     instead of the shapes.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.degrid import ensure_model_columns
 
@@ -1128,7 +1155,6 @@ def test_select_vis_nodes_handles_a_descending_spectral_window():
     matching index instead, so both orderings work and `chan0` stays a
     full-node index.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.msv4 import select_vis_nodes
 
@@ -1212,7 +1238,6 @@ def test_select_vis_nodes_handles_multiple_spectral_windows(multi_spw_ms):
     resolved against the wrong axis, silently writes the right numbers to the
     wrong channels.
     """
-    import xarray as xr
 
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 
@@ -1255,7 +1280,6 @@ def test_select_vis_nodes_handles_multiple_spectral_windows(multi_spw_ms):
 @pytest.mark.slow
 def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path, pctable):
     """A full run over two SPWs must fill both, each on its own channel axis."""
-    import xarray as xr
 
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
@@ -1434,16 +1458,15 @@ def test_imager_degrid_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_path)
     a perfect model, so what is left is gridder error.
 
     **Why `deconv` is not in this chain.** It cannot be, in this test session.
-    `fit_image_cube` handles one band since pfb-model-spec 0.1, but more than
-    one band makes `deconv` stand up one Ray actor per band, which starves on
-    the session cluster's `RAY_NUM_CPUS=2` (the same constraint
-    `test_deconv_groundtruth` documents when it pins itself to
-    `channels_per_image=-1`). So there is no band count at which
-    `deconv -> degrid` runs here. Using the truth as the model tests strictly
-    more of degrid than a deconvolved model would, and the `.mds` is still
-    produced by the real writer.
+    `fit_image_cube` handles one band since pfb-model-spec 0.1, so a
+    single-band `deconv` would run, but this test keeps 2 bands so the `.mds`
+    carries a real spectral fit -- and more than one band makes `deconv` stand
+    up one Ray actor per band, which starves on the session cluster's
+    `RAY_NUM_CPUS=2` (the same constraint `test_deconv_groundtruth` documents
+    when it pins itself to `channels_per_image=-1`). Using the truth as the
+    model also tests strictly more of degrid than a deconvolved model would,
+    and the `.mds` is still produced by the real writer.
     """
-    import xarray as xr
     from pfb_model_spec.utils.io import model_to_ds
 
     from pfb_imaging.core.degrid import degrid

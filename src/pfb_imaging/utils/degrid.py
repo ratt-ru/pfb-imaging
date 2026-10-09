@@ -277,10 +277,12 @@ def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
         The requested Stokes labels, in `product` order.
 
     Raises:
-        ValueError: If `product` has a letter outside IQUV, repeats one, or
-            names a plane absent from `model_stokes`.
+        ValueError: If `product` is empty, has a letter outside IQUV, repeats
+            one, or names a plane absent from `model_stokes`.
     """
     requested = list(product.upper().strip())
+    if not requested:
+        raise ValueError("Product is empty; name at least one Stokes parameter")
     unsupported = [s for s in requested if s not in "IQUV"]
     if unsupported:
         raise ValueError(f"Product {''.join(unsupported)} not yet supported")
@@ -483,7 +485,11 @@ def degrid_region(
     # would move this loop -- and the crop arithmetic -- behind that seam).
     geom = model_geometry(model_ds)
     planes = [geom["stokes"].index(s) for s in stokes]
-    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)[planes]
+    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)
+    if planes != list(range(len(geom["stokes"]))):
+        # fancy indexing copies the whole grid (361 MB at 6720^2), so only
+        # pay for it when the selection is not the identity
+        image = image[planes]
 
     assigned = {}
     for column, rm in zip(columns, masks, strict=True):
