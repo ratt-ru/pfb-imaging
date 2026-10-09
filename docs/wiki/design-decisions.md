@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-09T17:00:00Z
-last_verified_commit: d1cf230
+timestamp: 2026-10-09T19:00:00Z
+last_verified_commit: 30589ab
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1575,7 +1575,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   solve.
 - **Consequences:** an older `.mds` has no bounds; `degrid` then refuses its default chunk (D53)
   and the transfer coverage check falls back to the min/max of the fitted frequencies, which
-  understates the sampled extent.
+  understates the sampled extent; its extrapolation warning says so in that case.
 - **Source:** `src/pfb_imaging/core/deconv.py`, `src/pfb_imaging/core/imager.py` (band
   attrs), commits `49be858`, `7e22638`; issue #327; landmanbester/pfb-model-spec#31.
 
@@ -1625,11 +1625,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   `degrid` applies no beam (D42).
 - **Decision:** `deconv` writes `flux_scale="intrinsic"`; `degrid` warns (via
   `flux_scale_warning`) that the predicted visibilities are intrinsic, not apparent.
+  `imager --transfer-model-from` refuses an `"apparent"` model before Ray starts, and accepts
+  `"intrinsic"` and a legacy `None`.
 - **Rationale:** a warning is honest while beam application is unimplemented; refusing would
-  block legitimate use.
+  block legitimate use. The transfer is different: pass 2 applies `BEAM` to the rendered model,
+  so an apparent model would be attenuated twice, which is wrong rather than merely unbeamed.
 - **Consequences:** a follow-up issue adds beam application to `degrid`, with `--baseline-groups`
   parity; the warning goes then.
-- **Source:** `src/pfb_imaging/utils/degrid.py::flux_scale_warning`, `src/pfb_imaging/core/degrid.py`.
+- **Source:** `src/pfb_imaging/utils/degrid.py::flux_scale_warning`, `src/pfb_imaging/core/degrid.py`,
+  `src/pfb_imaging/core/imager.py` (the pre-Ray transfer checks),
+  `tests/test_imager_transfer.py::test_transfer_refuses_an_apparent_model_before_ray`.
 
 ## Known debt
 
