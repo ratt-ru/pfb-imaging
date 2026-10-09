@@ -141,7 +141,13 @@ def test_check_transfer_geometry_refusals_and_warnings(tmp_path):
     with pytest.raises(ValueError, match="pfb-model-spec#23"):
         check_transfer_geometry(ds, grid_radec=radec, cell_rad=2e-5, band_centres=centres)
     (msg,) = check_transfer_geometry(ds, grid_radec=radec, cell_rad=1e-5, band_centres=np.array([1.0e9, 1.3e9]))
-    assert "extrapolat" in msg
+    assert "extrapolat" in msg and "no freq_bounds" not in msg
+
+    # a legacy .mds without freq_bounds: the fallback extent is the band centres, and the warning says so
+    dsl = open_mds(_write_mds(tmp_path / "l.mds", radec=radec, cell_rad=1e-5, freq_bounds=False))
+    assert check_transfer_geometry(dsl, grid_radec=radec, cell_rad=1e-5, band_centres=centres) == []
+    (msg,) = check_transfer_geometry(dsl, grid_radec=radec, cell_rad=1e-5, band_centres=np.array([1.0e9, 1.3e9]))
+    assert "extrapolat" in msg and "(the model records no freq_bounds; using its band centres)" in msg
 
 
 def test_transfer_refuses_a_coarser_grid_before_pass_1(ms_name, tmp_path):

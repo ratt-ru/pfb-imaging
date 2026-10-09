@@ -272,9 +272,11 @@ def check_transfer_geometry(model_ds, *, grid_radec, cell_rad, band_centres) -> 
     band_centres = np.asarray(band_centres)
     outside = band_centres[(band_centres < lo) | (band_centres > hi)]
     if outside.size:
+        # without freq_bounds the band centres understate the sampled extent (D50)
+        source = "" if fb is not None else " (the model records no freq_bounds; using its band centres)"
         return [
-            f"Band centres {outside / 1e6} MHz lie outside the transfer model's {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz; "
-            "the model's frequency fit is being extrapolated there."
+            f"Band centres {outside / 1e6} MHz lie outside the transfer model's {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz"
+            f"{source}; the model's frequency fit is being extrapolated there."
         ]
     return []
 
