@@ -2,6 +2,7 @@ import gc
 import os
 import time
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -154,21 +155,48 @@ def _load_piece(node):
 
 
 def _load_transfer_model(path: str) -> xr.Dataset:
-    """Open and load a `--transfer-model-from` `.mds`. Module level so a `Multiton` can pickle it."""
+    """Open and load a `--transfer-model-from` `.mds`. Module level so a `Multiton` can pickle it.
+
+    Args:
+        path: Absolute path to the `.mds`.
+
+    Returns:
+        The in-memory model Dataset.
+    """
     return open_mds(path).load()
 
 
 def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
-    """Indices of the model's Stokes planes, in the band's `corr` order (#309)."""
+    """Indices of the model's Stokes planes, in the band's `corr` order (#309).
+
+    Args:
+        model_stokes: The `.mds` `stokes` coord labels.
+        corr: The band's Stokes labels.
+
+    Returns:
+        One index into `model_stokes` per entry of `corr`.
+
+    Raises:
+        ValueError: If a band Stokes is missing from the model (the driver
+            refuses this upfront).
+    """
     return [list(model_stokes).index(str(c)) for c in corr]
 
 
-def _iter_parts(dt_store: str, out_name: str, npart: int):
+def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset]:
     """Stream one image's partitions back from the `.dt`, one at a time (#309).
 
     Only the variables `residual_from_partitions` reads, plus the attrs (its
     l0/m0 set the phase centre). Reading back rather than holding the
     partitions keeps the pass-2 task at one partition's vis data at a time.
+
+    Args:
+        dt_store: The `.dt` store URL.
+        out_name: The band node the partitions live under.
+        npart: Number of `part####` children.
+
+    Yields:
+        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM, loaded, with its attrs.
     """
     for pid in range(npart):
         ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
@@ -177,7 +205,10 @@ def _iter_parts(dt_store: str, out_name: str, npart: int):
             sub.attrs = dict(ds.attrs)
         finally:
             ds.close()
+        del ds
         yield sub
+        # drop the generator's own reference before loading the next partition
+        del sub
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
@@ -489,6 +520,9 @@ def _grid_image_body(
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
+    # release the last partition's vis-space data now: the transfer residual
+    # below re-reads each partition from the store (#339)
+    del part, part_out, prod
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
@@ -578,7 +612,7 @@ def _grid_image_body(
     # break the reference cycles holding the loaded pieces so a reused Ray
     # worker doesn't accumulate them across tasks (see safe_stokes_vis)
     dt.close()
-    del groups, part, dt
+    del groups, dt
     gc.collect()
 
     # post-gc memory telemetry (see safe_stokes_vis for interpretation)
