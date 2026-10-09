@@ -15,7 +15,9 @@ def _ms_radec(ms_name):
         return tuple(float(v) for v in np.asarray(tab.getcol("PHASE_DIR")).squeeze())
 
 
-def _write_mds(path, *, radec, cell_rad, stokes=("I",), nx=32, ny=32, freqs=(1.0e9, 1.1e9)):
+def _write_mds(
+    path, *, radec, cell_rad, stokes=("I",), nx=32, ny=32, freqs=(1.0e9, 1.1e9), flux_scale=None, freq_bounds=True
+):
     from pfb_model_spec.utils.io import build_mds_dataset
 
     freqs = np.asarray(freqs)
@@ -42,7 +44,8 @@ def _write_mds(path, *, radec, cell_rad, stokes=("I",), nx=32, ny=32, freqs=(1.0
         radec,
         list(stokes),
         "test",
-        freq_bounds=np.stack([freqs - 5e7, freqs + 5e7], axis=1),
+        freq_bounds=np.stack([freqs - 5e7, freqs + 5e7], axis=1) if freq_bounds else None,
+        flux_scale=flux_scale,
     )
     ds.to_zarr(str(path), mode="w")
     return str(path)
@@ -79,6 +82,39 @@ def test_transfer_refuses_a_missing_path_before_ray(ms_name, tmp_path, monkeypat
             [Path(ms_name)],
             str(tmp_path / "out"),
             transfer_model_from=str(tmp_path / "nope.mds"),
+            overwrite=True,
+            keep_ray_alive=True,
+            log_directory=str(tmp_path / "logs"),
+        )
+
+
+def test_transfer_refuses_an_apparent_model_before_ray(ms_name, tmp_path, monkeypatch):
+    """Pass 2 applies BEAM to the model, so an apparent one would be attenuated twice."""
+    _no_ray(monkeypatch)
+    mds = _write_mds(tmp_path / "app.mds", radec=_ms_radec(ms_name), cell_rad=1e-5, flux_scale="apparent")
+    with pytest.raises(ValueError, match="intrinsic-flux model"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "out"),
+            product="I",
+            transfer_model_from=mds,
+            overwrite=True,
+            keep_ray_alive=True,
+            log_directory=str(tmp_path / "logs"),
+        )
+
+
+@pytest.mark.parametrize("flux_scale", ["intrinsic", None])
+def test_transfer_accepts_an_intrinsic_or_legacy_model(ms_name, tmp_path, monkeypatch, flux_scale):
+    """Reaching init_ray means every pre-Ray transfer check passed."""
+    _no_ray(monkeypatch)
+    mds = _write_mds(tmp_path / "ok.mds", radec=_ms_radec(ms_name), cell_rad=1e-5, flux_scale=flux_scale)
+    with pytest.raises(AssertionError, match="init_ray was called"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "out"),
+            product="I",
+            transfer_model_from=mds,
             overwrite=True,
             keep_ray_alive=True,
             log_directory=str(tmp_path / "logs"),

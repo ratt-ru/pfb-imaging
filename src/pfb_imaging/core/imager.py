@@ -903,6 +903,14 @@ def imager(
             check_stokes_subset(product, model_geometry(transfer_ds)["stokes"])
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
+        # pass 2 applies BEAM to the rendered model, so an apparent model would
+        # be attenuated twice; None is a legacy .mds, which deconv wrote intrinsic
+        if model_sampling(transfer_ds)["flux_scale"] == "apparent":
+            log.error_and_raise(
+                f"{transfer_model_from} is an apparent-flux model; --transfer-model-from needs an "
+                "intrinsic-flux model, because pass 2 applies the primary beam to it.",
+                ValueError,
+            )
 
     log.log_options_dict(opts_dict, title="IMAGER options")
 
