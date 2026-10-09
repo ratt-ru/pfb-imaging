@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-07T14:00:00Z
-last_verified_commit: 02cd842
+timestamp: 2026-10-09T17:00:00Z
+last_verified_commit: d1cf230
 ---
 
 # MSv4 DataTree imager pipeline
@@ -47,7 +47,9 @@ child with its own `BEAM`.
                nx, ny, nx_psf, ny_psf, cell_rad, max_blength, max_freq
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
-              robustness (omitted when natural), niters
+              robustness (omitted when natural), niters,
+              freq_bounds (nominal band edges, Hz), time_bounds (centroids -/+ half
+              an integration; unix s), transferred_from (--transfer-model-from only)
               # freq_out = effective (wsum-weighted) frequency of the channels
               # actually gridded; freq_nominal = band-edge midpoint, assignment
               # grid only (D28)
@@ -58,7 +60,9 @@ child with its own `BEAM`.
               # response, still B/n per D22)
               # BDIRTY = sum_p B_p * dirty_p: model-free term of the exact deconv
               # gradient (D23) -- not derivable from the summed DIRTY
-              # MODEL / RESIDUAL / BRESIDUAL / NOISE added later by the deconv consumer
+              # MODEL / RESIDUAL / BRESIDUAL are written by pass 2 under
+              # --transfer-model-from, else added later by the deconv consumer
+              # (with NOISE)
               # IMAGE / BIMAGE / KIMAGE (corr, y, x) + PSFPARSF (corr, bpar) and a
               # psfparsf_mfs attr added by the restore consumer -- the three flux
               # scales (intrinsic / apparent / mixed) of D29
@@ -84,10 +88,20 @@ D27. Pinned by `tests/test_imager_precision.py`.
 `deconv` refuses with "re-run pfb imager with --psf" (guard fires before Ray init).
 `--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
 and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
-carry a `BEAMINCN` card because the stored beam includes the folded n-term. `RESIDUAL` is only computed when a model is passed in (future feature; no flag), so the imager
-does not normally write it — **`deconv` falls back to `DIRTY` when `RESIDUAL` is absent**
+carry a `BEAMINCN` card because the stored beam includes the folded n-term. Without `--transfer-model-from` the imager does not write `RESIDUAL`, so **`deconv` falls back to `DIRTY` when it is absent**
 (`core/deconv.py:275`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
+`--transfer-model-from <.mds>` (#309) seeds that resume: the product and path are checked
+before Ray starts, the tangent point, cell size (D52) and frequency coverage before pass 1.
+In pass 2, after the gridding loop, each task renders the model at the band's effective
+`freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
+streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
+`transferred_from` attr. The loop's last partition's vis buffers are released before that
+sweep, so peak memory stays at one partition's worth. The `.mds` is loaded once per worker
+through a `Multiton` and stays resident there (default 300 s inactivity TTL, swept lazily on
+cache access, as for the xarray-ms tables in
+[memory-and-ray.md](memory-and-ray.md)); that is acceptable because a `.mds` holds
+coefficients and is small next to the vis data a worker handles.
 `--fits-per-partition` (default off) makes the pass-2 workers write per-partition
 sanity FITS while the products are in memory (per-partition DIRTY is never stored in the
 tree): `<var>_band####_time####_part####_<field>.fits` under
