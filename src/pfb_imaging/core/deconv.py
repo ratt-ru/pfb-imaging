@@ -293,6 +293,15 @@ def deconv(
         wsums[b] = bds.WSUM.values[0]
 
     wsum = wsums.sum()
+
+    # sampling bounds for the .mds (#327); absent on a .dt from an older imager,
+    # in which case the .mds simply omits them (they are optional in spec 0.1)
+    if all("freq_bounds" in a and "time_bounds" in a for a in band_attrs):
+        freq_bounds = np.array([a["freq_bounds"] for a in band_attrs], dtype=np.float64)
+        tb = np.array([a["time_bounds"] for a in band_attrs], dtype=np.float64)
+        time_bounds = np.array([[tb[:, 0].min(), tb[:, 1].max()]])
+    else:
+        freq_bounds = time_bounds = None
     residual = residual_raw / wsum
     bresidual = bresidual_raw / wsum
     residual_mfs = np.sum(residual, axis=0)
@@ -467,6 +476,8 @@ def deconv(
                 stokes=[product],
                 writer_version=pfb_version,
                 nbasisf=nbasisf,
+                freq_bounds=freq_bounds,
+                time_bounds=time_bounds,
                 flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)
             )
         except Exception as e:

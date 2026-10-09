@@ -798,6 +798,50 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
 
 
 @pytest.mark.slow
+def test_mds_carries_the_band_sampling_bounds(tmp_path):
+    """Band-node bounds reach the .mds; a .dt without them still writes one (#327)."""
+    import zarr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(99)
+    with_bounds = str(tmp_path / "bounded")
+    store = f"{with_bounds}_I.dt"
+    _write_synthetic_dt(store, 32, 32, 64, 1, rng)
+    root = zarr.open_group(store, mode="a")
+    names = sorted(n for n in root.group_keys() if n.startswith("band"))
+    for k, n in enumerate(names):
+        root[n].attrs.update(freq_bounds=[1.0e9 + k * 1e8, 1.1e9 + k * 1e8], time_bounds=[10.0 + k, 20.0 + k])
+    zarr.consolidate_metadata(store)
+
+    without = str(tmp_path / "unbounded")
+    _write_synthetic_dt(f"{without}_I.dt", 32, 32, 64, 1, np.random.default_rng(99))
+
+    for out in (with_bounds, without):
+        deconv_core(
+            out,
+            product="I",
+            niter=1,
+            nthreads=1,
+            bases=["self", "db1"],
+            nlevels=2,
+            fits_mfs=False,
+            fits_cubes=False,
+            log_directory=str(tmp_path),
+        )
+
+    mds = xr.open_zarr(f"{with_bounds}_I_main.mds", chunks=None)
+    np.testing.assert_allclose(mds.freq_bounds.values, [[1.0e9 + k * 1e8, 1.1e9 + k * 1e8] for k in range(len(names))])
+    np.testing.assert_allclose(mds.time_bounds.values, [[10.0, 20.0 + len(names) - 1]])
+    assert mds.weights.dims == ("stokes", "t", "f")
+    assert mds.attrs["flux_scale"] == "intrinsic"
+
+    bare = xr.open_zarr(f"{without}_I_main.mds", chunks=None)
+    assert "freq_bounds" not in bare.variables and "time_bounds" not in bare.variables
+    assert "weights" in bare.variables
+
+
+@pytest.mark.slow
 def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     """The .mds fit is an output. Its re-rendered cube must not reach the loop.
 
