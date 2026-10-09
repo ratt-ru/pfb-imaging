@@ -7,10 +7,10 @@ same region. The numerics live in pfb-model-spec; the distribution and the
 CLI live in `core/degrid.py`. This mirrors `utils/stokes2vis_msv4.py`,
 which plays the same role for the imager's pass 1.
 
-Axis convention: pfb-model-spec and ducc0 are both x-major `(nx, ny)`, and
-visibilities have no image orientation, so nothing here transposes an image.
-The single exception is `build_region_masks`, which converts an astropy
-`regions` mask from `(Y, X)` -- see its docstring.
+Axis convention: the `.mds` (spec 0.1), pfb-model-spec's rendered images and
+astropy `regions` masks are all `(Y, X)`, and visibilities have no image
+orientation, so nothing here transposes an image. ducc0's x-major world is
+pfb-model-spec's business (`degrid_stokes`).
 """
 
 from collections.abc import Mapping, Sequence
@@ -166,9 +166,9 @@ class RegionMask(NamedTuple):
     mask is 361 MB at 6720^2, and a small region's is under 1 MB.
 
     Attributes:
-        mask: `(nxc, nyc)` float64 weights, x-major like the model.
-        i0: Index along x of the mask's origin in the full model grid.
-        j0: Index along y of the mask's origin in the full model grid.
+        mask: `(nyc, nxc)` float64 weights, (Y, X) like the model.
+        i0: Index along y of the mask's origin in the full model grid.
+        j0: Index along x of the mask's origin in the full model grid.
     """
 
     mask: np.ndarray
@@ -201,20 +201,20 @@ def crop_bbox(mask: np.ndarray) -> RegionMask:
     even, which ducc requires (see `_even_span`).
 
     Args:
-        mask: `(nx, ny)` weights, x-major.
+        mask: `(ny, nx)` weights, (Y, X) like the model.
 
     Returns:
         The cropped mask and its origin. An all-zero mask crops to a `(2, 2)`
         zero box at the origin -- `degrid_stokes` skips an empty plane
         outright, so the degenerate box is never gridded.
     """
-    nx, ny = mask.shape
-    xs = np.flatnonzero(mask.any(axis=1))
-    ys = np.flatnonzero(mask.any(axis=0))
+    ny, nx = mask.shape
+    ys = np.flatnonzero(mask.any(axis=1))
+    xs = np.flatnonzero(mask.any(axis=0))
     if xs.size == 0 or ys.size == 0:
-        return RegionMask(np.zeros((min(2, nx), min(2, ny)), dtype=mask.dtype), 0, 0)
-    i0, i1 = _even_span(int(xs[0]), int(xs[-1]) + 1, nx)
-    j0, j1 = _even_span(int(ys[0]), int(ys[-1]) + 1, ny)
+        return RegionMask(np.zeros((min(2, ny), min(2, nx)), dtype=mask.dtype), 0, 0)
+    i0, i1 = _even_span(int(ys[0]), int(ys[-1]) + 1, ny)
+    j0, j1 = _even_span(int(xs[0]), int(xs[-1]) + 1, nx)
     return RegionMask(np.ascontiguousarray(mask[i0:i1, j0:j1]), i0, j0)
 
 
@@ -233,12 +233,12 @@ def crop_phase_centre(
 
     ducc places image pixel `i` at `(i - nx // 2) * cell` from the image
     centre, so cropping moves the centre by the shift in that origin --
-    `i0 + nxc // 2 - nx // 2` pixels along x, likewise along y. The sign is
-    the axis's flip convention: `flip_u`/`flip_v` negate the direction the
-    offset is measured in. Getting either sign wrong is not a small error --
-    it puts the model in the wrong place on the sky, and the visibilities come
-    back order-unity wrong (`tests/test_degrid.py`, the crop-parity test,
-    checks all four flip combinations).
+    `j0 + nxc // 2 - nx // 2` pixels along x and `i0 + nyc // 2 - ny // 2`
+    along y. The sign is the axis's flip convention: `flip_u`/`flip_v` negate
+    the direction the offset is measured in. Getting either sign wrong is not
+    a small error -- it puts the model in the wrong place on the sky, and the
+    visibilities come back order-unity wrong (`tests/test_degrid.py`, the
+    crop-parity test, checks all four flip combinations).
 
     Args:
         x0: The model's own `center_x`, from `model_geometry`.
@@ -253,13 +253,47 @@ def crop_phase_centre(
     Returns:
         `(center_x, center_y)` for `degrid_stokes`.
     """
-    nxc, nyc = rm.mask.shape
+    nyc, nxc = rm.mask.shape
     sx = -1.0 if flip_u else 1.0
     sy = -1.0 if flip_v else 1.0
     return (
-        x0 + sx * (rm.i0 + nxc // 2 - nx // 2) * cell_rad,
-        y0 + sy * (rm.j0 + nyc // 2 - ny // 2) * cell_rad,
+        x0 + sx * (rm.j0 + nxc // 2 - nx // 2) * cell_rad,
+        y0 + sy * (rm.i0 + nyc // 2 - ny // 2) * cell_rad,
     )
+
+
+def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
+    """Validate that `product` names Stokes planes the model actually carries.
+
+    Shared by `degrid` and `imager --transfer-model-from`: rendering a model as
+    a Stokes product it does not hold produces confidently wrong data, so a
+    missing plane is refused rather than zero-filled.
+
+    Args:
+        product: The `--product` string, for example `"I"` or `"IQUV"`.
+        model_stokes: The model's `stokes` coord, from `model_geometry`.
+
+    Returns:
+        The requested Stokes labels, in `product` order.
+
+    Raises:
+        ValueError: If `product` has a letter outside IQUV, repeats one, or
+            names a plane absent from `model_stokes`.
+    """
+    requested = list(product.upper().strip())
+    unsupported = [s for s in requested if s not in "IQUV"]
+    if unsupported:
+        raise ValueError(f"Product {''.join(unsupported)} not yet supported")
+    if len(set(requested)) != len(requested):
+        raise ValueError(f"Product {product!r} repeats a Stokes parameter")
+    missing = [s for s in requested if s not in model_stokes]
+    if missing:
+        raise ValueError(
+            f"Requested product {product!r} but the model carries Stokes {list(model_stokes)}; "
+            f"{''.join(missing)} is missing. Rendering a model as a Stokes product it does not "
+            "hold produces confidently wrong data."
+        )
+    return requested
 
 
 def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[RegionMask]:
@@ -270,12 +304,9 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
     `i == 0` (the remainder, i.e. everything outside every region) and
     `f"{model_column}{i}"` thereafter.
 
-    **Orientation.** `pixel_region.to_mask().to_image((ny, nx))` returns a
-    `(Y, X)` raster, which is astropy's convention and pfb-imaging's own for
-    images; the `.mds` and every pfb-model-spec array are x-major `(nx, ny)`.
-    The transpose below converts between them and is load-bearing -- it is the
-    one place in this module where an image orientation changes. Delete it
-    when the `.mds` spec flips (pfb-model-spec#20), not before.
+    **Orientation.** `to_image((ny, nx))` returns a `(Y, X)` raster, which is
+    the `.mds` order since spec 0.1 (pfb-model-spec#20), so no transpose is
+    needed.
 
     Args:
         model_ds: An opened `.mds` dataset.
@@ -298,7 +329,7 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
         # at 6720^2) per holder to multiply the model by 1. Consumers only read
         # .shape and broadcast against it.
         # nothing to crop to: the "region" is the whole grid
-        return [RegionMask(np.broadcast_to(np.float64(1.0), (nx, ny)), 0, 0)]
+        return [RegionMask(np.broadcast_to(np.float64(1.0), (ny, nx)), 0, 0)]
 
     # deferred: import cycle with utils.fits (load_fits <-> utils.misc)
     from regions import Regions
@@ -317,7 +348,7 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
     )
     wcs = wcs.dropaxis(-1).dropaxis(-1)  # drop the freq and stokes axes
 
-    total = np.zeros((nx, ny), dtype=np.float64)
+    total = np.zeros((ny, nx), dtype=np.float64)
     masks = []
     for i, region in enumerate(rfile):
         # a file in `image`/`physical` coordinates parses straight to a pixel
@@ -328,15 +359,14 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
         if image is None:
             # astropy returns None rather than an empty raster when the region
             # misses the grid entirely; say which region, since the alternative
-            # is an AttributeError on the chained .T naming nothing
+            # is a TypeError on `total += None` naming nothing
             raise ValueError(
                 f"Region {i} of {region_file} does not overlap the model grid "
                 f"({nx}x{ny} pixels centred on ra={float(model_ds.ra):.6f}, "
                 f"dec={float(model_ds.dec):.6f} rad). Check the region's "
                 "coordinates and frame against the model."
             )
-        # (Y, X) from astropy -> x-major to match the model; see the docstring
-        region_mask = image.T
+        region_mask = image
         total += region_mask
         masks.append(region_mask)
 
@@ -380,6 +410,7 @@ def degrid_region(
     masks: Sequence[RegionMask],
     columns: Sequence[str],
     corr_types: Sequence[str],
+    stokes: Sequence[str],
     accumulate: bool = False,
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
@@ -398,6 +429,8 @@ def degrid_region(
             of `columns` and in the same order.
         columns: Output column names, aligned with `masks`.
         corr_types: Correlation names, i.e. the node's `polarization` values.
+        stokes: Stokes planes to degrid, in output order; a subset of the
+            model's, validated by `check_stokes_subset`.
         accumulate: Add to what the column already holds in this region.
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.
@@ -449,12 +482,13 @@ def degrid_region(
     # which is why this composes its primitives instead (pfb-model-spec#27, which
     # would move this loop -- and the crop arithmetic -- behind that seam).
     geom = model_geometry(model_ds)
-    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)
+    planes = [geom["stokes"].index(s) for s in stokes]
+    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)[planes]
 
     assigned = {}
     for column, rm in zip(columns, masks, strict=True):
-        nxc, nyc = rm.mask.shape
-        sub = image[:, rm.i0 : rm.i0 + nxc, rm.j0 : rm.j0 + nyc] * rm.mask[None]
+        nyc, nxc = rm.mask.shape
+        sub = image[:, rm.i0 : rm.i0 + nyc, rm.j0 : rm.j0 + nxc] * rm.mask[None]
         x0, y0 = crop_phase_centre(
             x0=geom["x0"],
             y0=geom["y0"],
@@ -482,7 +516,7 @@ def degrid_region(
             nthreads=nthreads,
             mask=mask,
         )
-        vis = stokes_vis_to_corr(stokes_vis, geom["stokes"], tuple(corr_types))
+        vis = stokes_vis_to_corr(stokes_vis, list(stokes), tuple(corr_types))
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
         if accumulate:
             vis += ds[column].values.astype(np.complex64)

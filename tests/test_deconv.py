@@ -780,6 +780,8 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
     )
 
     mds = xr.open_zarr(f"{output_filename}_I_main.mds", chunks=None)
+    assert mds.attrs["flux_scale"] == "intrinsic"
+    assert list(mds.stokes.values) == ["I"]
     _, _, _, x0, y0 = wgridder_conventions(l0, m0)
     assert float(mds.center_x) == pytest.approx(x0)
     assert float(mds.center_y) == pytest.approx(y0)
@@ -821,7 +823,7 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
 
     def fake_model_to_ds(*args, **kwargs):
         calls.append(kwargs.get("nbasisf"))
-        model = args[3]
+        model = kwargs["model"]
         return np.full_like(np.asarray(model, dtype=np.float64), sentinel)
 
     monkeypatch.setattr(deconv_mod, "model_to_ds", fake_model_to_ds)

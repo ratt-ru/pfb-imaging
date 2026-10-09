@@ -39,6 +39,7 @@ from pfb_imaging.utils.degrid import (
     RegionMask,
     assert_writable,
     build_region_masks,
+    check_stokes_subset,
     check_writable_backend,
     degrid_region,
     ensure_model_columns,
@@ -98,12 +99,8 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
 
     `model_geometry` already raises on an unknown `spec` and on non-square
     pixels; calling it here means those fire before a Ray cluster is stood up
-    and before a column is added to the user's MS.
-
-    The product checks are stricter than the old `degrid`'s and deliberately
-    so. The `genesis` spec stores a single Stokes plane, but the old command
-    took `len(product)` planes and degridded the same image into each, so
-    `--product IQ` emitted `XX = 2I, YY = 0`. Refusing is the fix.
+    and before a column is added to the user's MS. The product must be a
+    subset of the model's Stokes planes (`check_stokes_subset`).
 
     Args:
         model_ds: An opened `.mds` dataset.
@@ -113,28 +110,11 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
         `model_geometry(model_ds)`: nx, ny, cell_rad, x0, y0, flip_u/v/w, stokes.
 
     Raises:
-        ValueError: If the product is not a subset of IQUV, names more than one
-            Stokes product, or disagrees with the model's own `stokes` attr; or
-            if `model_geometry` rejects the spec or the pixel shape.
+        ValueError: From `check_stokes_subset`, or if `model_geometry` rejects
+            the spec or the pixel shape.
     """
-    product = product.upper().strip()
-    remainder = product.strip("IQUV")
-    if remainder:
-        raise ValueError(f"Product {remainder} not yet supported")
-    if len(product) != 1:
-        raise ValueError(
-            f"Product {product!r} names {len(product)} Stokes products, but the "
-            "'genesis' .mds spec carries a single Stokes plane. Degrid one "
-            "product at a time until pfb-model-spec#19 lands."
-        )
-
     geom = model_geometry(model_ds)  # raises on unknown spec / non-square pixels
-    if geom["stokes"].upper() != product:
-        raise ValueError(
-            f"Requested product {product!r} but the model's stokes attr is "
-            f"{geom['stokes']!r}. Degridding a model as a different Stokes "
-            "product produces confidently wrong correlations."
-        )
+    check_stokes_subset(product, geom["stokes"])
     return geom
 
 
@@ -238,6 +218,7 @@ class Degridder:
         model: Multiton,
         masks: Multiton,
         columns: Sequence[str],
+        stokes: Sequence[str],
         accumulate: bool = False,
         epsilon: float = 1e-5,
         do_wgridding: bool = True,
@@ -264,6 +245,7 @@ class Degridder:
         self._model_ds: xr.Dataset | None = None
         self._mask_list: list[np.ndarray] | None = None
         self._columns = list(columns)
+        self._stokes = list(stokes)
         self._accumulate = accumulate
         self._epsilon = epsilon
         self._do_wgridding = do_wgridding
@@ -304,6 +286,7 @@ class Degridder:
                 masks=self._mask_list,
                 columns=self._columns,
                 corr_types=tuple(str(p) for p in node_ds.polarization.values),
+                stokes=self._stokes,
                 accumulate=self._accumulate,
                 epsilon=self._epsilon,
                 do_wgridding=self._do_wgridding,
@@ -408,7 +391,7 @@ def degrid(
         suffix: Product suffix used to build the default `.mds` path.
         model_column: Column to write. `--region-file` adds
             `{model_column}1`, `{model_column}2`, ... one per region.
-        product: Stokes product; must match the model's own `stokes` attr.
+        product: Stokes product; must be a subset of the model's `stokes` coord.
         field_names: Field names to degrid into. Defaults to all.
         spw_names: Spectral window names. Defaults to all.
         scan_names: Scan names. Defaults to all.
@@ -610,6 +593,7 @@ def degrid(
         model=Multiton(_load_model, mds),
         masks=Multiton(_load_masks, mds, region_file),
         columns=columns,
+        stokes=check_stokes_subset(product, geom["stokes"]),
         accumulate=accumulate,
         epsilon=epsilon,
         do_wgridding=do_wgridding,

@@ -436,11 +436,6 @@ def deconv(
             # point when its pixels are centred on the target, which a consumer
             # faithfully turns into sources displaced by (l0, m0) (#326).
             flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
-            # the .mds stays x-major (degrid/model2comps convention; see the
-            # pfb-model-spec migration in #277) -- the transpose stays in
-            # pfb-imaging until we formally update the spec version. `model` is
-            # (nband, ny, nx) here and the spec wants (nband, nx, ny).
-            #
             # The return value -- model_to_ds re-renders the fit at every band
             # -- is DELIBERATELY DISCARDED. The fit is a lossy representation
             # (a Legendre series over frequency with nbasisf terms), so feeding
@@ -454,24 +449,25 @@ def deconv(
             # the next cycle's `forward()` builds xtilde from the raw one.
             # Pinned by test_the_model_fit_does_not_re_enter_the_solver.
             model_to_ds(
-                time_out,
-                freq_out,
-                fsel,
-                model.transpose(0, 2, 1),
-                wsums / wsum,
-                f"{basename}_{suffix}.mds",
-                cell_rad,
-                nx,
-                ny,
-                x0,
-                y0,
-                flip_u,
-                flip_v,
-                flip_w,
-                radec,
-                product,
-                pfb_version,
+                time=time_out,
+                freq=freq_out,
+                fsel=fsel,
+                model=model[:, None],  # (nband, 1, ny, nx): one Stokes plane
+                wgt=(wsums / wsum)[:, None],
+                mds_name=f"{basename}_{suffix}.mds",
+                cell_rad=cell_rad,
+                nx=nx,
+                ny=ny,
+                x0=x0,
+                y0=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                radec=radec,
+                stokes=[product],
+                writer_version=pfb_version,
                 nbasisf=nbasisf,
+                flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)
             )
         except Exception as e:
             # Not fatal: the deconvolution itself is unaffected and the band

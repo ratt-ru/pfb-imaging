@@ -100,9 +100,7 @@ def degrid(
     product: Annotated[
         str,
         typer.Option(
-            help="Stokes product to degrid. "
-            "Must name exactly one product and must match the model's own stokes attribute. "
-            "The genesis mds spec stores a single Stokes plane.",
+            help="Stokes product to degrid. Every Stokes parameter named must be one the model carries.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",

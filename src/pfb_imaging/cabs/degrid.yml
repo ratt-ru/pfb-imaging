@@ -6,7 +6,7 @@ cabs:
     info:
       Degrid visibilities from a component model into MSv4 measurement sets.
       The model image needs to be in component format.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issues347a327a309
     inputs:
       ms:
         info:
@@ -63,8 +63,7 @@ cabs:
       product:
         info:
           Stokes product to degrid.
-          Must name exactly one product and must match the model's own stokes attribute.
-          The genesis mds spec stores a single Stokes plane.
+          Every Stokes parameter named must be one the model carries.
         default: I
         metadata:
           rich_help_panel: Data Selection
