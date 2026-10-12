@@ -446,8 +446,8 @@ def deconv(
             # faithfully turns into sources displaced by (l0, m0) (#326).
             flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
             # The return value -- model_to_ds re-renders the fit at every band
-            # -- is DELIBERATELY DISCARDED. The fit is a lossy representation
-            # (a Legendre series over frequency with nbasisf terms), so feeding
+            # -- is DELIBERATELY DISCARDED. The fit is pfb-model-spec's
+            # parametrisation of the band cube, not the cube itself, so feeding
             # it back would make the iteration's fixed point depend on the
             # component-model parametrisation, which is an algorithmic choice
             # and not something to acquire as a side effect of writing a file.

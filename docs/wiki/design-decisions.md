@@ -1543,7 +1543,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   would all come off the fitted cube while the next cycle's `forward()` builds
   `xtilde`, and `reg.update_weights`, off the raw one. Second, even done
   correctly (an in-place mutation or a solver setter) it changes the algorithm:
-  the fit is a lossy Legendre series over frequency with `nbasisf` terms, so
+  the fit is pfb-model-spec's parametrisation of the band cube (a Legendre
+  series with `nbasisf` terms when this was decided), not the cube itself, so
   feeding it back makes the iteration's fixed point depend on the component-model
   parametrisation. That is a deliberate choice to make on its own evidence, not
   one to acquire as a side effect of fixing a transpose.
