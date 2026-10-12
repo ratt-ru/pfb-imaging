@@ -42,7 +42,9 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 #   * tbb -- Intel ships x86_64/win_amd64 wheels only, and no sdist at all.
 full = [
     "katbeam>=0.1",
-    "pfb-model-spec[full]>=0.0.3",  # >=0.0.3 has utils.degrid (the degrid kernel)
+    # spec 0.1 holds for every 0.1.x release; a breaking spec change bumps the minor.
+    # Floor moves to >=0.1 once 0.1.0 is on PyPI.
+    "pfb-model-spec[full]>=0.0.3,<0.2",
     "codex-africanus[dask,scipy,astropy] >= 0.4.4",
     "reproject",
     "ray[default,serve]>=2.55.0",
@@ -246,3 +248,8 @@ dev = [
 
 [tool.uv]
 prerelease="allow"
+
+[tool.uv.sources]
+# spec-0.1 fields (landmanbester/pfb-model-spec#31), the flux-conserving remap (#32) and the
+# tent frequency fit (#33) are on main but unreleased; this goes away once 0.1.0 is on PyPI and the floor becomes >=0.1
+pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "main" }

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-07T14:00:00Z
-last_verified_commit: 02cd842
+timestamp: 2026-10-12T19:00:00Z
+last_verified_commit: 043f50d
 ---
 
 # MSv4 DataTree imager pipeline
@@ -47,7 +47,9 @@ child with its own `BEAM`.
                nx, ny, nx_psf, ny_psf, cell_rad, max_blength, max_freq
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
-              robustness (omitted when natural), niters
+              robustness (omitted when natural), niters,
+              freq_bounds (nominal band edges, Hz), time_bounds (outermost integration
+              edges, per-row intervals; unix s), transferred_from (--transfer-model-from only)
               # freq_out = effective (wsum-weighted) frequency of the channels
               # actually gridded; freq_nominal = band-edge midpoint, assignment
               # grid only (D28)
@@ -58,7 +60,9 @@ child with its own `BEAM`.
               # response, still B/n per D22)
               # BDIRTY = sum_p B_p * dirty_p: model-free term of the exact deconv
               # gradient (D23) -- not derivable from the summed DIRTY
-              # MODEL / RESIDUAL / BRESIDUAL / NOISE added later by the deconv consumer
+              # MODEL / RESIDUAL / BRESIDUAL are written by pass 2 under
+              # --transfer-model-from, else added later by the deconv consumer
+              # (with NOISE)
               # IMAGE / BIMAGE / KIMAGE (corr, y, x) + PSFPARSF (corr, bpar) and a
               # psfparsf_mfs attr added by the restore consumer -- the three flux
               # scales (intrinsic / apparent / mixed) of D29
@@ -84,10 +88,32 @@ D27. Pinned by `tests/test_imager_precision.py`.
 `deconv` refuses with "re-run pfb imager with --psf" (guard fires before Ray init).
 `--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
 and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
-carry a `BEAMINCN` card because the stored beam includes the folded n-term. `RESIDUAL` is only computed when a model is passed in (future feature; no flag), so the imager
-does not normally write it — **`deconv` falls back to `DIRTY` when `RESIDUAL` is absent**
-(`core/deconv.py:275`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
+carry a `BEAMINCN` card because the stored beam includes the folded n-term. Without `--transfer-model-from` the imager does not write `RESIDUAL`, so **`deconv` falls back to `DIRTY` when it is absent**
+(`core/deconv.py:277`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
+`--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
+apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point (D52) right after it; all of them before Ray starts. Frequency coverage is checked after pass 2, against each band's effective `freq_out`, the frequency the model was rendered at (D52).
+Any cell and image size are accepted: the render remaps the model onto the run's grid
+conserving flux, refining or coarsening (box kernel, D52). In pass 2, after the gridding loop,
+each task renders the model at the band's effective
+`freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
+streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
+`transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
+`deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
+Every name holding gridding-loop vis buffers is released before
+that sweep -- `part`, `part_vars` (which shares its VIS/WEIGHT/MASK/UVW), the `first` piece
+read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as the partition
+itself) and the loop's stale `ds` -- so the sweep holds one streamed partition's vis-space
+data at a time. Missing any one of them pinned a whole partition through the sweep (measured
+on the test MS: 10.43 -> 5.06 MB traced at sweep entry, the difference being the 4.85 MB
+partition). `residual_from_partitions` itself drops each partition and its `model_vis` before
+advancing the iterator; without that a three-partition sweep peaked at two partitions
+(synthetic parts: 27.47 -> 17.23 MB traced,
+`tests/test_imager_transfer.py::test_residual_sweep_holds_one_streamed_partition`). The `.mds` is loaded once per worker through a `Multiton` and stays resident there
+(default 300 s inactivity TTL, swept lazily on cache access, as for the xarray-ms tables in
+[memory-and-ray.md](memory-and-ray.md)). That residency is bounded by the model's size, which
+is not negligible: `.mds` stores have reached 633 MB at 6720², so budget one per pass-2
+worker.
 `--fits-per-partition` (default off) makes the pass-2 workers write per-partition
 sanity FITS while the products are in memory (per-partition DIRTY is never stored in the
 tree): `<var>_band####_time####_part####_<field>.fits` under
@@ -226,7 +252,8 @@ linear in rows, so the two must agree to gridder precision).
 needs — no longer lives in `core/imager.py`. It moved to
 `utils/msv4.py` (#278) so both MSv4 front ends resolve backends identically;
 `imager` imports it from there. That module also carries `select_vis_nodes`
-and `wrapped_angle_diff`, which are used only by `degrid`: the imager's
-own node loop additionally computes imaging geometry, channel widths and the
-rephasing barycentre, so it was deliberately **not** retrofitted onto the
-shared selector.
+and `wrapped_angle_diff`, both shared with `degrid`: the imager's node loop
+selects through `select_vis_nodes` (name-based selection, the frequency window
+and `chan0`, so the two front ends cannot drift; commit `08a5697`) and adds its
+own imaging geometry, channel widths and rephasing barycentre on top, and its
+transfer tangent-point check (D52) uses `wrapped_angle_diff`.

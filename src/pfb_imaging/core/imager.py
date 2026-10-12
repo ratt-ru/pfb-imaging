@@ -2,6 +2,7 @@ import gc
 import os
 import time
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,9 @@ import zarr
 from ducc0.misc import resize_thread_pool
 from meerkat_beams import cache as mbeams_cache
 from meerkat_beams.utils import BeamWizard
+from pfb_model_spec.utils.degrid import model_geometry, model_sampling, render_model_region
+from pfb_model_spec.utils.spec import open_mds
+from rarg_python_patterns.multiton import Multiton
 from xarray_ms.errors import (
     ColumnShapeImputationWarning,
     FrameConversionWarning,
@@ -20,7 +24,7 @@ from xarray_ms.errors import (
 )
 
 from pfb_imaging import MBEAMS_CACHE_DEFAULT, init_ray, pfb_version, set_envs, setup_ray_worker
-from pfb_imaging.operators.gridder import grid_partition
+from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
@@ -29,6 +33,7 @@ from pfb_imaging.utils.baselines import (
     classify_antennas,
     parse_antenna_groups,
 )
+from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
 from pfb_imaging.utils.misc import (
@@ -40,7 +45,7 @@ from pfb_imaging.utils.misc import (
     set_image_size,
     to_mjd_time,
 )
-from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes
+from pfb_imaging.utils.msv4 import get_engine, load_detached, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
 from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
@@ -149,6 +154,154 @@ def _load_piece(node):
     return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
 
 
+def _load_transfer_model(path: str) -> xr.Dataset:
+    """Open and load a `--transfer-model-from` `.mds`. Module level so a `Multiton` can pickle it.
+
+    Args:
+        path: Absolute path to the `.mds`.
+
+    Returns:
+        The in-memory model Dataset.
+    """
+    return open_mds(path).load()
+
+
+def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
+    """Indices of the model's Stokes planes, in the band's `corr` order (#309).
+
+    Args:
+        model_stokes: The `.mds` `stokes` coord labels.
+        corr: The band's Stokes labels.
+
+    Returns:
+        One index into `model_stokes` per entry of `corr`.
+
+    Raises:
+        ValueError: If a band Stokes is missing from the model (the driver
+            refuses this upfront).
+    """
+    return [list(model_stokes).index(str(c)) for c in corr]
+
+
+def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset]:
+    """Stream one image's partitions back from the `.dt`, one at a time (#309).
+
+    Only the variables `residual_from_partitions` reads, plus the attrs (its
+    l0/m0 set the phase centre). Reading back rather than holding the
+    partitions keeps the pass-2 task at one partition's vis data at a time.
+
+    Args:
+        dt_store: The `.dt` store URL.
+        out_name: The band node the partitions live under.
+        npart: Number of `part####` children.
+
+    Yields:
+        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM, loaded, with its attrs.
+    """
+    for pid in range(npart):
+        ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
+        try:
+            sub = ds[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+            sub.attrs = dict(ds.attrs)
+        finally:
+            ds.close()
+        del ds
+        yield sub
+        # drop the generator's own reference before loading the next partition
+        del sub
+
+
+def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
+    """Nominal band edges and integration-edge time extent of one output image (#327).
+
+    Stored on the band node so `deconv` can hand them to the `.mds`, where
+    `degrid` derives its chunking from them. The band edges are the nominal
+    ones that assigned channels to the band, not the flagged data's extent.
+
+    Args:
+        infos: The image's per-scratch-node summaries (`time_lo`, `time_hi`: the
+            outermost integration edges).
+        band_lo: Lower band edge in Hz.
+        band_hi: Upper band edge in Hz.
+
+    Returns:
+        `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
+    """
+    return {
+        "freq_bounds": [float(band_lo), float(band_hi)],
+        "time_bounds": [min(i["time_lo"] for i in infos), max(i["time_hi"] for i in infos)],
+    }
+
+
+def check_transfer_geometry(model_ds, *, grid_radec) -> None:
+    """Refuse a transfer model the pass-2 render cannot place correctly (#309).
+
+    Any cell size and image size are fine: the render remaps the model onto this
+    run's grid conserving flux, refining or coarsening (pfb-model-spec#32, D52).
+
+    Args:
+        model_ds: The opened `--transfer-model-from` `.mds`.
+        grid_radec: This run's tangent point `(ra, dec)` in radians.
+
+    Raises:
+        ValueError: If the tangent points differ (in-plane offsets are handled
+            by x0/y0, a different tangent point needs reprojection).
+    """
+    model_radec = np.array([float(model_ds.attrs["ra"]), float(model_ds.attrs["dec"])])
+    sep = wrapped_angle_diff(np.asarray(grid_radec, dtype=np.float64), model_radec)
+    if np.any(sep > 1e-9):
+        raise ValueError(
+            f"Tangent point mismatch: this run is centred on (ra, dec) = {np.rad2deg(grid_radec)} deg, "
+            f"the transfer model on {np.rad2deg(model_radec)} deg. Transferring a model to a different "
+            "tangent point needs reprojection, which is not supported."
+        )
+
+
+def transfer_freq_coverage(model_ds) -> tuple[float, float, bool]:
+    """The frequency range a transfer model's fit covers (#309, D52).
+
+    Args:
+        model_ds: The opened `--transfer-model-from` `.mds`.
+
+    Returns:
+        `(lo, hi, from_bounds)` in Hz: the extent of `freq_bounds` when the model
+        records them, else of its fitted `freqs` (D50).
+    """
+    fb = model_sampling(model_ds)["freq_bounds"]
+    if fb is not None:
+        return float(fb.min()), float(fb.max()), True
+    return float(model_ds.freqs.min()), float(model_ds.freqs.max()), False
+
+
+def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) -> str | None:
+    """Warn when pass 2 rendered the model outside its fitted range (#309, D52).
+
+    Checked against the effective frequencies the model was actually rendered
+    at, which are known only after pass 2 (D28): the nominal band centres differ
+    from them, and a model from a run with identical settings was fitted at
+    exactly these frequencies.
+
+    Args:
+        freqs_out: The bands' effective frequencies in Hz.
+        coverage: `transfer_freq_coverage` of the model.
+
+    Returns:
+        The message, or `None` when every frequency lies inside the coverage.
+    """
+    lo, hi, from_bounds = coverage
+    freqs_out = np.sort(np.asarray(freqs_out, dtype=np.float64))
+    # relative slack for float round-off in a recomputed effective frequency
+    tol = 1e-9 * hi
+    outside = freqs_out[(freqs_out < lo - tol) | (freqs_out > hi + tol)]
+    if not outside.size:
+        return None
+    source = "its freq_bounds" if from_bounds else "its fitted frequencies; it records no freq_bounds"
+    return (
+        f"The transfer model was rendered at {', '.join(f'{f / 1e6:.3f}' for f in outside)} MHz, outside the "
+        f"{lo / 1e6:.3f}-{hi / 1e6:.3f} MHz it covers ({source}); its frequency fit was extrapolated there."
+    )
+
+
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
@@ -243,6 +396,8 @@ def _grid_image_body(
     do_psf=True,
     part_fits_dir=None,
     part_fits_beam=True,
+    transfer_model=None,
+    transfer_path=None,
 ):
     """Pass-2 worker for one output image.
 
@@ -252,6 +407,10 @@ def _grid_image_body(
     writes the band node + ``part####`` children into the ``.dt`` store. Returns a
     light summary (``timeid``/``wsum``/telemetry); the band PSF goes to the ``.dt``
     only -- returning it would put an image per task in the Ray object store.
+
+    ``transfer_model`` is a ``Multiton`` over ``_load_transfer_model``, or ``None``;
+    ``transfer_path`` is its path, recorded on the band node. With a model, the
+    band node also gets ``MODEL``/``RESIDUAL``/``BRESIDUAL`` (#309).
     """
     resize_thread_pool(nthreads)
     # cache=False: otherwise the counts read below is memoised on the tree,
@@ -278,6 +437,12 @@ def _grid_image_body(
     # templates every array on one type), and the accumulation below must not
     # upcast it back to f8 (--double-accum is a wgridder-internal control only).
     real_type = first.VIS.values.real.dtype
+    # Neither may outlive this point: `first` is a piece, and for a one-piece
+    # partition _concat_pieces returns it as the partition itself, so holding
+    # it pins that partition's VIS/WEIGHT/UVW/MASK/BEAM through the transfer
+    # sweep; `ds` is the loop's last piece. `first` existing means the loop
+    # bound `ds` (next() raises on an empty `groups`).
+    del first, ds
     dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
@@ -289,6 +454,7 @@ def _grid_image_body(
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
 
+    npart = len(groups)
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
         part = _concat_pieces(plist)
@@ -383,6 +549,10 @@ def _grid_image_body(
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
+    # release the last partition's vis-space data now: the transfer residual
+    # below re-reads each partition from the store (#339). part_vars holds the
+    # same VIS/WEIGHT/MASK/UVW buffers as part, so it must go too.
+    del part, part_vars, part_out, prod
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
@@ -401,6 +571,8 @@ def _grid_image_body(
         "freq_out": freq_eff,
         "freq_nominal": float(freq_nominal),
         "time_out": meta["time_out"],
+        "freq_bounds": meta.get("freq_bounds"),
+        "time_bounds": meta.get("time_bounds"),
         "ra": meta["ra"],
         "dec": meta["dec"],
         "l0": meta.get("l0", 0.0),
@@ -412,8 +584,8 @@ def _grid_image_body(
     band_attrs = {k: v for k, v in band_attrs.items() if v is not None}
     # band-level BEAM: wsum-weighted mean of the partition beams -- the
     # linear-mosaic response (still the effective B/n of wiki D22).
-    # RESIDUAL is only computed once a model input exists (deconv falls back
-    # to DIRTY when it is absent).
+    # RESIDUAL/BRESIDUAL are only computed here with --transfer-model-from
+    # (deconv falls back to DIRTY/BDIRTY otherwise).
     with np.errstate(invalid="ignore", divide="ignore"):
         beam_avg = np.where(wsum_sum[:, None, None] > 0, beam_sum / wsum_sum[:, None, None], 0.0)
     band_vars = {
@@ -431,23 +603,62 @@ def _grid_image_body(
             np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
         )
         band_coords["bpar"] = bpar
+    if transfer_model is not None:
+        # Render at the band's effective frequency, known only now that the
+        # partitions are gridded (D28), then take the exact residual over the
+        # partitions just written -- the same path deconv uses (#309).
+        model_ds = transfer_model.instance  # one load per worker process
+        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
+        rendered = render_model_region(
+            model_ds,
+            time=meta["time_out"],
+            freq_out=freq_eff,
+            nx=nx,
+            ny=ny,
+            cell_rad=cell_rad,
+            x0=x0,
+            y0=y0,
+            # flux-conserving remap onto this grid, refining or coarsening (D52)
+            kernel="box",
+        )
+        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
+        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
+        del rendered
+        residual, bresidual = residual_from_partitions(
+            dirty_sum,
+            _iter_parts(dt_store, out_name, npart),
+            model,
+            cell_rad,
+            nthreads=nthreads,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            bdirty=bdirty_sum,
+        )
+        band_vars["MODEL"] = (("corr", "y", "x"), model)
+        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
+        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))
+        band_attrs_extra = {"transferred_from": transfer_path}
+    else:
+        band_attrs_extra = {}
     band_ds = xr.Dataset(
         band_vars,
         coords=band_coords,
-        attrs=band_attrs,
+        attrs={**band_attrs, **band_attrs_extra},
     )
     band_ds.to_zarr(dt_store, group=out_name, mode="a", consolidated=False)
 
     # break the reference cycles holding the loaded pieces so a reused Ray
     # worker doesn't accumulate them across tasks (see safe_stokes_vis)
     dt.close()
-    del groups, part, dt
+    del groups, dt
     gc.collect()
 
     # post-gc memory telemetry (see safe_stokes_vis for interpretation)
     mem = task_memory()
     return {
         "timeid": meta["timeid"],
+        "freq_out": freq_eff,
         "wsum": wsum_sum,
         "mem": mem,
         "beam_imre_ratio": beam_imre_max,
@@ -596,6 +807,7 @@ def imager(
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
+    transfer_model_from: str | Path | None = None,
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
     concat_row: bool = True,
@@ -712,20 +924,31 @@ def imager(
             NotImplementedError,
         )
 
+    transfer_ds = None
+    if transfer_model_from is not None:
+        # absolute before any Ray worker (with its own cwd) sees it
+        transfer_model_from = str(Path(transfer_model_from).resolve())
+        opts_dict["transfer_model_from"] = transfer_model_from
+        if not Path(transfer_model_from).exists():
+            log.error_and_raise(f"No .mds at {transfer_model_from}", ValueError)
+        transfer_ds = open_mds(transfer_model_from)
+        try:
+            check_stokes_subset(product, model_geometry(transfer_ds)["stokes"])
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+        # pass 2 applies BEAM to the rendered model, so an apparent model would
+        # be attenuated twice; None is a legacy .mds, which deconv wrote intrinsic
+        if model_sampling(transfer_ds)["flux_scale"] == "apparent":
+            log.error_and_raise(
+                f"{transfer_model_from} is an apparent-flux model; --transfer-model-from needs an "
+                "intrinsic-flux model, because pass 2 applies the primary beam to it.",
+                ValueError,
+            )
+
     log.log_options_dict(opts_dict, title="IMAGER options")
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
-
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env={
-            "env_vars": {**env_vars, **memray_env()},
-            "worker_process_setup_hook": setup_ray_worker,
-        },
-        log=log,
-    )
 
     basename = f"{output_filename}"
 
@@ -916,6 +1139,34 @@ def imager(
     ny_pad = int(np.ceil(min_padding * ny))
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+
+    if transfer_ds is not None:
+        try:
+            check_transfer_geometry(transfer_ds, grid_radec=grid_radec)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+        model_cell = float(transfer_ds.attrs["cell_rad_x"])
+        if not np.isclose(cell_rad, model_cell, rtol=1e-9, atol=0.0):
+            log.info(
+                f"Remapping the transfer model from its {np.rad2deg(model_cell) * 3600:.4e} arcsec cell onto "
+                f"{np.rad2deg(cell_rad) * 3600:.4e} arcsec (flux-conserving box kernel)"
+            )
+        # checked after pass 2, against the frequencies the model is rendered at
+        transfer_coverage = transfer_freq_coverage(transfer_ds)
+        # pass-2 workers load their own copy through a Multiton; the driver holds none
+        del transfer_ds
+
+    # only now: every refusal above, the transfer geometry included, needs the
+    # MS metadata but no cluster
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
+        runtime_env={
+            "env_vars": {**env_vars, **memray_env()},
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+        log=log,
+    )
 
     # Baseline-group masks, one dict per selected node. Computed here rather
     # than inside the dispatch loop so the set of groups that actually exist is
@@ -1133,6 +1384,10 @@ def imager(
             "ra": float(pieces[0].attrs["ra"]),
             "dec": float(pieces[0].attrs["dec"]),
             "time_out": float(np.mean([ds.attrs["time_out"] for ds in pieces])),
+            "time_min": float(min(ds.attrs["time_min"] for ds in pieces)),
+            "time_max": float(max(ds.attrs["time_max"] for ds in pieces)),
+            "time_lo": float(min(ds.attrs["time_lo"] for ds in pieces)),
+            "time_hi": float(max(ds.attrs["time_hi"] for ds in pieces)),
         }
     if not node_info:
         log.error_and_raise("Pass 1 produced no output images (all data flagged?)", RuntimeError)
@@ -1163,6 +1418,7 @@ def imager(
                         "l0": l0,
                         "m0": m0,
                         "time_out": time_out,
+                        **_sampling_bounds(infos, band_edges[bandid], band_edges[bandid + 1]),
                     },
                 )
             )
@@ -1171,6 +1427,7 @@ def imager(
             l0, m0 = target_offset(info["time_out"])
             meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
             meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
+            meta.update(_sampling_bounds([info], band_edges[info["bandid"]], band_edges[info["bandid"] + 1]))
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
@@ -1219,6 +1476,8 @@ def imager(
         log.info(f"Per-partition FITS will be written to {part_fits_dir}")
 
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
+    # per-worker cached model: one load per process, not per task (degrid's pattern)
+    transfer = Multiton(_load_transfer_model, transfer_model_from) if transfer_model_from else None
     tasks = []
     for out_name, src_names, meta in work:
         fut = _grid_image.remote(
@@ -1246,6 +1505,8 @@ def imager(
             do_psf=psf,
             part_fits_dir=part_fits_dir,
             part_fits_beam=beam,
+            transfer_model=transfer,
+            transfer_path=transfer_model_from,
         )
         tasks.append(fut)
 
@@ -1253,15 +1514,22 @@ def imager(
     ncomplete = 0
     remaining_tasks = tasks.copy()
     beam_imre_max = 0.0
+    freqs_out = []
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
+            freqs_out.append(res["freq_out"])
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
                 log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
+
+    if transfer_model_from is not None:
+        msg = transfer_coverage_warning(freqs_out, transfer_coverage)
+        if msg is not None:
+            log.warning(msg)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).
@@ -1315,6 +1583,9 @@ def imager(
             psfpars_mfs=psfparsn if psf else None,
         )
         columns = {"DIRTY": {}}
+        if transfer_model_from is not None:
+            # the pass-2 residual of the transferred model (#309), Jy/beam like deconv's
+            columns["RESIDUAL"] = {}
         if psf:
             columns["PSF"] = {}
         if beam:

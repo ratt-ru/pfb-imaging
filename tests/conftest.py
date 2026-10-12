@@ -686,10 +686,11 @@ def drop_column(ms_path, column):
 def simple_mds(ms_name, tmp_path):
     """A minimal, deliberately non-square `.mds` with a spectral slope.
 
-    64 x 32 in (nx, ny): a wrongly oriented mask or image is invisible on a
-    square grid, so nothing here is square. One component at (x=40, y=9),
-    1.0 Jy at 1.0 GHz and 2.0 Jy at 1.1 GHz, so a render at 1.05 GHz must give
-    exactly 1.5 -- which is the frequency-upsampling assertion.
+    64 (x) by 32 (y), stored `(Y, X)` as spec 0.1 has it: a wrongly oriented
+    mask or image is invisible on a square grid, so nothing here is square.
+    One component at (x=40, y=9), 1.0 Jy at 1.0 GHz and 2.0 Jy at 1.1 GHz,
+    so a render at 1.05 GHz must give exactly 1.5 -- which is the frequency-
+    upsampling assertion.
 
     The tangent point is read from the test MS's own FIELD.PHASE_DIR rather
     than invented: `degrid` refuses to degrid a model whose tangent point
@@ -710,19 +711,20 @@ def simple_mds(ms_name, tmp_path):
 
     nx, ny = 64, 32
     cell_rad = 1.0e-5
-    image = np.zeros((1, 2, nx, ny))
-    image[0, 0, 40, 9] = 1.0
-    image[0, 1, 40, 9] = 2.0
+    # (ntime, nband, nstokes, ny, nx) -- spec 0.1 is (Y, X)
+    image = np.zeros((1, 2, 1, ny, nx))
+    image[0, 0, 0, 9, 40] = 1.0
+    image[0, 1, 0, 9, 40] = 2.0
     times = np.array([1.62393461e9])  # unix seconds, as the .dt uses
     freqs = np.array([1.0e9, 1.1e9])
 
-    coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
-        times, freqs, image, wgt=np.ones((1, 2)), method="Legendre"
+    coeffs, y_index, x_index, expr, params, texpr, fexpr = fit_image_cube(
+        times, freqs, image, wgt=np.ones((1, 2, 1)), method="Legendre"
     )
     ds = build_mds_dataset(
         coeffs,
-        x_index,
         y_index,
+        x_index,
         expr,
         params,
         texpr,
@@ -738,8 +740,9 @@ def simple_mds(ms_name, tmp_path):
         True,
         False,  # flip_u, flip_v, flip_w
         (float(radec[0]), float(radec[1])),  # tangent point, from the MS
-        "I",
+        ["I"],
         "test",
+        freq_bounds=np.array([[0.95e9, 1.05e9], [1.05e9, 1.15e9]]),
     )
     path = tmp_path / "simple.mds"
     ds.to_zarr(str(path), mode="w")

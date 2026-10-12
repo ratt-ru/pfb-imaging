@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issues347a327a309
     inputs:
       output-filename:
         info:
@@ -201,9 +201,20 @@ cabs:
           rich_help_panel: PFB
       nbasisf:
         info:
-          Number of basis functions to use while fitting the frequency axis.
+          Number of basis functions for the fakenodes, Legendre and poly fit modes.
           Default is to use the number of non-null imaging bands (interpolation).
+          Ignored by tent and box, which have one piece per band.
         dtype: Optional[int]
+        metadata:
+          rich_help_panel: PFB
+      fit-mode:
+        info:
+          How the component model (.mds) is parametrised over frequency.
+          Choices are tent, box, fakenodes, Legendre and poly.
+          Tent and box reproduce each band at its effective frequency and never ring between bands.
+          Legendre and poly ring between bands when nbasisf is close to the number of bands.
+          Fakenodes does not ring but is biased near the outer band edges.
+        default: tent
         metadata:
           rich_help_panel: PFB
       positivity:

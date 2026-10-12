@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-07T11:00:00Z
-last_verified_commit: 8643bf6
+timestamp: 2026-10-12T19:00:00Z
+last_verified_commit: 043f50d
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -336,11 +336,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   order changed. ducc's x-major world exists only behind zero-copy `.T` views at the
   `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided arrays),
   `fitcleanbeam` is called with `yx_order=True`, and `save_fits(yx_order=True)` writes without
-  axis swaps. The `.mds` stays x-major — that convention is now **owned by pfb-model-spec**
-  (whose `fit_image_cube`/`eval_coeffs_to_slice`/`model_to_ds` pfb-imaging imports since #286);
-  pfb-imaging transposes to/from x-major at the `model_to_ds` (deconv) and `.mds`-read (degrid)
-  call sites. A future `.mds` (Y, X) flip is a pfb-model-spec spec revision
-  (landmanbester/pfb-model-spec#17), not a pfb-imaging change. uv-space grids (COUNTS,
+  axis swaps. The `.mds` was x-major under spec 0.0.x, owned by pfb-model-spec, with pfb-imaging
+  transposing at the `model_to_ds` (deconv) and `.mds`-read (degrid) call sites; spec 0.1
+  (landmanbester/pfb-model-spec#17, adopted in #347) made it `(Y, X)` with a Stokes axis, so
+  those transposes are gone and the `.mds` is (Y, X) like everything else here. uv-space grids (COUNTS,
   weighting) are untouched.
 - **Rationale:** Same as D19 — one canonical order shared with FITS/astropy/reproject,
   auditable at explicit seams. Extending it to the `.dt` was gated on an on-disk schema change,
@@ -873,8 +872,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   - The driver-side remainder is **negative** semi-definite (`C⁻¹ₙ`'s eigenvalues are in `(0, 1]`);
     the total operator is still SPD, so CG applies, but nothing may assume that term alone is PSD.
   - Interpolated flux in zero-`wsum` bands enters L21's 2-norm over bands, so a joint-sparsity
-    decision can be taken partly on a band with no data. Accepted: the loop already extrapolates
-    into those bands via `model_to_ds`'s `nbasisf` refit.
+    decision can be taken partly on a band with no data. Accepted: the `.mds` fit renders into
+    those bands too (though since D49 its refit never re-enters the loop).
   - **The fixed-point test cannot guard the prior's sign.** Flipping `dot`'s `+=` to `-=` is still
     SPD, so D22 says it reaches the same fixed point — and it does. The sign is pinned by
     `test_prior_term_matches_the_dense_congruence` and structurally by
@@ -884,8 +883,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     `gp_length_scale`, `gp_cap`), fixing a **pre-existing bug**: changing `--eta` between runs on
     one `.dt` silently reused a stale norm. A tree written before the key re-estimates once, logged.
   - Second band-coupling channel in `M` (bands previously coupled only through the L21 prox, D3).
-  - **Attribution:** `--nbasisf < nband` already smooths the *model* in frequency every major cycle.
-    Run GP experiments at full-rank `nbasisf` or the two effects cannot be separated.
+  - **Attribution:** when this was written, `--nbasisf < nband` also smoothed the model in
+    frequency every major cycle. Since D49 the `.mds` fit (`--fit-mode`, `--nbasisf`) is output
+    only, so the prior is the loop's sole frequency coupling besides L21.
 - **Source:** issue #307; `src/pfb_imaging/operators/hessian.py` (`freq_correlation`,
   `freq_precision`, `HessTreeRay`); `src/pfb_imaging/deconv/presets.py`;
   `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
@@ -1275,6 +1275,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D41 — `--product` must match the model's `stokes` attr, and may name only one product
 
+- **Historical, superseded by D51** (#347): the rule below no longer holds; the model now has a
+  Stokes axis and the rule is subset, not equality. Kept as the record, and for the reasoning on
+  silent wrong output.
 - **Context:** the `genesis` `.mds` spec stores a single Stokes plane, but `--product` is a
   free-form string.
 - **Decision:** refuse `len(product) > 1`, and refuse a product that disagrees with the
@@ -1518,8 +1521,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 ### D49 — `deconv`'s `.mds` write was dead code; the fit is an output, not an input
 
 - **Context:** `core/deconv.py` writes the component model each major cycle with
-  `model_to_ds`, whose input and output are both x-major `(nband, nx, ny)` while
-  pfb-imaging's cube is `(nband, ny, nx)`. The call transposed in with
+  `model_to_ds`, whose input and output were then both x-major `(nband, nx, ny)` while
+  pfb-imaging's cube is `(nband, ny, nx)` (spec 0.1 removed that mismatch, #347). The call transposed in with
   `model.transpose(0, 1, 3, 2)` — a four-axis transpose of a three-axis array,
   which raises unconditionally — and assigned the result back to `model` through
   a `.T` that reverses all three axes rather than swapping the last two. The
@@ -1541,7 +1544,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   would all come off the fitted cube while the next cycle's `forward()` builds
   `xtilde`, and `reg.update_weights`, off the raw one. Second, even done
   correctly (an in-place mutation or a solver setter) it changes the algorithm:
-  the fit is a lossy Legendre series over frequency with `nbasisf` terms, so
+  the fit is pfb-model-spec's parametrisation of the band cube (a Legendre
+  series with `nbasisf` terms when this was decided), not the cube itself, so
   feeding it back makes the iteration's fixed point depend on the component-model
   parametrisation. That is a deliberate choice to make on its own evidence, not
   one to acquire as a side effect of fixing a transpose.
@@ -1556,6 +1560,102 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/deconv/pfb.py` (`backward` returning `self._model`);
   `tests/test_deconv.py::test_mds_is_written_with_the_image_centre_offset`,
   `::test_the_model_fit_does_not_re_enter_the_solver`; issues #326, #277.
+
+### D50 — the `.mds` records sampling, and `deconv` is its only writer
+
+- **Context:** a `.mds` stores a frequency fit, so on its own it cannot say which band edges,
+  integration windows or weights the fit was made from. `degrid` needs the band width to pick a
+  chunk (D53) and the imager transfer needs the frequency coverage (D52).
+- **Decision:** pfb-model-spec 0.1 adds optional `freq_bounds (f, bound)`, `time_bounds (t,
+  bound)`, `weights (stokes, t, f)` and the attr `flux_scale`, read back with `model_sampling`.
+  `deconv` writes them from the `.dt` (band `freq_bounds`/`time_bounds` attrs, `weights` as the
+  per-band wsum fractions `wsums / wsum`,
+  `flux_scale="intrinsic"`) and omits the bounds for a `.dt` that predates them. Provenance (which
+  `.dt`, which run) stays out of the `.mds`. The imager writes no `.mds`.
+- **Rationale:** two writers would couple their naming and the fit would be refitted lossily
+  from a model that was itself already a fit. One writer keeps the file a pure output of the
+  solve.
+- **Consequences:** an older `.mds` has no bounds; `degrid` then refuses its default chunk (D53)
+  and the transfer coverage check falls back to the min/max of the fitted frequencies, which
+  understates the sampled extent; its extrapolation warning says so in that case. That
+  fallback is exact for a re-run with the same band settings: `deconv` fitted the model at the
+  bands' effective frequencies, which is where pass 2 renders it (D28, D52).
+- **Source:** `src/pfb_imaging/core/deconv.py`, `src/pfb_imaging/core/imager.py` (band
+  attrs), commits `49be858`, `7e22638`; issue #327; landmanbester/pfb-model-spec#31.
+
+### D51 — `--product` must be a subset of the model's Stokes
+
+- **Context:** D41's single-product rule came from the genesis spec storing one Stokes plane.
+  Spec 0.1 stores a Stokes axis.
+- **Decision:** `utils/degrid.check_stokes_subset(product, model_stokes)` refuses a product
+  naming a Stokes the model lacks. `degrid` and `imager --transfer-model-from` share it, and
+  `degrid_region` selects and orders the model planes to match the product.
+- **Rationale:** a missing plane would otherwise be silently zero (the failure D41 prevented);
+  a multi-Stokes product is now well defined.
+- **Consequences:** the transfer refuses before Ray starts. The check is on names only; it
+  says nothing about flux scale (D54).
+- **Source:** `src/pfb_imaging/utils/degrid.py`, `tests/test_degrid.py`,
+  `tests/test_imager_transfer.py`; issue #347.
+
+### D52 — transfer geometry: one tangent point, any cell
+
+- **Context:** `imager --transfer-model-from` renders a `.mds` onto this run's grid. The
+  original render resampled bilinearly and multiplied by the pixel-area ratio, which inflates a
+  point component's flux when coarsening (x4 at x2; landmanbester/pfb-model-spec#23), so the
+  transfer first refused any run whose cell was coarser than the model's.
+- **Decision:** refuse only when the tangent points differ by more than 1e-9 rad. Any cell and
+  image size are accepted: pass 2 renders with `render_model_region(..., kernel="box")`, the
+  flux-conserving remap of landmanbester/pfb-model-spec#32, and the driver logs when the cells
+  differ. Warn after pass 2 if any band's effective `freq_out` -- the frequency the model was
+  actually rendered at -- falls outside the model's coverage (the fit is extrapolated).
+- **Rationale:** the box remap conserves flux refining, coarsening and shifting, and is the
+  identity on the same grid. A different tangent point would need reprojection, which no
+  remap provides. The refusal runs after the MS metadata read but before Ray starts, so a bad
+  request costs neither a cluster nor any gridding. `"tent"` is not used: it is smoother only
+  when refining extended emission, and peaked at ~10x its output in memory against ~4x for box
+  (4096^2, pfb-model-spec#32 review).
+- **Consequences:** flux outside the run's footprint is dropped, never wrapped. Because pixel
+  centres sit at `n//2`, a coarser grid of half the pixels does not cover the model's last
+  half-row and half-column (2.4e-4 of a uniform model's flux at 4096^2). On a coarser grid the residual does
+  not null: each component lands on its coarse pixel's centre, up to half a coarse cell from its
+  true position (8.7% of the dirty peak at x2 on the ground-truth sky). The coverage check uses
+  `freq_bounds` when present and otherwise the fitted frequencies' extent (D50). It cannot run
+  upfront: it first compared the nominal band centres, and since a legacy model's fitted
+  frequencies are effective ones lying inside the nominal bands, a re-run with identical settings
+  warned spuriously that the outer bands were extrapolated.
+- **Source:** `src/pfb_imaging/core/imager.py` (`check_transfer_geometry`,
+  `transfer_coverage_warning`, the pass-2 render), `tests/test_imager_transfer.py`
+  (`test_transferred_truth_nulls_the_residual` covers the x2 coarsening); issues #309,
+  landmanbester/pfb-model-spec#23, #32.
+
+### D53 — `degrid`'s default chunk is one band in Hz
+
+- **Context:** `--channels-per-chunk` had no default tied to the model, and a chunk that
+  straddles bands disagrees with how the fit was made.
+- **Decision:** default per MS to `max(1, round(min_band_width / |chan_width|))`, converting
+  the model's narrowest band from its `freq_bounds` using that MS's own channel width. Refuse the
+  default when the `.mds` lacks `freq_bounds`; an explicit value still works.
+- **Rationale:** band width in Hz is the model's natural resolution and is MS-independent;
+  channel counts are not.
+- **Consequences:** `time_bounds` is recorded but drives nothing yet.
+- **Source:** `src/pfb_imaging/core/degrid.py`; commit `3717aef`; issue #327.
+
+### D54 — `flux_scale` and the intrinsic-model warning
+
+- **Context:** `deconv` solves for the intrinsic sky (D22/D23), so its `.mds` is intrinsic, but
+  `degrid` applies no beam (D42).
+- **Decision:** `deconv` writes `flux_scale="intrinsic"`; `degrid` warns (via
+  `flux_scale_warning`) that the predicted visibilities are intrinsic, not apparent.
+  `imager --transfer-model-from` refuses an `"apparent"` model before Ray starts, and accepts
+  `"intrinsic"` and a legacy `None`.
+- **Rationale:** a warning is honest while beam application is unimplemented; refusing would
+  block legitimate use. The transfer is different: pass 2 applies `BEAM` to the rendered model,
+  so an apparent model would be attenuated twice, which is wrong rather than merely unbeamed.
+- **Consequences:** #353 adds beam application to `degrid`, with `--baseline-groups` parity
+  (bare `B` with `divide_by_n=True`); the warning, which links #353, goes then.
+- **Source:** `src/pfb_imaging/utils/degrid.py::flux_scale_warning`, `src/pfb_imaging/core/degrid.py`,
+  `src/pfb_imaging/core/imager.py` (the pre-Ray transfer checks),
+  `tests/test_imager_transfer.py::test_transfer_refuses_an_apparent_model_before_ray`.
 
 ## Known debt
 

@@ -403,6 +403,14 @@ def test_deconv_requires_bdirty(tmp_path):
         )
 
 
+def test_deconv_refuses_an_unknown_fit_mode(tmp_path):
+    """--fit-mode is checked before any work, not when the first .mds fit fails and is logged."""
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    with pytest.raises(ValueError, match="fit_mode must be one of"):
+        deconv_core(str(tmp_path / "nofit"), fit_mode="legendre", log_directory=str(tmp_path))
+
+
 @pytest.mark.slow
 def test_deconv_driver_runs_with_the_frequency_prior(tmp_path):
     """End-to-end driver path with --gp-length-scale on (issue #307).
@@ -780,6 +788,8 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
     )
 
     mds = xr.open_zarr(f"{output_filename}_I_main.mds", chunks=None)
+    assert mds.attrs["flux_scale"] == "intrinsic"
+    assert list(mds.stokes.values) == ["I"]
     _, _, _, x0, y0 = wgridder_conventions(l0, m0)
     assert float(mds.center_x) == pytest.approx(x0)
     assert float(mds.center_y) == pytest.approx(y0)
@@ -796,6 +806,50 @@ def test_mds_is_written_with_the_image_centre_offset(tmp_path):
 
 
 @pytest.mark.slow
+def test_mds_carries_the_band_sampling_bounds(tmp_path):
+    """Band-node bounds reach the .mds; a .dt without them still writes one (#327)."""
+    import zarr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(99)
+    with_bounds = str(tmp_path / "bounded")
+    store = f"{with_bounds}_I.dt"
+    _write_synthetic_dt(store, 32, 32, 64, 1, rng)
+    root = zarr.open_group(store, mode="a")
+    names = sorted(n for n in root.group_keys() if n.startswith("band"))
+    for k, n in enumerate(names):
+        root[n].attrs.update(freq_bounds=[1.0e9 + k * 1e8, 1.1e9 + k * 1e8], time_bounds=[10.0 + k, 20.0 + k])
+    zarr.consolidate_metadata(store)
+
+    without = str(tmp_path / "unbounded")
+    _write_synthetic_dt(f"{without}_I.dt", 32, 32, 64, 1, np.random.default_rng(99))
+
+    for out in (with_bounds, without):
+        deconv_core(
+            out,
+            product="I",
+            niter=1,
+            nthreads=1,
+            bases=["self", "db1"],
+            nlevels=2,
+            fits_mfs=False,
+            fits_cubes=False,
+            log_directory=str(tmp_path),
+        )
+
+    mds = xr.open_zarr(f"{with_bounds}_I_main.mds", chunks=None)
+    np.testing.assert_allclose(mds.freq_bounds.values, [[1.0e9 + k * 1e8, 1.1e9 + k * 1e8] for k in range(len(names))])
+    np.testing.assert_allclose(mds.time_bounds.values, [[10.0, 20.0 + len(names) - 1]])
+    assert mds.weights.dims == ("stokes", "t", "f")
+    assert mds.attrs["flux_scale"] == "intrinsic"
+
+    bare = xr.open_zarr(f"{without}_I_main.mds", chunks=None)
+    assert "freq_bounds" not in bare.variables and "time_bounds" not in bare.variables
+    assert "weights" in bare.variables
+
+
+@pytest.mark.slow
 def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     """The .mds fit is an output. Its re-rendered cube must not reach the loop.
 
@@ -804,9 +858,10 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     never-executing code did -- would detach the two: the residual would be
     computed from the fitted cube while the next cycle's `forward()` builds
     xtilde from the raw one, and the solver's own model, the reweighting and
-    the stored MODEL would disagree. Beyond the inconsistency, the fit is a
-    lossy Legendre series over frequency, so feeding it back makes the
-    iteration's fixed point depend on the component-model parametrisation.
+    the stored MODEL would disagree. Beyond the inconsistency, the fit is the
+    component model's own parametrisation of the band cube, so feeding it back
+    makes the iteration's fixed point depend on it. A non-default --fit-mode
+    also checks that the option reaches model_to_ds.
 
     Two major cycles, because a one-cycle run cannot observe anything about
     what the next cycle consumes. The stand-in returns a cube that is
@@ -820,8 +875,8 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     calls = []
 
     def fake_model_to_ds(*args, **kwargs):
-        calls.append(kwargs.get("nbasisf"))
-        model = args[3]
+        calls.append(kwargs.get("method"))
+        model = kwargs["model"]
         return np.full_like(np.asarray(model, dtype=np.float64), sentinel)
 
     monkeypatch.setattr(deconv_mod, "model_to_ds", fake_model_to_ds)
@@ -837,12 +892,13 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
         nthreads=1,
         bases=["self", "db1"],
         nlevels=2,
+        fit_mode="box",
         fits_mfs=False,
         fits_cubes=False,
         log_directory=str(tmp_path),
     )
 
-    assert len(calls) == 2, f"expected one model fit per major cycle, got {len(calls)}"
+    assert calls == ["box", "box"], f"expected one box fit per major cycle, got {calls}"
 
     dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
     for n in sorted(n for n in dt.children if n.startswith("band")):

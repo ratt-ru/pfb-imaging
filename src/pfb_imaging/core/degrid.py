@@ -29,7 +29,7 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from pfb_model_spec.utils.degrid import model_geometry
+from pfb_model_spec.utils.degrid import model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
 
@@ -39,9 +39,12 @@ from pfb_imaging.utils.degrid import (
     RegionMask,
     assert_writable,
     build_region_masks,
+    check_stokes_subset,
     check_writable_backend,
+    default_channels_per_chunk,
     degrid_region,
     ensure_model_columns,
+    flux_scale_warning,
 )
 from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
 from pfb_imaging.utils.naming import glob_uris, set_output_names
@@ -98,12 +101,8 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
 
     `model_geometry` already raises on an unknown `spec` and on non-square
     pixels; calling it here means those fire before a Ray cluster is stood up
-    and before a column is added to the user's MS.
-
-    The product checks are stricter than the old `degrid`'s and deliberately
-    so. The `genesis` spec stores a single Stokes plane, but the old command
-    took `len(product)` planes and degridded the same image into each, so
-    `--product IQ` emitted `XX = 2I, YY = 0`. Refusing is the fix.
+    and before a column is added to the user's MS. The product must be a
+    subset of the model's Stokes planes (`check_stokes_subset`).
 
     Args:
         model_ds: An opened `.mds` dataset.
@@ -113,28 +112,11 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
         `model_geometry(model_ds)`: nx, ny, cell_rad, x0, y0, flip_u/v/w, stokes.
 
     Raises:
-        ValueError: If the product is not a subset of IQUV, names more than one
-            Stokes product, or disagrees with the model's own `stokes` attr; or
-            if `model_geometry` rejects the spec or the pixel shape.
+        ValueError: From `check_stokes_subset`, or if `model_geometry` rejects
+            the spec or the pixel shape.
     """
-    product = product.upper().strip()
-    remainder = product.strip("IQUV")
-    if remainder:
-        raise ValueError(f"Product {remainder} not yet supported")
-    if len(product) != 1:
-        raise ValueError(
-            f"Product {product!r} names {len(product)} Stokes products, but the "
-            "'genesis' .mds spec carries a single Stokes plane. Degrid one "
-            "product at a time until pfb-model-spec#19 lands."
-        )
-
     geom = model_geometry(model_ds)  # raises on unknown spec / non-square pixels
-    if geom["stokes"].upper() != product:
-        raise ValueError(
-            f"Requested product {product!r} but the model's stokes attr is "
-            f"{geom['stokes']!r}. Degridding a model as a different Stokes "
-            "product produces confidently wrong correlations."
-        )
+    check_stokes_subset(product, geom["stokes"])
     return geom
 
 
@@ -238,6 +220,7 @@ class Degridder:
         model: Multiton,
         masks: Multiton,
         columns: Sequence[str],
+        stokes: Sequence[str],
         accumulate: bool = False,
         epsilon: float = 1e-5,
         do_wgridding: bool = True,
@@ -264,6 +247,7 @@ class Degridder:
         self._model_ds: xr.Dataset | None = None
         self._mask_list: list[np.ndarray] | None = None
         self._columns = list(columns)
+        self._stokes = list(stokes)
         self._accumulate = accumulate
         self._epsilon = epsilon
         self._do_wgridding = do_wgridding
@@ -304,6 +288,7 @@ class Degridder:
                 masks=self._mask_list,
                 columns=self._columns,
                 corr_types=tuple(str(p) for p in node_ds.polarization.values),
+                stokes=self._stokes,
                 accumulate=self._accumulate,
                 epsilon=self._epsilon,
                 do_wgridding=self._do_wgridding,
@@ -368,7 +353,7 @@ def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_c
 def degrid(
     ms: list[Path],
     output_filename: str,
-    channels_per_chunk: int,
+    channels_per_chunk: int | None = None,
     suffix: str = "main",
     mds: str | None = None,
     model_column: str = "MODEL_DATA",
@@ -397,10 +382,8 @@ def degrid(
         ms: Measurement sets to write to.
         output_filename: Output basename; only used for naming and the default
             `.mds` location -- nothing image-space is written.
-        channels_per_chunk: Channels per degridding chunk. Required, and must
-            be positive: it also sets how finely the model's spectrum is
-            sampled, so there is no defensible default while the `.mds` does
-            not record the imaging run's channelisation (#327).
+        channels_per_chunk: Channels per degridding chunk. Defaults to the
+            channels spanning one imaging band, from the model's `freq_bounds`.
         mds: Path to the component model. Defaults to whichever of
             `{output_filename}_{suffix}.mds` (what `deconv` writes) or
             `{output_filename}_{suffix}_model.mds` (what `pfbspec model2comps`
@@ -408,7 +391,7 @@ def degrid(
         suffix: Product suffix used to build the default `.mds` path.
         model_column: Column to write. `--region-file` adds
             `{model_column}1`, `{model_column}2`, ... one per region.
-        product: Stokes product; must match the model's own `stokes` attr.
+        product: Stokes product; must be a subset of the model's `stokes` coord.
         field_names: Field names to degrid into. Defaults to all.
         spw_names: Spectral window names. Defaults to all.
         scan_names: Scan names. Defaults to all.
@@ -441,13 +424,8 @@ def degrid(
         raise ValueError(
             f"integrations-per-chunk must be -1 (whole partition), 0 (same) or positive, got {integrations_per_chunk}"
         )
-    if int(channels_per_chunk) <= 0:
-        raise ValueError(
-            "channels-per-chunk must be positive. There is no "
-            "defensible default while the .mds does not record the imaging "
-            "run's channelisation (see issue #327); it also sets how finely "
-            "the model's spectrum is sampled, so it is a science choice."
-        )
+    if channels_per_chunk is not None and int(channels_per_chunk) <= 0:
+        raise ValueError(f"channels-per-chunk must be positive, got {channels_per_chunk}")
 
     output_filename, _, log_directory, _ = set_output_names(output_filename, product, log_directory=log_directory)
     opts_dict["output_filename"] = output_filename
@@ -497,6 +475,14 @@ def degrid(
         f"Model grid {geom['nx']}x{geom['ny']} at {np.rad2deg(geom['cell_rad']) * 3600:.4e} arcsec, "
         f"stokes {geom['stokes']}"
     )
+    sampling = model_sampling(model_ds)
+    if channels_per_chunk is None and sampling["freq_bounds"] is None:
+        raise ValueError(
+            "channels-per-chunk was not given and the model records no freq_bounds to derive it "
+            "from. Pass --channels-per-chunk, or regenerate the .mds with a current pfb deconv."
+        )
+    if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
+        log.warning(msg)
 
     freq_min, freq_max = -np.inf, np.inf
     if freq_range:
@@ -610,6 +596,7 @@ def degrid(
         model=Multiton(_load_model, mds),
         masks=Multiton(_load_masks, mds, region_file),
         columns=columns,
+        stokes=check_stokes_subset(product, geom["stokes"]),
         accumulate=accumulate,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
@@ -617,8 +604,17 @@ def degrid(
     )
     # build the work list before standing the app up, so a bad chunk spec
     # cannot leave a Serve deployment running with nothing to shut it down
+
+    def node_fstep(node) -> int:
+        if channels_per_chunk is not None:
+            return int(channels_per_chunk)
+        return default_channels_per_chunk(sampling["freq_bounds"], node.chan_width)
+
+    if channels_per_chunk is None:
+        derived = sorted({node_fstep(node) for _, node in selected})
+        log.info(f"Derived channels-per-chunk {derived} from the model's band width")
     items = [
-        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, channels_per_chunk)
+        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, node_fstep(node))
     ]
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 

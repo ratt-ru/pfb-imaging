@@ -5,7 +5,7 @@ cabs:
     name: imager
     info:
       Initialise Stokes data products.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issues347a327a309
     inputs:
       ms:
         info:
@@ -116,6 +116,15 @@ cabs:
           Not implemented for imager and refused if set.
           Image a corrected-data column, or use hci, which does apply gains.
         dtype: Optional[List[URI]]
+        metadata:
+          rich_help_panel: Input
+      transfer-model-from:
+        info:
+          Component model (.mds) to start from, for example from an earlier deconv run.
+          It is rendered onto this run's grid and the exact residual is computed in pass 2.
+          The grid must share the model's tangent point.
+          Any cell size works, since the model is remapped onto the grid conserving flux.
+        dtype: Optional[Directory]
         metadata:
           rich_help_panel: Input
       integrations-per-image:

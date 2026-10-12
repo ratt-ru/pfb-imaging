@@ -27,6 +27,9 @@ log = pfb_logging.get_logger("DECONV")
 # of a different operator.
 _M_OPTS = ("eta", "eta_mode", "eta_cap", "gp_length_scale", "gp_cap")
 
+# pfb-model-spec fit_image_cube methods for the .mds frequency axis (pfb-model-spec#33)
+FIT_MODES = ("tent", "box", "fakenodes", "Legendre", "poly")
+
 
 def _m_signature(opts):
     """JSON string identifying the preconditioner these options build.
@@ -122,6 +125,7 @@ def deconv(
     gp_cap: float = 10.0,
     gamma: float = 0.95,
     nbasisf: int | None = None,
+    fit_mode: str = "tent",
     positivity: int = 1,
     niter: int = 10,
     tol: float = 0.0005,
@@ -163,6 +167,8 @@ def deconv(
     if eta_mode is not None and eta_mode not in ETA_MODES:
         # validated before Ray starts; the profile itself is built in the workers
         log.error_and_raise(f"eta_mode must be one of {ETA_MODES} or None, got '{eta_mode}'", ValueError)
+    if fit_mode not in FIT_MODES:
+        log.error_and_raise(f"fit_mode must be one of {FIT_MODES}, got '{fit_mode}'", ValueError)
     time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -293,6 +299,15 @@ def deconv(
         wsums[b] = bds.WSUM.values[0]
 
     wsum = wsums.sum()
+
+    # sampling bounds for the .mds (#327); absent on a .dt from an older imager,
+    # in which case the .mds simply omits them (they are optional in spec 0.1)
+    if all("freq_bounds" in a and "time_bounds" in a for a in band_attrs):
+        freq_bounds = np.array([a["freq_bounds"] for a in band_attrs], dtype=np.float64)
+        tb = np.array([a["time_bounds"] for a in band_attrs], dtype=np.float64)
+        time_bounds = np.array([[tb[:, 0].min(), tb[:, 1].max()]])
+    else:
+        freq_bounds = time_bounds = None
     residual = residual_raw / wsum
     bresidual = bresidual_raw / wsum
     residual_mfs = np.sum(residual, axis=0)
@@ -436,14 +451,9 @@ def deconv(
             # point when its pixels are centred on the target, which a consumer
             # faithfully turns into sources displaced by (l0, m0) (#326).
             flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
-            # the .mds stays x-major (degrid/model2comps convention; see the
-            # pfb-model-spec migration in #277) -- the transpose stays in
-            # pfb-imaging until we formally update the spec version. `model` is
-            # (nband, ny, nx) here and the spec wants (nband, nx, ny).
-            #
             # The return value -- model_to_ds re-renders the fit at every band
-            # -- is DELIBERATELY DISCARDED. The fit is a lossy representation
-            # (a Legendre series over frequency with nbasisf terms), so feeding
+            # -- is DELIBERATELY DISCARDED. The fit is pfb-model-spec's
+            # parametrisation of the band cube, not the cube itself, so feeding
             # it back would make the iteration's fixed point depend on the
             # component-model parametrisation, which is an algorithmic choice
             # and not something to acquire as a side effect of writing a file.
@@ -454,24 +464,28 @@ def deconv(
             # the next cycle's `forward()` builds xtilde from the raw one.
             # Pinned by test_the_model_fit_does_not_re_enter_the_solver.
             model_to_ds(
-                time_out,
-                freq_out,
-                fsel,
-                model.transpose(0, 2, 1),
-                wsums / wsum,
-                f"{basename}_{suffix}.mds",
-                cell_rad,
-                nx,
-                ny,
-                x0,
-                y0,
-                flip_u,
-                flip_v,
-                flip_w,
-                radec,
-                product,
-                pfb_version,
+                time=time_out,
+                freq=freq_out,
+                fsel=fsel,
+                model=model[:, None],  # (nband, 1, ny, nx): one Stokes plane
+                wgt=(wsums / wsum)[:, None],
+                mds_name=f"{basename}_{suffix}.mds",
+                cell_rad=cell_rad,
+                nx=nx,
+                ny=ny,
+                x0=x0,
+                y0=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                radec=radec,
+                stokes=[product],
+                writer_version=pfb_version,
                 nbasisf=nbasisf,
+                method=fit_mode,
+                freq_bounds=freq_bounds,
+                time_bounds=time_bounds,
+                flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)
             )
         except Exception as e:
             # Not fatal: the deconvolution itself is unaffected and the band
