@@ -108,8 +108,8 @@ def test_transfer_refuses_an_apparent_model_before_ray(ms_name, tmp_path, monkey
 def test_transfer_accepts_an_intrinsic_or_legacy_model(ms_name, tmp_path, monkeypatch, flux_scale):
     """Reaching init_ray means every pre-Ray transfer check passed, the geometry included."""
     _no_ray(monkeypatch)
-    # a model cell coarser than the run's, so the cell check passes too
-    mds = _write_mds(tmp_path / "ok.mds", radec=_ms_radec(ms_name), cell_rad=1e-3, flux_scale=flux_scale)
+    # a model cell much finer than the run's: coarsening is no longer refused
+    mds = _write_mds(tmp_path / "ok.mds", radec=_ms_radec(ms_name), cell_rad=1e-9, flux_scale=flux_scale)
     with pytest.raises(AssertionError, match="init_ray was called"):
         imager_core(
             [Path(ms_name)],
@@ -123,7 +123,7 @@ def test_transfer_accepts_an_intrinsic_or_legacy_model(ms_name, tmp_path, monkey
         )
 
 
-def test_check_transfer_geometry_refusals(tmp_path):
+def test_check_transfer_geometry(tmp_path):
     from pfb_model_spec.utils.spec import open_mds
 
     from pfb_imaging.core.imager import check_transfer_geometry
@@ -131,16 +131,14 @@ def test_check_transfer_geometry_refusals(tmp_path):
     radec = (1.0, -0.5)
     ds = open_mds(_write_mds(tmp_path / "m.mds", radec=radec, cell_rad=1e-5))
 
-    check_transfer_geometry(ds, grid_radec=radec, cell_rad=1e-5)
-    check_transfer_geometry(ds, grid_radec=radec, cell_rad=5e-6)  # finer ok
+    # the cell no longer enters: the render remaps flux-conservingly (pfb-model-spec#32)
+    check_transfer_geometry(ds, grid_radec=radec)
     # RA either side of zero is a tiny separation, not ~2 pi
     ds0 = open_mds(_write_mds(tmp_path / "z.mds", radec=(1e-12, -0.5), cell_rad=1e-5))
-    check_transfer_geometry(ds0, grid_radec=(2 * np.pi - 1e-12, -0.5), cell_rad=1e-5)
+    check_transfer_geometry(ds0, grid_radec=(2 * np.pi - 1e-12, -0.5))
 
     with pytest.raises(ValueError, match="[Tt]angent"):
-        check_transfer_geometry(ds, grid_radec=(1.0, -0.4), cell_rad=1e-5)
-    with pytest.raises(ValueError, match="pfb-model-spec#23"):
-        check_transfer_geometry(ds, grid_radec=radec, cell_rad=2e-5)
+        check_transfer_geometry(ds, grid_radec=(1.0, -0.4))
 
 
 def test_transfer_coverage_warning_uses_the_rendered_frequencies(tmp_path):
@@ -167,12 +165,13 @@ def test_transfer_coverage_warning_uses_the_rendered_frequencies(tmp_path):
     assert "900.000 MHz" in msg and "1050" not in msg and "records no freq_bounds" in msg
 
 
-def test_transfer_refuses_a_coarser_grid_before_ray(ms_name, tmp_path, monkeypatch):
+def test_transfer_refuses_a_tangent_point_mismatch_before_ray(ms_name, tmp_path, monkeypatch):
     """Geometry is only known after the MS metadata read, which still precedes init_ray."""
     _no_ray(monkeypatch)
-    mds = _write_mds(tmp_path / "fine.mds", radec=_ms_radec(ms_name), cell_rad=1e-9)
+    ra, dec = _ms_radec(ms_name)
+    mds = _write_mds(tmp_path / "off.mds", radec=(ra, dec + 1e-3), cell_rad=1e-5)
     out = tmp_path / "out"
-    with pytest.raises(ValueError, match="pfb-model-spec#23"):
+    with pytest.raises(ValueError, match="[Tt]angent point mismatch"):
         imager_core(
             [Path(ms_name)],
             str(out),
@@ -368,6 +367,30 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
     # gradient; deconv normalises it by the same total wsum as RESIDUAL. Its model-free
     # term is BDIRTY, not DIRTY, so BDIRTY's peak is the like-for-like reference.
     assert bpeak < 0.05 * bdirty_peak, f"bresidual peak {bpeak:.3e} vs bdirty peak {bdirty_peak:.3e}"
+
+    # onto a x2 coarser grid over the same field: the flux-conserving remap
+    # (landmanbester/pfb-model-spec#32) keeps every band's model flux
+    coarse = str(tmp_path / "coarse")
+    imager_core(
+        [Path(ms_name)],
+        coarse,
+        transfer_model_from=mds_path,
+        **{**common, "nx": nx // 2, "ny": ny // 2, "cell_size": 2 * sky_truth.cell_size, "psf": False},
+    )
+    dt = xr.open_datatree(coarse + "_I.dt", engine="zarr", chunks=None)
+    try:
+        cnodes = sorted(n for n in dt.children if n.startswith("band"))
+        cflux = np.array([float(dt[n].ds.MODEL[0].sum()) for n in cnodes])
+        cwsum = sum(float(dt[n].ds.WSUM.values[0]) for n in cnodes)
+        cdirty_peak = float(np.abs(sum(dt[n].ds.DIRTY[0] for n in cnodes).values).max() / cwsum)
+        cpeak = float(np.abs(sum(dt[n].ds.RESIDUAL[0] for n in cnodes).values).max() / cwsum)
+    finally:
+        dt.close()
+    # the old bilinear-times-area-ratio render inflated a point's flux x4 here
+    np.testing.assert_allclose(cflux, model.sum(axis=(1, 2, 3)), rtol=1e-5)
+    # not ~0 like the same-grid run: each source lands on its coarse pixel's centre,
+    # off its true position by up to half a coarse cell (measured 8.7%)
+    assert cpeak < 0.15 * cdirty_peak, f"coarse residual peak {cpeak:.3e} vs dirty peak {cdirty_peak:.3e}"
 
     # deconv resumes from the transferred tree without the "MODEL but no BRESIDUAL" refusal
     from pfb_imaging.core.deconv import deconv as deconv_core

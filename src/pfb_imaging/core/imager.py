@@ -233,19 +233,19 @@ def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
     }
 
 
-def check_transfer_geometry(model_ds, *, grid_radec, cell_rad) -> None:
+def check_transfer_geometry(model_ds, *, grid_radec) -> None:
     """Refuse a transfer model the pass-2 render cannot place correctly (#309).
+
+    Any cell size and image size are fine: the render remaps the model onto this
+    run's grid conserving flux, refining or coarsening (pfb-model-spec#32, D52).
 
     Args:
         model_ds: The opened `--transfer-model-from` `.mds`.
         grid_radec: This run's tangent point `(ra, dec)` in radians.
-        cell_rad: This run's cell size in radians.
 
     Raises:
         ValueError: If the tangent points differ (in-plane offsets are handled
-            by x0/y0, a different tangent point needs reprojection), or the run's
-            cell is coarser than the model's -- resampling to a coarser grid
-            inflates flux by the pixel-area ratio (pfb-model-spec#23).
+            by x0/y0, a different tangent point needs reprojection).
     """
     model_radec = np.array([float(model_ds.attrs["ra"]), float(model_ds.attrs["dec"])])
     sep = wrapped_angle_diff(np.asarray(grid_radec, dtype=np.float64), model_radec)
@@ -254,14 +254,6 @@ def check_transfer_geometry(model_ds, *, grid_radec, cell_rad) -> None:
             f"Tangent point mismatch: this run is centred on (ra, dec) = {np.rad2deg(grid_radec)} deg, "
             f"the transfer model on {np.rad2deg(model_radec)} deg. Transferring a model to a different "
             "tangent point needs reprojection, which is not supported."
-        )
-    model_cell = float(model_ds.attrs["cell_rad_x"])
-    if cell_rad > model_cell * (1 + 1e-9):
-        raise ValueError(
-            f"This run's cell ({np.rad2deg(cell_rad) * 3600:.4e} arcsec) is coarser than the transfer "
-            f"model's ({np.rad2deg(model_cell) * 3600:.4e} arcsec). Rendering a .mds onto a coarser grid "
-            "inflates flux by the pixel-area ratio (pfb-model-spec#23). Image at the model's cell size "
-            "or finer."
         )
 
 
@@ -618,7 +610,16 @@ def _grid_image_body(
         model_ds = transfer_model.instance  # one load per worker process
         _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
         rendered = render_model_region(
-            model_ds, time=meta["time_out"], freq_out=freq_eff, nx=nx, ny=ny, cell_rad=cell_rad, x0=x0, y0=y0
+            model_ds,
+            time=meta["time_out"],
+            freq_out=freq_eff,
+            nx=nx,
+            ny=ny,
+            cell_rad=cell_rad,
+            x0=x0,
+            y0=y0,
+            # flux-conserving remap onto this grid, refining or coarsening (D52)
+            kernel="box",
         )
         planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
         model = np.ascontiguousarray(rendered[planes], dtype=real_type)
@@ -1141,9 +1142,15 @@ def imager(
 
     if transfer_ds is not None:
         try:
-            check_transfer_geometry(transfer_ds, grid_radec=grid_radec, cell_rad=cell_rad)
+            check_transfer_geometry(transfer_ds, grid_radec=grid_radec)
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
+        model_cell = float(transfer_ds.attrs["cell_rad_x"])
+        if not np.isclose(cell_rad, model_cell, rtol=1e-9, atol=0.0):
+            log.info(
+                f"Remapping the transfer model from its {np.rad2deg(model_cell) * 3600:.4e} arcsec cell onto "
+                f"{np.rad2deg(cell_rad) * 3600:.4e} arcsec (flux-conserving box kernel)"
+            )
         # checked after pass 2, against the frequencies the model is rendered at
         transfer_coverage = transfer_freq_coverage(transfer_ds)
         # pass-2 workers load their own copy through a Multiton; the driver holds none

@@ -187,7 +187,8 @@ def imager(
             parser=parse_upath,
             help="Component model (.mds) to start from, for example from an earlier deconv run. "
             "It is rendered onto this run's grid and the exact residual is computed in pass 2. "
-            "The grid must share the model's tangent point and must not be coarser than the model's.",
+            "The grid must share the model's tangent point. "
+            "Any cell size works, since the model is remapped onto the grid conserving flux.",
             rich_help_panel="Input",
         ),
     ] = None,
