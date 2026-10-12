@@ -79,6 +79,26 @@ def real_beam_maps(maps):
     return np.stack(real_maps, axis=0), ratio
 
 
+def integration_edges(time: np.ndarray, interval: np.ndarray) -> tuple[float, float]:
+    """Outermost integration edges of a chunk's rows (#327).
+
+    Taken per row, so an irregular grid's edge integrations are exact rather
+    than padded by a typical interval. NaN rows (xarray-ms's fill for absent
+    data) are ignored; with no finite interval the centroids' extent is returned.
+
+    Args:
+        time: Per-row centroid times.
+        interval: Per-row integration times, same shape as `time`.
+
+    Returns:
+        `(lo, hi)`: the earliest row start and the latest row end.
+    """
+    lo, hi = time - interval / 2, time + interval / 2
+    if not np.isfinite(lo).any():
+        return float(np.nanmin(time)), float(np.nanmax(time))
+    return float(np.nanmin(lo)), float(np.nanmax(hi))
+
+
 def stokes_vis(
     dc1=None,
     dc2=None,
@@ -226,6 +246,9 @@ def stokes_vis(
     ant2_bl = order[np.searchsorted(sorted_n, ant2_names)]
     time, ant1, ant2 = np.broadcast_arrays(utime[:, None], ant1_bl[None, :], ant2_bl[None, :])
     time = time.ravel()
+    # before any row masking: the image's time_bounds (#327) are the nominal
+    # coverage, like its freq_bounds
+    time_lo, time_hi = integration_edges(time, interval)
     # averaging routines expect int32 antenna indices
     ant1 = ant1.ravel().astype(np.int32)
     ant2 = ant2.ravel().astype(np.int32)
@@ -670,9 +693,9 @@ def stokes_vis(
         "time_out": time_out,
         "time_min": utime.min(),
         "time_max": utime.max(),
-        # half of it pads the image's time_bounds (#327); the per-row
-        # `interval` resolved above, so irregular grids are handled
-        "int_time": float(np.nanmedian(interval)),
+        # outermost integration edges, for the image's time_bounds (#327)
+        "time_lo": time_lo,
+        "time_hi": time_hi,
         "timeid": timeid,
         "product": product,
         "utc": utc,

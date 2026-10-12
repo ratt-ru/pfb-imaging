@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from pfb_imaging.utils.stokes2vis_msv4 import real_beam_maps
+from pfb_imaging.utils.stokes2vis_msv4 import integration_edges, real_beam_maps
 
 
 def test_real_maps_pass_through_with_zero_ratio():
@@ -42,3 +42,12 @@ def test_mixed_real_and_complex_maps():
     out, ratio = real_beam_maps([np.ones((2, 2)), np.full((2, 2), 1.0 + 0.25j)])
     assert out.shape == (2, 2, 2)
     assert ratio == pytest.approx(0.25)
+
+
+def test_integration_edges_use_each_rows_own_interval():
+    """A long edge integration widens the bound; one median interval would clip it (#327)."""
+    time = np.array([10.0, 20.0, 30.0, np.nan])
+    interval = np.array([8.0, 2.0, 2.0, np.nan])  # a long first integration, then a NaN fill row
+    assert integration_edges(time, interval) == (6.0, 31.0)
+    # no finite interval: fall back to the centroids' extent
+    assert integration_edges(time[:3], np.full(3, np.nan)) == (10.0, 30.0)

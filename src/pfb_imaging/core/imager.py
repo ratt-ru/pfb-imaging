@@ -212,24 +212,24 @@ def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
-    """Nominal band edges and padded time extent of one output image (#327).
+    """Nominal band edges and integration-edge time extent of one output image (#327).
 
     Stored on the band node so `deconv` can hand them to the `.mds`, where
     `degrid` derives its chunking from them. The band edges are the nominal
     ones that assigned channels to the band, not the flagged data's extent.
 
     Args:
-        infos: The image's per-scratch-node summaries (`time_min`, `time_max`, `int_time`).
+        infos: The image's per-scratch-node summaries (`time_lo`, `time_hi`: the
+            outermost integration edges).
         band_lo: Lower band edge in Hz.
         band_hi: Upper band edge in Hz.
 
     Returns:
         `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
     """
-    half = max(i["int_time"] for i in infos) / 2
     return {
         "freq_bounds": [float(band_lo), float(band_hi)],
-        "time_bounds": [min(i["time_min"] for i in infos) - half, max(i["time_max"] for i in infos) + half],
+        "time_bounds": [min(i["time_lo"] for i in infos), max(i["time_hi"] for i in infos)],
     }
 
 
@@ -1350,7 +1350,8 @@ def imager(
             "time_out": float(np.mean([ds.attrs["time_out"] for ds in pieces])),
             "time_min": float(min(ds.attrs["time_min"] for ds in pieces)),
             "time_max": float(max(ds.attrs["time_max"] for ds in pieces)),
-            "int_time": float(max(ds.attrs.get("int_time", 0.0) for ds in pieces)),
+            "time_lo": float(min(ds.attrs["time_lo"] for ds in pieces)),
+            "time_hi": float(max(ds.attrs["time_hi"] for ds in pieces)),
         }
     if not node_info:
         log.error_and_raise("Pass 1 produced no output images (all data flagged?)", RuntimeError)
