@@ -27,6 +27,9 @@ log = pfb_logging.get_logger("DECONV")
 # of a different operator.
 _M_OPTS = ("eta", "eta_mode", "eta_cap", "gp_length_scale", "gp_cap")
 
+# pfb-model-spec fit_image_cube methods for the .mds frequency axis (pfb-model-spec#33)
+FIT_MODES = ("tent", "box", "fakenodes", "Legendre", "poly")
+
 
 def _m_signature(opts):
     """JSON string identifying the preconditioner these options build.
@@ -122,6 +125,7 @@ def deconv(
     gp_cap: float = 10.0,
     gamma: float = 0.95,
     nbasisf: int | None = None,
+    fit_mode: str = "tent",
     positivity: int = 1,
     niter: int = 10,
     tol: float = 0.0005,
@@ -163,6 +167,8 @@ def deconv(
     if eta_mode is not None and eta_mode not in ETA_MODES:
         # validated before Ray starts; the profile itself is built in the workers
         log.error_and_raise(f"eta_mode must be one of {ETA_MODES} or None, got '{eta_mode}'", ValueError)
+    if fit_mode not in FIT_MODES:
+        log.error_and_raise(f"fit_mode must be one of {FIT_MODES}, got '{fit_mode}'", ValueError)
     time_start = time.time()
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -476,6 +482,7 @@ def deconv(
                 stokes=[product],
                 writer_version=pfb_version,
                 nbasisf=nbasisf,
+                method=fit_mode,
                 freq_bounds=freq_bounds,
                 time_bounds=time_bounds,
                 flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)

@@ -403,6 +403,14 @@ def test_deconv_requires_bdirty(tmp_path):
         )
 
 
+def test_deconv_refuses_an_unknown_fit_mode(tmp_path):
+    """--fit-mode is checked before any work, not when the first .mds fit fails and is logged."""
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    with pytest.raises(ValueError, match="fit_mode must be one of"):
+        deconv_core(str(tmp_path / "nofit"), fit_mode="legendre", log_directory=str(tmp_path))
+
+
 @pytest.mark.slow
 def test_deconv_driver_runs_with_the_frequency_prior(tmp_path):
     """End-to-end driver path with --gp-length-scale on (issue #307).
@@ -850,9 +858,10 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     never-executing code did -- would detach the two: the residual would be
     computed from the fitted cube while the next cycle's `forward()` builds
     xtilde from the raw one, and the solver's own model, the reweighting and
-    the stored MODEL would disagree. Beyond the inconsistency, the fit is a
-    lossy Legendre series over frequency, so feeding it back makes the
-    iteration's fixed point depend on the component-model parametrisation.
+    the stored MODEL would disagree. Beyond the inconsistency, the fit is the
+    component model's own parametrisation of the band cube, so feeding it back
+    makes the iteration's fixed point depend on it. A non-default --fit-mode
+    also checks that the option reaches model_to_ds.
 
     Two major cycles, because a one-cycle run cannot observe anything about
     what the next cycle consumes. The stand-in returns a cube that is
@@ -866,7 +875,7 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
     calls = []
 
     def fake_model_to_ds(*args, **kwargs):
-        calls.append(kwargs.get("nbasisf"))
+        calls.append(kwargs.get("method"))
         model = kwargs["model"]
         return np.full_like(np.asarray(model, dtype=np.float64), sentinel)
 
@@ -883,12 +892,13 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
         nthreads=1,
         bases=["self", "db1"],
         nlevels=2,
+        fit_mode="box",
         fits_mfs=False,
         fits_cubes=False,
         log_directory=str(tmp_path),
     )
 
-    assert len(calls) == 2, f"expected one model fit per major cycle, got {len(calls)}"
+    assert calls == ["box", "box"], f"expected one box fit per major cycle, got {calls}"
 
     dt = xr.open_datatree(f"{output_filename}_I.dt", engine="zarr", chunks=None)
     for n in sorted(n for n in dt.children if n.startswith("band")):

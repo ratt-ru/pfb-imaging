@@ -253,11 +253,23 @@ def deconv(
     nbasisf: Annotated[
         int | None,
         typer.Option(
-            help="Number of basis functions to use while fitting the frequency axis. "
-            "Default is to use the number of non-null imaging bands (interpolation).",
+            help="Number of basis functions for the fakenodes, Legendre and poly fit modes. "
+            "Default is to use the number of non-null imaging bands (interpolation). "
+            "Ignored by tent and box, which have one piece per band.",
             rich_help_panel="PFB",
         ),
     ] = None,
+    fit_mode: Annotated[
+        str,
+        typer.Option(
+            help="How the component model (.mds) is parametrised over frequency. "
+            "Choices are tent, box, fakenodes, Legendre and poly. "
+            "Tent and box reproduce each band at its effective frequency and never ring between bands. "
+            "Legendre and poly ring between bands when nbasisf is close to the number of bands. "
+            "Fakenodes does not ring but is biased near the outer band edges.",
+            rich_help_panel="PFB",
+        ),
+    ] = "tent",
     positivity: Annotated[
         int,
         typer.Option(
@@ -561,6 +573,7 @@ def deconv(
                     gp_cap=gp_cap,
                     gamma=gamma,
                     nbasisf=nbasisf,
+                    fit_mode=fit_mode,
                     positivity=positivity,
                     niter=niter,
                     tol=tol,
@@ -625,6 +638,7 @@ def deconv(
                 gp_cap=gp_cap,
                 gamma=gamma,
                 nbasisf=nbasisf,
+                fit_mode=fit_mode,
                 positivity=positivity,
                 niter=niter,
                 tol=tol,
@@ -698,6 +712,7 @@ def deconv(
             gp_cap=gp_cap,
             gamma=gamma,
             nbasisf=nbasisf,
+            fit_mode=fit_mode,
             positivity=positivity,
             niter=niter,
             tol=tol,

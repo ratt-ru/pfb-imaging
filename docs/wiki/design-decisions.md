@@ -872,8 +872,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   - The driver-side remainder is **negative** semi-definite (`C⁻¹ₙ`'s eigenvalues are in `(0, 1]`);
     the total operator is still SPD, so CG applies, but nothing may assume that term alone is PSD.
   - Interpolated flux in zero-`wsum` bands enters L21's 2-norm over bands, so a joint-sparsity
-    decision can be taken partly on a band with no data. Accepted: the loop already extrapolates
-    into those bands via `model_to_ds`'s `nbasisf` refit.
+    decision can be taken partly on a band with no data. Accepted: the `.mds` fit renders into
+    those bands too (though since D49 its refit never re-enters the loop).
   - **The fixed-point test cannot guard the prior's sign.** Flipping `dot`'s `+=` to `-=` is still
     SPD, so D22 says it reaches the same fixed point — and it does. The sign is pinned by
     `test_prior_term_matches_the_dense_congruence` and structurally by
@@ -883,8 +883,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     `gp_length_scale`, `gp_cap`), fixing a **pre-existing bug**: changing `--eta` between runs on
     one `.dt` silently reused a stale norm. A tree written before the key re-estimates once, logged.
   - Second band-coupling channel in `M` (bands previously coupled only through the L21 prox, D3).
-  - **Attribution:** `--nbasisf < nband` already smooths the *model* in frequency every major cycle.
-    Run GP experiments at full-rank `nbasisf` or the two effects cannot be separated.
+  - **Attribution:** when this was written, `--nbasisf < nband` also smoothed the model in
+    frequency every major cycle. Since D49 the `.mds` fit (`--fit-mode`, `--nbasisf`) is output
+    only, so the prior is the loop's sole frequency coupling besides L21.
 - **Source:** issue #307; `src/pfb_imaging/operators/hessian.py` (`freq_correlation`,
   `freq_precision`, `HessTreeRay`); `src/pfb_imaging/deconv/presets.py`;
   `src/pfb_imaging/core/deconv.py` (`_M_OPTS`, `_m_signature`, `_cached_hess_norm`);
