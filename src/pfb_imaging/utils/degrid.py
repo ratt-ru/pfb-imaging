@@ -567,5 +567,6 @@ def flux_scale_warning(flux_scale: str | None) -> str | None:
         return None
     return (
         "The model is in intrinsic flux and degrid applies no primary beam, so the model "
-        "visibilities are only correct where the beam is close to 1."
+        "visibilities are only correct where the beam is close to 1. "
+        "Beam application is tracked in https://github.com/ratt-ru/pfb-imaging/issues/353."
     )

@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-09T19:00:00Z
-last_verified_commit: 30589ab
+timestamp: 2026-10-12T12:00:00Z
+last_verified_commit: fb09a08
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1630,8 +1630,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** a warning is honest while beam application is unimplemented; refusing would
   block legitimate use. The transfer is different: pass 2 applies `BEAM` to the rendered model,
   so an apparent model would be attenuated twice, which is wrong rather than merely unbeamed.
-- **Consequences:** a follow-up issue adds beam application to `degrid`, with `--baseline-groups`
-  parity; the warning goes then.
+- **Consequences:** #353 adds beam application to `degrid`, with `--baseline-groups` parity
+  (bare `B` with `divide_by_n=True`); the warning, which links #353, goes then.
 - **Source:** `src/pfb_imaging/utils/degrid.py::flux_scale_warning`, `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/core/imager.py` (the pre-Ray transfer checks),
   `tests/test_imager_transfer.py::test_transfer_refuses_an_apparent_model_before_ray`.

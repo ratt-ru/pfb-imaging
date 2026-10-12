@@ -1656,6 +1656,7 @@ def test_flux_scale_warning():
     from pfb_imaging.utils.degrid import flux_scale_warning
 
     assert "primary beam" in flux_scale_warning("intrinsic")
+    assert "issues/353" in flux_scale_warning("intrinsic")
     assert flux_scale_warning("apparent") is None
     assert flux_scale_warning(None) is None
 
