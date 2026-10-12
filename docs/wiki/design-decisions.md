@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-12T12:00:00Z
-last_verified_commit: fb09a08
+timestamp: 2026-10-12T14:00:00Z
+last_verified_commit: e29a395
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1601,7 +1601,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   when the tangent points differ by more than 1e-9 rad. Warn before pass 1 if the band
   frequencies fall outside the model's `freq_bounds` (the fit is extrapolated).
 - **Rationale:** refining is conservative; coarsening is wrong until a flux-conserving regrid
-  exists. Checks run before pass 1 so a bad request costs no gridding.
+  exists. Checks run after the MS metadata read but before Ray starts, so a bad request
+  costs neither a cluster nor any gridding.
 - **Consequences:** lifted by the flux-conserving-regrid follow-up. The coverage check uses
   `freq_bounds` when present and otherwise the fitted frequencies' extent (D50).
 - **Source:** `src/pfb_imaging/core/imager.py` (the upfront checks), `tests/test_imager_transfer.py`;

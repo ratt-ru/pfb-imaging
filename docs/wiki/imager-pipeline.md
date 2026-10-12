@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-09T19:00:00Z
-last_verified_commit: 30589ab
+timestamp: 2026-10-12T14:00:00Z
+last_verified_commit: e29a395
 ---
 
 # MSv4 DataTree imager pipeline
@@ -48,8 +48,8 @@ child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters,
-              freq_bounds (nominal band edges, Hz), time_bounds (centroids -/+ half
-              an integration; unix s), transferred_from (--transfer-model-from only)
+              freq_bounds (nominal band edges, Hz), time_bounds (outermost integration
+              edges, per-row intervals; unix s), transferred_from (--transfer-model-from only)
               # freq_out = effective (wsum-weighted) frequency of the channels
               # actually gridded; freq_nominal = band-edge midpoint, assignment
               # grid only (D28)
@@ -92,7 +92,7 @@ carry a `BEAMINCN` card because the stored beam includes the folded n-term. With
 (`core/deconv.py:277`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
-apparent model is refused, D54) are checked before Ray starts, the tangent point, cell size (D52) and frequency coverage before pass 1.
+apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point, cell size (D52) and frequency coverage right after it; all of them before Ray starts.
 In pass 2, after the gridding loop, each task renders the model at the band's effective
 `freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
 streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
@@ -102,7 +102,10 @@ read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as 
 itself) and the loop's stale `ds` -- so the sweep holds one streamed partition's vis-space
 data at a time. Missing any one of them pinned a whole partition through the sweep (measured
 on the test MS: 10.43 -> 5.06 MB traced at sweep entry, the difference being the 4.85 MB
-partition). The `.mds` is loaded once per worker through a `Multiton` and stays resident there
+partition). `residual_from_partitions` itself drops each partition and its `model_vis` before
+advancing the iterator; without that a three-partition sweep peaked at two partitions
+(synthetic parts: 27.47 -> 17.23 MB traced,
+`tests/test_imager_transfer.py::test_residual_sweep_holds_one_streamed_partition`). The `.mds` is loaded once per worker through a `Multiton` and stays resident there
 (default 300 s inactivity TTL, swept lazily on cache access, as for the xarray-ms tables in
 [memory-and-ray.md](memory-and-ray.md)). That residency is bounded by the model's size, which
 is not negligible: `.mds` stores have reached 633 MB at 6720², so budget one per pass-2
