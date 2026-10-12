@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-12T14:00:00Z
-last_verified_commit: e29a395
+timestamp: 2026-10-12T16:00:00Z
+last_verified_commit: 5474199
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1575,7 +1575,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   solve.
 - **Consequences:** an older `.mds` has no bounds; `degrid` then refuses its default chunk (D53)
   and the transfer coverage check falls back to the min/max of the fitted frequencies, which
-  understates the sampled extent; its extrapolation warning says so in that case.
+  understates the sampled extent; its extrapolation warning says so in that case. That
+  fallback is exact for a re-run with the same band settings: `deconv` fitted the model at the
+  bands' effective frequencies, which is where pass 2 renders it (D28, D52).
 - **Source:** `src/pfb_imaging/core/deconv.py`, `src/pfb_imaging/core/imager.py` (band
   attrs), commits `49be858`, `7e22638`; issue #327; landmanbester/pfb-model-spec#31.
 
@@ -1598,15 +1600,19 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Context:** `imager --transfer-model-from` renders a `.mds` onto this run's grid. Rendering
   onto a coarser cell inflates flux by the pixel-area ratio (landmanbester/pfb-model-spec#23).
 - **Decision:** refuse when the run's cell is coarser than the model's (1e-9 relative), and
-  when the tangent points differ by more than 1e-9 rad. Warn before pass 1 if the band
-  frequencies fall outside the model's `freq_bounds` (the fit is extrapolated).
+  when the tangent points differ by more than 1e-9 rad. Warn after pass 2 if any band's
+  effective `freq_out` -- the frequency the model was actually rendered at -- falls outside the
+  model's coverage (the fit is extrapolated).
 - **Rationale:** refining is conservative; coarsening is wrong until a flux-conserving regrid
   exists. Checks run after the MS metadata read but before Ray starts, so a bad request
   costs neither a cluster nor any gridding.
 - **Consequences:** lifted by the flux-conserving-regrid follow-up. The coverage check uses
-  `freq_bounds` when present and otherwise the fitted frequencies' extent (D50).
-- **Source:** `src/pfb_imaging/core/imager.py` (the upfront checks), `tests/test_imager_transfer.py`;
-  issue #309.
+  `freq_bounds` when present and otherwise the fitted frequencies' extent (D50). It cannot run
+  upfront: it first compared the nominal band centres, and since a legacy model's fitted
+  frequencies are effective ones lying inside the nominal bands, a re-run with identical settings
+  warned spuriously that the outer bands were extrapolated.
+- **Source:** `src/pfb_imaging/core/imager.py` (`check_transfer_geometry`,
+  `transfer_coverage_warning`), `tests/test_imager_transfer.py`; issue #309.
 
 ### D53 — `degrid`'s default chunk is one band in Hz
 

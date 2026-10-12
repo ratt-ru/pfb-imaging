@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-12T14:00:00Z
-last_verified_commit: e29a395
+timestamp: 2026-10-12T16:00:00Z
+last_verified_commit: 5474199
 ---
 
 # MSv4 DataTree imager pipeline
@@ -92,7 +92,7 @@ carry a `BEAMINCN` card because the stored beam includes the folded n-term. With
 (`core/deconv.py:277`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
-apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point, cell size (D52) and frequency coverage right after it; all of them before Ray starts.
+apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point and cell size (D52) right after it; all of them before Ray starts. Frequency coverage is checked after pass 2, against each band's effective `freq_out`, the frequency the model was rendered at (D52).
 In pass 2, after the gridding loop, each task renders the model at the band's effective
 `freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
 streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
