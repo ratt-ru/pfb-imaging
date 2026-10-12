@@ -339,6 +339,9 @@ def residual_from_partitions(
             if bconvim is not None:
                 # outer per-partition beam of the data-term gradient (D23)
                 bconvim[c] += beam[c] * tmp
+        # release this partition before the iterator loads the next one, so a
+        # streamed `parts` holds one partition at a time (#309)
+        del part, uvw, wgt, mask, freq, beam, model_vis
 
     if bdirty is not None:
         return dirty - convim, bdirty - bconvim

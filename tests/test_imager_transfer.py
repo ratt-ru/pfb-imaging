@@ -217,6 +217,40 @@ def test_iter_parts_keeps_the_phase_centre_attrs(tmp_path):
     assert "VIS" not in got and got.WEIGHT.shape == (1, 2, 1)
 
 
+def test_residual_sweep_holds_one_streamed_partition():
+    """Partition N is freed before the iterator loads N+1, so pass 2 holds one at a time."""
+    import weakref
+
+    import xarray as xr
+
+    from pfb_imaging.operators.gridder import residual_from_partitions
+
+    held = []  # whether the previous partition's arrays were still alive at each advance
+
+    def parts(k):
+        prev = None
+        for _ in range(k):
+            held.append(prev is not None and prev() is not None)
+            sub = xr.Dataset(
+                {
+                    "UVW": (("row", "three"), np.array([[10.0, 20.0, 0.0], [30.0, -5.0, 0.0]])),
+                    "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1), np.float32)),
+                    "MASK": (("row", "chan"), np.ones((2, 1), np.uint8)),
+                    "FREQ": (("chan",), np.array([1e9])),
+                    "BEAM": (("corr", "y", "x"), np.ones((1, 16, 16), np.float32)),
+                }
+            )
+            prev = weakref.ref(sub["WEIGHT"].values)
+            yield sub
+            del sub
+
+    dirty = np.zeros((1, 16, 16), np.float32)
+    model = np.zeros_like(dirty)
+    model[0, 8, 8] = 1
+    residual_from_partitions(dirty, parts(3), model, 1e-5, epsilon=1e-4, do_wgridding=False)
+    assert held == [False, False, False]
+
+
 @pytest.mark.slow
 def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_path):
     """Transfer the injected sky; pass 2's RESIDUAL must be ~0 and deconv must resume.
