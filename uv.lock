@@ -3999,7 +3999,7 @@ requires-dist = [
     { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["full"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["x86"], marker = "extra == 'all'" },
-    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", git = "https://github.com/landmanbester/pfb-model-spec?branch=pfbattrs" },
+    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", git = "https://github.com/landmanbester/pfb-model-spec?branch=main" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
@@ -4042,7 +4042,7 @@ dev = [
 [[package]]
 name = "pfb-model-spec"
 version = "0.0.3"
-source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=pfbattrs#e84060fd6fb4ec76dc90152fa2cc2789e82001a2" }
+source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=main#d58a211bf83ab7f9d035df142eee1881afda3a98" }
 dependencies = [
     { name = "hip-cargo" },
 ]

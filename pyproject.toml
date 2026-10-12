@@ -250,6 +250,6 @@ dev = [
 prerelease="allow"
 
 [tool.uv.sources]
-# spec-0.1 work in progress (landmanbester/pfb-model-spec PR from pfbattrs); becomes
-# branch = "main" once merged, and goes away once 0.1.0 is on PyPI
-pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "pfbattrs" }
+# spec-0.1 fields (landmanbester/pfb-model-spec#31) are on main but unreleased; this goes
+# away once 0.1.0 is on PyPI and the floor becomes >=0.1
+pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "main" }
