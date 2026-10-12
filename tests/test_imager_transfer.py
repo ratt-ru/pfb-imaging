@@ -339,7 +339,16 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
     )
 
     second = str(tmp_path / "second")
-    imager_core([Path(ms_name)], second, transfer_model_from=mds_path, **common)
+    fits_dir = tmp_path / "fits"
+    imager_core(
+        [Path(ms_name)],
+        second,
+        transfer_model_from=mds_path,
+        **{**common, "fits_mfs": True},
+        fits_output_folder=str(fits_dir),
+    )
+    # the transferred residual reaches FITS beside the dirty image
+    assert list(fits_dir.glob("*_residual_*mfs.fits")) and list(fits_dir.glob("*_dirty_*mfs.fits"))
     dt = xr.open_datatree(second + "_I.dt", engine="zarr", chunks=None)
     try:
         nodes = sorted(n for n in dt.children if n.startswith("band"))

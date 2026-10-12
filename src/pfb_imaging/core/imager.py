@@ -1576,6 +1576,9 @@ def imager(
             psfpars_mfs=psfparsn if psf else None,
         )
         columns = {"DIRTY": {}}
+        if transfer_model_from is not None:
+            # the pass-2 residual of the transferred model (#309), Jy/beam like deconv's
+            columns["RESIDUAL"] = {}
         if psf:
             columns["PSF"] = {}
         if beam:
