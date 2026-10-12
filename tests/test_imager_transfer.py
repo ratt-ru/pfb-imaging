@@ -123,33 +123,48 @@ def test_transfer_accepts_an_intrinsic_or_legacy_model(ms_name, tmp_path, monkey
         )
 
 
-def test_check_transfer_geometry_refusals_and_warnings(tmp_path):
+def test_check_transfer_geometry_refusals(tmp_path):
     from pfb_model_spec.utils.spec import open_mds
 
     from pfb_imaging.core.imager import check_transfer_geometry
 
     radec = (1.0, -0.5)
     ds = open_mds(_write_mds(tmp_path / "m.mds", radec=radec, cell_rad=1e-5))
-    centres = np.array([1.0e9, 1.1e9])
 
-    assert check_transfer_geometry(ds, grid_radec=radec, cell_rad=1e-5, band_centres=centres) == []
-    assert check_transfer_geometry(ds, grid_radec=radec, cell_rad=5e-6, band_centres=centres) == []  # finer ok
+    check_transfer_geometry(ds, grid_radec=radec, cell_rad=1e-5)
+    check_transfer_geometry(ds, grid_radec=radec, cell_rad=5e-6)  # finer ok
     # RA either side of zero is a tiny separation, not ~2 pi
     ds0 = open_mds(_write_mds(tmp_path / "z.mds", radec=(1e-12, -0.5), cell_rad=1e-5))
-    assert check_transfer_geometry(ds0, grid_radec=(2 * np.pi - 1e-12, -0.5), cell_rad=1e-5, band_centres=centres) == []
+    check_transfer_geometry(ds0, grid_radec=(2 * np.pi - 1e-12, -0.5), cell_rad=1e-5)
 
     with pytest.raises(ValueError, match="[Tt]angent"):
-        check_transfer_geometry(ds, grid_radec=(1.0, -0.4), cell_rad=1e-5, band_centres=centres)
+        check_transfer_geometry(ds, grid_radec=(1.0, -0.4), cell_rad=1e-5)
     with pytest.raises(ValueError, match="pfb-model-spec#23"):
-        check_transfer_geometry(ds, grid_radec=radec, cell_rad=2e-5, band_centres=centres)
-    (msg,) = check_transfer_geometry(ds, grid_radec=radec, cell_rad=1e-5, band_centres=np.array([1.0e9, 1.3e9]))
-    assert "extrapolat" in msg and "no freq_bounds" not in msg
+        check_transfer_geometry(ds, grid_radec=radec, cell_rad=2e-5)
 
-    # a legacy .mds without freq_bounds: the fallback extent is the band centres, and the warning says so
-    dsl = open_mds(_write_mds(tmp_path / "l.mds", radec=radec, cell_rad=1e-5, freq_bounds=False))
-    assert check_transfer_geometry(dsl, grid_radec=radec, cell_rad=1e-5, band_centres=centres) == []
-    (msg,) = check_transfer_geometry(dsl, grid_radec=radec, cell_rad=1e-5, band_centres=np.array([1.0e9, 1.3e9]))
-    assert "extrapolat" in msg and "(the model records no freq_bounds; using its band centres)" in msg
+
+def test_transfer_coverage_warning_uses_the_rendered_frequencies(tmp_path):
+    from pfb_model_spec.utils.spec import open_mds
+
+    from pfb_imaging.core.imager import transfer_coverage_warning, transfer_freq_coverage
+
+    radec = (1.0, -0.5)
+    # freq_bounds = fitted freqs -/+ 50 MHz
+    cov = transfer_freq_coverage(open_mds(_write_mds(tmp_path / "m.mds", radec=radec, cell_rad=1e-5)))
+    assert cov == (0.95e9, 1.15e9, True)
+    assert transfer_coverage_warning([0.96e9, 1.14e9], cov) is None
+    msg = transfer_coverage_warning([1.0e9, 1.3e9], cov)
+    assert "extrapolated" in msg and "1300.000 MHz" in msg and "freq_bounds)" in msg
+
+    # a legacy .mds: coverage is the fitted (effective) frequencies, so a run with
+    # identical settings renders exactly at them and must not warn -- the nominal
+    # band centres, which lie outside them, never enter the check
+    legacy = open_mds(_write_mds(tmp_path / "l.mds", radec=radec, cell_rad=1e-5, freq_bounds=False))
+    cov = transfer_freq_coverage(legacy)
+    assert cov == (1.0e9, 1.1e9, False)
+    assert transfer_coverage_warning(legacy.freqs.values * (1 + 1e-12), cov) is None
+    msg = transfer_coverage_warning([0.9e9, 1.05e9], cov)
+    assert "900.000 MHz" in msg and "1050" not in msg and "records no freq_bounds" in msg
 
 
 def test_transfer_refuses_a_coarser_grid_before_ray(ms_name, tmp_path, monkeypatch):

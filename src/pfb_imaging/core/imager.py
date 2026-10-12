@@ -233,17 +233,13 @@ def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
     }
 
 
-def check_transfer_geometry(model_ds, *, grid_radec, cell_rad, band_centres) -> list[str]:
+def check_transfer_geometry(model_ds, *, grid_radec, cell_rad) -> None:
     """Refuse a transfer model the pass-2 render cannot place correctly (#309).
 
     Args:
         model_ds: The opened `--transfer-model-from` `.mds`.
         grid_radec: This run's tangent point `(ra, dec)` in radians.
         cell_rad: This run's cell size in radians.
-        band_centres: This run's nominal band centres in Hz.
-
-    Returns:
-        Warnings to log (empty when there is nothing to say).
 
     Raises:
         ValueError: If the tangent points differ (in-plane offsets are handled
@@ -267,18 +263,51 @@ def check_transfer_geometry(model_ds, *, grid_radec, cell_rad, band_centres) -> 
             "inflates flux by the pixel-area ratio (pfb-model-spec#23). Image at the model's cell size "
             "or finer."
         )
+
+
+def transfer_freq_coverage(model_ds) -> tuple[float, float, bool]:
+    """The frequency range a transfer model's fit covers (#309, D52).
+
+    Args:
+        model_ds: The opened `--transfer-model-from` `.mds`.
+
+    Returns:
+        `(lo, hi, from_bounds)` in Hz: the extent of `freq_bounds` when the model
+        records them, else of its fitted `freqs` (D50).
+    """
     fb = model_sampling(model_ds)["freq_bounds"]
-    lo, hi = (fb.min(), fb.max()) if fb is not None else (float(model_ds.freqs.min()), float(model_ds.freqs.max()))
-    band_centres = np.asarray(band_centres)
-    outside = band_centres[(band_centres < lo) | (band_centres > hi)]
-    if outside.size:
-        # without freq_bounds the band centres understate the sampled extent (D50)
-        source = "" if fb is not None else " (the model records no freq_bounds; using its band centres)"
-        return [
-            f"Band centres {outside / 1e6} MHz lie outside the transfer model's {lo / 1e6:.3f}-{hi / 1e6:.3f} MHz"
-            f"{source}; the model's frequency fit is being extrapolated there."
-        ]
-    return []
+    if fb is not None:
+        return float(fb.min()), float(fb.max()), True
+    return float(model_ds.freqs.min()), float(model_ds.freqs.max()), False
+
+
+def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) -> str | None:
+    """Warn when pass 2 rendered the model outside its fitted range (#309, D52).
+
+    Checked against the effective frequencies the model was actually rendered
+    at, which are known only after pass 2 (D28): the nominal band centres differ
+    from them, and a model from a run with identical settings was fitted at
+    exactly these frequencies.
+
+    Args:
+        freqs_out: The bands' effective frequencies in Hz.
+        coverage: `transfer_freq_coverage` of the model.
+
+    Returns:
+        The message, or `None` when every frequency lies inside the coverage.
+    """
+    lo, hi, from_bounds = coverage
+    freqs_out = np.sort(np.asarray(freqs_out, dtype=np.float64))
+    # relative slack for float round-off in a recomputed effective frequency
+    tol = 1e-9 * hi
+    outside = freqs_out[(freqs_out < lo - tol) | (freqs_out > hi + tol)]
+    if not outside.size:
+        return None
+    source = "its freq_bounds" if from_bounds else "its fitted frequencies; it records no freq_bounds"
+    return (
+        f"The transfer model was rendered at {', '.join(f'{f / 1e6:.3f}' for f in outside)} MHz, outside the "
+        f"{lo / 1e6:.3f}-{hi / 1e6:.3f} MHz it covers ({source}); its frequency fit was extrapolated there."
+    )
 
 
 def _concat_pieces(plist):
@@ -628,6 +657,7 @@ def _grid_image_body(
     mem = task_memory()
     return {
         "timeid": meta["timeid"],
+        "freq_out": freq_eff,
         "wsum": wsum_sum,
         "mem": mem,
         "beam_imre_ratio": beam_imre_max,
@@ -1111,12 +1141,11 @@ def imager(
 
     if transfer_ds is not None:
         try:
-            for msg in check_transfer_geometry(
-                transfer_ds, grid_radec=grid_radec, cell_rad=cell_rad, band_centres=band_centres
-            ):
-                log.warning(msg)
+            check_transfer_geometry(transfer_ds, grid_radec=grid_radec, cell_rad=cell_rad)
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
+        # checked after pass 2, against the frequencies the model is rendered at
+        transfer_coverage = transfer_freq_coverage(transfer_ds)
         # pass-2 workers load their own copy through a Multiton; the driver holds none
         del transfer_ds
 
@@ -1478,15 +1507,22 @@ def imager(
     ncomplete = 0
     remaining_tasks = tasks.copy()
     beam_imre_max = 0.0
+    freqs_out = []
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
+            freqs_out.append(res["freq_out"])
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
                 log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
+
+    if transfer_model_from is not None:
+        msg = transfer_coverage_warning(freqs_out, transfer_coverage)
+        if msg is not None:
+            log.warning(msg)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).
