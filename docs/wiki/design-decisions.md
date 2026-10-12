@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-12T16:00:00Z
-last_verified_commit: 5474199
+timestamp: 2026-10-12T19:00:00Z
+last_verified_commit: 043f50d
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1595,24 +1595,36 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** `src/pfb_imaging/utils/degrid.py`, `tests/test_degrid.py`,
   `tests/test_imager_transfer.py`; issue #347.
 
-### D52 — transfer refuses a coarser grid
+### D52 — transfer geometry: one tangent point, any cell
 
-- **Context:** `imager --transfer-model-from` renders a `.mds` onto this run's grid. Rendering
-  onto a coarser cell inflates flux by the pixel-area ratio (landmanbester/pfb-model-spec#23).
-- **Decision:** refuse when the run's cell is coarser than the model's (1e-9 relative), and
-  when the tangent points differ by more than 1e-9 rad. Warn after pass 2 if any band's
-  effective `freq_out` -- the frequency the model was actually rendered at -- falls outside the
-  model's coverage (the fit is extrapolated).
-- **Rationale:** refining is conservative; coarsening is wrong until a flux-conserving regrid
-  exists. Checks run after the MS metadata read but before Ray starts, so a bad request
-  costs neither a cluster nor any gridding.
-- **Consequences:** lifted by the flux-conserving-regrid follow-up. The coverage check uses
+- **Context:** `imager --transfer-model-from` renders a `.mds` onto this run's grid. The
+  original render resampled bilinearly and multiplied by the pixel-area ratio, which inflates a
+  point component's flux when coarsening (x4 at x2; landmanbester/pfb-model-spec#23), so the
+  transfer first refused any run whose cell was coarser than the model's.
+- **Decision:** refuse only when the tangent points differ by more than 1e-9 rad. Any cell and
+  image size are accepted: pass 2 renders with `render_model_region(..., kernel="box")`, the
+  flux-conserving remap of landmanbester/pfb-model-spec#32, and the driver logs when the cells
+  differ. Warn after pass 2 if any band's effective `freq_out` -- the frequency the model was
+  actually rendered at -- falls outside the model's coverage (the fit is extrapolated).
+- **Rationale:** the box remap conserves flux refining, coarsening and shifting, and is the
+  identity on the same grid. A different tangent point would need reprojection, which no
+  remap provides. The refusal runs after the MS metadata read but before Ray starts, so a bad
+  request costs neither a cluster nor any gridding. `"tent"` is not used: it is smoother only
+  when refining extended emission, and peaked at ~10x its output in memory against ~4x for box
+  (4096^2, pfb-model-spec#32 review).
+- **Consequences:** flux outside the run's footprint is dropped, never wrapped. Because pixel
+  centres sit at `n//2`, a coarser grid of half the pixels does not cover the model's last
+  half-row and half-column (2.4e-4 of a uniform model's flux at 4096^2). On a coarser grid the residual does
+  not null: each component lands on its coarse pixel's centre, up to half a coarse cell from its
+  true position (8.7% of the dirty peak at x2 on the ground-truth sky). The coverage check uses
   `freq_bounds` when present and otherwise the fitted frequencies' extent (D50). It cannot run
   upfront: it first compared the nominal band centres, and since a legacy model's fitted
   frequencies are effective ones lying inside the nominal bands, a re-run with identical settings
   warned spuriously that the outer bands were extrapolated.
 - **Source:** `src/pfb_imaging/core/imager.py` (`check_transfer_geometry`,
-  `transfer_coverage_warning`), `tests/test_imager_transfer.py`; issue #309.
+  `transfer_coverage_warning`, the pass-2 render), `tests/test_imager_transfer.py`
+  (`test_transferred_truth_nulls_the_residual` covers the x2 coarsening); issues #309,
+  landmanbester/pfb-model-spec#23, #32.
 
 ### D53 — `degrid`'s default chunk is one band in Hz
 
