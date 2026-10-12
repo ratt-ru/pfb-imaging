@@ -4042,7 +4042,7 @@ dev = [
 [[package]]
 name = "pfb-model-spec"
 version = "0.0.3"
-source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=main#d58a211bf83ab7f9d035df142eee1881afda3a98" }
+source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=main#15da165f9b2d906eeeaf83fcc4dbfc25a530caca" }
 dependencies = [
     { name = "hip-cargo" },
 ]
