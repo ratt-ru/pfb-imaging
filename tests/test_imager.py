@@ -813,8 +813,10 @@ def test_baseline_groups_without_beam_model_skips_the_telescope_guard(ms_name, t
             str(tmp_path / "nope"),
             baseline_groups=True,
             antenna_groups="vla-0*,vla-[12]*",
+            field_of_view=1.0,
             overwrite=True,
             keep_ray_alive=True,
+            log_directory=str(tmp_path / "logs"),
         )
 
 

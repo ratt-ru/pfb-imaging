@@ -919,16 +919,6 @@ def imager(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
 
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env={
-            "env_vars": {**env_vars, **memray_env()},
-            "worker_process_setup_hook": setup_ray_worker,
-        },
-        log=log,
-    )
-
     basename = f"{output_filename}"
 
     # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
@@ -1127,8 +1117,20 @@ def imager(
                 log.warning(msg)
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
-        # workers load their own copy (Task 7); the driver holds none during the passes
+        # pass-2 workers load their own copy through a Multiton; the driver holds none
         del transfer_ds
+
+    # only now: every refusal above, the transfer geometry included, needs the
+    # MS metadata but no cluster
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
+        runtime_env={
+            "env_vars": {**env_vars, **memray_env()},
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+        log=log,
+    )
 
     # Baseline-group masks, one dict per selected node. Computed here rather
     # than inside the dispatch loop so the set of groups that actually exist is

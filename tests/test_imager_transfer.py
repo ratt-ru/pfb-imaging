@@ -106,14 +106,16 @@ def test_transfer_refuses_an_apparent_model_before_ray(ms_name, tmp_path, monkey
 
 @pytest.mark.parametrize("flux_scale", ["intrinsic", None])
 def test_transfer_accepts_an_intrinsic_or_legacy_model(ms_name, tmp_path, monkeypatch, flux_scale):
-    """Reaching init_ray means every pre-Ray transfer check passed."""
+    """Reaching init_ray means every pre-Ray transfer check passed, the geometry included."""
     _no_ray(monkeypatch)
-    mds = _write_mds(tmp_path / "ok.mds", radec=_ms_radec(ms_name), cell_rad=1e-5, flux_scale=flux_scale)
+    # a model cell coarser than the run's, so the cell check passes too
+    mds = _write_mds(tmp_path / "ok.mds", radec=_ms_radec(ms_name), cell_rad=1e-3, flux_scale=flux_scale)
     with pytest.raises(AssertionError, match="init_ray was called"):
         imager_core(
             [Path(ms_name)],
             str(tmp_path / "out"),
             product="I",
+            field_of_view=1.0,
             transfer_model_from=mds,
             overwrite=True,
             keep_ray_alive=True,
@@ -150,8 +152,9 @@ def test_check_transfer_geometry_refusals_and_warnings(tmp_path):
     assert "extrapolat" in msg and "(the model records no freq_bounds; using its band centres)" in msg
 
 
-def test_transfer_refuses_a_coarser_grid_before_pass_1(ms_name, tmp_path):
-    """Geometry is only known after the MS metadata read; still nothing is gridded."""
+def test_transfer_refuses_a_coarser_grid_before_ray(ms_name, tmp_path, monkeypatch):
+    """Geometry is only known after the MS metadata read, which still precedes init_ray."""
+    _no_ray(monkeypatch)
     mds = _write_mds(tmp_path / "fine.mds", radec=_ms_radec(ms_name), cell_rad=1e-9)
     out = tmp_path / "out"
     with pytest.raises(ValueError, match="pfb-model-spec#23"):
