@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-12T16:00:00Z
-last_verified_commit: 5474199
+timestamp: 2026-10-12T17:00:00Z
+last_verified_commit: 3d5a94b
 ---
 
 # MSv4 DataTree imager pipeline
@@ -96,7 +96,9 @@ apparent model is refused, D54) are checked before the MS metadata is read, and 
 In pass 2, after the gridding loop, each task renders the model at the band's effective
 `freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
 streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
-`transferred_from` attr. Every name holding gridding-loop vis buffers is released before
+`transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
+`deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
+Every name holding gridding-loop vis buffers is released before
 that sweep -- `part`, `part_vars` (which shares its VIS/WEIGHT/MASK/UVW), the `first` piece
 read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as the partition
 itself) and the loop's stale `ds` -- so the sweep holds one streamed partition's vis-space
