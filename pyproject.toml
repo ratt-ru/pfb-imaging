@@ -250,7 +250,7 @@ dev = [
 prerelease="allow"
 
 [tool.uv.sources]
-# spec-0.1 fields (landmanbester/pfb-model-spec#31), the flux-conserving remap (#32) and the
-# tent frequency fit (#33) are on main but unreleased; this goes away once 0.1.0 is on PyPI and the floor becomes >=0.1
-# local checkout of the beam-terms branch (multi-region beam API, pfb-model-spec#27) during #353 development; back to the git source before the PR
-pfb-model-spec = { path = "../pfb-model-spec", editable = true }
+# spec-0.1 fields (landmanbester/pfb-model-spec#31), the flux-conserving remap (#32), the
+# tent frequency fit (#33) and the multi-region beam terms (#36) are on main but unreleased;
+# this goes away once 0.1.0 is on PyPI and the floor becomes >=0.1
+pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "main" }

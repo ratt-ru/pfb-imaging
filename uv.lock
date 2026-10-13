@@ -3992,7 +3992,7 @@ requires-dist = [
     { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["full"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["x86"], marker = "extra == 'all'" },
-    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", editable = "../pfb-model-spec" },
+    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", git = "https://github.com/landmanbester/pfb-model-spec?branch=main" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
@@ -4035,7 +4035,7 @@ dev = [
 [[package]]
 name = "pfb-model-spec"
 version = "0.0.3"
-source = { editable = "../pfb-model-spec" }
+source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=main#b0037ba16a618e1ba26df28131ab61d3c415430a" }
 dependencies = [
     { name = "hip-cargo" },
 ]
@@ -4055,32 +4055,6 @@ full = [
     { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "astropy", marker = "extra == 'full'" },
-    { name = "ducc0", marker = "extra == 'full'" },
-    { name = "hip-cargo", specifier = ">=0.2.2" },
-    { name = "hip-cargo", extras = ["gcs", "s3"], marker = "extra == 'full'", specifier = ">=0.4.0" },
-    { name = "numpy", marker = "extra == 'full'" },
-    { name = "scipy", marker = "extra == 'full'" },
-    { name = "sympy", marker = "extra == 'full'" },
-    { name = "xarray", marker = "extra == 'full'" },
-    { name = "zarr", marker = "extra == 'full'" },
-]
-provides-extras = ["full"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pre-commit", specifier = ">=4.0.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "ruff", specifier = ">=0.9.0" },
-    { name = "tbump", specifier = ">=6.11.0" },
-]
-test = [
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-cov", specifier = ">=5.0.0" },
 ]
 
 [[package]]
