@@ -510,10 +510,32 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
         dt.close()
 
 
-def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
-    """No beam still means ducc folds 1/n in (D55). A wide cell makes n matter."""
+def _direct_reference(node_ds, node, model_ds, region, divide_by_n):
+    """Call the plural kernel directly with independently built arguments."""
     from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_regions
 
+    sub = node_ds.isel(**region)
+    uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
+    valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
+    freq = sub.frequency.values
+    mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
+    (vis,) = model_to_apparent_vis_for_regions(
+        model_ds,
+        divide_by_n=divide_by_n,
+        uvw=uvw,
+        freq=freq,
+        corr_types=node.corr_types,
+        time=float(sub.time.values.mean()),
+        freq_out=float(freq.mean()),
+        stokes_out=["I"],
+        mask=mask,
+        epsilon=1e-9,
+    )
+    return vis
+
+
+def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
+    """No beam still means ducc folds 1/n in (D55). A wide cell makes n matter."""
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
@@ -530,23 +552,8 @@ def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
             stokes=["I"],
             epsilon=1e-9,
         ).MODEL_DATA.values
-        sub = node_ds.isel(**region)
-        uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
-        valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
-        freq = sub.frequency.values
-        mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
-        kw = dict(
-            uvw=uvw,
-            freq=freq,
-            corr_types=node.corr_types,
-            time=float(sub.time.values.mean()),
-            freq_out=float(freq.mean()),
-            stokes_out=["I"],
-            mask=mask,
-            epsilon=1e-9,
-        )
-        (with_n,) = model_to_apparent_vis_for_regions(wide, divide_by_n=True, **kw)
-        (without_n,) = model_to_apparent_vis_for_regions(wide, divide_by_n=False, **kw)
+        with_n = _direct_reference(node_ds, node, wide, region, True)
+        without_n = _direct_reference(node_ds, node, wide, region, False)
         got = got.reshape(with_n.shape)
         scale = np.abs(with_n).max()
         np.testing.assert_allclose(got, with_n.astype(np.complex64), rtol=0, atol=1e-6 * scale)
@@ -1685,3 +1692,110 @@ def test_selected_nodes_carry_a_positive_channel_width(ms_name):
     finally:
         dt.close()
     assert nodes and all(n.chan_width > 0 for n in nodes)
+
+
+class _FakeWizard:
+    """Stands in for meerkat_beams' BeamWizard: a diagonal Mueller block
+    value * (1 + slope * l_deg), constant in m, so an E-W mirror changes the answer."""
+
+    def __init__(self, value=1.0, slope_deg=0.0):
+        from types import SimpleNamespace
+
+        self.value, self.slope = value, slope_deg
+        self.bds = SimpleNamespace(X=SimpleNamespace(values=np.linspace(-2.0, 2.0, 401)))  # 0.01 deg pixels
+        self.calls = []
+
+    def partition_mueller(self, *, field_centre, times, freq, l, m, stokes_out, stokes_in):  # noqa: E741
+        self.calls.append({"freq": freq, "ntime": times.size, "stokes": (stokes_out, stokes_in)})
+        ll, _ = np.meshgrid(l, m)  # (Y, X), like the real one
+        field = self.value * (1.0 + self.slope * ll)
+        out = np.zeros((len(stokes_out), len(stokes_in)) + ll.shape, dtype=np.result_type(self.value, np.float32))
+        for o, s in enumerate(stokes_out):
+            if s in stokes_in:
+                out[o, stokes_in.index(s)] = field
+        return out
+
+
+def _region_vis(node_ds, node, mds_ds, **kw):
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    out = degrid_region(
+        node_ds,
+        region={"time": slice(0, 6), "frequency": slice(0, 4)},
+        model_ds=mds_ds,
+        masks=build_region_masks(mds_ds, None),
+        columns=["MODEL_DATA"],
+        corr_types=node.corr_types,
+        stokes=["I"],
+        epsilon=1e-9,
+        **kw,
+    )
+    return out.MODEL_DATA.values
+
+
+def test_degrid_region_attenuates_by_the_beam_at_the_source(degrid_ms, simple_mds):
+    """One component at (x=40, y=9): the beam scales it by the beam's value there,
+    and by the mirrored position's value only if l has the wrong sign."""
+    from pfb_model_spec.utils.degrid import model_geometry, pixel_lm
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wizard = _FakeWizard(slope_deg=30.0)
+        beam = _region_vis(node_ds, node, mds_ds, wizards={"all": wizard})
+        bare = _region_vis(node_ds, node, mds_ds)
+        l_px, _ = pixel_lm(model_geometry(mds_ds))
+        gain = 1.0 + 30.0 * np.rad2deg(l_px[40])
+        mirrored = 1.0 + 30.0 * np.rad2deg(-l_px[40])
+        assert abs(gain - mirrored) > 1e-3  # the test can tell the two apart
+        np.testing.assert_allclose(beam, gain * bare, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
+        assert wizard.calls and wizard.calls[0]["stokes"] == ("I", "I")
+    finally:
+        dt.close()
+
+
+def test_degrid_region_with_a_beam_lets_ducc_divide_by_n(degrid_ms, simple_mds):
+    """Pins the 1/n convention on the beam path (D55): the wizard's B is used bare
+    and ducc divides. Fails if the beam path folds 1/n itself or the flag flips."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wide = mds_ds.assign_attrs(cell_rad_x=2e-3, cell_rad_y=2e-3)
+        beam = _region_vis(node_ds, node, wide, wizards={"all": _FakeWizard()})
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        with_n = _direct_reference(node_ds, node, wide, region, True)
+        without_n = _direct_reference(node_ds, node, wide, region, False)
+        got = beam.reshape(with_n.shape)
+        scale = np.abs(with_n).max()
+        np.testing.assert_allclose(got, with_n.astype(np.complex64), rtol=0, atol=1e-6 * scale)
+        assert np.abs(got - without_n).max() > 1e-5 * scale
+    finally:
+        dt.close()
+
+
+def test_degrid_region_groups_take_their_own_beam_and_conjugate(degrid_ms, simple_mds):
+    """MM rows get 0.5, MPM rows c and their reversed rows conj(c), exactly."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        nbl = int(node_ds.sizes["baseline_id"])
+        idx = np.arange(nbl)
+        conj = (idx % 4) == 1
+        groups = ({"MM": idx[idx % 2 == 0], "MPM": idx[idx % 2 == 1]}, conj)
+        c = 0.8 + 0.2j
+        wizards = {"MM": _FakeWizard(0.5), "MPM": _FakeWizard(c)}
+        beam = _region_vis(node_ds, node, mds_ds, wizards=wizards, groups=groups)
+        bare = _region_vis(node_ds, node, mds_ds)
+        factor = np.where(idx % 2 == 0, 0.5, np.where(conj, np.conj(c), c))
+        expected = bare * factor[None, :, None, None]
+        np.testing.assert_allclose(beam, expected, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
+    finally:
+        dt.close()
+
+
+def test_beam_terms_must_cover_every_baseline(degrid_ms, simple_mds):
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        nbl = int(node_ds.sizes["baseline_id"])
+        groups = ({"MM": np.arange(nbl - 1)}, np.zeros(nbl, dtype=bool))
+        with pytest.raises(ValueError, match="baseline"):
+            _region_vis(node_ds, node, mds_ds, wizards={"MM": _FakeWizard()}, groups=groups)
+    finally:
+        dt.close()

@@ -14,16 +14,25 @@ pfb-model-spec's business (`degrid_stokes`).
 """
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import xarray as xr
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from pfb_model_spec.utils.degrid import (
+    BeamTerm,
     RegionMask,
     crop_bbox,
+    model_geometry,
     model_to_apparent_vis_for_regions,
+    pixel_lm,
 )
+
+from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
@@ -295,6 +304,99 @@ def assert_writable(ds: xr.Dataset) -> None:
         )
 
 
+def _coarse_axes(wizard: Any, l_px: np.ndarray, m_px: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Ascending coarse (l, m) axes covering the model grid at half a beam-cube pixel.
+
+    The beam is smooth on that scale, so evaluating there and interpolating is
+    exact to the beam's own resolution while costing a few thousand points
+    instead of the model's millions.
+    """
+    step = 0.5 * np.deg2rad(np.abs(np.diff(np.asarray(wizard.bds.X.values, dtype=float))).min())
+
+    def axis(v: np.ndarray) -> np.ndarray:
+        lo, hi = float(v.min()) - step, float(v.max()) + step
+        return lo + step * np.arange(max(2, int(np.ceil((hi - lo) / step)) + 1))
+
+    return axis(l_px), axis(m_px)
+
+
+def chunk_beam_terms(
+    wizards: Mapping[str, Any],
+    groups: tuple[dict[str, np.ndarray], np.ndarray] | None,
+    *,
+    nbl: int,
+    ntime: int,
+    geom: dict,
+    radec: tuple[float, float],
+    times: np.ndarray,
+    freq_out: float,
+    stokes_out: Sequence[str],
+) -> list[BeamTerm]:
+    """Build one work item's beam terms from meerkat-beams wizards.
+
+    Evaluated at the chunk's own times and its unweighted mean frequency (D39),
+    pointing at the model's tangent point, which `check_tangent_point` has
+    already required to be the field centre. The beam is the bare B from
+    `partition_mueller`: the caller degrids with `divide_by_n=True` (D55).
+
+    Args:
+        wizards: `{"all": wizard}` without groups, else `{label: wizard}`.
+        groups: `node_baseline_groups` output for the node, or None.
+        nbl: Baselines on the node.
+        ntime: Times in the chunk; rows are `(time, baseline)` C-ordered.
+        geom: `model_geometry` of the model.
+        radec: Model tangent point, radians.
+        times: The chunk's unix-second times.
+        freq_out: The chunk's unweighted mean frequency, Hz.
+        stokes_out: Stokes planes predicted, in output order.
+
+    Returns:
+        One `BeamTerm` per group present (one in all without groups).
+
+    Raises:
+        ValueError: If the groups leave a baseline uncovered or name a group
+            with no wizard.
+    """
+    l_px, m_px = pixel_lm(geom)
+    field_centre = SkyCoord(ra=radec[0] * u.rad, dec=radec[1] * u.rad)
+    # D13: MSv4 time is unix seconds; astropy Time wants MJD days
+    t = Time(to_mjd_time(np.unique(times)) / 86400.0, format="mjd")
+    if groups is None:
+        items = [("all", None, None)]
+    else:
+        index, conj = groups
+        covered = np.zeros(nbl, dtype=bool)
+        for idx in index.values():
+            covered[idx] = True
+        if not covered.all():
+            raise ValueError(f"{int((~covered).sum())} baseline(s) belong to no baseline group")
+        items = [(label, idx, conj) for label, idx in index.items()]
+
+    terms = []
+    for label, idx, conj in items:
+        if label not in wizards:
+            raise ValueError(f"no beam for baseline group {label!r}")
+        wizard = wizards[label]
+        l_axis, m_axis = _coarse_axes(wizard, l_px, m_px)
+        block = wizard.partition_mueller(
+            field_centre=field_centre,
+            times=t,
+            freq=float(freq_out),
+            l=np.rad2deg(l_axis),
+            m=np.rad2deg(m_axis),
+            stokes_out="".join(stokes_out),
+            stokes_in="".join(geom["stokes"]),
+        )
+        rows = conj_rows = None
+        if idx is not None:
+            mine = np.zeros(nbl, dtype=bool)
+            mine[idx] = True
+            rows = np.tile(mine, ntime)
+            conj_rows = np.tile(conj & mine, ntime)
+        terms.append(BeamTerm(np.asarray(block), l_axis, m_axis, rows, conj_rows))
+    return terms
+
+
 def degrid_region(
     node_ds: xr.Dataset,
     *,
@@ -308,6 +410,8 @@ def degrid_region(
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     nthreads: int = 1,
+    wizards: Mapping[str, Any] | None = None,
+    groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -328,6 +432,8 @@ def degrid_region(
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.
         nthreads: ducc threads.
+        wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
+        groups: `node_baseline_groups` output, or None.
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
@@ -369,6 +475,20 @@ def degrid_region(
     time_out = float(ds.time.values.mean())
     freq_out = float(freq.mean())
 
+    beam_terms = None
+    if wizards is not None:
+        beam_terms = chunk_beam_terms(
+            wizards,
+            groups,
+            nbl=nbl,
+            ntime=ntime,
+            geom=model_geometry(model_ds),
+            radec=(float(model_ds.ra), float(model_ds.dec)),
+            times=ds.time.values,
+            freq_out=freq_out,
+            stokes_out=stokes,
+        )
+
     # Render once and degrid each region's cropped box: pfb-model-spec's
     # multi-region entry point (#27). No FLAG is read: the model is predicted on
     # every real row so flagging can be rerun against it; `mask` only hides
@@ -389,6 +509,7 @@ def degrid_region(
         # it, beam or not (D55); the pre-#353 False dropped it off-axis
         divide_by_n=True,
         nthreads=nthreads,
+        beam_terms=beam_terms,
     )
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):
