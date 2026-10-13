@@ -4,15 +4,26 @@ On a mixed MeerKAT / MeerKAT+ array the primary beam depends on which pair of
 dishes forms a baseline, so the imager partitions visibilities into the three
 pairings meerkat-beams serves: MM, MPM, MPMP (issue #335).
 
-Everything here is pure: numpy arrays and strings in, numpy arrays out,
-ValueError on anything ambiguous. The driver owns logging and I/O. That keeps
-every test in tests/test_baselines.py free of an MS, so they run on the
-casacore-free CI legs too.
+The classification and mask helpers are pure (numpy and strings in, numpy out,
+ValueError on anything ambiguous), which keeps their tests in tests/test_baselines.py
+free of an MS. The group preflight and per-node helpers below them, shared by
+imager and degrid, open MS metadata and log.
 """
 
 import fnmatch
+import gc
+import os
+from pathlib import Path
 
 import numpy as np
+import xarray as xr
+from meerkat_beams import cache as mbeams_cache
+
+from pfb_imaging import MBEAMS_CACHE_DEFAULT
+from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.msv4 import get_engine
+
+log = pfb_logging.get_logger("BASELINES")
 
 # meerkat-beams' own labels: MeerKAT-MeerKAT, MeerKAT-MeerKAT+, MeerKAT+-MeerKAT+.
 GROUP_LABELS = ("MM", "MPM", "MPMP")
@@ -197,3 +208,161 @@ def baseline_group_masks(is_ext, antenna_names, ant1_names, ant2_names):
         if idx.size:
             masks[label] = idx
     return masks
+
+
+# meerkat-beams serves baseline-group beams for L band only (its
+# design-decisions D15 -- no matched MeerKAT counterpart exists for MKE's S3
+# product). Keep this in sync with meerkat_beams.cache.
+GROUP_BANDS = ("L",)
+
+
+def preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups):
+    """Validate a --baseline-groups request before any Ray cluster exists.
+
+    Opens each MS once to read antenna_xds.attrs["overall_telescope_name"].
+    That attr is broadcast from OBSERVATION::TELESCOPE_NAME, so it identifies
+    the array (it cannot discriminate dishes -- that is dish diameter's job).
+
+    The telescope and band checks are conditioned on a beam model being
+    requested: with no beam model there is no group beam to get wrong, and the
+    split degenerates to pure data partitioning whose summation is algebraically
+    identical to not splitting. See wiki design-decisions D47.
+
+    Args:
+        ms: resolved MS paths.
+        partition_columns: MSv2 partition schema override, as passed to imager.
+        beam_model: the --beam-model value, or None.
+        antenna_groups: the --antenna-groups value, or None.
+
+    Returns:
+        The parsed (meerkat_pattern, meerkat_plus_pattern) override, or None.
+
+    Raises:
+        ValueError: on a bad override, a non-MeerKAT array, katbeam, or a band
+            for which meerkat-beams has no group beams.
+    """
+    override = None
+    if antenna_groups is not None:
+        try:
+            override = parse_antenna_groups(antenna_groups)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    if beam_model is None:
+        return override
+
+    if str(beam_model).lower() == "katbeam":
+        log.error_and_raise(
+            "--baseline-groups needs per-group MeerKAT beams; katbeam has no MeerKAT+ "
+            "model and gives power beams only. Pass --beam-model L instead.",
+            ValueError,
+        )
+    if str(beam_model).upper() not in GROUP_BANDS:
+        log.error_and_raise(
+            f"meerkat-beams serves baseline-group beams for {', '.join(GROUP_BANDS)} band "
+            f"only; --beam-model {beam_model!r} has no group products. The MdV-2026 group "
+            f"beams also need staging by hand -- see meerkat-beams scripts/stage_group_cache.py.",
+            ValueError,
+        )
+
+    for ms_name in ms:
+        dt_kwargs = get_engine(ms_name, partition_columns)
+        path = ms_name.replace("file://", "") if "file://" in ms_name else ms_name
+        dt = xr.open_datatree(path, **dt_kwargs)
+        try:
+            node = next(iter(dt.children.values()))
+            telescope = node["antenna_xds"].ds.attrs["overall_telescope_name"]
+        finally:
+            dt.close()
+            del dt
+            gc.collect()
+        try:
+            check_telescope_is_meerkat(telescope, path)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+
+    return override
+
+
+def missing_group_beams(band: str, groups: list[str]) -> str | None:
+    """Explain group beams that meerkat-beams can neither find nor download.
+
+    The MdV-2026 group products are not published yet, so meerkat-beams can
+    only use them once someone has staged them in its cache by hand. Its own
+    error names the path it looked in, not why that path is empty or where the
+    beams might already be. pfb points the cache at ``MBEAMS_CACHE_DEFAULT`` in
+    ``/tmp``, which is RAM-backed on many hosts and lost on reboot, while a
+    previous ``meerkat-beams`` run may have staged them in its own default.
+
+    Args:
+        band: the --beam-model band.
+        groups: the baseline groups present in the data.
+
+    Returns:
+        An error message, or None when every needed product is staged or
+        downloadable.
+    """
+
+    def staged(root: Path, product: str) -> bool:
+        return (root / "bds" / f"{product}.bds.zarr").exists() or (root / "inputs" / f"{product}.zarr").exists()
+
+    root = mbeams_cache.cache_root()
+    needed = dict.fromkeys(p for g in groups for p in mbeams_cache.GROUP_PRODUCTS[(band, g)])
+    missing = [
+        p
+        for p in needed
+        if mbeams_cache.product_gdrive_id(p) == mbeams_cache.PLACEHOLDER_GDRIVE_ID and not staged(root, p)
+    ]
+    if not missing:
+        return None
+
+    msg = (
+        f"--baseline-groups needs the beam product(s) {', '.join(missing)}. meerkat-beams cannot "
+        f"download them yet, and they are not staged in the beam cache MBEAMS_CACHE_DIR={root}."
+    )
+    if str(root) == MBEAMS_CACHE_DEFAULT:
+        msg += " That is pfb's default cache, which is lost on reboot wherever /tmp is RAM-backed."
+    # meerkat-beams' own default, which an earlier standalone run may have filled
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    usual = Path(xdg) / "meerkat-beams" if xdg else Path.home() / ".cache" / "meerkat-beams"
+    if usual != root and all(staged(usual, p) for p in missing):
+        msg += f" They are staged in {usual}: run export MBEAMS_CACHE_DIR={usual} and retry."
+    else:
+        msg += (
+            f" Copy each product's MdV mean-beam zarr to {root / 'inputs'}/<product>.zarr, or set "
+            f"MBEAMS_CACHE_DIR to a directory where they are already staged "
+            f"(see meerkat-beams scripts/stage_group_cache.py)."
+        )
+    return msg
+
+
+def node_baseline_groups(node: xr.DataTree, override) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Classify one visibility node's baselines into groups.
+
+    Strictly per node: different scans/SPWs can carry different antenna
+    subsets, so baseline_id indices are only valid for their own node.
+
+    Args:
+        node: The visibility node, with its `antenna_xds` child.
+        override: Parsed --antenna-groups, or None to classify on dish diameter.
+
+    Returns:
+        (`{label: baseline indices}` as `baseline_group_masks` returns, `(nbl,)`
+        bool marking baselines whose antenna1 is MeerKAT+ and antenna2 MeerKAT.)
+        meerkat-beams fixes p = MeerKAT for the cross group, so those rows take
+        the conjugate Mueller block.
+
+    Raises:
+        ValueError: From `classify_antennas` on anything ambiguous.
+    """
+    ant_xds = node["antenna_xds"].ds
+    names = ant_xds.antenna_name.values
+    diam = ant_xds.ANTENNA_DISH_DIAMETER.values if "ANTENNA_DISH_DIAMETER" in ant_xds.data_vars else None
+    is_ext = classify_antennas(names, diam, override=override)
+    a1 = node.ds.baseline_antenna1_name.values
+    a2 = node.ds.baseline_antenna2_name.values
+    groups = baseline_group_masks(is_ext, names, a1, a2)
+    lookup = {str(n): bool(e) for n, e in zip(np.asarray(names).astype(str), is_ext)}
+    e1 = np.array([lookup[str(n)] for n in np.asarray(a1).astype(str)], dtype=bool)
+    e2 = np.array([lookup[str(n)] for n in np.asarray(a2).astype(str)], dtype=bool)
+    return groups, e1 & ~e2

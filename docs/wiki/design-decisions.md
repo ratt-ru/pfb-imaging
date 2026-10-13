@@ -1434,7 +1434,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   non-MeerKAT array has no group beam at all.
 - **Decision:** the telescope and band guards fire when a group-capable
   `BeamWizard` is required — i.e. whenever `--beam-model` is set — not on
-  `--baseline-groups` alone. They run in `_preflight_baseline_groups` **before**
+  `--baseline-groups` alone. They run in `utils/baselines.preflight_baseline_groups` **before**
   `init_ray`, so a bad request never stands up a cluster.
 - **Rationale:** with no beam model there is no group beam to get wrong, and the
   split degenerates to pure data partitioning whose summation is algebraically
@@ -1723,7 +1723,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   products staged by hand land where `pfb` will not look. `/tmp` is also RAM-backed
   on many hosts, so even products staged there are gone after a reboot. `imager`
   now checks the products the data's groups need before building any wizard
-  (`core/imager._missing_group_beams`) and says which are missing, from which
+  (`utils/baselines.missing_group_beams`) and says which are missing, from which
   cache, and -- if they are in meerkat-beams' own default -- the `export` that
   fixes it; before that it died inside meerkat-beams with "beam product ... is not
   yet published". Export a persistent `MBEAMS_CACHE_DIR` (the `setdefault` means an
