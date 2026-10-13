@@ -25,7 +25,7 @@ def test_write_support_and_kernel_available():
     import xarray_ms
     from pfb_model_spec.utils.degrid import (  # noqa: F401
         model_geometry,
-        model_to_apparent_vis_for_region,
+        model_to_apparent_vis_for_regions,
         render_model_region,
         stokes_vis_to_corr,
     )
@@ -471,29 +471,13 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
     dtype cast and the reshape back -- so compare against the kernel driven
     with independently constructed arguments.
     """
-    from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
-
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
         region = {"time": slice(5, 15), "frequency": slice(2, 6)}
-        sub = node_ds.isel(**region)
-        uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
-        freq = sub.frequency.values
-        valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
-        mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
-        expected = model_to_apparent_vis_for_region(
-            mds_ds,
-            uvw=uvw,
-            freq=freq,
-            corr_types=node.corr_types,
-            time=float(sub.time.values.mean()),
-            freq_out=float(freq.mean()),
-            mask=mask,
-            region_mask=None,
-            divide_by_n=True,
-        ).astype(np.complex64)
+        expected = _direct_reference(node_ds, node, mds_ds, region, True).astype(np.complex64)
+        freq = node_ds.isel(**region).frequency.values
 
         out = degrid_region(
             node_ds,
@@ -503,6 +487,7 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
             columns=["MODEL_DATA"],
             corr_types=node.corr_types,
             stokes=["I"],
+            epsilon=1e-9,
         )
         got = out.MODEL_DATA.values.reshape(-1, freq.size, len(node.corr_types))
         np.testing.assert_array_equal(got, expected)
