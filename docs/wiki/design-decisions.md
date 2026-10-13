@@ -432,7 +432,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   multiply by n afterwards" correction is gone — `test_deconv_groundtruth` asserts intrinsic
   recovery). DIRTY/RESIDUAL are unchanged. **Consumers must not treat the stored BEAM as the bare
   primary beam** — a PB-corrected quicklook must use `B = BEAM·n`, or check `beam_includes_n`.
-  `degrid` predicts unattenuated model vis (D42). Known residual approximation errors in the
+  `degrid` is the one path that calls ducc with `divide_by_n=True`: it never folds `1/n` into a
+  beam, with or without `--beam-model` (D55). Known residual approximation errors in the
   PSF-convolution Hessian: the w-term and the `abs(PSFHAT)` rectification (Hermitian-positivity
   for CG) — both far larger than the n-term at any fov, sub-percent for realistic decaying PSFs —
   and PSF truncation, below.
@@ -1312,7 +1313,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   predict leakage, which needs `M[Q,I]`, `M[U,I]`, `M[V,I]`; (2) the `.dt` and meerkat-beams
   sources are fidelity levels, not competitors — gauge-exact but diagonal and per-band,
   versus full-Mueller and frequency-resolved but not gauge-exact.
-- **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278.
+- **Amendment (#353) — degrid now applies a beam, from the other source.** `--beam-model` evaluates
+  a meerkat-beams full-Mueller beam per chunk at the chunk's own mean frequency, so the band
+  tension above does not arise: nothing is read from the `.dt`. The "no beam" decision now
+  holds only for the `.dt`'s pinned beam, which #324 still owns. Without `--beam-model` degrid
+  now still divides by `n`, which it failed to do before #353. See D55.
+- **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278, #353.
 
 ### D43 — (Retired) the MSv2 `degrid` was retired outright rather than aliased or deprecated
 
@@ -1426,6 +1432,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   wrote `beam_imre_ratio` 0.0 / 2.1287e-02 / 0.0 for `MM` / `MPM` / `MPMP`, and
   the band `BEAM` stayed finite and within [0.738, 1]. So the approximation is
   now quantified rather than assumed, and 2% is the number to argue about.
+- **Scope:** imager gridding only. The argument needs a sum over conjugate baseline orderings,
+  which an image has and a single visibility row does not, so `degrid` predicts the cross group
+  exactly as `Re + i·Im` (D55).
 
 ### D47 — the baseline-group telescope guard keys on the beam model
 
@@ -1643,19 +1652,84 @@ update it (and this page's `last_verified_commit`) in the same session.
 ### D54 — `flux_scale` and the intrinsic-model warning
 
 - **Context:** `deconv` solves for the intrinsic sky (D22/D23), so its `.mds` is intrinsic, but
-  `degrid` applies no beam (D42).
-- **Decision:** `deconv` writes `flux_scale="intrinsic"`; `degrid` warns (via
-  `flux_scale_warning`) that the predicted visibilities are intrinsic, not apparent.
+  `degrid` applied no beam before #353 (D42).
+- **Decision:** `deconv` writes `flux_scale="intrinsic"`; `degrid` without `--beam-model` warns
+  (via `flux_scale_warning`) that the predicted visibilities are intrinsic, not apparent, and
+  points at `--beam-model`.
   `imager --transfer-model-from` refuses an `"apparent"` model before Ray starts, and accepts
   `"intrinsic"` and a legacy `None`.
-- **Rationale:** a warning is honest while beam application is unimplemented; refusing would
-  block legitimate use. The transfer is different: pass 2 applies `BEAM` to the rendered model,
+- **Rationale:** without a beam, a warning is honest; refusing would block legitimate use
+  (a field small against the beam). The transfer is different: pass 2 applies `BEAM` to the rendered model,
   so an apparent model would be attenuated twice, which is wrong rather than merely unbeamed.
-- **Consequences:** #353 adds beam application to `degrid`, with `--baseline-groups` parity
-  (bare `B` with `divide_by_n=True`); the warning, which links #353, goes then.
+- **Consequences:** #353 added beam application to `degrid` (D55). The warning stays, but is
+  logged only when `degrid` runs without `--beam-model`; with a beam, an apparent model is
+  refused and a model with no `flux_scale` warns that it is assumed intrinsic.
 - **Source:** `src/pfb_imaging/utils/degrid.py::flux_scale_warning`, `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/core/imager.py` (the pre-Ray transfer checks),
   `tests/test_imager_transfer.py::test_transfer_refuses_an_apparent_model_before_ray`.
+
+### D55 — degrid applies the bare primary beam, and ducc always divides by `n`
+
+- **Context:** #353 adds the primary beam to `degrid`, with `--baseline-groups` parity with the
+  imager. The imager folds `1/n` into its stored beam and calls ducc with `divide_by_n=False`
+  (D22); degrid has no stored beam to fold into. Before #353 degrid also passed
+  `divide_by_n=False`, with no beam at all, so it dropped `1/n` entirely. The imager's no-beam
+  `BEAM` is `1/n`, so degrid and `imager --transfer-model-from` disagreed off-axis on the same
+  model.
+- **Decision:**
+  - **`1/n` is never folded into a degrid beam, so every prediction passes `divide_by_n=True`,
+    beam or not.** ducc divides. `degrid_region` hard-codes it. The beam is the bare `B` from
+    meerkat-beams' `BeamWizard.partition_mueller`: one beam convention per caller, and
+    pfb-model-spec passes `divide_by_n` through untouched (landmanbester/pfb-model-spec#22).
+  - **The beam is the full Stokes Mueller block** from the model's Stokes to the requested
+    product, so leakage (`M[Q,I]` and friends) is predicted, which the `.dt`'s diagonal beam
+    cannot do (D42).
+  - **The MPM cross group is predicted exactly**, as `V = degrid(Re A) ± i·degrid(Im A)`, with
+    `-` (the conjugate) on rows whose antenna1 is MeerKAT+. D46's `Re(B)` argument needs a sum
+    over conjugate baseline orderings, which an image has and a single visibility row does not.
+  - **Evaluation:** `chunk_beam_terms` evaluates the beam at the chunk's own times and its
+    unweighted mean frequency (D39), pointing at the model's tangent point. `_coarse_axes` puts
+    it on a coarse `(l, m)` grid at half a beam-cube pixel, and pfb-model-spec interpolates it
+    onto the model grid (`pixel_lm`, `interp_mueller`).
+  - **Guards, all before Ray:** katbeam is refused (no Stokes Mueller block; `partition_mueller`
+    refuses it). An `apparent` model is refused, since it would be attenuated twice. A model
+    with no `flux_scale` warns and the beam is applied. `--antenna-groups` without
+    `--baseline-groups` is refused, as is a malformed pattern. `--baseline-groups` without a
+    beam warns and predicts one group.
+  - **Wizards are built once on the driver**, which warms meerkat-beams' cache single-process
+    and stops a staging error before Serve starts. Replicas get `Multiton(BeamWizard, ...)`
+    recipes, never loaded objects (D38). Groups are classified per node with
+    `utils/baselines.node_baseline_groups`, sharing the imager's preflight
+    (`utils/baselines.preflight_baseline_groups`).
+- **Rationale:** ducc's `divide_by_n=True` is exactly `diag(1/n)` under w-gridding (D22), so
+  degrid gets the right physics without inventing a second beam convention. D22's reasons for
+  folding (the PSF-convolution Hessian) do not apply to a forward prediction. Evaluating on a
+  coarse grid costs a few thousand beam points instead of the model's millions, and the beam is
+  smooth on that scale.
+- **Consequences:**
+  - **The no-beam output changed by the `1/n` factor.** That is the fix, not a regression.
+    Measured on the test MS by `test_imager_degrid_nulls_the_residual`: residual peak
+    2.725368e-02 before and 2.725156e-02 after, against a dirty peak of 2.514.
+  - **`--do-wgridding False` is an accepted caveat:** ducc then skips the `1/n` division (D22's
+    "trap"). That is fine for narrow fields, where `n ≈ 1`, and is not guarded.
+  - **No FLAG is ever fed into a ducc mask.** The model is predicted on every real row, so
+    flagging can be rerun against it. The only masks are structural: xarray-ms's NaN padding
+    (#287) and a beam term's rows. A group set that leaves a baseline uncovered raises rather
+    than predicting zeros.
+  - Cost on a tiny 64x32 model: `degrid_region` 14 ms without the beam, 24 ms with the L beam.
+  - `flux_scale_warning` is logged only without `--beam-model` (D54).
+- **Source:** issue #353; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
+  `_coarse_axes`, `degrid_region`), `src/pfb_imaging/core/degrid.py`,
+  `src/pfb_imaging/utils/baselines.py`; pfb-model-spec#27 (`pixel_lm`, `interp_mueller`,
+  `BeamTerm`, `model_to_apparent_vis_for_regions` and the crop helpers moved there);
+  landmanbester/pfb-model-spec#22; landmanbester/meerkat-beams#31, #33. Tests in
+  `tests/test_degrid.py`: `test_degrid_region_divides_by_n_without_a_beam`,
+  `test_degrid_region_with_a_beam_lets_ducc_divide_by_n`,
+  `test_degrid_region_attenuates_by_the_beam_at_the_source`,
+  `test_degrid_region_groups_take_their_own_beam_and_conjugate`,
+  `test_beam_terms_must_cover_every_baseline`, the `test_degrid_refuses_*` guards, and
+  `test_degrid_with_a_real_beam_matches_the_in_process_region` (slow; staged, runs with
+  `PFB_TEST_BEAM_L=1`).
 
 ## Known debt
 

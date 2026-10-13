@@ -76,7 +76,8 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 4. `pfb degrid` — degrid a `.mds` component model into MSv4 measurement sets (#278). Guards,
    the Ray Serve `Degridder` deployment and the driver live in `core/degrid.py`; the pure
    MSv4<->kernel seam is `utils/degrid.py`. All numerics go through
-   `pfb_model_spec.utils.degrid`. Load-bearing decisions: D38-D42.
+   `pfb_model_spec.utils.degrid`. Applies a meerkat-beams Mueller beam per baseline group
+   with `--beam-model` (D55). Load-bearing decisions: D38-D42, D55.
 
 `pfb hci` is the separate high-cadence-imaging front-end.
 
