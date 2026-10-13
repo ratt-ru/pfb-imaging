@@ -492,7 +492,7 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
             freq_out=float(freq.mean()),
             mask=mask,
             region_mask=None,
-            divide_by_n=False,
+            divide_by_n=True,
         ).astype(np.complex64)
 
         out = degrid_region(
@@ -510,13 +510,59 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
         dt.close()
 
 
+def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
+    """No beam still means ducc folds 1/n in (D55). A wide cell makes n matter."""
+    from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_regions
+
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wide = mds_ds.assign_attrs(cell_rad_x=2e-3, cell_rad_y=2e-3)
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        got = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=wide,
+            masks=build_region_masks(wide, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+            stokes=["I"],
+            epsilon=1e-9,
+        ).MODEL_DATA.values
+        sub = node_ds.isel(**region)
+        uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
+        valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
+        freq = sub.frequency.values
+        mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
+        kw = dict(
+            uvw=uvw,
+            freq=freq,
+            corr_types=node.corr_types,
+            time=float(sub.time.values.mean()),
+            freq_out=float(freq.mean()),
+            stokes_out=["I"],
+            mask=mask,
+            epsilon=1e-9,
+        )
+        (with_n,) = model_to_apparent_vis_for_regions(wide, divide_by_n=True, **kw)
+        (without_n,) = model_to_apparent_vis_for_regions(wide, divide_by_n=False, **kw)
+        got = got.reshape(with_n.shape)
+        scale = np.abs(with_n).max()
+        np.testing.assert_allclose(got, with_n.astype(np.complex64), rtol=0, atol=1e-6 * scale)
+        assert np.abs(got - without_n).max() > 1e-5 * scale
+    finally:
+        dt.close()
+
+
 def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_mds):
     """Narrower frequency chunks sample the model's spectrum more finely.
 
     The model is a continuous function of frequency, re-rendered once per
     chunk, so this is the feature `--channels-per-chunk` exists for. A single
     point source degrids to a visibility of constant magnitude equal to its
-    flux (`divide_by_n=False`, so no n-term scaling), which makes the assertion
+    flux (ducc divides by n, which is 1 to ~3e-9 this close to the
+    phase centre), which makes the assertion
     direct: |vis| per chunk == the model's flux at that chunk's mean frequency.
     """
     from pfb_model_spec.utils.degrid import render_model_region
@@ -1370,82 +1416,6 @@ def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path,
         assert not np.allclose(a, b), "both SPWs got identical visibilities"
     finally:
         dt.close()
-
-
-@pytest.mark.parametrize("flip_u", [False, True])
-@pytest.mark.parametrize("flip_v", [False, True])
-def test_crop_phase_centre_reproduces_the_full_grid_degrid(flip_u, flip_v):
-    """Degridding a cropped sub-grid must equal degridding the full one.
-
-    This is the guard on `crop_phase_centre`'s arithmetic, and it has to run
-    over every flip combination: each axis's offset sign is set by its flip
-    convention, and a sign error moves the model on the sky rather than
-    changing it slightly, so it would sail past any loose tolerance. The
-    check is that a wrong sign is order-unity wrong, not that the right one
-    is merely close.
-    """
-    from ducc0.wgridder import dirty2vis
-
-    from pfb_imaging.utils.degrid import crop_bbox, crop_phase_centre
-
-    rng = np.random.default_rng(42)
-    nx, ny, cell = 64, 48, 1e-5
-    x0, y0 = -3e-4, 2e-4
-
-    uvw = rng.normal(0.0, 3000.0, (500, 3))
-    uvw[:, 2] *= 0.05
-    freq = np.linspace(1.0e9, 1.1e9, 4)
-
-    # flux confined to a box away from the grid centre, so a mis-set centre
-    # cannot be masked by symmetry. (Y, X) like the .mds; ducc is x-major, so
-    # it is handed the transpose
-    image = np.zeros((ny, nx))
-    image[30:42, 10:26] = rng.normal(size=(12, 16))
-
-    kw = dict(
-        uvw=uvw,
-        freq=freq,
-        pixsize_x=cell,
-        pixsize_y=cell,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=False,
-        epsilon=1e-9,
-        do_wgridding=True,
-        divide_by_n=False,
-        nthreads=1,
-    )
-    ref = dirty2vis(dirty=np.ascontiguousarray(image.T), center_x=x0, center_y=y0, **kw)
-
-    rm = crop_bbox(np.where(image != 0.0, 1.0, 0.0))
-    assert (rm.mask.shape, rm.i0, rm.j0) == ((12, 16), 30, 10)
-    nyc, nxc = rm.mask.shape
-    sub = np.ascontiguousarray(image[rm.i0 : rm.i0 + nyc, rm.j0 : rm.j0 + nxc].T)
-
-    geom = dict(x0=x0, y0=y0, cell_rad=cell, flip_u=flip_u, flip_v=flip_v, nx=nx, ny=ny)
-    xc, yc = crop_phase_centre(rm=rm, **geom)
-    got = dirty2vis(dirty=sub, center_x=xc, center_y=yc, **kw)
-    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
-
-    # every other sign choice is order-unity wrong
-    for sx, sy in ((1, -1), (-1, 1), (-1, -1)):
-        bad = dirty2vis(
-            dirty=sub,
-            center_x=x0 + sx * (xc - x0),
-            center_y=y0 + sy * (yc - y0),
-            **kw,
-        )
-        assert np.abs(bad - ref).max() > 0.1 * np.abs(ref).max()
-
-
-def test_crop_bbox_of_an_empty_mask_is_degenerate():
-    """An empty region must not crop to a zero-sized grid ducc would reject."""
-    from pfb_imaging.utils.degrid import crop_bbox
-
-    rm = crop_bbox(np.zeros((16, 8)))
-    assert rm.mask.shape == (2, 2)
-    assert (rm.i0, rm.j0) == (0, 0)
-    assert not rm.mask.any()
 
 
 def test_workitem_is_hashable_with_slice_regions():

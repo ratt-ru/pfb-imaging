@@ -27,14 +27,13 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from pfb_model_spec.utils.degrid import model_geometry, model_sampling
+from pfb_model_spec.utils.degrid import RegionMask, model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.degrid import (
-    RegionMask,
     assert_writable,
     build_region_masks,
     check_stokes_subset,
