@@ -985,6 +985,68 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path, pctable):
 
 
 @pytest.mark.slow
+def test_degrid_with_a_real_beam_matches_the_in_process_region(degrid_ms, simple_mds, tmp_path, pctable):
+    """The Serve path with a real L-band wizard writes what degrid_region computes in-process.
+
+    Skips unless PFB_TEST_BEAM_L=1: building the wizard reads (or downloads) the
+    legacy L product from the beam cache, which CI does not stage.
+    """
+    import os
+
+    if os.environ.get("PFB_TEST_BEAM_L") != "1":
+        pytest.skip("set PFB_TEST_BEAM_L=1 with the L product in the beam cache")
+    from meerkat_beams.utils import BeamWizard
+
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    mds_path, mds_ds = simple_mds
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+
+    degrid(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        beam_model="L",
+        integrations_per_chunk=20,
+        channels_per_chunk=4,
+        nworkers=2,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+        epsilon=1e-7,
+    )
+
+    wizards = {"all": BeamWizard(band="L")}
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        node = select_vis_nodes(dt)[0]
+        node_ds = dt[node.path].ds
+        got = node_ds.MODEL_DATA.values
+        expected = np.zeros_like(got)
+        for t0 in range(0, 60, 20):
+            for f0 in range(0, 8, 4):
+                region = {"time": slice(t0, t0 + 20), "frequency": slice(f0, f0 + 4)}
+                expected[t0 : t0 + 20, :, f0 : f0 + 4, :] = degrid_region(
+                    node_ds,
+                    region=region,
+                    model_ds=mds_ds,
+                    masks=build_region_masks(mds_ds, None),
+                    columns=["MODEL_DATA"],
+                    corr_types=node.corr_types,
+                    stokes=["I"],
+                    wizards=wizards,
+                ).MODEL_DATA.values
+        np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-8)
+        assert np.any(got != 0), "nothing was written"
+    finally:
+        dt.close()
+
+
+@pytest.mark.slow
 def test_degrid_creates_the_column_when_it_is_absent(degrid_ms, simple_mds, tmp_path, pctable):
     """The default --model-column on an MS that has no MODEL_DATA."""
 
