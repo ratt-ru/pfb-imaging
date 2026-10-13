@@ -1229,7 +1229,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   each axis's offset sign is its own flip convention (`-1 if flip_u else +1`, likewise `flip_v`),
   and ducc asserts an even grid extent, so an odd bounding box must grow by a pixel *into real
   model pixels* — zero-padding would misplace the window. Pinned over all four flip combinations
-  by `tests/test_degrid.py::test_crop_phase_centre_reproduces_the_full_grid_degrid`.
+  by pfb-model-spec's `test_crop_phase_centre_reproduces_the_full_grid_degrid`.
 - **Open question (2026-09-23): does the fused write survive concurrent writers?** tricolour#106
   has since gone the other way — a *single* `DataWriter` replica — because concurrent writers
   block on the CASA table lock and one eventually wedges, fails its health check and is
@@ -1316,8 +1316,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Amendment (#353) — degrid now applies a beam, from the other source.** `--beam-model` evaluates
   a meerkat-beams full-Mueller beam per chunk at the chunk's own mean frequency, so the band
   tension above does not arise: nothing is read from the `.dt`. The "no beam" decision now
-  holds only for the `.dt`'s pinned beam, which #324 still owns. Without `--beam-model` degrid
-  now still divides by `n`, which it failed to do before #353. See D55.
+  holds only for the `.dt`'s pinned beam, which #324 still owns. Degrid now always lets ducc
+  divide by `n`, beam or not; before #353 the no-beam path did not (D55).
 - **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278, #353.
 
 ### D43 — (Retired) the MSv2 `degrid` was retired outright rather than aliased or deprecated
@@ -1718,6 +1718,18 @@ update it (and this page's `last_verified_commit`) in the same session.
     than predicting zeros.
   - Cost on a tiny 64x32 model: `degrid_region` 14 ms without the beam, 24 ms with the L beam.
   - `flux_scale_warning` is logged only without `--beam-model` (D54).
+  - **Measured inconsistency: the imager's single-field beam path is mirrored east-west.**
+    `utils/stokes2vis_msv4.py`, the non-offset branch that calls `eval_beam` with ascending x as
+    l, stores the primary beam mirrored. A fake beam of `1 + 30·l_deg` gives 0.519 at the East
+    pixel j=4 of a 64² grid at 1e-5 rad, where 1.481 is expected. The mosaic/reproject path is
+    correct, and degrid evaluates on `pixel_lm` and is correct. Until the imager is fixed,
+    `imager --transfer-model-from` and `degrid --beam-model` apply opposite east-west
+    orientations on single-field data; circular beams hide this. Not yet filed as an issue.
+  - **Multi-node runs need a shared `MBEAMS_CACHE_DIR`.** The driver warms only its own node's
+    beam cache, and replicas rebuild wizards from their node's `MBEAMS_CACHE_DIR`. A multi-node
+    `--ray-address` run therefore needs `MBEAMS_CACHE_DIR` on shared storage, with any
+    hand-staged MdV-2026 group products in it. The imager's ungrouped wizard has the same
+    requirement.
 - **Source:** issue #353; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
   `_coarse_axes`, `degrid_region`), `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/utils/baselines.py`; pfb-model-spec#27 (`pixel_lm`, `interp_mueller`,
@@ -1729,7 +1741,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_degrid_region_groups_take_their_own_beam_and_conjugate`,
   `test_beam_terms_must_cover_every_baseline`, the `test_degrid_refuses_*` guards, and
   `test_degrid_with_a_real_beam_matches_the_in_process_region` (slow; staged, runs with
-  `PFB_TEST_BEAM_L=1`).
+  `PFB_TEST_BEAM_L=1`). The spec's imager-vs-degrid round trip was replaced by this staged
+  real-beam Serve test because of the east-west inconsistency above.
 
 ## Known debt
 

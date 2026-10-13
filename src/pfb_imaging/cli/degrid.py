@@ -222,7 +222,8 @@ def degrid(
         typer.Option(
             help="Primary beam to apply, as a meerkat-beams band name such as L. "
             "The model must be in intrinsic flux. "
-            "katbeam is not supported here.",
+            "katbeam is not supported here. "
+            "Multi-node clusters need MBEAMS_CACHE_DIR on shared storage.",
             rich_help_panel="Beam",
         ),
     ] = None,
