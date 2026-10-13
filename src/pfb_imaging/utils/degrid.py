@@ -545,7 +545,8 @@ def flux_scale_warning(flux_scale: str | None) -> str | None:
     """The warning to log for a model's flux scale, if any.
 
     `degrid` applies no primary beam, so an intrinsic model yields intrinsic
-    visibilities -- correct only where the beam is close to 1.
+    visibilities -- correct only where the beam is close to 1. Only logged when
+    degrid runs without --beam-model.
 
     Args:
         flux_scale: The `.mds` `flux_scale`, from `model_sampling`.
@@ -556,7 +557,7 @@ def flux_scale_warning(flux_scale: str | None) -> str | None:
     if flux_scale != "intrinsic":
         return None
     return (
-        "The model is in intrinsic flux and degrid applies no primary beam, so the model "
+        "The model is in intrinsic flux and no primary beam is applied, so the model "
         "visibilities are only correct where the beam is close to 1. "
-        "Beam application is tracked in https://github.com/ratt-ru/pfb-imaging/issues/353."
+        "Pass --beam-model to predict apparent visibilities."
     )

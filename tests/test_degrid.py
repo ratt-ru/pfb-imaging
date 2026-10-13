@@ -1633,7 +1633,7 @@ def test_flux_scale_warning():
     from pfb_imaging.utils.degrid import flux_scale_warning
 
     assert "primary beam" in flux_scale_warning("intrinsic")
-    assert "issues/353" in flux_scale_warning("intrinsic")
+    assert "--beam-model" in flux_scale_warning("intrinsic")
     assert flux_scale_warning("apparent") is None
     assert flux_scale_warning(None) is None
 
@@ -1799,3 +1799,35 @@ def test_beam_terms_must_cover_every_baseline(degrid_ms, simple_mds):
             _region_vis(node_ds, node, mds_ds, wizards={"MM": _FakeWizard()}, groups=groups)
     finally:
         dt.close()
+
+
+def _no_ray(monkeypatch):
+    import pfb_imaging.core.degrid as degrid_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(degrid_mod, "init_ray", _boom)
+    return degrid_mod
+
+
+def test_degrid_refuses_katbeam_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="katbeam"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="katbeam")
+
+
+def test_degrid_refuses_a_beam_on_an_apparent_model(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    apparent = str(tmp_path / "apparent.mds")
+    simple_mds[1].assign_attrs(flux_scale="apparent").to_zarr(apparent, mode="w")
+    with pytest.raises(ValueError, match="twice"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=apparent, product="I", beam_model="L")
+
+
+def test_degrid_group_beams_refuse_a_non_meerkat_array(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="MeerKAT"):
+        degrid_mod.degrid(
+            [degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="L", baseline_groups=True
+        )

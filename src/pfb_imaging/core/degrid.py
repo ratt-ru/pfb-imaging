@@ -27,12 +27,19 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
+from meerkat_beams.utils import BeamWizard
 from pfb_model_spec.utils.degrid import RegionMask, model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.baselines import (
+    GROUP_LABELS,
+    missing_group_beams,
+    node_baseline_groups,
+    preflight_baseline_groups,
+)
 from pfb_imaging.utils.degrid import (
     assert_writable,
     build_region_masks,
@@ -231,6 +238,9 @@ class Degridder:
         epsilon: float = 1e-5,
         do_wgridding: bool = True,
         nthreads: int = 1,
+        beams: Mapping[str, Multiton] | None = None,
+        antenna_groups: tuple[str, str] | None = None,
+        baseline_groups: bool = False,
     ):
         # Multitons, not DataTrees: each replica reconstructs its own tree
         # rather than receiving a pickled one. The driver must not touch
@@ -252,6 +262,12 @@ class Degridder:
         # behind it would let a quiet replica drop and reload it mid-run.
         self._model_ds: xr.Dataset | None = None
         self._mask_list: list[np.ndarray] | None = None
+        # Beam wizards are Multitons too (D38: bind recipes, never loaded objects)
+        self._beams = beams
+        self._override = antenna_groups
+        self._use_groups = baseline_groups
+        self._wizards: dict | None = None
+        self._node_groups: dict = {}
         self._columns = list(columns)
         self._stokes = list(stokes)
         self._accumulate = accumulate
@@ -286,7 +302,16 @@ class Degridder:
                 if self._model_ds is None:
                     self._model_ds = self._model.instance
                     self._mask_list = self._masks.instance
+                # dereferenced once and held; a Multiton's TTL is inactivity-based
+                if self._wizards is None and self._beams is not None:
+                    self._wizards = {k: v.instance for k, v in self._beams.items()}
                 dt = self._datatrees[item.ms_index].instance
+                groups = None
+                if self._use_groups:
+                    key = (item.ms_index, item.node_path)
+                    if key not in self._node_groups:
+                        self._node_groups[key] = node_baseline_groups(dt[item.node_path], self._override)
+                    groups = self._node_groups[key]
                 node_ds = dt[item.node_path].ds
                 write_ds = degrid_region(
                     node_ds,
@@ -300,6 +325,8 @@ class Degridder:
                     epsilon=self._epsilon,
                     do_wgridding=self._do_wgridding,
                     nthreads=self._nthreads,
+                    wizards=self._wizards,
+                    groups=groups,
                 )
                 assert_writable(write_ds)
                 # region MUST be explicit: the default "auto" expands each dim to
@@ -375,6 +402,9 @@ def degrid(
     region_file: str | None = None,
     epsilon: float = 1e-5,
     do_wgridding: bool = True,
+    beam_model: str | None = None,
+    baseline_groups: bool = False,
+    antenna_groups: str | None = None,
     ray_address: str = "local",
     nworkers: int = 1,
     nthreads: int | None = None,
@@ -408,6 +438,12 @@ def degrid(
         region_file: Region file splitting the model across columns (#115).
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.
+        beam_model: meerkat-beams band name of the primary beam to apply. The
+            model must be in intrinsic flux; katbeam is refused.
+        baseline_groups: Apply a separate beam per MeerKAT baseline group.
+            Requires `beam_model`.
+        antenna_groups: Two comma separated glob patterns naming the MeerKAT
+            and MeerKAT+ antennas. Requires `baseline_groups`.
         ray_address: Ray cluster address, or `"local"` for a private one.
         nworkers: Maximum `Degridder` replicas.
         nthreads: ducc threads per replica. Defaults to half the logical CPUs.
@@ -486,8 +522,30 @@ def degrid(
             "channels-per-chunk was not given and the model records no freq_bounds to derive it "
             "from. Pass --channels-per-chunk, or regenerate the .mds with a current pfb deconv."
         )
-    if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
-        log.warning(msg)
+    if beam_model is None:
+        if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
+            log.warning(msg)
+        if baseline_groups:
+            # without a beam, groups change nothing in a prediction (D47's reasoning)
+            log.warning("--baseline-groups does nothing without --beam-model; predicting one group")
+    else:
+        if str(beam_model).lower() == "katbeam":
+            log.error_and_raise(
+                "degrid --beam-model needs a meerkat-beams band (for example L): katbeam has no "
+                "Stokes Mueller block, and partition_mueller refuses it (meerkat-beams D17).",
+                ValueError,
+            )
+        if sampling["flux_scale"] == "apparent":
+            log.error_and_raise(
+                "The model is already in apparent flux; applying --beam-model would attenuate it twice.",
+                ValueError,
+            )
+        if sampling["flux_scale"] is None:
+            log.warning("The model records no flux_scale; assuming intrinsic flux and applying the beam.")
+    use_groups = beam_model is not None and baseline_groups
+    group_override = (
+        preflight_baseline_groups(msnames, partition_columns, beam_model, antenna_groups) if use_groups else None
+    )
 
     freq_min, freq_max = -np.inf, np.inf
     if freq_range:
@@ -503,6 +561,7 @@ def degrid(
 
     # --- guards, then column creation, then close -----------------------
     selected: list[tuple[int, SelectedNode]] = []
+    present_groups: set[str] = set()
     for ims, ms_name in enumerate(msnames):
         # before opening anything: degrid writes, and only the CASA backend can
         # be written back to
@@ -526,6 +585,12 @@ def degrid(
             if not nodes:
                 continue
             check_tangent_point(model_ds, nodes)
+            if use_groups:
+                for node in nodes:
+                    try:
+                        present_groups |= set(node_baseline_groups(dt[node.path], group_override)[0])
+                    except ValueError as e:
+                        log.error_and_raise(str(e), ValueError)
             ensure_model_columns(ms_name, dt, columns)
             selected += [(ims, node) for node in nodes]
         finally:
@@ -536,6 +601,25 @@ def degrid(
 
     if not selected:
         raise ValueError("Selection matched no data")
+
+    beams = None
+    if beam_model is not None:
+        if use_groups:
+            labels = sorted(present_groups, key=GROUP_LABELS.index)
+            if (missing := missing_group_beams(str(beam_model).upper(), labels)) is not None:
+                log.error_and_raise(missing, RuntimeError)
+            log.info(f"Beam {beam_model} for baseline groups {', '.join(labels)}")
+            kwargs = {g: {"band": beam_model, "group": g} for g in labels}
+        else:
+            log.info(f"Beam {beam_model}")
+            kwargs = {"all": {"band": beam_model}}
+        # Build each wizard once here, single process: meerkat-beams does not
+        # guard concurrent first downloads, and a staging error should stop the
+        # run before Serve starts. Replicas rebuild their own from the warmed
+        # cache through a Multiton (D38: bind recipes, never loaded objects).
+        for kw in kwargs.values():
+            BeamWizard(**kw)
+        beams = {label: Multiton(BeamWizard, **kw) for label, kw in kwargs.items()}
 
     # No cache eviction after creating columns: arcae >= 0.4.0a13 resyncs table
     # handles that were already open when a column was added (ska-sa/arcae#241,
@@ -606,6 +690,9 @@ def degrid(
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         nthreads=nthreads,
+        beams=beams,
+        antenna_groups=group_override,
+        baseline_groups=use_groups,
     )
     # build the work list before standing the app up, so a bad chunk spec
     # cannot leave a Serve deployment running with nothing to shut it down
