@@ -1697,7 +1697,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     `--baseline-groups` is refused, as is a malformed pattern. `--baseline-groups` without a
     beam warns and predicts one group.
   - **Wizards are built once on the driver**, which warms meerkat-beams' cache single-process
-    and stops a staging error before Serve starts. Replicas get `Multiton(BeamWizard, ...)`
+    and stops a staging error before Serve starts. The model columns are added only after
+    that, so a failed guard or beam leaves every MS untouched
+    (`test_degrid_beam_failure_leaves_the_ms_untouched`). Replicas get `Multiton(BeamWizard, ...)`
     recipes, never loaded objects (D38). Groups are classified per node with
     `utils/baselines.node_baseline_groups`, sharing the imager's preflight
     (`utils/baselines.preflight_baseline_groups`).

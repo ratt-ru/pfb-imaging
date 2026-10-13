@@ -1864,6 +1864,29 @@ def test_degrid_refuses_katbeam_before_ray(degrid_ms, simple_mds, tmp_path, monk
         degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="katbeam")
 
 
+def test_degrid_beam_failure_leaves_the_ms_untouched(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    """A beam that cannot be built must fail before any column is added."""
+    import arcae
+
+    degrid_mod = _no_ray(monkeypatch)
+
+    def _unstaged(**kw):
+        raise RuntimeError("beam products not staged")
+
+    monkeypatch.setattr(degrid_mod, "BeamWizard", _unstaged)
+    with pytest.raises(RuntimeError, match="not staged"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=simple_mds[0],
+            product="I",
+            beam_model="L",
+            model_column="BEAM_MODEL_DATA",
+        )
+    with arcae.table(degrid_ms) as tab:
+        assert "BEAM_MODEL_DATA" not in tab.columns()
+
+
 def test_degrid_refuses_a_beam_on_an_apparent_model(degrid_ms, simple_mds, tmp_path, monkeypatch):
     degrid_mod = _no_ray(monkeypatch)
     apparent = str(tmp_path / "apparent.mds")

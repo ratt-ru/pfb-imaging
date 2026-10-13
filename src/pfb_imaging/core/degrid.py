@@ -573,17 +573,15 @@ def degrid(
     columns = [model_column] + [f"{model_column}{i}" for i in range(1, len(masks))]
     log.info(f"Writing {len(columns)} column(s): {', '.join(columns)}")
 
-    # --- guards, then column creation, then close -----------------------
+    # --- guards, then the beam preflight, then column creation ----------
     selected: list[tuple[int, SelectedNode]] = []
     present_groups: set[str] = set()
     for ims, ms_name in enumerate(msnames):
         # before opening anything: degrid writes, and only the CASA backend can
         # be written back to
         check_writable_backend(ms_name)
-        # one MAIN instance: this tree adds columns, and with several instances
-        # arcae can answer the follow-up reads from one that has not seen them
-        # (see get_engine). It only reads metadata and is closed before any
-        # replica starts, so there is no parallelism to lose.
+        # metadata only, closed before any replica starts: one MAIN instance
+        # loses no parallelism and matches the column pass below
         dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
         dt = xr.open_datatree(ms_name, **dt_kwargs)
         try:
@@ -605,12 +603,8 @@ def degrid(
                         present_groups |= set(node_baseline_groups(dt[node.path], group_override)[0])
                     except ValueError as e:
                         log.error_and_raise(str(e), ValueError)
-            ensure_model_columns(ms_name, dt, columns)
             selected += [(ims, node) for node in nodes]
         finally:
-            # LOAD BEARING, do not tidy away: newly added columns are invisible
-            # to other processes until the table is closed (CTDS property), and
-            # every Ray replica is another process.
             dt.close()
 
     if not selected:
@@ -634,6 +628,22 @@ def degrid(
         for kw in kwargs.values():
             BeamWizard(**kw)
         beams = {label: Multiton(BeamWizard, **kw) for label, kw in kwargs.items()}
+
+    # Columns last, so a failed guard or beam leaves every MS untouched. One
+    # MAIN instance: with several, arcae can answer the follow-up reads from one
+    # that has not seen the new column (see get_engine).
+    for ims in sorted({ims for ims, _ in selected}):
+        ms_name = msnames[ims]
+        dt = xr.open_datatree(
+            ms_name, **get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
+        )
+        try:
+            ensure_model_columns(ms_name, dt, columns)
+        finally:
+            # LOAD BEARING, do not tidy away: newly added columns are invisible
+            # to other processes until the table is closed (CTDS property), and
+            # every Ray replica is another process.
+            dt.close()
 
     # No cache eviction after creating columns: arcae >= 0.4.0a13 resyncs table
     # handles that were already open when a column was added (ska-sa/arcae#241,
