@@ -15,8 +15,6 @@ with an unrecognised-option error rather than silently doing the wrong thing.
 
 import asyncio
 import gc
-import os
-import resource
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
@@ -46,10 +44,19 @@ from pfb_imaging.utils.degrid import (
     ensure_model_columns,
     flux_scale_warning,
 )
-from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
+from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
+from pfb_imaging.utils.msv4 import (
+    SelectedNode,
+    get_engine,
+    ignore_xarray_ms_warnings,
+    select_vis_nodes,
+    wrapped_angle_diff,
+)
 from pfb_imaging.utils.naming import glob_uris, set_output_names
 
-log = pfb_logging.get_logger("DEGRID_MSV4")
+ignore_xarray_ms_warnings()
+
+log = pfb_logging.get_logger("DEGRID")
 
 # Ray Serve application name. Used for both serve.run and the targeted
 # serve.delete that replaces a cluster-wide serve.shutdown.
@@ -275,48 +282,47 @@ class Degridder:
         return await asyncio.get_running_loop().run_in_executor(self._executor, self._degrid, item)
 
     def _degrid(self, item: WorkItem) -> dict:
-        try:
-            if self._model_ds is None:
-                self._model_ds = self._model.instance
-                self._mask_list = self._masks.instance
-            dt = self._datatrees[item.ms_index].instance
-            node_ds = dt[item.node_path].ds
-            write_ds = degrid_region(
-                node_ds,
-                region=item.region,
-                model_ds=self._model_ds,
-                masks=self._mask_list,
-                columns=self._columns,
-                corr_types=tuple(str(p) for p in node_ds.polarization.values),
-                stokes=self._stokes,
-                accumulate=self._accumulate,
-                epsilon=self._epsilon,
-                do_wgridding=self._do_wgridding,
-                nthreads=self._nthreads,
-            )
-            assert_writable(write_ds)
-            # region MUST be explicit: the default "auto" expands each dim to
-            # slice(0, size) and would write every chunk to the start of the
-            # array. write_map is identity so MSV4_WRITE_MAP cannot redirect a
-            # column that happens to share an MSv4 variable name.
-            write_ds.to_msv2(
-                compute=True,
-                region=dict(item.region),
-                write_map={c: c for c in self._columns},
-            )
-        finally:
-            # Never wipe xarray-ms's class-level Multiton cache here: this
-            # deployment keys its model and masks on Multitons, and a wholesale
-            # clear reloaded a 633 MB .mds on every work item (wiki
-            # memory-and-ray). Reference cycles in deserialised xarray objects
-            # still need the collect.
-            gc.collect()
-
-        return {
-            "pid": os.getpid(),
-            "rss_gb": psutil.Process().memory_info().rss / 2**30,
-            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-        }
+        with memray_task("degrid"):
+            try:
+                if self._model_ds is None:
+                    self._model_ds = self._model.instance
+                    self._mask_list = self._masks.instance
+                dt = self._datatrees[item.ms_index].instance
+                node_ds = dt[item.node_path].ds
+                write_ds = degrid_region(
+                    node_ds,
+                    region=item.region,
+                    model_ds=self._model_ds,
+                    masks=self._mask_list,
+                    columns=self._columns,
+                    corr_types=tuple(str(p) for p in node_ds.polarization.values),
+                    stokes=self._stokes,
+                    accumulate=self._accumulate,
+                    epsilon=self._epsilon,
+                    do_wgridding=self._do_wgridding,
+                    nthreads=self._nthreads,
+                )
+                assert_writable(write_ds)
+                # region MUST be explicit: the default "auto" expands each dim to
+                # slice(0, size) and would write every chunk to the start of the
+                # array. write_map is identity so MSV4_WRITE_MAP cannot redirect a
+                # column that happens to share an MSv4 variable name.
+                write_ds.to_msv2(
+                    compute=True,
+                    region=dict(item.region),
+                    write_map={c: c for c in self._columns},
+                )
+            finally:
+                # Never wipe xarray-ms's class-level Multiton cache here: this
+                # deployment keys its model and masks on Multitons, and a wholesale
+                # clear reloaded a 633 MB .mds on every work item (wiki
+                # memory-and-ray). Reference cycles in deserialised xarray objects
+                # still need the collect.
+                gc.collect()
+        # Measured after the collect, as pass 1 does: post-gc anon that ratchets
+        # for a pid across items is retention below Python; shm is Ray
+        # object-store pages (wiki memory-and-ray).
+        return task_memory()
 
 
 def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int):
@@ -553,7 +559,7 @@ def degrid(
     init_ray(
         nworkers + 1,
         ray_address=ray_address,
-        runtime_env={"env_vars": env_vars, "worker_process_setup_hook": setup_ray_worker},
+        runtime_env={"env_vars": {**env_vars, **memray_env()}, "worker_process_setup_hook": setup_ray_worker},
         log=log,
     )
 
@@ -652,9 +658,7 @@ def degrid(
                     # a post-gc rss that ratchets for a pid across items means
                     # retention below Python; peak is the lifetime high-water
                     log.info(
-                        f"Completed: {ncomplete} / {len(items)} "
-                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
-                        extra=pfb_logging.NO_MARKUP,
+                        f"Completed: {ncomplete} / {len(items)} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP
                     )
 
         for item in items:

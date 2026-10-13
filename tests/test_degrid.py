@@ -1661,6 +1661,28 @@ def test_flux_scale_warning():
     assert flux_scale_warning(None) is None
 
 
+def test_ignore_xarray_ms_warnings():
+    import warnings
+
+    from xarray_ms.errors import (
+        ColumnShapeImputationWarning,
+        FrameConversionWarning,
+        IrregularGridWarning,
+        MissingMetadataWarning,
+    )
+
+    from pfb_imaging.utils.msv4 import ignore_xarray_ms_warnings
+
+    noisy = (IrregularGridWarning, MissingMetadataWarning, FrameConversionWarning, ColumnShapeImputationWarning)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ignore_xarray_ms_warnings()
+        for category in noisy:
+            warnings.warn("noise", category, stacklevel=1)
+        warnings.warn("signal", UserWarning, stacklevel=1)
+    assert [w.category for w in caught] == [UserWarning]
+
+
 def test_degrid_refuses_a_model_without_freq_bounds_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
     import pfb_imaging.core.degrid as degrid_mod
 

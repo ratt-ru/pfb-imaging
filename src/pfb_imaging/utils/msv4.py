@@ -7,6 +7,7 @@ the imager's own node loop also computes imaging geometry and the rephasing
 barycentre, so sharing it would be a contortion, not a simplification.
 """
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,29 @@ import numpy as np
 import xarray as xr
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
+from xarray_ms.errors import (
+    ColumnShapeImputationWarning,
+    FrameConversionWarning,
+    IrregularGridWarning,
+    MissingMetadataWarning,
+)
+
+
+def ignore_xarray_ms_warnings() -> None:
+    """Silence the xarray-ms warnings every MSv4 open repeats.
+
+    They fire per partition, per open and per Ray worker, so a real run buries
+    its log under them. Call at module scope in every front-end that opens
+    MSv4 data, so that Ray workers, which import the module to unpickle its
+    tasks or deployments, install the same filters.
+    """
+    for category in (
+        IrregularGridWarning,
+        MissingMetadataWarning,
+        FrameConversionWarning,
+        ColumnShapeImputationWarning,
+    ):
+        warnings.filterwarnings("ignore", category=category)
 
 
 def get_engine(
