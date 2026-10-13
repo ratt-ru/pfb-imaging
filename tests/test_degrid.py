@@ -762,6 +762,19 @@ def test_check_model_refuses_a_product_beyond_the_models_planes(simple_mds):
         check_model(ds, "IQ")
 
 
+def test_check_model_lets_a_beam_predict_planes_the_model_lacks(simple_mds):
+    """With a beam, --product names apparent planes: an I-only model can be
+    asked for IQUV, and the beam's leakage fills Q, U and V (opt-in, D55)."""
+    from pfb_imaging.core.degrid import check_model
+    from pfb_imaging.utils.degrid import check_stokes_subset
+
+    _, ds = simple_mds
+    assert check_model(ds, "IQUV", beam=True)["stokes"] == ["I"]
+    assert check_stokes_subset("QI", ["I"], beam=True) == ["Q", "I"]
+    with pytest.raises(ValueError, match="repeats"):
+        check_stokes_subset("II", ["I"], beam=True)
+
+
 @pytest.mark.parametrize(
     "product, model_stokes, expected",
     [("I", ["I"], ["I"]), ("I", ["I", "Q", "U", "V"], ["I"]), ("VI", ["I", "V"], ["V", "I"])],
@@ -1745,10 +1758,10 @@ class _FakeWizard:
     """Stands in for meerkat_beams' BeamWizard: a diagonal Mueller block
     value * (1 + slope * l_deg), constant in m, so an E-W mirror changes the answer."""
 
-    def __init__(self, value=1.0, slope_deg=0.0):
+    def __init__(self, value=1.0, slope_deg=0.0, leak_q=0.0):
         from types import SimpleNamespace
 
-        self.value, self.slope = value, slope_deg
+        self.value, self.slope, self.leak_q = value, slope_deg, leak_q
         self.bds = SimpleNamespace(X=SimpleNamespace(values=np.linspace(-2.0, 2.0, 401)))  # 0.01 deg pixels
         self.calls = []
 
@@ -1760,6 +1773,8 @@ class _FakeWizard:
         for o, s in enumerate(stokes_out):
             if s in stokes_in:
                 out[o, stokes_in.index(s)] = field
+        if "Q" in stokes_out and "I" in stokes_in:
+            out[stokes_out.index("Q"), stokes_in.index("I")] += self.leak_q * field
         return out
 
 
@@ -1773,9 +1788,8 @@ def _region_vis(node_ds, node, mds_ds, **kw):
         masks=build_region_masks(mds_ds, None),
         columns=["MODEL_DATA"],
         corr_types=node.corr_types,
-        stokes=["I"],
         epsilon=1e-9,
-        **kw,
+        **{"stokes": ["I"], **kw},
     )
     return out.MODEL_DATA.values
 
@@ -1796,6 +1810,22 @@ def test_degrid_region_attenuates_by_the_beam_at_the_source(degrid_ms, simple_md
         assert abs(gain - mirrored) > 1e-3  # the test can tell the two apart
         np.testing.assert_allclose(beam, gain * bare, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
         assert wizard.calls and wizard.calls[0]["stokes"] == ("I", "I")
+    finally:
+        dt.close()
+
+
+def test_degrid_region_predicts_leakage_when_the_product_asks_for_it(degrid_ms, simple_mds):
+    """An I-only model, --product IQ and an I->Q leak of 0.1: XX = I + Q and
+    YY = I - Q, so the two correlations differ by exactly the leak."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        assert list(node.corr_types) == ["XX", "XY", "YX", "YY"]
+        bare = _region_vis(node_ds, node, mds_ds)
+        leaky = _region_vis(node_ds, node, mds_ds, stokes=["I", "Q"], wizards={"all": _FakeWizard(leak_q=0.1)})
+        atol = 1e-6 * np.abs(bare).max()
+        np.testing.assert_allclose(leaky[..., 0], 1.1 * bare[..., 0], rtol=1e-6, atol=atol)
+        np.testing.assert_allclose(leaky[..., 3], 0.9 * bare[..., 3], rtol=1e-6, atol=atol)
+        np.testing.assert_allclose(leaky[..., 1:3], 0, atol=atol)
     finally:
         dt.close()
 

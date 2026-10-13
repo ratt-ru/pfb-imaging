@@ -110,17 +110,19 @@ def _default_mds(output_filename: str, suffix: str) -> str:
     raise ValueError(f"No mds found. Looked for {' and '.join(candidates)}. Pass --mds to name one explicitly.")
 
 
-def check_model(model_ds: xr.Dataset, product: str) -> dict:
+def check_model(model_ds: xr.Dataset, product: str, *, beam: bool = False) -> dict:
     """Validate the `.mds` and the requested product before any work starts.
 
     `model_geometry` already raises on an unknown `spec` and on non-square
     pixels; calling it here means those fire before a Ray cluster is stood up
-    and before a column is added to the user's MS. The product must be a
-    subset of the model's Stokes planes (`check_stokes_subset`).
+    and before a column is added to the user's MS. Without a beam the product
+    must be a subset of the model's Stokes planes (`check_stokes_subset`).
 
     Args:
         model_ds: An opened `.mds` dataset.
         product: The `--product` string.
+        beam: Whether `--beam-model` is set, which lets the product name planes
+            the model lacks (leakage, D55).
 
     Returns:
         `model_geometry(model_ds)`: nx, ny, cell_rad, x0, y0, flip_u/v/w, stokes.
@@ -130,7 +132,7 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
             the spec or the pixel shape.
     """
     geom = model_geometry(model_ds)  # raises on unknown spec / non-square pixels
-    check_stokes_subset(product, geom["stokes"])
+    check_stokes_subset(product, geom["stokes"], beam=beam)
     return geom
 
 
@@ -512,7 +514,7 @@ def degrid(
     # the driver loads it for the guards below; replicas reopen it themselves
     model_ds = _load_model(mds)
 
-    geom = check_model(model_ds, product)
+    geom = check_model(model_ds, product, beam=beam_model is not None)
     log.info(
         f"Model grid {geom['nx']}x{geom['ny']} at {np.rad2deg(geom['cell_rad']) * 3600:.4e} arcsec, "
         f"stokes {geom['stokes']}"
@@ -709,7 +711,7 @@ def degrid(
         model=Multiton(_load_model, mds),
         masks=Multiton(_load_masks, mds, region_file),
         columns=columns,
-        stokes=check_stokes_subset(product, geom["stokes"]),
+        stokes=check_stokes_subset(product, geom["stokes"], beam=beam_model is not None),
         accumulate=accumulate,
         epsilon=epsilon,
         do_wgridding=do_wgridding,

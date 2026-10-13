@@ -109,7 +109,9 @@ def degrid(
     product: Annotated[
         str,
         typer.Option(
-            help="Stokes product to degrid. Every Stokes parameter named must be one the model carries.",
+            help="Stokes product to degrid. "
+            "Without --beam-model every Stokes parameter named must be one the model carries. "
+            "With it any of IQUV may be named, which predicts the beam's leakage into those planes.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",

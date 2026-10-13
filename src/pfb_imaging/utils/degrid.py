@@ -162,23 +162,27 @@ def ensure_model_columns(
     dt.sync_msv2(write_map={c: c for c in columns})
 
 
-def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
+def check_stokes_subset(product: str, model_stokes: Sequence[str], *, beam: bool = False) -> list[str]:
     """Validate that `product` names Stokes planes the model actually carries.
 
     Shared by `degrid` and `imager --transfer-model-from`: rendering a model as
     a Stokes product it does not hold produces confidently wrong data, so a
-    missing plane is refused rather than zero-filled.
+    missing plane is refused rather than zero-filled. With a beam the product
+    names apparent planes, which the Mueller block fills from the model's
+    planes, so any of IQUV is allowed: naming more is how a user opts into
+    beam leakage (D55).
 
     Args:
         product: The `--product` string, for example `"I"` or `"IQUV"`.
         model_stokes: The model's `stokes` coord, from `model_geometry`.
+        beam: Whether a beam maps the model's planes onto the product.
 
     Returns:
         The requested Stokes labels, in `product` order.
 
     Raises:
         ValueError: If `product` is empty, has a letter outside IQUV, repeats
-            one, or names a plane absent from `model_stokes`.
+            one, or, without a beam, names a plane absent from `model_stokes`.
     """
     requested = list(product.upper().strip())
     if not requested:
@@ -189,7 +193,7 @@ def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
     if len(set(requested)) != len(requested):
         raise ValueError(f"Product {product!r} repeats a Stokes parameter")
     missing = [s for s in requested if s not in model_stokes]
-    if missing:
+    if missing and not beam:
         raise ValueError(
             f"Requested product {product!r} but the model carries Stokes {list(model_stokes)}; "
             f"{''.join(missing)} is missing. Rendering a model as a Stokes product it does not "
@@ -426,8 +430,9 @@ def degrid_region(
             of `columns` and in the same order.
         columns: Output column names, aligned with `masks`.
         corr_types: Correlation names, i.e. the node's `polarization` values.
-        stokes: Stokes planes to degrid, in output order; a subset of the
-            model's, validated by `check_stokes_subset`.
+        stokes: Stokes planes to degrid, in output order, validated by
+            `check_stokes_subset`: a subset of the model's without `wizards`,
+            any of IQUV with them (the beam's leakage fills the rest).
         accumulate: Add to what the column already holds in this region.
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.

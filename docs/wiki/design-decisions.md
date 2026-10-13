@@ -1682,8 +1682,12 @@ update it (and this page's `last_verified_commit`) in the same session.
     meerkat-beams' `BeamWizard.partition_mueller`: one beam convention per caller, and
     pfb-model-spec passes `divide_by_n` through untouched (landmanbester/pfb-model-spec#22).
   - **The beam is the full Stokes Mueller block** from the model's Stokes to the requested
-    product, so leakage (`M[Q,I]` and friends) is predicted, which the `.dt`'s diagonal beam
-    cannot do (D42).
+    product, so leakage (`M[Q,I]` and friends) can be predicted, which the `.dt`'s diagonal beam
+    cannot do (D42). **Leakage is opt-in:** with a beam, `--product` names apparent planes and
+    may name ones the model lacks, so an I-only model with `--product IQUV` predicts I->Q/U/V.
+    The default `--product I` predicts `M[I,I]` only. Each extra output plane is another
+    gridding pass per beam term, and the cost is to be measured before leakage becomes a
+    default (#357; `test_degrid_region_predicts_leakage_when_the_product_asks_for_it`).
   - **The MPM cross group is predicted exactly**, as `V = degrid(Re A) ± i·degrid(Im A)`, with
     `-` (the conjugate) on rows whose antenna1 is MeerKAT+. D46's `Re(B)` argument needs a sum
     over conjugate baseline orderings, which an image has and a single visibility row does not.
