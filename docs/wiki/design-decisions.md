@@ -1724,7 +1724,7 @@ update it (and this page's `last_verified_commit`) in the same session.
     pixel j=4 of a 64² grid at 1e-5 rad, where 1.481 is expected. The mosaic/reproject path is
     correct, and degrid evaluates on `pixel_lm` and is correct. Until the imager is fixed,
     `imager --transfer-model-from` and `degrid --beam-model` apply opposite east-west
-    orientations on single-field data; circular beams hide this. Not yet filed as an issue.
+    orientations on single-field data; circular beams hide this. Tracked in #355.
   - **Multi-node runs need a shared `MBEAMS_CACHE_DIR`.** The driver warms only its own node's
     beam cache, and replicas rebuild wizards from their node's `MBEAMS_CACHE_DIR`. A multi-node
     `--ray-address` run therefore needs `MBEAMS_CACHE_DIR` on shared storage, with any
@@ -1733,8 +1733,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** issue #353; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
   `_coarse_axes`, `degrid_region`), `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/utils/baselines.py`; pfb-model-spec#27 (`pixel_lm`, `interp_mueller`,
-  `BeamTerm`, `model_to_apparent_vis_for_regions` and the crop helpers moved there);
-  landmanbester/pfb-model-spec#22; landmanbester/meerkat-beams#31, #33. Tests in
+  `BeamTerm`, `model_to_apparent_vis_for_regions` and the crop helpers moved there in
+  landmanbester/pfb-model-spec#36); landmanbester/pfb-model-spec#22; landmanbester/meerkat-beams#31, #33. Tests in
   `tests/test_degrid.py`: `test_degrid_region_divides_by_n_without_a_beam`,
   `test_degrid_region_with_a_beam_lets_ducc_divide_by_n`,
   `test_degrid_region_attenuates_by_the_beam_at_the_source`,
