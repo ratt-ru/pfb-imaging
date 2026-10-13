@@ -38,6 +38,7 @@ from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
     missing_group_beams,
     node_baseline_groups,
+    parse_antenna_groups,
     preflight_baseline_groups,
 )
 from pfb_imaging.utils.degrid import (
@@ -542,6 +543,19 @@ def degrid(
             )
         if sampling["flux_scale"] is None:
             log.warning("The model records no flux_scale; assuming intrinsic flux and applying the beam.")
+    if antenna_groups is not None:
+        if not baseline_groups:
+            # Refuse rather than ignore, as the imager does
+            log.error_and_raise(
+                "--antenna-groups only has an effect with --baseline-groups, which is not set. "
+                "Add --baseline-groups, or drop --antenna-groups.",
+                ValueError,
+            )
+        # parsed even when --baseline-groups is dropped for lack of a beam
+        try:
+            parse_antenna_groups(antenna_groups)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
     use_groups = beam_model is not None and baseline_groups
     group_override = (
         preflight_baseline_groups(msnames, partition_columns, beam_model, antenna_groups) if use_groups else None

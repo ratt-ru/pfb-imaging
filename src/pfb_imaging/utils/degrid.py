@@ -542,11 +542,11 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:
-    """The warning to log for a model's flux scale, if any.
+    """The warning to log when an intrinsic model is degridded without --beam-model.
 
-    `degrid` applies no primary beam, so an intrinsic model yields intrinsic
-    visibilities -- correct only where the beam is close to 1. Only logged when
-    degrid runs without --beam-model.
+    Without a beam an intrinsic model yields intrinsic visibilities, correct
+    only where the beam is close to 1. Only logged when degrid runs without
+    --beam-model.
 
     Args:
         flux_scale: The `.mds` `flux_scale`, from `model_sampling`.

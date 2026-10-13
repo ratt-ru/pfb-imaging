@@ -1831,3 +1831,24 @@ def test_degrid_group_beams_refuse_a_non_meerkat_array(degrid_ms, simple_mds, tm
         degrid_mod.degrid(
             [degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="L", baseline_groups=True
         )
+
+
+def test_degrid_refuses_antenna_groups_without_baseline_groups(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="only has an effect with --baseline-groups"):
+        degrid_mod.degrid(
+            [degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="L", antenna_groups="m*,e*"
+        )
+
+
+def test_degrid_refuses_malformed_antenna_groups_without_a_beam(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="exactly two comma-separated patterns"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=simple_mds[0],
+            product="I",
+            baseline_groups=True,
+            antenna_groups="m*",
+        )
