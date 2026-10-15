@@ -1,5 +1,6 @@
 """pfb hci-msv4: high cadence imaging of MSv4 data with worker actors and an actor writer."""
 
+import contextlib
 import gc
 import time
 from collections import Counter, deque
@@ -362,6 +363,8 @@ def hci_msv4(
         )
     if transfer_model_from is not None:
         log.error_and_raise("Use the degrid app to populate a model column instead", NotImplementedError)
+    if max_simul_chunks < 1:
+        log.error_and_raise(f"max_simul_chunks must be >= 1 (got {max_simul_chunks})", ValueError)
     if gain_table is not None:
         if len(gain_table) != len(ms):
             log.error_and_raise(f"Need one gain table per MS: got {len(gain_table)} for {len(ms)} MSs", ValueError)
@@ -579,7 +582,8 @@ def hci_msv4(
         # actors would outlive this call under keep_ray_alive; killing one also
         # fails its pending tasks, which is the error path's cancellation
         for actor in actors:
-            ray.kill(actor)
+            with contextlib.suppress(Exception):  # the original error, if any, must win
+                ray.kill(actor)
         if not keep_ray_alive:
             ray.shutdown()
 

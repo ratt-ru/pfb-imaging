@@ -78,6 +78,7 @@ def test_hci_msv4_output_layout(ms_name, tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)  # two full runs (hci and hci-msv4) can exceed the 300 s default
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
 def test_hci_msv4_matches_hci(ms_name, tmp_path, phase_dir):
     pytest.importorskip("daskms")
@@ -206,6 +207,11 @@ def test_hci_msv4_two_ms_centre_on_the_barycentre(ms_name, tmp_path, pctable):
     nx, ny = ds.sizes["X"], ds.sizes["Y"]
     assert_allclose(ds.X.values[nx // 2], ra0, atol=1e-9)
     assert_allclose(ds.Y.values[ny // 2], dec0, atol=1e-9)
+
+
+def test_hci_msv4_refuses_non_positive_max_simul_chunks(ms_name, tmp_path):
+    with pytest.raises(ValueError, match="max_simul_chunks must be >= 1"):
+        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), max_simul_chunks=0, **COMMON)
 
 
 def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
