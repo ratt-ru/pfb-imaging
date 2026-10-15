@@ -77,3 +77,23 @@ def test_empty_selection_is_refused(dts):
 def test_integrations_per_image_must_be_positive_or_sentinel(dts):
     with pytest.raises(ValueError, match="integrations_per_image"):
         plan_images(dts, integrations_per_image=-3, channels_per_image=-1, images_per_chunk=4)
+
+
+def test_channels_per_image_must_be_positive_or_sentinel(dts):
+    with pytest.raises(ValueError, match="channels_per_image"):
+        plan_images(dts, integrations_per_image=1, channels_per_image=-3, images_per_chunk=4)
+
+
+def test_images_per_chunk_must_be_positive(dts):
+    with pytest.raises(ValueError, match="images_per_chunk"):
+        plan_images(dts, integrations_per_image=1, channels_per_image=-1, images_per_chunk=0)
+
+
+def test_plan_wraps_ra_and_keeps_full_spw_for_transients(dts):
+    node = _node(dts)
+    freqs = node.ds.frequency.values
+    plan = plan_images(
+        dts, integrations_per_image=1, channels_per_image=-1, images_per_chunk=4, freq_min=freqs[2], freq_max=freqs[-2]
+    )
+    assert ((plan.field_radecs[:, 0] >= 0) & (plan.field_radecs[:, 0] < 2 * np.pi)).all()
+    np.testing.assert_array_equal(plan.all_freqs, np.unique(freqs))

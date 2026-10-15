@@ -43,7 +43,7 @@ class HciPlan:
     max_blength: float
     max_freq: float
     all_times: np.ndarray  # unique MJD integration times over the selection (transients)
-    all_freqs: np.ndarray  # unique channel frequencies over the selection (transients)
+    all_freqs: np.ndarray  # unique channel frequencies of the selected nodes' full spws (transients)
 
 
 def plan_images(
@@ -77,14 +77,20 @@ def plan_images(
         The HciPlan.
 
     Raises:
-        ValueError: on an empty selection, a non-positive integrations_per_image
-            other than the whole-scan sentinels, or two partitions mapping to the
-            same output image.
+        ValueError: on an empty selection, a non-positive integrations_per_image or
+            channels_per_image other than the whole-scan/spw sentinels, a non-positive
+            images_per_chunk, or two partitions mapping to the same output image.
     """
     if integrations_per_image not in _WHOLE and integrations_per_image < 1:
         raise ValueError(
             f"integrations_per_image must be >= 1, or -1 for one image per scan (got {integrations_per_image})"
         )
+    if channels_per_image not in _WHOLE and channels_per_image < 1:
+        raise ValueError(
+            f"channels_per_image must be >= 1, or -1 for one image per spectral window (got {channels_per_image})"
+        )
+    if images_per_chunk < 1:
+        raise ValueError(f"images_per_chunk must be >= 1 (got {images_per_chunk})")
     raw = []  # (ms_index, path, tslice, fslice, tmean_mjd, fmean, fwidth)
     radecs, all_times, all_freqs = [], [], []
     max_blength, max_freq = 0.0, 0.0
@@ -106,9 +112,11 @@ def plan_images(
             if uvw.size:
                 max_blength = max(max_blength, float(np.hypot(uvw[:, 0], uvw[:, 1]).max()))
             max_freq = max(max_freq, float(freqs.max()))
-            radecs.append(sel.field_radec)
+            radec = np.array(sel.field_radec, dtype=np.float64)
+            radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings and read_item
+            radecs.append(radec)
             all_times.append(tmjd)
-            all_freqs.append(freqs)
+            all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
             ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
             cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
             for t0 in range(0, tmjd.size, ipi):
