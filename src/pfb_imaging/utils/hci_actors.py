@@ -6,9 +6,16 @@ it lives, which is what makes the slab writes safe without a lock.
 """
 
 import gc
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+import xarray as xr
 import zarr
+from rarg_python_patterns.multiton import Multiton
+
+from pfb_imaging.utils.memprof import task_memory
+from pfb_imaging.utils.msv4 import get_engine
+from pfb_imaging.utils.stokes2im_msv4 import image_item, read_item
 
 _IMAGE_VARS = ("cube", "beam_weight", "psf")
 _SCALAR_VARS = ("weight", "rms", "nonzero", "psf_maj", "psf_min", "psf_pa")
@@ -188,3 +195,97 @@ class CubeWriterImpl:
         self._root["flag"][:] = flag
         self._root["channel_width"][:] = self._channel_width.astype(self._root["channel_width"].dtype)
         return {"nflagged": int(drop.sum())}
+
+
+def _key(item) -> tuple:
+    return (item.ms_index, item.node_path, item.time_index, item.band_index)
+
+
+class HciWorkerImpl:
+    """Reads and images work items; reads the next item on a thread while imaging the current one.
+
+    Visibilities stay in this process. Actor execution is serial, so the only
+    concurrency is the single prefetch thread (arcae reads and ducc gridding both
+    release the GIL).
+
+    Args:
+        msnames: Measurement sets, indexed by ``WorkItem.ms_index``.
+        cfg: Imaging configuration.
+        nx_psf: PSF size in x.
+        ny_psf: PSF size in y.
+        data_group: MSv4 data group.
+        gain_specs: One gain term (or None) per MS.
+        beam_model: A BeamWizard or None.
+    """
+
+    def __init__(
+        self,
+        msnames: list[str],
+        cfg,
+        nx_psf: int,
+        ny_psf: int,
+        data_group: str = "base",
+        gain_specs: list[str | None] | None = None,
+        beam_model=None,
+    ) -> None:
+        self._dts = [Multiton(xr.open_datatree, name, **get_engine(name)) for name in msnames]
+        self._cfg = cfg
+        self._nx_psf = nx_psf
+        self._ny_psf = ny_psf
+        self._data_group = data_group
+        self._gain_specs = gain_specs or [None] * len(msnames)
+        self._beam_model = beam_model
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hci-read")
+        self._pending = None  # (key, Future[ItemData])
+
+    def _read(self, item):
+        node = self._dts[item.ms_index].instance[item.node_path]
+        return read_item(node, item.region, self._cfg, self._data_group, self._gain_specs[item.ms_index])
+
+    def image(self, item, next_item=None) -> tuple[dict, dict]:
+        """Image ``item`` (prefetched if it was the previous call's ``next_item``) and start reading ``next_item``.
+
+        Args:
+            item: The work item to image.
+            next_item: The item the driver will send next, or None.
+
+        Returns:
+            (result, mem): the image result dict plus ``time_index``/``band_index``, and the
+            post-gc ``task_memory()`` telemetry. Call with ``num_returns=2`` so the image ref
+            goes to the writer and only the small telemetry returns to the driver.
+
+        Raises:
+            RuntimeError: A prefetch is still pending for a different item (driver bug).
+        """
+        try:
+            if self._pending is not None and self._pending[0] == _key(item):
+                _, fut = self._pending
+                self._pending = None  # cleared first so a failed read surfaces here, once
+                inp = fut.result()
+            else:
+                inp = self._read(item)
+            if next_item is not None:
+                if self._pending is not None:
+                    raise RuntimeError(
+                        f"prefetch pending for {self._pending[0]} while asked to prefetch {_key(next_item)}"
+                    )
+                self._pending = (_key(next_item), self._executor.submit(self._read, next_item))
+            result = image_item(inp, self._cfg, self._beam_model, self._nx_psf, self._ny_psf)
+            result["time_index"] = item.time_index
+            result["band_index"] = item.band_index
+            del inp
+            gc.collect()
+            return result, task_memory()
+        except Exception as e:
+            e.add_note(f"while imaging {item}")
+            raise
+        finally:
+            gc.collect()
+
+    def close(self) -> None:
+        """Drop any pending prefetch and stop the read thread."""
+        try:
+            self._pending = None
+            self._executor.shutdown(wait=True, cancel_futures=True)
+        finally:
+            gc.collect()
