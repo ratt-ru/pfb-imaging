@@ -11,6 +11,7 @@ import pytest
 import xarray as xr
 from numpy.testing import assert_allclose
 
+from pfb_imaging.core import hci_msv4 as hci_msv4_module
 from pfb_imaging.core.hci_msv4 import hci_msv4 as hci_msv4_core
 from pfb_imaging.utils.misc import radec_barycentre, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
@@ -121,13 +122,20 @@ def test_hci_msv4_gain_table_count_mismatch(ms_name, tmp_path):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), gain_table=["a::NET", "b::NET"], **COMMON)
 
 
-@pytest.mark.slow
-def test_hci_msv4_worker_error_propagates(ms_name, tmp_path):
-    """An off-grid gain term fails in a worker; the driver re-raises rather than hanging."""
+def test_hci_msv4_refuses_off_grid_gains_before_ray(ms_name, tmp_path, monkeypatch):
+    """An off-grid gain term is refused by the driver from coordinates alone, before Ray starts.
+
+    Worker-error propagation itself is covered by tests/test_hci_dispatch.py.
+    """
     node = _vis_node(ms_name)
     t = to_mjd_time(node.ds.time.values) + 3.0  # 3 s off the data grid
     _gain_term(f"{tmp_path}/bad.qc/NET/NET_0", node, t, 1.0 + 0j)
-    with pytest.raises(ValueError, match="on-grid only"):
+
+    def no_ray(*args, **kwargs):
+        raise AssertionError("Ray was started")
+
+    monkeypatch.setattr(hci_msv4_module, "init_ray", no_ray)
+    with pytest.raises(ValueError, match=r"bad\.qc/NET does not apply to .* node .*on-grid only"):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), gain_table=[f"{tmp_path}/bad.qc::NET"], **COMMON)
 
 

@@ -4,7 +4,7 @@ import gc
 import time
 from collections import Counter, deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import fsspec
@@ -17,7 +17,7 @@ from meerkat_beams.utils import BeamWizard
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.gains import open_term, term_path
+from pfb_imaging.utils.gains import check_node_grid, open_term, term_path
 from pfb_imaging.utils.hci_actors import CubeWriterImpl, HciWorkerImpl
 from pfb_imaging.utils.hci_common import (
     build_scaffold,
@@ -54,6 +54,15 @@ class WorkItem:
         return {"time": self.time, "frequency": self.frequency}
 
 
+@dataclass(frozen=True)
+class PlannedNode:
+    """What the driver checks per selected node once the trees are closed."""
+
+    scan_name: str
+    times_unix: np.ndarray  # the node's time coordinate
+    freqs: np.ndarray  # Hz, the selected channels: the union of the node's image regions
+
+
 @dataclass
 class HciPlan:
     """The full set of work items plus the output axes and global scalars."""
@@ -68,6 +77,7 @@ class HciPlan:
     max_freq: float
     all_times: np.ndarray  # unique MJD integration times over the selection (transients)
     all_freqs: np.ndarray  # unique channel frequencies of the selected nodes' full spws (transients)
+    nodes: dict[tuple[int, str], PlannedNode] = field(default_factory=dict)  # (ms_index, path) -> node
 
 
 def plan_images(
@@ -117,6 +127,7 @@ def plan_images(
         raise ValueError(f"images_per_chunk must be >= 1 (got {images_per_chunk})")
     raw = []  # (ms_index, path, tslice, fslice, tmean_mjd, fmean, fwidth)
     radecs, all_times, all_freqs = [], [], []
+    nodes = {}
     max_blength, max_freq = 0.0, 0.0
     for ims, dt in enumerate(dts):
         for sel in select_vis_nodes(
@@ -141,6 +152,7 @@ def plan_images(
             radecs.append(radec)
             all_times.append(tmjd)
             all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
+            nodes[(ims, sel.path)] = PlannedNode(str(sel.scan_name), node.ds.time.values, freqs)
             ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
             cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
             for t0 in range(0, tmjd.size, ipi):
@@ -189,6 +201,7 @@ def plan_images(
         max_freq=max_freq,
         all_times=np.unique(np.concatenate(all_times)),
         all_freqs=np.unique(np.concatenate(all_freqs)),
+        nodes=nodes,
     )
 
 
@@ -420,6 +433,16 @@ def hci_msv4(
             f"{missing} not found in data group {data_group!r} of {first.path}; have {sorted(first.ds.data_vars)}",
             ValueError,
         )
+
+    if gain_table is not None:
+        # coordinates only, with the workers' own selection and alignment: fail now, not hours in
+        for (ims, path), pn in plan.nodes.items():
+            try:
+                check_node_grid(gain_table[ims], pn.scan_name, pn.times_unix, pn.freqs)
+            except ValueError as e:
+                log.error_and_raise(
+                    f"Gain term {gain_table[ims]} does not apply to {ms[ims]} node {path}: {e}", ValueError
+                )
 
     if sigma_column is not None:
         log.info(f"Initialising weights from {sigma_column} column")
