@@ -87,7 +87,8 @@ object store; a single `CubeWriter` actor assembles `(band, time-block)` slabs a
 once to integer zarr regions -- no synchronizer, no `region="auto"` (D56). `--images-per-chunk`
 (default 128) is the TIME chunk only; `--max-simul-chunks` (default 2) bounds writer memory.
 Selection is by name (`--field-names`/`--spw-names`/`--scan-names`), as `degrid`. Behaviour
-changes from `hci`: gain flags are honoured, two partitions mapping to one output image raise,
+changes from `hci`: gain flags are honoured, `FLAG_ROW` is not (xarray-ms ignores it when `FLAG`
+exists; `docs/msv4_issues.md` issue 7), two partitions mapping to one output image raise,
 `--temp-dir` is dropped, `--weight-grid-out` is refused and `--check-ants` is removed.
 
 **`degrid`'s option contract is MSv4-native and is not the MSv2 command's.** Selection is by

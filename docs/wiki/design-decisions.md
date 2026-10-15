@@ -1774,6 +1774,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Consequences:** writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image bytes`,
   the knob for 128 GB nodes (`--max-simul-chunks`, default 2). `TIME` stays MJD seconds for
   parity with `hci`. Gain flags are honoured. Two partitions mapping to one output image raise.
+  `FLAG_ROW` is not: xarray-ms reads it only when `FLAG` is absent, so a row flagged only
+  through `FLAG_ROW` enters `hci-msv4` images but not `hci`'s, which ORs it in itself
+  (`docs/msv4_issues.md` issue 7). Documented, deliberately not worked around.
   `--temp-dir` is dropped, `--weight-grid-out` is refused before Ray and `--check-ants` is
   removed. Zero-weight images keep NaN `psf_maj`/`psf_min`/`psf_pa` exactly as `hci`; the only
   deliberate numerical deviation is in `cube_mean`, which excludes unreceived images and is 0

@@ -36,6 +36,7 @@ xarray-ms 0.4.0a12 / arcae 0.4.0a14 are the floors that carry the fixes for issu
 | 4 | Every `MSv2Structure` build retains ~1.5 MB | arcae | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed** by ska-sa/arcae#244 (0.4.0a13); 0.0185 MB/build on a14 |
 | 5 | No public way to evict xarray-ms's own table cache | rarg-python-patterns | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed**: keyed `Multiton.clear_cache` in 0.0.5 (via xarray-ms 0.4.0a12) |
 | 6 | `open_datatree` ignores `cache`, so every load is cached on the tree | xarray-ms | not yet | Worked around by `utils.msv4.load_detached` |
+| 7 | `FLAG_ROW` is ignored when `FLAG` is present | xarray-ms | not yet | Documented, not worked around (`hci-msv4`, D56) |
 
 ---
 
@@ -228,6 +229,22 @@ next task's peak — ~1.7 GiB per task on a 5120² UHF run (pfb-imaging#339). Wo
 `utils.msv4.load_detached`: indexing a `MemoryCachedArray` returns a new wrapper instead of
 populating it, so a full-slice `isel` before `.load()` gives the load private wrappers
 (0.00 x held). The ask upstream: forward `cache` (and `chunks`) to the per-partition opens.
+
+### 7. `FLAG_ROW` is ignored when `FLAG` is present — NOT YET FILED
+
+In MSv2 a row with `FLAG_ROW` set is flagged whatever its `FLAG` cells hold. xarray-ms reads
+`FLAG_ROW` only to synthesise `FLAG` when the `FLAG` column is absent, so on an ordinary MS
+a row flagged *only* through `FLAG_ROW` comes back unflagged in the MSv4 `FLAG`.
+[`flag_row_ignored.py`](../scripts/msv4_issues/flag_row_ignored.py) sets `FLAG_ROW` (and
+clears `FLAG`) on every row of the first timestamp of a copy of the MS; on xarray-ms 0.4.0a12 /
+arcae 0.4.0a14 the MSv4 `FLAG` at that time is 0% set over all 351 baselines.
+
+**Why it matters to us.** Legacy `pfb hci` ORs `FLAG_ROW` into its flags itself
+(`utils/stokes2im.py`), `pfb hci-msv4` takes the MSv4 `FLAG` as is, so the two differ on any MS
+whose flagger set `FLAG_ROW` without also setting `FLAG`. Most flaggers write both, which is
+why the agreement test does not see it. Deliberately documented rather than worked around
+(D56): the fix belongs in xarray-ms's `FLAG` factory, which should OR in `FLAG_ROW` whenever
+both columns exist. The ask upstream is exactly that.
 
 ## Retested, not reproduced
 
