@@ -30,7 +30,23 @@ class CubeWriterImpl:
         flag_excess_rms: Images whose rms exceeds this multiple of the band median are flagged.
     """
 
-    def __init__(self, store, expected, images_per_chunk, channel_width, flag_excess_rms):
+    def __init__(
+        self,
+        store: str,
+        expected: dict[tuple[int, int], int],
+        images_per_chunk: int,
+        channel_width: np.ndarray,
+        flag_excess_rms: float,
+    ) -> None:
+        """Open the scaffolded store for update.
+
+        Args:
+            store: Path of the scaffolded zarr store.
+            expected: (band_index, block) -> number of images the plan sends to that slab.
+            images_per_chunk: TIME chunk of the store.
+            channel_width: (nband,) channel width per band.
+            flag_excess_rms: Rms flagging threshold as a multiple of the band median.
+        """
         self._root = zarr.open_group(store, mode="r+")
         self._expected = dict(expected)
         self._ipc = images_per_chunk
@@ -58,7 +74,24 @@ class CubeWriterImpl:
         """Number of slabs currently held in memory."""
         return len(self._slabs)
 
-    def add(self, result):
+    def add(self, result: dict) -> tuple[int, int] | None:
+        """Store one image; write its slab once every expected image has arrived.
+
+        Args:
+            result: Task 4 image dict plus ``time_index`` and ``band_index``.
+
+        Returns:
+            (band, block) when that slab was written, otherwise None.
+
+        Raises:
+            KeyError: If the image's slab is not in the plan.
+        """
+        try:
+            return self._add(result)
+        finally:
+            gc.collect()  # actor-method boundary: deserialised results sit in cycles
+
+    def _add(self, result: dict) -> tuple[int, int] | None:
         t = int(result["time_index"])
         b = int(result["band_index"])
         key = (b, t // self._ipc)
@@ -99,10 +132,23 @@ class CubeWriterImpl:
         for v in self._img_vars:
             self._root[v][:, b, t0 : t0 + tlen] = slab[v]
         del self._slabs[key], self._counts[key]
-        gc.collect()
         return key
 
-    def finalise(self):
+    def finalise(self) -> dict:
+        """Write per-image scalars, flag, cube_mean, psf2 and channel_width.
+
+        Returns:
+            ``{"nflagged": int}``, the number of received, nonzero images flagged for excess rms.
+
+        Raises:
+            RuntimeError: If any slab is still incomplete.
+        """
+        try:
+            return self._finalise()
+        finally:
+            gc.collect()
+
+    def _finalise(self) -> dict:
         if self._slabs:
             raise RuntimeError(f"finalise called with {len(self._slabs)} incomplete slabs: {sorted(self._slabs)}")
         rms = self._scalars["rms"]
