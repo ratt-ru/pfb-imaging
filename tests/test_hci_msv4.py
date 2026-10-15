@@ -214,6 +214,27 @@ def test_hci_msv4_refuses_non_positive_max_simul_chunks(ms_name, tmp_path):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), max_simul_chunks=0, **COMMON)
 
 
+def test_hci_msv4_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
+    """Each MS's tree is closed before the next opens, and on a planning error (#241)."""
+    events = []
+    real_open, real_close = xr.open_datatree, xr.DataTree.close
+
+    def opening(*args, **kwargs):
+        events.append("open")
+        return real_open(*args, **kwargs)
+
+    def closing(self):
+        events.append("close")
+        return real_close(self)
+
+    monkeypatch.setattr(xr, "open_datatree", opening)
+    monkeypatch.setattr(xr.DataTree, "close", closing)
+    # the same MS twice maps two partitions to each output image: planning fails after both are read
+    with pytest.raises(ValueError, match="same output image"):
+        hci_msv4_core([ms_name, ms_name], str(tmp_path / "x.zarr"), **COMMON)
+    assert events == ["open", "close", "open", "close"]
+
+
 def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
     with pytest.raises(ValueError, match="NOPE"):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), data_column="DATA-NOPE", **COMMON)

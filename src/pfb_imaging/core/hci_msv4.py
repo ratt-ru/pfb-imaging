@@ -4,7 +4,7 @@ import contextlib
 import gc
 import time
 from collections import Counter, deque
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +62,8 @@ class PlannedNode:
     scan_name: str
     times_unix: np.ndarray  # the node's time coordinate
     freqs: np.ndarray  # Hz, the selected channels: the union of the node's image regions
+    data_vars: frozenset[str]  # the node's data variables
+    data_group: dict  # the node's entry for the requested data group, e.g. {"correlated_data": ...}
 
 
 @dataclass
@@ -82,7 +84,7 @@ class HciPlan:
 
 
 def plan_images(
-    dts: Sequence[xr.DataTree],
+    dts: Iterable[xr.DataTree],
     *,
     integrations_per_image: int,
     channels_per_image: int,
@@ -97,7 +99,8 @@ def plan_images(
     """One WorkItem per output image, with hci's time and band semantics.
 
     Args:
-        dts: Opened MSv4 DataTrees, one per measurement set.
+        dts: Opened MSv4 DataTrees, one per measurement set. Each is visited once, in order,
+            and not used after the next is requested, so a generator may close each in turn.
         integrations_per_image: Integrations per image; -1/0/None means one image per scan.
         channels_per_image: Channels per image; -1/0/None means all selected channels.
         images_per_chunk: Output images per time block.
@@ -153,7 +156,13 @@ def plan_images(
             radecs.append(radec)
             all_times.append(tmjd)
             all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
-            nodes[(ims, sel.path)] = PlannedNode(str(sel.scan_name), node.ds.time.values, freqs)
+            nodes[(ims, sel.path)] = PlannedNode(
+                str(sel.scan_name),
+                node.ds.time.values,
+                freqs,
+                frozenset(node.ds.data_vars),
+                dict(node.ds.attrs["data_groups"][data_group]),
+            )
             ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
             cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
             for t0 in range(0, tmjd.size, ipi):
@@ -393,19 +402,23 @@ def hci_msv4(
         freq_max = np.inf
 
     log.info("Planning images")
-    dts = [xr.open_datatree(m, **get_engine(m)) for m in ms]
-    plan = plan_images(
-        dts,
-        integrations_per_image=integrations_per_image,
-        channels_per_image=channels_per_image,
-        images_per_chunk=images_per_chunk,
-        data_group=data_group,
-        field_names=field_names,
-        spw_names=spw_names,
-        scan_names=scan_names,
-        freq_min=freq_min,
-        freq_max=freq_max,
-    )
+    # one MS open at a time, as hci (#241); the plan keeps what the checks below need
+    trees = _each_tree(ms)
+    try:
+        plan = plan_images(
+            trees,
+            integrations_per_image=integrations_per_image,
+            channels_per_image=channels_per_image,
+            images_per_chunk=images_per_chunk,
+            data_group=data_group,
+            field_names=field_names,
+            spw_names=spw_names,
+            scan_names=scan_names,
+            freq_min=freq_min,
+            freq_max=freq_max,
+        )
+    finally:
+        trees.close()
 
     # crude column arithmetic, as hci
     dc = data_column.replace(" ", "")
@@ -421,21 +434,21 @@ def hci_msv4(
         operator = None
 
     # MSv2 column names -> the data group's MSv4 variables
-    first = dts[plan.items[0].ms_index][plan.items[0].node_path]
-    grp = first.ds.attrs["data_groups"][data_group]
-
+    grp = plan.nodes[(plan.items[0].ms_index, plan.items[0].node_path)].data_group
     col_map = {"DATA": grp["correlated_data"], "WEIGHT_SPECTRUM": grp["weight"], "FLAG": grp["flag"]}
 
     def resolve(name: str | None) -> str | None:
         return None if name is None else col_map.get(name, name)
 
     wanted = [dc1, dc2, model_column, sigma_column if sigma_column else weight_column, flag_column]
-    missing = [n for n in wanted if n is not None and resolve(n) not in first.ds.data_vars]
-    if missing:  # fail now, not in a worker
-        log.error_and_raise(
-            f"{missing} not found in data group {data_group!r} of {first.path}; have {sorted(first.ds.data_vars)}",
-            ValueError,
-        )
+    for (ims, path), pn in plan.nodes.items():  # every node, not just the first: fail now, not in a worker
+        missing = [n for n in wanted if n is not None and resolve(n) not in pn.data_vars]
+        if missing:
+            log.error_and_raise(
+                f"{missing} not found in data group {data_group!r} of {ms[ims]} node {path}; "
+                f"have {sorted(pn.data_vars)}",
+                ValueError,
+            )
 
     if gain_table is not None:
         # coordinates only, with the workers' own selection and alignment: fail now, not hours in
@@ -546,8 +559,7 @@ def hci_msv4(
         inject_transients=inject_transients,
         nthreads=nthreads,
     )
-    del dts, first, grp  # the driver needs no open MS handles from here on
-    gc.collect()
+    gc.collect()  # every planning tree is closed; drop what they left in cycles
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
@@ -591,6 +603,16 @@ def hci_msv4(
         write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
 
     log.info(f"All done after {time.time() - time_start}s")
+
+
+def _each_tree(ms: list[str]) -> Iterator[xr.DataTree]:
+    """Open each MS's DataTree in turn, closing it once the consumer moves on."""
+    for m in ms:
+        dt = xr.open_datatree(m, **get_engine(m))
+        try:
+            yield dt
+        finally:
+            dt.close()
 
 
 def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
