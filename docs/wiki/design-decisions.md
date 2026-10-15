@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-15T17:38:25Z
+timestamp: 2026-10-15T17:43:30Z
 last_verified_commit: 865c107
 ---
 
@@ -1764,25 +1764,26 @@ update it (and this page's `last_verified_commit`) in the same session.
   `(band, time-block)` slabs, so each slab is one set of zarr chunks with exactly one writer, and
   writes each once to integer regions (`core/hci_msv4.py`, `utils/hci_actors.py`). No
   synchronizer, no `region="auto"`. The driver kills all actors in its `finally`, on success and
-  on failure, and shuts Ray down unless `keep_ray_alive`; it does not `ray.cancel` (Ray 2.56
-  forbids force-cancelling actor tasks). Worker errors reach the driver as
+  on failure, and shuts Ray down unless `keep_ray_alive`; it does not `ray.cancel`, because Ray
+  rejects `force=True` for actor tasks ("Only `force=False` is allowed for an Actor Task" in
+  `ray.cancel`'s docstring), so killing the actor, which fails its pending tasks, is the way out. Worker errors reach the driver as
   `RayTaskError(<OriginalType>)` with a `while imaging <item>` note.
 - **Rationale:** one writer per chunk removes the need for a lock that does not exist in zarr 3
   and does not cross nodes. Visibilities stay out of the object store (D10, #339), and only
   images travel. Long TIME chunks (`--images-per-chunk`, default 128) keep chunk counts small.
-- **Consequences:** writer RAM is `max_simul_chunks x nband x images_per_chunk x image bytes`,
+- **Consequences:** writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image bytes`,
   the knob for 128 GB nodes (`--max-simul-chunks`, default 2). `TIME` stays MJD seconds for
   parity with `hci`. Gain flags are honoured. Two partitions mapping to one output image raise.
   `--temp-dir` is dropped, `--weight-grid-out` is refused before Ray and `--check-ants` is
   removed. Zero-weight images keep NaN `psf_maj`/`psf_min`/`psf_pa` exactly as `hci`; the only
   deliberate numerical deviation is in `cube_mean`, which excludes unreceived images and is 0
-  where the masked weight sum is 0. `test_hci_msv4_matches_hci` shows agreement to about 2.4e-7
-  for both `phase_dir` cases. Every end-to-end `hci-msv4` test is `slow` under D45; only the
+  where the masked weight sum is 0. `test_hci_msv4_matches_hci` enforces
+  `atol = 1e-5 * max|hci|` per variable; the measured agreement is at most 2.4e-7 (`cube_mean`,
+  of 2.4; cube 8.5e-8, `psf2` 1.2e-7), recorded in the message of commit b8f011f. Every end-to-end `hci-msv4` test is `slow` under D45; only the
   refusal tests are in the fast set.
 - **Source:** #279, #257, #320 (fix 77978ce); `src/pfb_imaging/core/hci_msv4.py`,
   `src/pfb_imaging/utils/hci_actors.py`, `tests/test_hci_writer.py`,
   `tests/test_hci_msv4.py::test_hci_msv4_matches_hci`.
-
 
 ## Known debt
 

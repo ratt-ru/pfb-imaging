@@ -3,7 +3,7 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-15T17:38:25Z
+timestamp: 2026-10-15T17:43:30Z
 last_verified_commit: 865c107
 ---
 
@@ -296,7 +296,7 @@ Four Serve-specific notes:
   wrap their bodies in `try/finally gc.collect()`.
 - A worker's `shm` should stay near one image's size: images travel to the writer, visibilities
   do not. A ratchet there means arrays are being shipped through the object store.
-- The writer's RSS is flat at about `max_simul_chunks` slabs plus the float64 running sums
+- The writer's RSS is flat at about `max_simul_chunks` slabs (each `nband x images_per_chunk x nstokes` images) plus the float64 running sums
   `(nstokes, nband, ny, nx)`. Expect a plateau, not a ratchet (D56).
 - The prefetch doubles a worker's visibility footprint: two images' data are resident at once.
 
