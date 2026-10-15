@@ -119,3 +119,23 @@ def test_unknown_slab_is_an_error(tmp_path):
     w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
     with pytest.raises(KeyError, match="not in the plan"):
         w.add(_result(0, 3, 1.0))
+
+
+def test_finalise_drops_two_flagged_images_from_one_block(tmp_path):
+    """Two outliers in the same time block are both removed from the means (one block read)."""
+    store = _store(tmp_path, ntime=6, ipc=3)
+    w = CubeWriterImpl(store, _expected(6, 3), 3, np.array([1e6]), 1.5)
+    rms = [1.0, 6.0, 7.0, 1.0, 1.1, 0.9]  # times 1 and 2 share block 0
+    vals = [1.0, 50.0, 80.0, 2.0, 3.0, 4.0]
+    wts = [1.0, 2.0, 3.0, 1.0, 0.5, 2.0]
+    for t in range(6):
+        w.add(_result(t, 0, vals[t], weight=wts[t], rms=rms[t]))
+    out = w.finalise()
+    ds = xr.open_zarr(store)
+    flag = ds.flag.values[0, 0]
+    assert flag.tolist() == [False, True, True, False, False, False]
+    assert out["nflagged"] == 2
+    keep = ~flag
+    ref = np.sum(np.array(vals)[keep] * np.array(wts)[keep]) / np.sum(np.array(wts)[keep])
+    assert_allclose(ds.cube_mean.values[0, 0], ref, rtol=1e-6)
+    assert_allclose(ds.psf2.values[0], 1.0, rtol=1e-6)

@@ -173,13 +173,19 @@ class CubeWriterImpl:
         # zero-weight images never contributed
         weight = self._scalars["weight"].astype(np.float64)
         drop = flag & nonzero & self._received[None]
-        for c, b, t in zip(*np.nonzero(drop)):
-            w = weight[c, b, t]
-            self._cube_sum[c, b] -= w * self._root["cube"][c, b, t]
-            self._wsum[c, b] -= w
+        # read each (stokes, band, time block) once: a chunk spans images_per_chunk times
+        for c, b, blk in sorted({(c, b, t // self._ipc) for c, b, t in zip(*np.nonzero(drop))}):
+            t0 = blk * self._ipc
+            t1 = min(t0 + self._ipc, self._ntime)
+            ts = np.nonzero(drop[c, b, t0:t1])[0]
+            w = weight[c, b, t0 + ts]
+            cube = self._root["cube"][c, b, t0:t1][ts]
+            self._cube_sum[c, b] -= np.tensordot(w, cube, axes=1)
+            self._wsum[c, b] -= w.sum()
             if self._psf:
-                self._psf_sum[c] -= (w * self._root["psf"][c, b, t]) ** 2
-                self._w2sum[c] -= w**2
+                psf = self._root["psf"][c, b, t0:t1][ts]
+                self._psf_sum[c] -= ((w[:, None, None] * psf) ** 2).sum(axis=0)
+                self._w2sum[c] -= (w**2).sum()
 
         wsum = self._wsum[:, :, None, None]
         mean = np.divide(self._cube_sum, wsum, out=np.zeros_like(self._cube_sum), where=wsum > 0)
