@@ -571,6 +571,10 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
 
     Each worker's next item is promised at call time so its prefetch is always for an item it
     will receive. Image refs go straight from worker to writer; the driver only sees telemetry.
+    A worker is free again as soon as its own image call finishes, not when the writer has
+    stored the image: Ray runs an actor's calls in submission order, so gating on the writer
+    would make every worker wait on every earlier writer call (head-of-line blocking). Writer
+    acks drive slab accounting only, and at most ``2 * len(workers)`` of them are outstanding.
 
     Args:
         plan: The image plan; items are sorted by (block, band, time).
@@ -579,14 +583,17 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
         max_open: Maximum number of time blocks open in the writer at once.
 
     Raises:
-        Exception: The first worker or writer error, re-raised as Ray delivers it.
+        Exception: The first worker or writer error, re-raised as Ray delivers it; a worker's
+            error is preferred over the writer error it causes.
         RuntimeError: If dispatch stalls with work remaining (a bug).
     """
     queue = deque(plan.items)
     slabs_left = Counter(block for _, block in plan.expected)  # block -> slabs not yet written
     promised: dict[int, WorkItem] = {}
     idle = list(range(len(workers)))
-    inflight: dict = {}  # writer ack -> (worker index, item, telemetry ref)
+    imaging: dict = {}  # worker telemetry ref -> (worker index, item)
+    writing: dict = {}  # writer ack -> (item, worker telemetry ref)
+    max_writing = 2 * len(workers)
     nitems = len(plan.items)
     ndone = 0
 
@@ -594,8 +601,10 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
         lowest_open = min(slabs_left) if slabs_left else np.iinfo(np.int64).max
         return item.block < lowest_open + max_open
 
-    while queue or promised or inflight:
+    while queue or promised or imaging or writing:
         for w in list(idle):
+            if len(writing) >= max_writing:
+                break  # backpressure: the writer is behind
             if w in promised:
                 item = promised.pop(w)
             elif queue and allowed(queue[0]):
@@ -606,21 +615,30 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
             if nxt is not None:
                 promised[w] = nxt
             img_ref, mem_ref = workers[w].image.options(num_returns=2).remote(item, nxt)
-            inflight[writer.add.remote(img_ref)] = (w, item, mem_ref)
+            imaging[mem_ref] = (w, item)
+            writing[writer.add.remote(img_ref)] = (item, mem_ref)
             idle.remove(w)
-        if not inflight:
+        if not imaging and not writing:
             raise RuntimeError("hci-msv4 dispatch stalled with work remaining; this is a bug")
-        (ack,), _ = ray.wait(list(inflight), num_returns=1)
-        w, item, mem_ref = inflight.pop(ack)
+        (ref,), _ = ray.wait(list(imaging) + list(writing), num_returns=1)
+        if ref in imaging:
+            w, item = imaging.pop(ref)
+            try:
+                mem = ray.get(ref)
+            except Exception:
+                log.error(f"Failed on {item}")
+                raise
+            idle.append(w)
+            ndone += 1
+            log.info(f"Imaged: {ndone} / {nitems} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
+            continue
+        item, mem_ref = writing.pop(ref)
         try:
-            slab = ray.get(ack)
+            slab = ray.get(ref)
         except Exception:
-            log.error(f"Failed on {item}")
+            log.error(f"Failed writing {item}")
             ray.get(mem_ref)  # re-raises the worker's own error if it failed there
             raise
-        idle.append(w)
-        ndone += 1
-        log.info(f"Imaged: {ndone} / {nitems} [{format_memory(ray.get(mem_ref))}]", extra=pfb_logging.NO_MARKUP)
         if slab is not None:
             slabs_left[slab[1]] -= 1
             if slabs_left[slab[1]] == 0:
