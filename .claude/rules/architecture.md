@@ -80,6 +80,15 @@ rationale ledger: `docs/wiki/design-decisions.md`.
    with `--beam-model` (D55). Load-bearing decisions: D38-D42, D55.
 
 `pfb hci` is the separate high-cadence-imaging front-end.
+`pfb hci-msv4` is hci on MSv4 (xarray-ms/arcae), run side by side with `hci` until the two are
+shown to agree up to chunking, after which it replaces it. One `HciWorker` actor per worker reads
+and images one image per call, prefetching the next on a thread, so visibilities never enter the
+object store; a single `CubeWriter` actor assembles `(band, time-block)` slabs and writes each
+once to integer zarr regions -- no synchronizer, no `region="auto"` (D56). `--images-per-chunk`
+(default 128) is the TIME chunk only; `--max-simul-chunks` (default 2) bounds writer memory.
+Selection is by name (`--field-names`/`--spw-names`/`--scan-names`), as `degrid`. Behaviour
+changes from `hci`: gain flags are honoured, two partitions mapping to one output image raise,
+`--temp-dir` is dropped, `--weight-grid-out` is refused and `--check-ants` is removed.
 
 **`degrid`'s option contract is MSv4-native and is not the MSv2 command's.** Selection is by
 **name** — `--scan-names`/`--spw-names`/`--field-names`, not integer ids; chunking is
@@ -98,8 +107,11 @@ spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
 
 * Numba JIT with TBB threading for critical loops.
 * DUCC0 for gridding and FFT.
-* Dask for parallel chunk processing on the **`hci`** path only (`core/hci.py`, `utils/misc.py`,
-  `operators/fft.py`, `utils/spi.py`, `utils/correlations.py`); threads for FFTs/gridding (`--nthreads`). The imager/deconv/degrid path is
+* Dask for parallel chunk processing on the legacy **`hci`** path only (`core/hci.py`, `utils/misc.py`,
+  `operators/fft.py`, `utils/spi.py`, `utils/correlations.py`); threads for FFTs/gridding (`--nthreads`).
+  `hci-msv4` uses dask nowhere in its compute path: its only dask-backed step is the FITS export,
+  which reads the finished zarr through `xr.open_zarr` chunks (`utils/hci_common.write_fits_vars`).
+  The imager/deconv/degrid/hci-msv4 path is
   Ray, and `degrid`'s `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the
   last `distributed` consumer).
 * Ray actors for process-level parallelism in wavelet operators.

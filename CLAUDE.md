@@ -42,7 +42,7 @@ reasoning about. The rules say what you must do; the wiki says why.
 
 **The front-ends.** `pfb imager` (MSv4 -> `.dt`), `pfb deconv` (`.dt` -> model),
 `pfb restore` (`.dt` -> restored FITS) and `pfb degrid` (`.mds` -> MSv4), plus `pfb hci` for
-high-cadence imaging. `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
+high-cadence imaging and `pfb hci-msv4`, its MSv4 successor (run side by side for now). `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
 imager's invariants; `docs/wiki/imager-pipeline.md` has the tree layout.
 
 **Two things that bite hardest, so they are stated here as well as there:** never
