@@ -16,6 +16,8 @@ import pytest
 import xarray as xr
 import yaml
 from africanus.coordinates import radec_to_lm
+from astropy import units
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 from daskms import xds_from_table
@@ -25,13 +27,14 @@ from numpy.testing import assert_allclose
 from pfb_imaging.core.hci import (
     _FITS_AXIS_KEYWORDS,
     _STOKES_FITS_INDEX,
+    _default_phase_dir,
     _make_fits_header,
 )
 from pfb_imaging.core.hci import (
     hci as hci_core,
 )
 from pfb_imaging.utils.astrometry import resolve_target_radec
-from pfb_imaging.utils.misc import set_image_size
+from pfb_imaging.utils.misc import radec_barycentre, set_image_size
 from pfb_imaging.utils.stokes2im import beam_for_band, beam_gain_for_source
 from pfb_imaging.utils.transients import generate_transient_spectra
 
@@ -1056,3 +1059,25 @@ def test_hci_accepts_a_moving_target_in_a_single_time_bin(ms_name, ms_meta, tmp_
     hdr = dict(ds.attrs["fits_header"])
     assert_allclose(hdr["CRVAL1"], np.rad2deg(ra_sun), atol=1e-9)
     assert_allclose(hdr["CRVAL2"], np.rad2deg(dec_sun), atol=1e-9)
+
+
+def test_default_phase_dir_with_fields_sharing_a_coordinate():
+    """#320: fields sharing an RA or a Dec must not desynchronise the dedup."""
+    # three distinct pointings on one Dec strip, the first one seen twice (one
+    # per scan) -- unique-ing RA and Dec separately gives 3 RAs and 1 Dec
+    ra = np.deg2rad([10.0, 10.0, 11.0, 12.0])
+    dec = np.deg2rad([-30.0, -30.0, -30.0, -30.0])
+
+    phase_dir = _default_phase_dir(ra, dec)
+
+    ra_str, dec_str = phase_dir.split(",")
+    coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
+    expected = np.rad2deg(radec_barycentre(np.deg2rad([[10.0, -30.0], [11.0, -30.0], [12.0, -30.0]])))
+    assert_allclose([coord.ra.deg, coord.dec.deg], expected, atol=1e-6)
+
+
+def test_default_phase_dir_single_pointing_is_none():
+    """One pointing over many scans keeps the MS phase centre."""
+    ra = np.deg2rad([10.0, 10.0, 10.0])
+    dec = np.deg2rad([-30.0, -30.0, -30.0])
+    assert _default_phase_dir(ra, dec) is None

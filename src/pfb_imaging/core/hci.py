@@ -34,7 +34,7 @@ from zarr import ProcessSynchronizer
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import resolve_target_radec
-from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, set_image_size
+from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, radec_barycentre, set_image_size
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
@@ -781,6 +781,31 @@ def _make_fits_header(base_hdr, data_shape, stokes_params, drop_axes):
     return fits.Header(ordered)
 
 
+def _default_phase_dir(out_ra: np.ndarray, out_dec: np.ndarray) -> str | None:
+    """Barycentre of the distinct pointings, or None when there is only one.
+
+    Pointings are de-duplicated as (ra, dec) pairs: fields sharing an RA or a
+    Dec would otherwise leave the two arrays different lengths (#320).
+
+    Args:
+        out_ra: RA of every selected partition, radians.
+        out_dec: Dec of every selected partition, radians.
+
+    Returns:
+        ``'HH:MM:SS,DD:MM:SS'`` for the workers to rephase to, or None for a
+        single pointing, which keeps the MS phase centre.
+    """
+    radecs = np.unique(np.column_stack((out_ra, out_dec)), axis=0)
+    if radecs.shape[0] == 1:
+        return None
+    # propagated as phase_dir so the workers rephase to the same reference;
+    # otherwise the scaffold and the images would be centred on different skies
+    log.info("Using barycenter as phase center since no phase-dir was specified")
+    ra0, dec0 = radec_barycentre(radecs)
+    bary = SkyCoord(ra=ra0 * units.rad, dec=dec0 * units.rad, frame="fk5")
+    return f"{bary.ra.to_string(unit=units.hourangle, sep=':')},{bary.dec.to_string(unit=units.deg, sep=':')}"
+
+
 def make_dummy_dataset(
     ms,
     output_dataset,
@@ -871,29 +896,12 @@ def make_dummy_dataset(
 
     # spatial coordinates
     if phase_dir is None:
-        # these are in radians
-        out_ra = np.unique(out_ra)
-        out_dec = np.unique(out_dec)
-        if out_ra.size > 1 or out_dec.size > 1:
-            # compute the barycenter and propagate it as phase_dir so workers rephase to
-            # the same reference; otherwise the scaffold and the images would be centred
-            # on different skies.
-            log.info("Using barycenter as phase center since no phase-dir was specified")
-            cos_dec = np.cos(out_dec)
-            x = np.mean(cos_dec * np.cos(out_ra))
-            y = np.mean(cos_dec * np.sin(out_ra))
-            z = np.mean(np.sin(out_dec))
-            ra0 = np.arctan2(y, x) % (2.0 * np.pi)
-            dec0 = np.arctan2(z, np.hypot(x, y))
-            bary = SkyCoord(ra=ra0 * units.rad, dec=dec0 * units.rad, frame="fk5")
-            phase_dir = (
-                f"{bary.ra.to_string(unit=units.hourangle, sep=':')},{bary.dec.to_string(unit=units.deg, sep=':')}"
-            )
+        phase_dir = _default_phase_dir(out_ra, out_dec)
 
     if phase_dir is None:
         # single-field / single radec — use the MS phase centre directly
-        out_ra_deg = np.rad2deg(out_ra)
-        out_dec_deg = np.rad2deg(out_dec)
+        out_ra_deg = np.rad2deg(out_ra[:1])
+        out_dec_deg = np.rad2deg(out_dec[:1])
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
