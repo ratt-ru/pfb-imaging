@@ -6,9 +6,11 @@ partition -- ``gains.qc/NET/NET_0``, ``NET_1``... -- each holding ``gains``
 without the last axis, written by dask-ms with MSv2 ids (``FIELD_ID``,
 ``DATA_DESC_ID``, optionally ``SCAN_NUMBER``) as attributes. MSv4 nodes carry
 names, not ids, so partitions are matched on ``SCAN_NUMBER == int(scan_name)``
-when present, the frequency grid, and time overlap.
+when present, on every wanted channel being a gain channel (so a channel subset of
+the term's grid matches), and on time overlap.
 
-Gains apply on-grid only: each gain axis matches the data or has length one.
+Gains apply on-grid only: each wanted time and channel is a gain solution point, in
+either axis order, or the gain axis has length one.
 Ported from surfvis (serve-ui); temporary until QuartiCal writes plain xarray.
 """
 
@@ -82,8 +84,8 @@ def load_node_gains(
     Args:
         spec: Gain term, ``gains.qc/NET`` or ``gains.qc::NET``.
         scan_name: The node's scan name (``str(SCAN_NUMBER)`` for MSv2-backed trees).
-        times_unix: The node's ``time`` coordinate (unix seconds), ascending.
-        freqs: The node's channel frequencies in Hz.
+        times_unix: The times to load (unix seconds), all or part of the node's ``time`` coordinate.
+        freqs: The channel frequencies to load in Hz, all or a subset of the node's channels.
         antenna_names: Antenna names, indexed the way the caller's ant1/ant2 are.
 
     Returns:
@@ -93,16 +95,7 @@ def load_node_gains(
         ValueError: if zero or several partitions match, the grids disagree, or the term
             has several directions or an unsupported correlation count.
     """
-    path = term_path(spec)
-    dss = Multiton(open_term, path).instance
-    times_mjd = to_mjd_time(np.asarray(times_unix, dtype=float))
-    ds = _select(path, dss, scan_name, times_mjd, np.asarray(freqs, dtype=float))
-
-    if ds.sizes.get("direction", 1) > 1:
-        raise ValueError(f"{spec} has {ds.sizes['direction']} directions; only direction-independent gains apply")
-
-    tsel = _align(ds.gain_time.values, times_mjd, "time", atol=TIME_TOLERANCE)
-    fsel = _align(ds.gain_freq.values, np.asarray(freqs, dtype=float), "frequency", rtol=FREQ_RTOL)
+    ds, tsel, fsel = _resolve(spec, scan_name, times_unix, freqs)
 
     jones = np.asarray(ds.gains.values)[..., 0, :][tsel][:, fsel].astype(np.complex128)
     gflags = np.asarray(ds.gain_flags.values)[..., 0][tsel][:, fsel]
@@ -131,16 +124,50 @@ def load_node_gains(
     return NodeGains(jones=out_j, flags=out_f)
 
 
+def check_node_grid(spec: str, scan_name: str, times_unix: np.ndarray, freqs: np.ndarray) -> None:
+    """Check, on coordinates only, that a gain term applies to a node's (time, frequency) grid.
+
+    Runs exactly the partition selection and alignment :func:`load_node_gains` runs, so a
+    driver can refuse a mismatched term before any worker starts.
+
+    Args:
+        spec: Gain term, ``gains.qc/NET`` or ``gains.qc::NET``.
+        scan_name: The node's scan name.
+        times_unix: The node's ``time`` coordinate (unix seconds).
+        freqs: Every channel frequency the node will be imaged at, in Hz.
+
+    Raises:
+        ValueError: as :func:`load_node_gains`.
+    """
+    _resolve(spec, scan_name, times_unix, freqs)
+
+
+def _resolve(spec: str, scan_name: str, times_unix: np.ndarray, freqs: np.ndarray):
+    """The matching partition and the time/frequency indices of the wanted grid in it."""
+    path = term_path(spec)
+    dss = Multiton(open_term, path).instance
+    times_mjd = to_mjd_time(np.asarray(times_unix, dtype=float))
+    freqs = np.asarray(freqs, dtype=float)
+    ds = _select(path, dss, scan_name, times_mjd, freqs)
+    if ds.sizes.get("direction", 1) > 1:
+        raise ValueError(f"{spec} has {ds.sizes['direction']} directions; only direction-independent gains apply")
+    tsel = _align(ds.gain_time.values, times_mjd, "time", atol=TIME_TOLERANCE)
+    fsel = _align(ds.gain_freq.values, freqs, "frequency", rtol=FREQ_RTOL)
+    return ds, tsel, fsel
+
+
 def _select(path: str, dss, scan_name: str, times_mjd: np.ndarray, freqs: np.ndarray) -> xr.Dataset:
     lo, hi = float(times_mjd.min()), float(times_mjd.max())
 
     def overlaps(d):
         gt = d.gain_time.values
-        return gt.min() - TIME_TOLERANCE <= hi and gt.max() + TIME_TOLERANCE >= lo
+        # a single solution interval broadcasts over the node
+        return gt.size == 1 or (gt.min() - TIME_TOLERANCE <= hi and gt.max() + TIME_TOLERANCE >= lo)
 
     def freq_matches(d):
+        # every wanted channel is a gain channel: a channel subset of the term's grid matches
         gf = d.gain_freq.values
-        return gf.size == 1 or (gf.size == freqs.size and np.allclose(gf, freqs, rtol=FREQ_RTOL, atol=0))
+        return gf.size == 1 or _on_grid(gf, freqs, rtol=FREQ_RTOL)
 
     cands = [d for d in dss if freq_matches(d)]
     if any("SCAN_NUMBER" in d.attrs for d in cands):
@@ -153,13 +180,25 @@ def _select(path: str, dss, scan_name: str, times_mjd: np.ndarray, freqs: np.nda
     return cands[0]
 
 
+def _nearest(have: np.ndarray, want: np.ndarray) -> np.ndarray:
+    """Index into ``have`` (any order) of the element nearest each of ``want``."""
+    order = np.argsort(have, kind="stable")
+    srt = have[order]
+    idx = np.clip(np.searchsorted(srt, want), 0, srt.size - 1)
+    lower = np.clip(idx - 1, 0, srt.size - 1)
+    idx = np.where(np.abs(srt[lower] - want) < np.abs(srt[idx] - want), lower, idx)
+    return order[idx]
+
+
+def _on_grid(have: np.ndarray, want: np.ndarray, atol: float = 0.0, rtol: float = 0.0) -> bool:
+    return bool(np.allclose(have[_nearest(have, want)], want, atol=atol, rtol=rtol))
+
+
 def _align(have: np.ndarray, want: np.ndarray, name: str, atol: float = 0.0, rtol: float = 0.0):
     """Indices into ``have`` matching each of ``want``, or a broadcast slice."""
     if have.size == 1:
         return slice(None)
-    idx = np.clip(np.searchsorted(have, want), 0, have.size - 1)
-    lower = np.clip(idx - 1, 0, have.size - 1)
-    idx = np.where(np.abs(have[lower] - want) < np.abs(have[idx] - want), lower, idx)
+    idx = _nearest(have, want)
     if not np.allclose(have[idx], want, atol=atol, rtol=rtol):
         raise ValueError(
             f"Gain {name} axis does not match the data ({have.size} solutions for {want.size} data points). "

@@ -5,7 +5,7 @@ import pytest
 import xarray as xr
 from numpy.testing import assert_array_equal
 
-from pfb_imaging.utils.gains import load_node_gains, term_path
+from pfb_imaging.utils.gains import check_node_grid, load_node_gains, term_path
 from pfb_imaging.utils.misc import to_mjd_time
 
 ANTS = ["m000", "m001", "m002"]
@@ -153,3 +153,57 @@ def test_no_matching_partition(tmp_path):
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
     with pytest.raises(ValueError, match="No gain partitions"):
         load_node_gains(spec, "9", times, freqs, ANTS)
+
+
+def _ramp(ntime, nchan):
+    """Diagonal gains whose value encodes (time, channel): 1 + t + 0.1 c."""
+    g = np.empty((ntime, nchan, len(ANTS), 1, 2), dtype=np.complex128)
+    g[...] = (1.0 + np.arange(ntime)[:, None] + 0.1 * np.arange(nchan)[None, :])[:, :, None, None, None]
+    return g, np.zeros(g.shape[:-1], np.int8)
+
+
+def test_channel_and_time_subset_of_the_term(tmp_path):
+    """A region (channel subset, time subset) of a data-resolution term selects and aligns."""
+    times, freqs = _grid(ntime=4, nchan=8)
+    g, f = _ramp(4, 8)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
+    out = load_node_gains(spec, "1", times[1:3], freqs[2:5], ANTS)
+    assert out.jones.shape == (2, 3, 3, 2)
+    assert_array_equal(out.jones[..., 0, 0], g[1:3, 2:5, 0, 0, 0])
+    check_node_grid(spec, "1", times[1:3], freqs[2:5])
+
+
+def test_descending_gain_frequencies(tmp_path):
+    times, freqs = _grid(ntime=2, nchan=5)
+    g, f = _ramp(2, 5)
+    # the term is written high-to-low; the data asks low-to-high, and for a subset
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs[::-1], g, f)])
+    out = load_node_gains(spec, "1", times, freqs[1:4], ANTS)
+    assert_array_equal(out.jones[..., 0, 0], g[:, ::-1][:, 1:4, 0, 0, 0])
+
+
+def test_single_solution_interval_broadcasts_without_scan_attr(tmp_path):
+    """No SCAN_NUMBER: a length-1 gain_time counts as overlapping the node; the spw decides."""
+    times, freqs = _grid()
+    g1, f1 = _diag(1, 4, 2.0)
+    g2, f2 = _diag(1, 4, 3.0)
+    spec = _write_term(
+        tmp_path,
+        [
+            ({"FIELD_ID": 0, "DATA_DESC_ID": 0}, times[:1] - 500.0, freqs, g1, f1),
+            ({"FIELD_ID": 0, "DATA_DESC_ID": 1}, times[:1] - 500.0, freqs + 1e8, g2, f2),
+        ],
+    )
+    out = load_node_gains(spec, "3", times, freqs[1:3] + 1e8, ANTS)
+    assert out.jones.shape == (1, 2, 3, 2)
+    assert np.all(out.jones == 3.0)
+
+
+def test_check_node_grid_refuses_off_grid_channels(tmp_path):
+    times, freqs = _grid()
+    g, f = _diag(3, 4, 2.0)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
+    with pytest.raises(ValueError, match="No gain partitions"):
+        check_node_grid(spec, "1", times, freqs + 0.5e6)
+    with pytest.raises(ValueError, match="on-grid only"):
+        check_node_grid(spec, "1", times + 3.0, freqs)
