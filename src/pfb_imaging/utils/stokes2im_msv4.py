@@ -613,11 +613,8 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
     # should happen after beam correction
     rms = np.std(residual, axis=(1, 2))
 
-    # these will be in degrees; a zero-weight Stokes has an all-zero PSF and no beam
-    gausspars = np.zeros((nstokes, 3))
-    live = wsum > 0
-    if live.any():
-        gausspars[live] = fitcleanbeam(psf[live], level=0.5, pixsize=cell_deg, yx_order=True)
+    # these will be in degrees; an all-zero (zero-weight) PSF fits to NaN, as in hci
+    gausspars = np.asarray(fitcleanbeam(psf, level=0.5, pixsize=cell_deg, yx_order=True), dtype=np.float64)
 
     out = {"cube": residual.astype(np.float32)}
     if cfg.psf_out:

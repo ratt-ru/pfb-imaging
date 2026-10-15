@@ -71,6 +71,10 @@ def test_read_item_shapes_and_dtypes(node):
     assert inp.time_mjd[0] > 4e9  # MJD seconds, not unix
 
 
+# filter_extreme_counts takes the mean of an all-zero counts grid (robust weighting,
+# unchanged from the legacy path, which warns identically)
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in scalar divide:RuntimeWarning")
 def test_image_item_fully_flagged_returns_zero_weight(node):
     tree, sel = node
     inp = read_item(tree, {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}, _cfg())
@@ -80,6 +84,9 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
     assert not out["nonzero"][0]
     assert out["cube"].shape == (1, 128, 128) and out["cube"].dtype == np.float32
     assert np.all(out["cube"] == 0)
+    # legacy hci stores NaN beam parameters for a zero-weight image
+    for key in ("psf_maj", "psf_min", "psf_pa"):
+        assert out[key].shape == (1,) and np.isnan(out[key]).all()
 
 
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
