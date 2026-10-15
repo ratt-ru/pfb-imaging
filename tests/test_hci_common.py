@@ -1,20 +1,23 @@
-"""hci_common must be importable without dask-ms or pyrap (hci-msv4 depends on it)."""
+"""hci_common: scaffold layout, and the hci-msv4 import path stays free of dask-ms and pyrap."""
 
 import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 from pfb_imaging.utils.hci_common import build_scaffold, default_phase_dir
 
 
-def test_hci_common_imports_without_daskms_or_pyrap():
+@pytest.mark.slow  # a fresh interpreter importing the scientific stack: ~14-18 s (D45)
+def test_hci_msv4_imports_without_daskms_or_pyrap():
     code = (
         "import sys\n"
         "sys.modules['daskms'] = None\n"
         "sys.modules['pyrap'] = None\n"
         "sys.modules['casacore'] = None\n"
-        "import pfb_imaging.utils.hci_common\n"
+        "import pfb_imaging.core.hci_msv4\n"
+        "import pfb_imaging.cli.hci_msv4\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
