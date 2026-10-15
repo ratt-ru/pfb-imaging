@@ -22,7 +22,7 @@ URI = NewType("URI", Path)
 @stimela_output(
     dtype="Directory",
     name="output-dataset",
-    info="Basename of output.",
+    info="Basename of output. On a multi-node Ray cluster it must be on a filesystem every node can see.",
     required=True,
     policies={"positional": True},
     must_exist=True,
@@ -86,7 +86,7 @@ def hci_msv4(
         typer.Option(
             ...,
             parser=parse_upath,
-            help="Basename of output.",
+            help="Basename of output. On a multi-node Ray cluster it must be on a filesystem every node can see.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
@@ -435,22 +435,24 @@ def hci_msv4(
     ray_address: Annotated[
         str,
         typer.Option(
-            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            help="Address of the ray cluster to connect to. "
+            "If not provided, will run locally. "
+            "A multi-node cluster needs a filesystem shared by every node. "
+            "It must hold the output store, measurement sets, gain terms and transient files.",
             rich_help_panel="Performance",
         ),
     ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
-            help="Number of worker processes. Use with distributed scheduler.",
+            help="Number of HciWorker actors. Each reads and images one image at a time.",
             rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (for FFTs and gridding). "
-            "Each dask thread can in principle spawn this many threads. "
+            help="Number of threads per HciWorker actor, used for gridding and FFTs. "
             "Will attempt to use half the available threads by default.",
             rich_help_panel="Performance",
         ),

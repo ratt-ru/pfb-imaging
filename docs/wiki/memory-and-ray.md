@@ -291,6 +291,9 @@ Four Serve-specific notes:
 
 - Workers and the writer claim nominal CPUs (D8 reasoning) and the local cluster is sized
   `nworkers + 2`.
+- On a multi-node cluster every path is opened by whichever process needs it -- workers open
+  the measurement sets, gain terms and transient spectra, the writer the output store -- so all
+  of them must be on a filesystem every node can see. Nothing is shipped through Ray instead.
 - Each `HciWorker.image` call returns post-gc `task_memory()` alongside the image; the driver
   logs it as `Imaged: i / n [...]`. `CubeWriterImpl.add`/`finalise` and `HciWorkerImpl.image`
   wrap their bodies in `try/finally gc.collect()`.
