@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-15T17:43:30Z
-last_verified_commit: 865c107
+timestamp: 2026-10-15T19:01:09Z
+last_verified_commit: 56f1b05
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1767,13 +1767,21 @@ update it (and this page's `last_verified_commit`) in the same session.
   on failure, and shuts Ray down unless `keep_ray_alive`; it does not `ray.cancel`, because Ray
   rejects `force=True` for actor tasks ("Only `force=False` is allowed for an Actor Task" in
   `ray.cancel`'s docstring), so killing the actor, which fails its pending tasks, is the way out. Worker errors reach the driver as
-  `RayTaskError(<OriginalType>)` with a `while imaging <item>` note.
+  `RayTaskError(<OriginalType>)` with a `while imaging <item>` note. A worker is freed when its
+  own image call finishes, not when the writer acks the image: Ray runs an actor's calls in
+  submission order, so gating on writer acks makes every worker wait behind every earlier
+  `add` (head-of-line blocking). Acks drive only the slab accounting that bounds open time
+  blocks, with at most `2 x nworkers` outstanding (`_dispatch`).
 - **Rationale:** one writer per chunk removes the need for a lock that does not exist in zarr 3
   and does not cross nodes. Visibilities stay out of the object store (D10, #339), and only
   images travel. Long TIME chunks (`--images-per-chunk`, default 128) keep chunk counts small.
 - **Consequences:** writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image bytes`,
   the knob for 128 GB nodes (`--max-simul-chunks`, default 2). `TIME` stays MJD seconds for
-  parity with `hci`. Gain flags are honoured. Two partitions mapping to one output image raise.
+  parity with `hci`. Gain flags are honoured. Gain terms match a node when every wanted channel
+  is a gain channel, so channel subsets and descending `gain_freq` work, and the driver runs the
+  same selection and alignment on coordinates only (`gains.check_node_grid`) for every node
+  before Ray starts, so an off-grid term fails in seconds rather than in a worker hours in.
+  Two partitions mapping to one output image raise.
   `FLAG_ROW` is not: xarray-ms reads it only when `FLAG` is absent, so a row flagged only
   through `FLAG_ROW` enters `hci-msv4` images but not `hci`'s, which ORs it in itself
   (`docs/msv4_issues.md` issue 7). Documented, deliberately not worked around.
@@ -1781,12 +1789,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   removed. Zero-weight images keep NaN `psf_maj`/`psf_min`/`psf_pa` exactly as `hci`; the only
   deliberate numerical deviation is in `cube_mean`, which excludes unreceived images and is 0
   where the masked weight sum is 0. `test_hci_msv4_matches_hci` enforces
-  `atol = 1e-5 * max|hci|` per variable; the measured agreement is at most 2.4e-7 (`cube_mean`,
-  of 2.4; cube 8.5e-8, `psf2` 1.2e-7), recorded in the message of commit b8f011f. Every end-to-end `hci-msv4` test is `slow` under D45; only the
-  refusal tests are in the fast set.
+  `atol = 1e-5 * max|hci|` per variable; the agreement measured by that test when it was added
+  is at most 2.4e-7 (`cube_mean`, of 2.4; cube 8.5e-8, `psf2` 1.2e-7). Every end-to-end
+  `hci-msv4` test is `slow` under D45; only the refusal tests are in the fast set.
 - **Source:** #279, #257, #320 (fix 77978ce); `src/pfb_imaging/core/hci_msv4.py`,
-  `src/pfb_imaging/utils/hci_actors.py`, `tests/test_hci_writer.py`,
-  `tests/test_hci_msv4.py::test_hci_msv4_matches_hci`.
+  `src/pfb_imaging/utils/hci_actors.py`, `src/pfb_imaging/utils/gains.py`,
+  `tests/test_hci_writer.py`, `tests/test_hci_dispatch.py`, `tests/test_gains.py`,
+  `tests/test_hci_msv4.py::test_hci_msv4_matches_hci`,
+  `…::test_hci_msv4_refuses_off_grid_gains_before_ray`.
 
 ## Known debt
 
