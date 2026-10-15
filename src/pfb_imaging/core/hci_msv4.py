@@ -689,6 +689,8 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
             ray.get(mem_ref)  # re-raises the worker's own error if it failed there
             raise
         if slab is not None:
-            slabs_left[slab[1]] -= 1
-            if slabs_left[slab[1]] == 0:
-                del slabs_left[slab[1]]
+            (band, block), wmem = slab
+            log.info(f"Wrote band {band} block {block}: writer [{format_memory(wmem)}]", extra=pfb_logging.NO_MARKUP)
+            slabs_left[block] -= 1
+            if slabs_left[block] == 0:
+                del slabs_left[block]

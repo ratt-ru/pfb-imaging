@@ -62,7 +62,9 @@ def test_slab_written_once_complete_out_of_order(tmp_path):
     w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
     assert w.add(_result(1, 0, 2.0)) is None
     assert w.open_blocks() == 1
-    assert w.add(_result(0, 0, 1.0)) == (0, 0)
+    key, mem = w.add(_result(0, 0, 1.0))
+    assert key == (0, 0)
+    assert {"pid", "rss_gb", "peak_gb"} <= set(mem)  # writer telemetry on flush
     assert w.open_blocks() == 0
     cube = xr.open_zarr(store).cube.values
     assert_allclose(cube[0, 0, 0], 1.0)
@@ -73,7 +75,7 @@ def test_slab_written_once_complete_out_of_order(tmp_path):
 def test_short_last_block(tmp_path):
     store = _store(tmp_path)
     w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
-    assert w.add(_result(4, 0, 9.0)) == (0, 2)
+    assert w.add(_result(4, 0, 9.0))[0] == (0, 2)
     assert_allclose(xr.open_zarr(store).cube.values[0, 0, 4], 9.0)
 
 
@@ -83,7 +85,7 @@ def test_writer_partial_slab_keeps_fill_and_means_only_received(tmp_path):
     w = CubeWriterImpl(store, {(0, 0): 3}, 4, np.array([1e6]), 10.0)
     for t, v in [(0, 1.0), (1, 2.0)]:
         assert w.add(_result(t, 0, v)) is None
-    assert w.add(_result(3, 0, 4.0)) == (0, 0)
+    assert w.add(_result(3, 0, 4.0))[0] == (0, 0)
     w.finalise()
     ds = xr.open_zarr(store)
     assert np.isnan(ds.cube.values[0, 0, 2]).all()

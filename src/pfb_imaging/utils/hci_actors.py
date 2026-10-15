@@ -81,14 +81,15 @@ class CubeWriterImpl:
         """Number of slabs currently held in memory."""
         return len(self._slabs)
 
-    def add(self, result: dict) -> tuple[int, int] | None:
+    def add(self, result: dict) -> tuple[tuple[int, int], dict] | None:
         """Store one image; write its slab once every expected image has arrived.
 
         Args:
             result: Task 4 image dict plus ``time_index`` and ``band_index``.
 
         Returns:
-            (band, block) when that slab was written, otherwise None.
+            ``((band, block), mem)`` when that slab was written, with ``mem`` this process's
+            post-gc ``task_memory()``; otherwise None.
 
         Raises:
             KeyError: If the image's slab is not in the plan.
@@ -98,7 +99,7 @@ class CubeWriterImpl:
         finally:
             gc.collect()  # actor-method boundary: deserialised results sit in cycles
 
-    def _add(self, result: dict) -> tuple[int, int] | None:
+    def _add(self, result: dict) -> tuple[tuple[int, int], dict] | None:
         t = int(result["time_index"])
         b = int(result["band_index"])
         key = (b, t // self._ipc)
@@ -138,8 +139,9 @@ class CubeWriterImpl:
         tlen = slab[self._img_vars[0]].shape[1]
         for v in self._img_vars:
             self._root[v][:, b, t0 : t0 + tlen] = slab[v]
-        del self._slabs[key], self._counts[key]
-        return key
+        del self._slabs[key], self._counts[key], slab
+        gc.collect()  # so the telemetry shows the slab released
+        return key, task_memory()
 
     def finalise(self) -> dict:
         """Write per-image scalars, flag, cube_mean, psf2 and channel_width.

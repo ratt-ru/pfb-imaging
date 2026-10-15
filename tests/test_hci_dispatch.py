@@ -78,7 +78,7 @@ def _stubs():
                 return None
             if not any(n for (_, blk), n in self.left.items() if blk == key[1]):
                 self.open.discard(key[1])
-            return key
+            return key, {"pid": 0, "rss_gb": 0.0, "peak_gb": 0.0}
 
         def max_open(self):
             return self.max_open_blocks
