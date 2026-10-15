@@ -1,0 +1,121 @@
+"""CubeWriterImpl: one write per slab, fill kept for missing images, hci's reductions."""
+
+import numpy as np
+import pytest
+import xarray as xr
+from numpy.testing import assert_allclose
+
+from pfb_imaging.utils.hci_actors import CubeWriterImpl
+from pfb_imaging.utils.hci_common import build_scaffold
+
+NY = NX = 16
+
+
+def _store(tmp_path, ntime=5, nband=1, ipc=2, psf_out=True):
+    ds, _ = build_scaffold(
+        5.0e9 + 8.0 * np.arange(ntime),
+        1e9 + 1e7 * np.arange(nband),
+        np.array([10.0]),
+        np.array([-30.0]),
+        product="I",
+        beam=False,
+        psf_out=psf_out,
+        nx=NX,
+        ny=NY,
+        nx_psf=NX,
+        ny_psf=NY,
+        cell_deg=1e-3,
+        spatial_chunk=128,
+        images_per_chunk=ipc,
+        obs_label=None,
+    )
+    path = str(tmp_path / "cube.zarr")
+    ds.to_zarr(path, mode="w", compute=False)
+    return path
+
+
+def _result(t, b, value, weight=1.0, rms=1.0, psf_out=True):
+    r = {
+        "time_index": t,
+        "band_index": b,
+        "cube": np.full((1, NY, NX), value, np.float32),
+        "weight": np.array([weight], np.float32),
+        "rms": np.array([rms], np.float32),
+        "nonzero": np.array([weight > 0]),
+        "psf_maj": np.ones(1, np.float32),
+        "psf_min": np.ones(1, np.float32),
+        "psf_pa": np.zeros(1, np.float32),
+        "orig_phase_dir_ra": 0.1,
+        "orig_phase_dir_dec": -0.5,
+    }
+    if psf_out:
+        r["psf"] = np.full((1, NY, NX), 1.0, np.float32)
+    return r
+
+
+def _expected(ntime, ipc, band=0):
+    return {(band, blk): min(ipc, ntime - blk * ipc) for blk in range(-(-ntime // ipc))}
+
+
+def test_slab_written_once_complete_out_of_order(tmp_path):
+    store = _store(tmp_path)
+    w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
+    assert w.add(_result(1, 0, 2.0)) is None
+    assert w.open_blocks() == 1
+    assert w.add(_result(0, 0, 1.0)) == (0, 0)
+    assert w.open_blocks() == 0
+    cube = xr.open_zarr(store).cube.values
+    assert_allclose(cube[0, 0, 0], 1.0)
+    assert_allclose(cube[0, 0, 1], 2.0)
+    assert np.isnan(cube[0, 0, 2]).all()  # block 1 not yet written: fill
+
+
+def test_short_last_block(tmp_path):
+    store = _store(tmp_path)
+    w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
+    assert w.add(_result(4, 0, 9.0)) == (0, 2)
+    assert_allclose(xr.open_zarr(store).cube.values[0, 0, 4], 9.0)
+
+
+def test_writer_partial_slab_keeps_fill_and_means_only_received(tmp_path):
+    store = _store(tmp_path, ntime=4, ipc=4)
+    # time 2 has no data for this band: the plan expects 3 images in the slab
+    w = CubeWriterImpl(store, {(0, 0): 3}, 4, np.array([1e6]), 10.0)
+    for t, v in [(0, 1.0), (1, 2.0)]:
+        assert w.add(_result(t, 0, v)) is None
+    assert w.add(_result(3, 0, 4.0)) == (0, 0)
+    w.finalise()
+    ds = xr.open_zarr(store)
+    assert np.isnan(ds.cube.values[0, 0, 2]).all()
+    assert_allclose(ds.cube_mean.values[0, 0], (1.0 + 2.0 + 4.0) / 3)
+    assert bool(ds.flag.values[0, 0, 2])  # missing image is flagged (~nonzero), as in hci
+
+
+def test_finalise_flags_excess_rms_and_excludes_it_from_means(tmp_path):
+    store = _store(tmp_path, ntime=5, ipc=2)
+    w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([3e6]), 1.5)
+    rms = [1.0, 1.1, 0.9, 5.0, 1.0]  # time 3 is an outlier
+    vals = [1.0, 2.0, 3.0, 100.0, 5.0]
+    wts = [1.0, 2.0, 1.0, 1.0, 0.5]
+    for t in range(5):
+        w.add(_result(t, 0, vals[t], weight=wts[t], rms=rms[t]))
+    out = w.finalise()
+    ds = xr.open_zarr(store)
+    flag = ds.flag.values[0, 0]
+    assert flag.tolist() == [False, False, False, True, False]
+    assert out["nflagged"] == 1
+    keep = ~flag
+    ref = np.sum(np.array(vals)[keep] * np.array(wts)[keep]) / np.sum(np.array(wts)[keep])
+    assert_allclose(ds.cube_mean.values[0, 0], ref, rtol=1e-6)
+    # psf2 = sum((w psf)^2) / sum(w^2) over unflagged images; psf == 1
+    assert_allclose(ds.psf2.values[0], 1.0, rtol=1e-6)
+    assert_allclose(ds.channel_width.values, [3e6])
+    assert_allclose(ds.rms.values[0, 0], rms, rtol=1e-6)
+    assert_allclose(ds.orig_phase_dir_ra.values, 0.1)
+
+
+def test_unknown_slab_is_an_error(tmp_path):
+    store = _store(tmp_path)
+    w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
+    with pytest.raises(KeyError, match="not in the plan"):
+        w.add(_result(0, 3, 1.0))
