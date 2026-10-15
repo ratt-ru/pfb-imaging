@@ -97,3 +97,25 @@ def test_plan_wraps_ra_and_keeps_full_spw_for_transients(dts):
     )
     assert ((plan.field_radecs[:, 0] >= 0) & (plan.field_radecs[:, 0] < 2 * np.pi)).all()
     np.testing.assert_array_equal(plan.all_freqs, np.unique(freqs))
+
+
+def test_several_bands_regions_frequencies_and_expected(dts):
+    node = _node(dts)
+    ntime, nchan = node.ds.sizes["time"], node.ds.sizes["frequency"]
+    freqs = node.ds.frequency.values
+    cpi, ipc = 3, 16
+    assert nchan > cpi  # several bands, the last one short
+    plan = plan_images(dts, integrations_per_image=1, channels_per_image=cpi, images_per_chunk=ipc)
+    bands = [slice(f0, min(f0 + cpi, nchan)) for f0 in range(0, nchan, cpi)]
+    assert plan.out_freqs.size == len(bands)
+    np.testing.assert_allclose(plan.out_freqs, [freqs[b].mean() for b in bands])
+    np.testing.assert_allclose(plan.channel_width, [freqs[b].max() - freqs[b].min() for b in bands])
+    for it in plan.items:
+        assert it.frequency == bands[it.band_index]
+        assert it.time == slice(it.time_index, it.time_index + 1)
+        assert it.block == it.time_index // ipc
+    nblock = -(-ntime // ipc)
+    assert plan.expected == {(b, blk): min(ipc, ntime - blk * ipc) for b in range(len(bands)) for blk in range(nblock)}
+    (pn,) = plan.nodes.values()
+    np.testing.assert_array_equal(pn.freqs, freqs)  # the union of the node's band regions
+    np.testing.assert_array_equal(pn.times_unix, node.ds.time.values)

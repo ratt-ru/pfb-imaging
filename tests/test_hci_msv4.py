@@ -38,10 +38,15 @@ def _vis_node(ms_name):
     return next(n for n in dt.subtree if n.attrs.get("type") == "visibility")
 
 
-def _gain_term(path, node, gain_time, value):
-    """Write a one-direction diagonal QuartiCal-style gain term for ``node``."""
+def _gain_term(path, node, gain_time, value, gain_freq=None):
+    """Write a one-direction diagonal QuartiCal-style gain term for ``node``.
+
+    ``value`` is a scalar or a ``(gain_time, gain_freq)`` array, the same for every antenna.
+    """
     ants = [str(a) for a in node["antenna_xds"].antenna_name.values]
-    g = np.full((gain_time.size, 1, len(ants), 1, 2), value, dtype=np.complex128)
+    gain_freq = node.ds.frequency.values[:1] if gain_freq is None else gain_freq
+    v = np.broadcast_to(np.asarray(value, dtype=np.complex128), (gain_time.size, gain_freq.size))
+    g = np.ascontiguousarray(np.broadcast_to(v[:, :, None, None, None], v.shape + (len(ants), 1, 2)))
     xr.Dataset(
         {
             "gains": (("gain_time", "gain_freq", "antenna", "direction", "correlation"), g),
@@ -49,7 +54,7 @@ def _gain_term(path, node, gain_time, value):
         },
         coords={
             "gain_time": gain_time,
-            "gain_freq": node.ds.frequency.values[:1],
+            "gain_freq": gain_freq,
             "antenna": ants,
             "direction": [0],
             "correlation": ["XX", "YY"],
@@ -115,6 +120,40 @@ def test_hci_msv4_constant_gain_scales_cube(ms_name, tmp_path):
     hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **COMMON)
     a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
     assert_allclose(b, a / 4.0, rtol=1e-6, atol=1e-9 * np.abs(a).max())
+
+
+@pytest.mark.slow
+def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, tmp_path):
+    """Per-time, per-channel gains with channels_per_image < nchan: each image scales by 1/|g|^2.
+
+    |g| is constant within an image but differs between images and bands, and the phase varies
+    per integration and channel (the same for every antenna, so it cancels): a misaligned time
+    or channel axis, or a channel subset that fails to select, changes the result.
+    """
+    node = _vis_node(ms_name)
+    ntime, nchan = node.ds.sizes["time"], node.ds.sizes["frequency"]
+    ipi, cpi = 10, 3
+    assert nchan > cpi
+    t_amp = 1.0 + 0.1 * (np.arange(ntime) // ipi)
+    b_amp = 1.0 + 0.5 * (np.arange(nchan) // cpi)
+    phase = 0.3 * np.arange(ntime)[:, None] - 0.2 * np.arange(nchan)[None, :]
+    gains = t_amp[:, None] * b_amp[None, :] * np.exp(1j * phase)
+    _gain_term(
+        f"{tmp_path}/gains.qc/NET/NET_0",
+        node,
+        to_mjd_time(node.ds.time.values),
+        gains,
+        gain_freq=node.ds.frequency.values,
+    )
+    opts = {**COMMON, "integrations_per_image": ipi, "channels_per_image": cpi}
+    plain, gained = str(tmp_path / "plain.zarr"), str(tmp_path / "gained.zarr")
+    hci_msv4_core([ms_name], plain, **opts)
+    hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **opts)
+    a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
+    nband = -(-nchan // cpi)
+    assert a.shape[1:3] == (nband, -(-ntime // ipi))
+    scale = (t_amp[::ipi][None, :] * b_amp[::cpi][:, None]) ** 2  # (band, time)
+    assert_allclose(b, a / scale[None, :, :, None, None], rtol=1e-6, atol=1e-9 * np.abs(a).max())
 
 
 def test_hci_msv4_gain_table_count_mismatch(ms_name, tmp_path):
