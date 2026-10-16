@@ -752,8 +752,26 @@ def degrid(
     # `RuntimeError: Failed to bind to address '127.0.0.1:8000'`. We drive the
     # deployment entirely through the handle returned below, so the proxy is a
     # port dependency we never use. location="NoServer" removes it.
-    serve.start(http_options={"location": "NoServer"})
-    handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    #
+    # Serve's own chatter is silenced. The driver-side "ray.serve" logger is
+    # held at WARNING for the app's lifetime (start-up, router and delete INFO
+    # lines), and at ERROR across start/run, where serve.run re-calls
+    # serve_start with its EveryNode default and WARNs that our NoServer is
+    # already in force -- benign, and unavoidable through the public API. The
+    # controller's lifecycle INFO (replicas added, upscaling) goes through its
+    # log_level; its warnings, e.g. a replica slow to start, still show. The
+    # "Completed:" telemetry names each replica pid anyway.
+    log.info(f"Starting Ray Serve with up to {nworkers} Degridder replica(s)")
+    serve_log = logging.getLogger("ray.serve")
+    serve_level = serve_log.level
+    serve_log.setLevel(logging.ERROR)
+    try:
+        serve.start(http_options={"location": "NoServer"}, logging_config={"log_level": "WARNING"})
+        handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    except BaseException:
+        serve_log.setLevel(serve_level)
+        raise
+    serve_log.setLevel(logging.WARNING)
 
     try:
         # Bounded in-flight queue: drain the oldest response once more than
@@ -799,5 +817,6 @@ def degrid(
         # it deletes every app and tears down the Serve system actors -- so on
         # a shared --ray-address cluster it would kill unrelated workloads.
         serve.delete(_SERVE_APP_NAME)
+        serve_log.setLevel(serve_level)
 
     log.info(f"All done after {time.time() - time_start}s.")
