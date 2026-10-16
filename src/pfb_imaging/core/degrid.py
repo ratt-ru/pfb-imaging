@@ -697,6 +697,10 @@ def degrid(
         # second request simply awaits that executor, which is harmless now
         # that `degrid` is async and the event loop stays free.
         max_ongoing_requests=_MAX_ONGOING_REQUESTS,
+        # Serve's per-request "CALL degrid OK" access lines duplicate the
+        # driver's "Completed:" progress line and are streamed to the terminal
+        # interleaved with it
+        logging_config={"enable_access_log": False},
         autoscaling_config={
             "upscale_delay_s": 1.0,
             "min_replicas": 1,
