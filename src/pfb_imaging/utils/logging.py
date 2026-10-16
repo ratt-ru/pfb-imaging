@@ -225,6 +225,17 @@ class LoggingManager:
 _logging_manager = LoggingManager("pfb")
 
 
+def _not_bds_only_warning(record: logging.LogRecord) -> bool:
+    return not record.getMessage().startswith("BeamWizard constructed without an image")
+
+
+# imager and degrid build every BeamWizard without an image on purpose (they
+# pass explicit l/m/times/freq), so meerkat-beams' BDS-only warning is noise --
+# once per wizard per Ray worker/Serve replica. Filtered at import because the
+# replicas never run the driver's logging setup.
+logging.getLogger("meerkat_beams").addFilter(_not_bds_only_warning)
+
+
 def get_logger(component_name: str) -> PFBLogger:
     """
     Get a logger for a specific component.

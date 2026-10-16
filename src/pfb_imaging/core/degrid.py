@@ -15,6 +15,7 @@ with an unrecognised-option error rather than silently doing the wrong thing.
 
 import asyncio
 import gc
+import logging
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
@@ -27,7 +28,7 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from meerkat_beams.utils import BeamWizard
+from meerkat_beams.utils import BeamWizard, set_console_logging_level
 from pfb_model_spec.utils.degrid import RegionMask, model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
@@ -267,6 +268,10 @@ class Degridder:
         self._mask_list: list[np.ndarray] | None = None
         # Beam wizards are Multitons too (D38: bind recipes, never loaded objects)
         self._beams = beams
+        # The driver already built every wizard once, so its meerkat-beams INFO
+        # (download, staging, "opening BDS ...") is in the log; a replica's
+        # rebuild from the warm cache would only repeat it per replica
+        set_console_logging_level(logging.WARNING)
         self._override = antenna_groups
         self._use_groups = baseline_groups
         self._wizards: dict | None = None
