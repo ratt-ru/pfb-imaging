@@ -4,14 +4,15 @@ import numpy as np
 import pytest
 import xarray as xr
 from numpy.testing import assert_array_equal
+from rarg_python_patterns.multiton import Multiton
 
-from pfb_imaging.utils.gains import check_node_grid, load_node_gains, term_path
+from pfb_imaging.utils.gains import check_node_grid, load_node_gains, open_term, term_path
 from pfb_imaging.utils.misc import to_mjd_time
 
 ANTS = ["m000", "m001", "m002"]
 
 
-def _write_term(root, groups, term="NET", ncorr=2):
+def _write_term(root, groups, term="NET", ncorr=2, ants=ANTS):
     """Write QuartiCal's layout: <root>/<term>/<term>_<n>, one group per partition."""
     for n, (attrs, times_unix, freqs, gains, gflags) in enumerate(groups):
         ds = xr.Dataset(
@@ -22,7 +23,7 @@ def _write_term(root, groups, term="NET", ncorr=2):
             coords={
                 "gain_time": to_mjd_time(np.asarray(times_unix, dtype=float)),
                 "gain_freq": freqs,
-                "antenna": ANTS,
+                "antenna": ants,
                 "direction": [0],
                 "correlation": ["XX", "XY", "YX", "YY"][:ncorr] if ncorr == 4 else ["XX", "YY"],
             },
@@ -129,14 +130,12 @@ def test_full_jones_layout(tmp_path):
     assert out.jones[0, 0, 0, 0, 1] == 0.5
 
 
-def test_broadcast_axes_and_subset(tmp_path):
+def test_broadcast_axes(tmp_path):
     times, freqs = _grid()
     g, f = _diag(1, 1, 2.0)
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times[:1], freqs[:1], g, f)])
     out = load_node_gains(spec, "1", times, freqs, ANTS)
     assert out.jones.shape == (1, 1, 3, 2)
-    sub = out.subset(slice(1, 3), slice(0, 2))
-    assert sub.jones.shape == (1, 1, 3, 2)
 
 
 def test_off_grid_gains_are_refused(tmp_path):
@@ -203,7 +202,76 @@ def test_check_node_grid_refuses_off_grid_channels(tmp_path):
     times, freqs = _grid()
     g, f = _diag(3, 4, 2.0)
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
-    with pytest.raises(ValueError, match="No gain partitions"):
+    with pytest.raises(ValueError, match="has the channels of"):
         check_node_grid(spec, "1", times, freqs + 0.5e6)
     with pytest.raises(ValueError, match="on-grid only"):
         check_node_grid(spec, "1", times + 3.0, freqs)
+
+
+def test_field_name_disambiguates_a_term_solved_across_scans(tmp_path):
+    """Interleaved target and calibrator, solved per field across scans: both overlap in time."""
+    times, freqs = _grid(ntime=4)
+    g1, f1 = _diag(2, 4, 2.0)
+    g2, f2 = _diag(2, 4, 3.0)
+    spec = _write_term(
+        tmp_path,
+        [
+            ({"FIELD_ID": 0, "FIELD_NAME": "cal", "DATA_DESC_ID": 0}, times[[0, 3]], freqs, g1, f1),
+            ({"FIELD_ID": 1, "FIELD_NAME": "target", "DATA_DESC_ID": 0}, times[[1, 2]], freqs, g2, f2),
+        ],
+    )
+    out = load_node_gains(spec, "5", times[1:3], freqs, ANTS, field_name="target")
+    assert np.all(out.jones == 3.0)
+    with pytest.raises(ValueError, match="2 gain partitions"):
+        check_node_grid(spec, "5", times[1:3], freqs)  # without the field name it is ambiguous
+
+
+def test_another_fields_term_is_refused(tmp_path):
+    times, freqs = _grid()
+    g, f = _diag(1, 4, 2.0)
+    spec = _write_term(tmp_path, [({"FIELD_NAME": "cal", "DATA_DESC_ID": 0}, times[:1] - 1e6, freqs, g, f)])
+    with pytest.raises(ValueError, match="No gain partitions .* for field target"):
+        load_node_gains(spec, "1", times, freqs, ANTS, field_name="target")
+
+
+def test_no_shared_antenna_name_is_refused(tmp_path):
+    """A term whose antenna coordinate is integer ids would otherwise flag every visibility."""
+    times, freqs = _grid()
+    g, f = _diag(3, 4, 2.0)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)], ants=[0, 1, 2])
+    with pytest.raises(ValueError, match="matched to antennas by name"):
+        load_node_gains(spec, "1", times, freqs, ANTS)
+    with pytest.raises(ValueError, match="matched to antennas by name"):
+        check_node_grid(spec, "1", times, freqs, antenna_names=ANTS)
+
+
+def test_check_node_grid_reports_missing_antennas(tmp_path):
+    times, freqs = _grid()
+    g, f = _diag(3, 4, 2.0)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
+    assert check_node_grid(spec, "1", times, freqs, antenna_names=ANTS + ["m099"]) == ["m099"]
+    assert check_node_grid(spec, "1", times, freqs) == []
+
+
+def test_only_the_region_is_read_and_nothing_is_cached(tmp_path):
+    """The term stays in a process-lifetime Multiton, so a full .values would stay resident."""
+    times, freqs = _grid(ntime=4, nchan=8)
+    g, f = _ramp(4, 8)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
+    # unsorted and repeated wanted points still come back in the order asked for
+    want_t, want_f = times[[2, 0, 2]], freqs[[5, 1]]
+    out = load_node_gains(spec, "1", want_t, want_f, ANTS)
+    assert_array_equal(out.jones[..., 0, 0], g[[2, 0, 2]][:, [5, 1], 0, 0, 0])
+    (ds,) = Multiton(open_term, str(tmp_path / "NET")).instance
+    assert not ds.gains.variable._in_memory
+    assert not ds.gain_flags.variable._in_memory
+
+
+def test_a_table_without_array_dimensions_is_refused_clearly(tmp_path):
+    times, freqs = _grid()
+    g, f = _diag(3, 4, 2.0)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
+    zattrs = tmp_path / "NET" / "NET_0" / "gains" / ".zattrs"
+    zattrs.write_text("{}")
+    with pytest.raises(ValueError, match="older"):
+        open_term(spec)

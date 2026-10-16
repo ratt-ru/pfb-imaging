@@ -60,6 +60,8 @@ class PlannedNode:
     """What the driver checks per selected node once the trees are closed."""
 
     scan_name: str
+    field_name: str
+    antenna_names: tuple[str, ...]  # antenna_xds order, as the workers index gains
     times_unix: np.ndarray  # the node's time coordinate
     freqs: np.ndarray  # Hz, the selected channels: the union of the node's image regions
     data_vars: frozenset[str]  # the node's data variables
@@ -158,6 +160,8 @@ def plan_images(
             all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
             nodes[(ims, sel.path)] = PlannedNode(
                 str(sel.scan_name),
+                str(sel.field_name),
+                tuple(map(str, node["antenna_xds"].antenna_name.values)),
                 node.ds.time.values,
                 freqs,
                 frozenset(node.ds.data_vars),
@@ -452,13 +456,25 @@ def hci_msv4(
 
     if gain_table is not None:
         # coordinates only, with the workers' own selection and alignment: fail now, not hours in
+        missing_ants = {}
         for (ims, path), pn in plan.nodes.items():
             try:
-                check_node_grid(gain_table[ims], pn.scan_name, pn.times_unix, pn.freqs)
+                missing = check_node_grid(
+                    gain_table[ims],
+                    pn.scan_name,
+                    pn.times_unix,
+                    pn.freqs,
+                    field_name=pn.field_name,
+                    antenna_names=pn.antenna_names,
+                )
             except ValueError as e:
                 log.error_and_raise(
                     f"Gain term {gain_table[ims]} does not apply to {ms[ims]} node {path}: {e}", ValueError
                 )
+            missing_ants.setdefault(ims, set()).update(missing)
+        for ims, missing in missing_ants.items():
+            if missing:
+                log.warning(f"Antennas {sorted(missing)} are not in {gain_table[ims]}; their data will be flagged")
 
     if sigma_column is not None:
         log.info(f"Initialising weights from {sigma_column} column")

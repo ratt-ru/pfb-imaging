@@ -165,8 +165,15 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
     tree, sel = node
     seen = {}
 
-    def fake_gains(spec, scan_name, times_unix, freqs, antenna_names):
-        seen.update(spec=spec, scan=scan_name, ntime=times_unix.size, nchan=freqs.size, ants=list(antenna_names))
+    def fake_gains(spec, scan_name, times_unix, freqs, antenna_names, field_name=None):
+        seen.update(
+            spec=spec,
+            scan=scan_name,
+            field=field_name,
+            ntime=times_unix.size,
+            nchan=freqs.size,
+            ants=list(antenna_names),
+        )
         nant = len(antenna_names)
         flags = np.zeros((1, freqs.size, nant), dtype=bool)
         flags[0, 1, 3] = True  # antenna 3, second channel of the region
@@ -179,6 +186,7 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
     assert seen == {
         "spec": "g.qc/NET",
         "scan": sel.scan_name,
+        "field": sel.field_name,
         "ntime": 2,
         "nchan": 3,
         "ants": list(tree["antenna_xds"].antenna_name.values),

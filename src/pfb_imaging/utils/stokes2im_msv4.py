@@ -194,7 +194,7 @@ def read_item(
     complex_type = np.complex64 if cfg.precision.lower() == "single" else np.complex128
     if gain_spec is not None:
         # gains on the region's own (time, frequency) grid
-        gains = load_node_gains(gain_spec, scan_name, times_unix, freq, list(ant_names))
+        gains = load_node_gains(gain_spec, scan_name, times_unix, freq, list(ant_names), field_name=field_name)
         jones = gains.jones.astype(complex_type)
         gf = gains.flags[:, :, ant1] | gains.flags[:, :, ant2]  # (gtime, gchan, baseline)
         flag |= np.transpose(gf, (0, 2, 1))[:, :, :, None]
