@@ -36,10 +36,10 @@ from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
-    missing_group_beams,
     node_baseline_groups,
     parse_antenna_groups,
     preflight_baseline_groups,
+    resolve_group_beam_cache,
 )
 from pfb_imaging.utils.degrid import (
     assert_writable,
@@ -616,7 +616,7 @@ def degrid(
     if beam_model is not None:
         if use_groups:
             labels = sorted(present_groups, key=GROUP_LABELS.index)
-            if (missing := missing_group_beams(str(beam_model).upper(), labels)) is not None:
+            if (missing := resolve_group_beam_cache(str(beam_model).upper(), labels)) is not None:
                 log.error_and_raise(missing, RuntimeError)
             log.info(f"Beam {beam_model} for baseline groups {', '.join(labels)}")
             kwargs = {g: {"band": beam_model, "group": g} for g in labels}

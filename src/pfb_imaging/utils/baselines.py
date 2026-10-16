@@ -284,15 +284,21 @@ def preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
     return override
 
 
-def missing_group_beams(band: str, groups: list[str]) -> str | None:
-    """Explain group beams that meerkat-beams can neither find nor download.
+def resolve_group_beam_cache(band: str, groups: list[str]) -> str | None:
+    """Find a beam cache holding the group beams meerkat-beams cannot download.
 
     The MdV-2026 group products are not published yet, so meerkat-beams can
-    only use them once someone has staged them in its cache by hand. Its own
-    error names the path it looked in, not why that path is empty or where the
-    beams might already be. pfb points the cache at ``MBEAMS_CACHE_DEFAULT`` in
-    ``/tmp``, which is RAM-backed on many hosts and lost on reboot, while a
-    previous ``meerkat-beams`` run may have staged them in its own default.
+    only use them once someone has staged them in its cache by hand. pfb points
+    the cache at ``MBEAMS_CACHE_DEFAULT`` in ``/tmp``, which is RAM-backed on
+    many hosts and lost on reboot, while a standalone ``meerkat-beams`` run
+    stages them in its own default, ``~/.cache/meerkat-beams``. When the cache
+    in use is pfb's default and lacks a needed product that meerkat-beams'
+    default has every one of, this repoints ``MBEAMS_CACHE_DIR`` there. An
+    explicitly exported ``MBEAMS_CACHE_DIR`` is never overridden.
+
+    Call it before ``init_ray``: Ray workers take ``MBEAMS_CACHE_DIR`` from the
+    environment ``set_envs`` captured, so a caller that already holds that dict
+    must refresh the entry.
 
     Args:
         band: the --beam-model band.
@@ -300,7 +306,7 @@ def missing_group_beams(band: str, groups: list[str]) -> str | None:
 
     Returns:
         An error message, or None when every needed product is staged or
-        downloadable.
+        downloadable (possibly after repointing ``MBEAMS_CACHE_DIR``).
     """
 
     def staged(root: Path, product: str) -> bool:
@@ -308,12 +314,23 @@ def missing_group_beams(band: str, groups: list[str]) -> str | None:
 
     root = mbeams_cache.cache_root()
     needed = dict.fromkeys(p for g in groups for p in mbeams_cache.GROUP_PRODUCTS[(band, g)])
-    missing = [
-        p
-        for p in needed
-        if mbeams_cache.product_gdrive_id(p) == mbeams_cache.PLACEHOLDER_GDRIVE_ID and not staged(root, p)
-    ]
+    unpublished = [p for p in needed if mbeams_cache.product_gdrive_id(p) == mbeams_cache.PLACEHOLDER_GDRIVE_ID]
+    missing = [p for p in unpublished if not staged(root, p)]
     if not missing:
+        return None
+
+    # meerkat-beams' own default, which an earlier standalone run may have filled
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    usual = Path(xdg) / "meerkat-beams" if xdg else Path.home() / ".cache" / "meerkat-beams"
+    # every unpublished product, not just the missing ones: switching caches
+    # must not lose one that only pfb's default has
+    in_usual = usual != root and all(staged(usual, p) for p in unpublished)
+    if in_usual and str(root) == MBEAMS_CACHE_DEFAULT:
+        log.info(
+            f"Beam product(s) {', '.join(missing)} are not staged in pfb's default beam cache {root}; "
+            f"using {usual}, where meerkat-beams staged them. Export MBEAMS_CACHE_DIR to choose a cache."
+        )
+        os.environ["MBEAMS_CACHE_DIR"] = str(usual)
         return None
 
     msg = (
@@ -322,10 +339,7 @@ def missing_group_beams(band: str, groups: list[str]) -> str | None:
     )
     if str(root) == MBEAMS_CACHE_DEFAULT:
         msg += " That is pfb's default cache, which is lost on reboot wherever /tmp is RAM-backed."
-    # meerkat-beams' own default, which an earlier standalone run may have filled
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    usual = Path(xdg) / "meerkat-beams" if xdg else Path.home() / ".cache" / "meerkat-beams"
-    if usual != root and all(staged(usual, p) for p in missing):
+    if in_usual:
         msg += f" They are staged in {usual}: run export MBEAMS_CACHE_DIR={usual} and retry."
     else:
         msg += (

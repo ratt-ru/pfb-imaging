@@ -1815,12 +1815,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   meerkat-beams' own default is `~/.cache/meerkat-beams`, so MdV-2026 group
   products staged by hand land where `pfb` will not look. `/tmp` is also RAM-backed
   on many hosts, so even products staged there are gone after a reboot. `imager`
-  now checks the products the data's groups need before building any wizard
-  (`utils/baselines.missing_group_beams`) and says which are missing, from which
-  cache, and -- if they are in meerkat-beams' own default -- the `export` that
-  fixes it; before that it died inside meerkat-beams with "beam product ... is not
-  yet published". Export a persistent `MBEAMS_CACHE_DIR` (the `setdefault` means an
-  explicit value always wins), e.g. `~/.cache/meerkat-beams`.
+  and `degrid` check the products the data's groups need before building any
+  wizard or starting Ray (`utils/baselines.resolve_group_beam_cache`). If the cache
+  in use is pfb's default and lacks one, and `~/.cache/meerkat-beams` holds *every*
+  unpublished product needed (so switching cannot lose one only `/tmp` had), the
+  run repoints `MBEAMS_CACHE_DIR` there, logs it, and carries on; the imager also
+  refreshes the `env_vars` it hands `init_ray`. An explicitly exported
+  `MBEAMS_CACHE_DIR` is never overridden -- the error names the missing products,
+  the cache, and the `export` that fixes it. Before the check, the run died inside
+  meerkat-beams with "beam product ... is not yet published". The fallback only
+  helps native runs: a container sees `/tmp` (the cab's mount hint), not `~/.cache`.
 - **`to_msv2`'s `region` default silently corrupts.** `region="auto"` expands every dimension
   to `slice(0, ds.sizes[d])`, so an `isel`'d chunk is written to the *start* of the array
   rather than where it came from. Always pass `region` explicitly, and only slices — an
