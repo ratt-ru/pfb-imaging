@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-15T19:01:09Z
-last_verified_commit: 56f1b05
+timestamp: 2026-10-16T06:44:11Z
+last_verified_commit: 9e05b33
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -298,7 +298,15 @@ Four Serve-specific notes:
   logs it as `Imaged: i / n [...]`. `CubeWriter.add` returns its own post-gc telemetry when it
   writes a slab, logged as `Wrote band b block k: writer [...]` -- the line to read for the
   writer's plateau. `CubeWriterImpl.add`/`finalise` and `HciWorkerImpl.image`
-  wrap their bodies in `try/finally gc.collect()`.
+  wrap their bodies in `try/finally gc.collect()`, which is cheap only because each actor
+  `gc.freeze()`s the imported stack at the end of `__init__`: unfrozen, every collect walks
+  ~324k objects for ~0.5 s, a serial ceiling of ~2.5 images/s on the single writer (D56). A
+  per-call collect that suddenly costs tenths of a second means something re-grew that heap.
+- Gain terms are opened once per process and cached (a Multiton), but only each item's
+  `(time, frequency)` region is read, so a term costs coordinates, not data, between calls.
+  Reading a whole variable with `.values` would keep the full partition resident for the
+  process's life through xarray's `MemoryCachedArray` -- ~30 GB for an 8 h, 8 s,
+  4096-channel, 64-antenna data-resolution term (`tests/test_gains.py` pins `_in_memory`).
 - A worker's `shm` should stay within a few images (see the writer cap below): images travel to the writer, visibilities
   do not. A ratchet there means arrays are being shipped through the object store.
 - The writer's RSS is flat at about `max_simul_chunks` slabs (each `nband x images_per_chunk x nstokes` images) plus the float64 running sums

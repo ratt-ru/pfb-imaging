@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-10-05T16:47:58Z
-last_verified_commit: d4da59f
+timestamp: 2026-10-16T06:44:11Z
+last_verified_commit: 9e05b33
 ---
 
 # Image and beam orientation conventions (hci)
@@ -48,7 +48,8 @@ assignment (`out_ras` descending along `ix`, `out_decs` ascending along `iy`)
 and the legacy `save_fits` transpose (`(..., nx, ny) → (..., ny, nx)`, no flips,
 `CDELT1 = -cell`) label the sky correctly — long validated in production.
 
-The hci reference header (`core/hci.py`, scaffold construction):
+The hci reference header (`utils/hci_common.py::build_scaffold`, shared by `hci` and
+`hci-msv4`):
 `CTYPE = [RA---SIN, DEC--SIN, ...]`, `CDELT = [-cell_deg, +cell_deg, ...]`,
 `CRPIX = [1 + nx//2, 1 + ny//2, ...]`, `CRVAL = radec_new` (the rephased/
 barycentre target, **not** the per-scan pointing).
@@ -180,8 +181,9 @@ one Stokes plane at a fixed sky position on the chunk's own `(row, chan)` grid
 (`get_time_variable_beamgain` returns `(nchan, ntime)`, expanded onto rows) —
 no maps, no reprojection, no transposes.
 
-Sources: `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, coordinate
-assignment), `src/pfb_imaging/utils/beam.py`, `core/hci.py` (scaffold header),
+Sources: `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`,
+`beam_gain_for_source`, `build_scaffold` -- the scaffold header),
+`src/pfb_imaging/utils/stokes2im.py` (coordinate assignment), `src/pfb_imaging/utils/beam.py`,
 `utils/fits.py` (`save_fits`/`set_wcs`), commits `547458f`, `330bc5d`,
 `a516530`; meerkat-beams `616906b` + PR landmanbester/meerkat-beams#8;
 ratt-ru/pfb-imaging#263, ratt-ru/breifast#208.

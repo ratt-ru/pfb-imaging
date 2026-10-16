@@ -156,6 +156,9 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
     model). If an eviction is ever needed, use the keyed `Multiton.clear_cache(where=...)`.
   * Large arrays never travel as Ray task arguments or return values -- write them to the
     store and pass the path (D10; #339). They land in the object store and show as `shm`.
+    The one deliberate exception is `hci-msv4`: each finished image goes worker -> writer as a
+    Ray ref, because the single writer is what assembles the slabs; visibilities still never
+    leave the worker (D56).
   * Read the per-task post-gc telemetry in the progress lines before theorising:
     ratcheting post-gc `anon` per pid = below-Python retention; ratcheting `shm` = arrays
     shipped through the object store; flat with a high peak = per-task transients.
