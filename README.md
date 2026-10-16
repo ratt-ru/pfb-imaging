@@ -42,7 +42,7 @@ The dependencies are split so the cross-platform stack installs cleanly on
 
 | extra | contents | notes |
 |---|---|---|
-| `full` | the cross-platform scientific stack | `imager`, `deconv`, `degrid`, `restore` — the whole main pipeline |
+| `full` | the cross-platform scientific stack | `imager`, `deconv`, `degrid`, `restore` — the whole main pipeline — and `hci-msv4` |
 | `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | `hci`, rephasing, `--target`. No aarch64 wheel — see below |
 | `x86` | `tbb` | x86_64-only; a no-op elsewhere |
 | `all` | all of the above | safe on every architecture |
@@ -58,9 +58,9 @@ Exactly three things need `[casacore]`:
 
 | | needs it for | why |
 |---|---|---|
-| `pfb hci` | the whole command | reads the MS with `dask-ms`, and QuartiCal gains with `xds_from_zarr` |
+| `pfb hci` | the whole command | reads the MS with `dask-ms`, and QuartiCal gains with `xds_from_zarr`; `pfb hci-msv4` does neither |
 | `--phase-dir`, and any multi-field selection | rephasing | `synthesize_uvw` goes through pyrap measures (`utils/astrometry.py`) |
-| `--target <body>` | ephemeris lookup | `get_coordinates`, same pyrap measures; on both `imager` and `hci` |
+| `--target <body>` | ephemeris lookup | `get_coordinates`, same pyrap measures; on `imager`, `hci` and `hci-msv4` |
 
 The last two are *options*, not commands: `pfb imager` installs and runs fine
 without `[casacore]` — their imports are deferred, so you only pay for them if
@@ -169,6 +169,7 @@ The processing pipeline follows a modular pattern where each step is a separate 
 Additional commands:
 
 - `pfb hci` -- High cadence imaging
+- `pfb hci-msv4` -- High cadence imaging of MSv4 data (via arcae); `hci`'s successor, run side by side with it for now
 - `pfb restore` -- Restore clean components onto residuals (apparent, intrinsic and mixed products)
 
 The legacy MSv2 pipeline (`init`, `grid`, `kclean`, `sara`, `fluxtractor`) was removed
@@ -245,7 +246,7 @@ Imaging weights control the tradeoff between point-source sensitivity and angula
   Combined with a non-default `--robustness`, this yields super-robust weighting.
 - `--filter-counts-level` -- Floor cells with extremely low counts at `median / level` before normalising.
   This prevents a handful of nearly empty uv-cells from being up-weighted far above the rest.
-- `--l2-reweight-dof` (`pfb hci` only) -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
+- `--l2-reweight-dof` (`pfb hci-msv4` only; it never worked in `pfb hci`) -- Degrees-of-freedom parameter for an optional Student's t reweighting pass that down-weights visibilities with large model residuals (useful for residual RFI).
 
 Weights are computed in `pfb imager` pass 2 and written to the `.dt` partitions; the dirty image, the PSF, and every subsequent forward/backward pass in `pfb deconv` grid with that same stored set.
 The pass-1 `.scratch` cache is retained on disk for future reuse, but re-running `pfb imager` currently requires `--overwrite` (which deletes and regenerates it), redoing the MS ingestion each time.

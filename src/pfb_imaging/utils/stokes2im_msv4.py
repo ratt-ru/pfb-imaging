@@ -167,13 +167,14 @@ def read_item(
     field_name = str(np.unique(ds.field_name.values).item())
     scan_name = str(np.unique(ds.scan_name.values).item())
     spw_name = str(ds.frequency.attrs["spectral_window_name"])
-    corr = {str(p) for p in ds.polarization.values}
-    if corr.issubset({"XX", "XY", "YX", "YY"}):
+    # the Stokes kernels index correlations by position, so the order matters, not just the set
+    corr = tuple(str(p) for p in ds.polarization.values)
+    if corr in (("XX", "XY", "YX", "YY"), ("XX", "YY")):
         poltype = "linear"
-    elif corr.issubset({"RR", "RL", "LR", "LL"}):
+    elif corr in (("RR", "RL", "LR", "LL"), ("RR", "LL")):
         poltype = "circular"
     else:
-        raise ValueError(f"Unknown polarization types {sorted(corr)}")
+        raise ValueError(f"Unsupported correlations {corr}; expected XX,XY,YX,YY / XX,YY or RR,RL,LR,LL / RR,LL")
 
     # MSv2-style antenna indices into antenna_xds order (searchsorted, as stokes_vis does)
     ant_names = node["antenna_xds"].antenna_name.values

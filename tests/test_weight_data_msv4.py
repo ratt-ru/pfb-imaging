@@ -49,18 +49,21 @@ def _legacy(data, weight, flag, jones, ant1, ant2, pol, product, wgt_mode):
     )
 
 
-@pmp("full", [False, True])
-@pmp("ncorr", [2, 4])
-@pmp("product", ["I", "IQUV"])
-@pmp("wgt_mode", ["l2", "minvar"])
-@pmp("gtime,gchan", [(3, 5), (1, 1)])
+# full Jones needs four correlations, minvar is not implemented for full 2x2 Jones
+# (stokes_expr_funcs), and Q/U need the cross hands
+_CASES = [
+    (full, ncorr, product, wgt_mode, gtime, gchan)
+    for full in (False, True)
+    for ncorr in (2, 4)
+    for product in ("I", "IQUV")
+    for wgt_mode in ("l2", "minvar")
+    for gtime, gchan in ((3, 5), (1, 1))
+    if not (full and ncorr == 2) and not (full and wgt_mode == "minvar") and not (product == "IQUV" and ncorr == 2)
+]
+
+
+@pmp("full,ncorr,product,wgt_mode,gtime,gchan", _CASES)
 def test_matches_legacy_kernel(full, ncorr, product, wgt_mode, gtime, gchan):
-    if full and ncorr == 2:
-        pytest.skip("full Jones needs four correlations")
-    if full and wgt_mode == "minvar":
-        pytest.skip("minvar weighting is not implemented for full 2x2 Jones (stokes_expr_funcs)")
-    if product == "IQUV" and ncorr == 2:
-        pytest.skip("Q/U need the cross hands")
     rng = np.random.default_rng(42)
     data, weight, flag, jones, ant1, ant2 = _inputs(rng, 3, 6, 5, ncorr, full, gtime, gchan)
     vis, wgt = weight_data_msv4(data, weight, flag, jones, ant1, ant2, "linear", product, str(ncorr), wgt_mode)

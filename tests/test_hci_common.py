@@ -5,8 +5,12 @@ import sys
 
 import numpy as np
 import pytest
+from astropy import units
+from astropy.coordinates import SkyCoord
+from numpy.testing import assert_allclose
 
 from pfb_imaging.utils.hci_common import build_scaffold, default_phase_dir
+from pfb_imaging.utils.misc import radec_barycentre
 
 
 @pytest.mark.slow  # a fresh interpreter importing the scientific stack: ~14-18 s (D45)
@@ -51,3 +55,25 @@ def test_build_scaffold_layout():
     assert "beam_weight" in ds and "psf" in ds and "psf2" in ds
     assert attrs["fits_dims"][2] == ("TIME", "TIME")
     assert default_phase_dir(np.zeros(2), np.zeros(2)) is None
+
+
+def test_default_phase_dir_with_fields_sharing_a_coordinate():
+    """#320: fields sharing an RA or a Dec must not desynchronise the dedup."""
+    # three distinct pointings on one Dec strip, the first one seen twice (one
+    # per scan) -- unique-ing RA and Dec separately gives 3 RAs and 1 Dec
+    ra = np.deg2rad([10.0, 10.0, 11.0, 12.0])
+    dec = np.deg2rad([-30.0, -30.0, -30.0, -30.0])
+
+    phase_dir = default_phase_dir(ra, dec)
+
+    ra_str, dec_str = phase_dir.split(",")
+    coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
+    expected = np.rad2deg(radec_barycentre(np.deg2rad([[10.0, -30.0], [11.0, -30.0], [12.0, -30.0]])))
+    assert_allclose([coord.ra.deg, coord.dec.deg], expected, atol=1e-6)
+
+
+def test_default_phase_dir_single_pointing_is_none():
+    """One pointing over many scans keeps the MS phase centre."""
+    ra = np.deg2rad([10.0, 10.0, 10.0])
+    dec = np.deg2rad([-30.0, -30.0, -30.0])
+    assert default_phase_dir(ra, dec) is None

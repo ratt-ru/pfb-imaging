@@ -16,7 +16,7 @@ from scipy.constants import c as lightspeed
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import resolve_target_radec, synthesize_uvw
-from pfb_imaging.utils.hci_common import beam_for_band, beam_gain_for_source  # noqa: F401  (re-exported for tests)
+from pfb_imaging.utils.hci_common import beam_for_band, beam_gain_for_source
 from pfb_imaging.utils.misc import fitcleanbeam, radec_to_lm, to_unix_time
 from pfb_imaging.utils.weighting import (
     _compute_counts,
