@@ -145,7 +145,7 @@ def hci_msv4(
     transfer_model_from: Annotated[
         str | None,
         typer.Option(
-            help="Name of dataset to use for model initialisation",
+            help="Not supported by hci-msv4 and refused. Use the degrid app to populate a model column instead.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -183,9 +183,7 @@ def hci_msv4(
     sigma_column: Annotated[
         str | None,
         typer.Option(
-            help="Column containing standard devations. "
-            "Will be used to initialise natural weights if detected. "
-            "Must be the same across MSs",
+            help="Not supported by hci-msv4 and refused, since MSv4 has no SIGMA. Use --weight-column instead.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -200,7 +198,8 @@ def hci_msv4(
         list[URI] | None,
         typer.Option(
             parser=parse_upath,
-            help="Path to Quartical gain table containing NET gains. "
+            help="Path to a QuartiCal gain term, gains.qc/NET or gains.qc::NET. "
+            "Any term name is accepted. "
             "There must be a table for each MS. "
             "glob(ms) and glob(gt) should match up when running from CLI.",
             rich_help_panel="Input",
@@ -360,14 +359,14 @@ def hci_msv4(
     weight_grid_out: Annotated[
         bool,
         typer.Option(
-            help="Whether to produce an image of the weighted grid or not.",
+            help="Not supported by hci-msv4 and refused. The hci scaffold has no weight_grid either.",
             rich_help_panel="Output",
         ),
     ] = False,
     natural_grad: Annotated[
         bool,
         typer.Option(
-            help="Compute naural gradient",
+            help="Compute natural gradient. Needs a PSF twice the image size (--psf-relative-size 2).",
             rich_help_panel="Imaging",
         ),
     ] = False,
@@ -483,7 +482,7 @@ def hci_msv4(
         typer.Option(
             parser=parse_list_str,
             help="Write these variables to fits. "
-            "Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'. "
+            "Options are 'cube', 'cube_mean', 'psf' and 'beam_weight'. "
             "Variables are written per band.",
             rich_help_panel="Output",
         ),

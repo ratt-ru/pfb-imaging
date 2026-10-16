@@ -2,6 +2,7 @@
 
 import contextlib
 import gc
+import importlib.util
 import time
 from collections import Counter, deque
 from collections.abc import Iterable, Iterator
@@ -378,6 +379,12 @@ def hci_msv4(
         log.error_and_raise("Use the degrid app to populate a model column instead", NotImplementedError)
     if max_simul_chunks < 1:
         log.error_and_raise(f"max_simul_chunks must be >= 1 (got {max_simul_chunks})", ValueError)
+    if nworkers < 1:
+        log.error_and_raise(f"nworkers must be >= 1 (got {nworkers})", ValueError)
+    if sigma_column is not None:
+        log.error_and_raise(
+            "--sigma-column is not supported by hci-msv4: MSv4 has no SIGMA. Use --weight-column", NotImplementedError
+        )
     if gain_table is not None:
         if len(gain_table) != len(ms):
             log.error_and_raise(f"Need one gain table per MS: got {len(gain_table)} for {len(ms)} MSs", ValueError)
@@ -389,13 +396,8 @@ def hci_msv4(
         log.error_and_raise("primary_beam_band must be one of U, L, S0 or S4", ValueError)
 
     fds_fs, fds_url = uri_and_fs(output_dataset)
-    if fds_fs.exists(fds_url):
-        if overwrite:
-            log.info(f"Overwriting {output_dataset}")
-            fds_fs.rm(fds_url, recursive=True)
-        else:
-            log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
-    fds_fs.makedirs(fds_url, exist_ok=True)
+    if fds_fs.exists(fds_url) and not overwrite:
+        log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
 
     if freq_range is not None:
         fmin, fmax = freq_range.strip(" ").split(":")
@@ -497,9 +499,28 @@ def hci_msv4(
         psf_oversize=psf_relative_size,  # 128 pix if not specified
         log=log,
     )
+    if natural_grad and (nx_psf, ny_psf) != (2 * nx, 2 * ny):
+        log.error_and_raise(
+            f"--natural-grad needs a PSF twice the image size ({2 * nx}x{2 * ny}), got {nx_psf}x{ny_psf}; "
+            "set --psf-relative-size 2",
+            ValueError,
+        )
+    # rephasing and --target resolve coordinates with pyrap in the workers: fail now, not after Ray starts
+    if (phase_dir is not None or target is not None) and importlib.util.find_spec("pyrap") is None:
+        log.error_and_raise(
+            "Rephasing (--phase-dir, or several pointings) and --target need python-casacore: "
+            "install pfb-imaging[casacore]",
+            ImportError,
+        )
     out_ra_deg, out_dec_deg = image_centre_deg(
         plan.field_radecs[:, 0], plan.field_radecs[:, 1], phase_dir, target, plan.out_times
     )
+
+    # every refusal is behind us: only now may an existing cube go
+    if fds_fs.exists(fds_url):
+        log.info(f"Overwriting {output_dataset}")
+        fds_fs.rm(fds_url, recursive=True)
+    fds_fs.makedirs(fds_url, exist_ok=True)
 
     log.info("Creating scaffold for stacked cube")
     scaffold, _ = build_scaffold(

@@ -1,5 +1,7 @@
 """stokes2im_msv4 reproduces stokes_image on the same image."""
 
+import dataclasses
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -197,3 +199,39 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
     assert not base[:, on3, 1].all() and inp.flag[:, on3, 1].all()
     assert (inp.flag[:, ~on3, 1] == base[:, ~on3, 1]).all()
     assert (inp.flag[:, :, [0, 2]] == base[:, :, [0, 2]]).all()
+
+
+@pytest.mark.slow  # numba compiles the CORRECTED_DATA path: ~30 s cold (D45)
+def test_model_column_is_subtracted_like_the_column_difference(node):
+    """--model-column never worked in hci (a broadcast error); pin it against dc1 - dc2."""
+    tree, sel = node
+    region = {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}
+    cfg_m = _cfg(dc1="CORRECTED_DATA", model_column="MODEL_DATA", robustness=None, psf_out=False)
+    cfg_d = _cfg(dc1="CORRECTED_DATA", dc2="MODEL_DATA", operator="-", robustness=None, psf_out=False)
+    with_model = image_item(read_item(tree, region, cfg_m), cfg_m, None, 128, 128)
+    difference = image_item(read_item(tree, region, cfg_d), cfg_d, None, 128, 128)
+    assert np.abs(with_model["cube"]).max() > 0
+    assert_allclose(with_model["cube"], difference["cube"], rtol=0, atol=1e-6 * np.abs(difference["cube"]).max())
+
+
+@pytest.mark.slow  # numba compiles the IQUV kernel: ~30 s cold (D45)
+def test_l2_reweight_is_per_stokes(node):
+    """--l2-reweight-dof never worked in hci; each Stokes is reweighted by its own variance."""
+    tree, sel = node
+    region = {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}
+    base = read_item(tree, region, _cfg())
+    # the test MS is unpolarised (Q, U, V exactly zero); noise gives each Stokes its own variance
+    rng = np.random.default_rng(42)
+    noise = rng.standard_normal(base.data.shape) + 1j * rng.standard_normal(base.data.shape)
+    inp = dataclasses.replace(base, data=base.data + 0.1 * np.abs(base.data).max() * noise)
+    out = {}
+    for product in ("I", "IQUV"):
+        cfg = _cfg(product=product, l2_reweight_dof=5, robustness=None, psf_out=False)
+        out[product] = image_item(inp, cfg, None, 128, 128)
+    plain = _cfg(robustness=None, psf_out=False)
+    unweighted = image_item(inp, plain, None, 128, 128)
+    assert np.isfinite(out["IQUV"]["cube"]).all() and (out["IQUV"]["weight"] > 0).all()
+    # adding Q, U and V must not change how Stokes I is reweighted
+    assert_allclose(out["IQUV"]["cube"][0], out["I"]["cube"][0], rtol=1e-6, atol=1e-7)
+    assert_allclose(out["IQUV"]["weight"][0], out["I"]["weight"][0], rtol=1e-6)
+    assert not np.allclose(out["I"]["weight"], unweighted["weight"])  # the reweighting did something

@@ -238,3 +238,40 @@ def test_hci_msv4_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
 def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
     with pytest.raises(ValueError, match="NOPE"):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), data_column="DATA-NOPE", **COMMON)
+
+
+@pytest.mark.parametrize(
+    "over, err, match",
+    [
+        ({"nworkers": 0}, ValueError, "nworkers must be >= 1"),
+        ({"sigma_column": "SIGMA"}, NotImplementedError, "MSv4 has no SIGMA"),
+        ({"natural_grad": True, "psf_relative_size": 1.0}, ValueError, "natural-grad needs a PSF twice"),
+    ],
+)
+def test_hci_msv4_refusals_before_ray(ms_name, tmp_path, monkeypatch, over, err, match):
+    def no_ray(*args, **kwargs):
+        raise AssertionError("Ray was started")
+
+    monkeypatch.setattr(hci_msv4_module, "init_ray", no_ray)
+    with pytest.raises(err, match=match):
+        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), **{**COMMON, **over})
+
+
+def test_hci_msv4_overwrite_keeps_the_cube_when_validation_fails(ms_name, tmp_path):
+    """A typo with --overwrite must not cost the previous cube."""
+    out = tmp_path / "x.zarr"
+    out.mkdir()
+    (out / "keep").write_text("previous cube")
+    with pytest.raises(ValueError, match="NOPE"):
+        hci_msv4_core([ms_name], str(out), data_column="DATA-NOPE", **COMMON)
+    assert (out / "keep").read_text() == "previous cube"
+
+
+def test_hci_msv4_refuses_rephasing_without_casacore_before_ray(ms_name, tmp_path, monkeypatch):
+    real = hci_msv4_module.importlib.util.find_spec
+    monkeypatch.setattr(
+        hci_msv4_module.importlib.util, "find_spec", lambda name, *a: None if name == "pyrap" else real(name, *a)
+    )
+    monkeypatch.setattr(hci_msv4_module, "init_ray", lambda *a, **k: pytest.fail("Ray was started"))
+    with pytest.raises(ImportError, match="python-casacore"):
+        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), phase_dir="00:20:00,-30:00:00", **COMMON)

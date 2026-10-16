@@ -61,7 +61,8 @@ cabs:
           rich_help_panel: Control
       transfer-model-from:
         info:
-          Name of dataset to use for model initialisation
+          Not supported by hci-msv4 and refused.
+          Use the degrid app to populate a model column instead.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
@@ -97,9 +98,8 @@ cabs:
           rich_help_panel: Data Selection
       sigma-column:
         info:
-          Column containing standard devations.
-          Will be used to initialise natural weights if detected.
-          Must be the same across MSs
+          Not supported by hci-msv4 and refused, since MSv4 has no SIGMA.
+          Use --weight-column instead.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
@@ -112,7 +112,8 @@ cabs:
           rich_help_panel: Data Selection
       gain-table:
         info:
-          Path to Quartical gain table containing NET gains.
+          Path to a QuartiCal gain term, gains.qc/NET or gains.qc::NET.
+          Any term name is accepted.
           There must be a table for each MS.
           glob(ms) and glob(gt) should match up when running from CLI.
         dtype: Optional[List[URI]]
@@ -271,14 +272,16 @@ cabs:
           rich_help_panel: Output
       weight-grid-out:
         info:
-          Whether to produce an image of the weighted grid or not.
+          Not supported by hci-msv4 and refused.
+          The hci scaffold has no weight_grid either.
         dtype: bool
         default: false
         metadata:
           rich_help_panel: Output
       natural-grad:
         info:
-          Compute naural gradient
+          Compute natural gradient.
+          Needs a PSF twice the image size (--psf-relative-size 2).
         dtype: bool
         default: false
         metadata:
@@ -391,7 +394,7 @@ cabs:
       fits-vars:
         info:
           Write these variables to fits.
-          Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'.
+          Options are 'cube', 'cube_mean', 'psf' and 'beam_weight'.
           Variables are written per band.
         dtype: Optional[List[str]]
         metadata:

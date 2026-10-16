@@ -384,11 +384,13 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
         ressq = (data * data.conj()).real * mask[None]
         wcount = mask.sum()
         if wcount:
-            ovar = ressq.sum() / wcount  # use 67% quantile?
-            if ovar > 0:
-                weight = (dof + 1) / (dof + ressq / ovar) / ovar
-            else:
+            # one variance per Stokes: pooling them over a single-Stokes count overestimates it ns-fold
+            ovar = ressq.sum(axis=(1, 2), keepdims=True) / wcount  # use 67% quantile?
+            if not (ovar > 0).any():
                 raise ValueError("Residual visibilities are exactly zero. Cannot compute L2 reweighting.")
+            # a Stokes with an exactly zero residual (an unpolarised simulation's V) keeps its weights
+            safe = np.where(ovar > 0, ovar, 1.0)
+            weight = np.where(ovar > 0, (dof + 1) / (dof + ressq / safe) / safe, weight)
         # with nothing unflagged the (all-masked) weights are left as they are
 
     n = np.sqrt(1 - x0**2 - y0**2)

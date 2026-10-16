@@ -427,7 +427,16 @@ def weight_data_msv4(data, weight, flag, jones, ant1, ant2, pol, product, nc, wg
     ``(gtime, gchan, ant, 2[, 2])`` (length-1 gtime/gchan broadcast) and the
     output is ``(stokes, time, baseline, chan)`` so ``(stokes, row, chan)`` is a
     free reshape for ducc. Flagged (any-correlation) samples are zero.
+
+    Raises:
+        ValueError: if a gain axis is neither length one nor the data's length.
     """
+    # the kernel indexes gain time/channel as 0 or the data's own index: guard its bounds
+    if jones.shape[0] not in (1, data.shape[0]) or jones.shape[1] not in (1, data.shape[2]):
+        raise ValueError(
+            f"jones (gtime, gchan) = {jones.shape[:2]} must each be 1 or the data's (ntime, nchan) = "
+            f"{(data.shape[0], data.shape[2])}"
+        )
     return _weight_data_msv4_impl(
         data, weight, flag, jones, ant1, ant2, literally(pol), literally(product), literally(nc), literally(wgt_mode)
     )
