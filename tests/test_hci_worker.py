@@ -29,6 +29,7 @@ def items(ms_name):
     return plan_images([dt], integrations_per_image=1, channels_per_image=-1, images_per_chunk=4).items, dt
 
 
+@pytest.mark.slow  # two worker inits and three images: ~5 s (D45)
 def test_prefetched_item_matches_a_synchronous_read(ms_name, items, monkeypatch):
     its, dt = items
     calls = []
@@ -65,4 +66,7 @@ def test_mismatched_prefetch_is_a_driver_bug(ms_name, items):
     w.image(its[0], its[1])
     with pytest.raises(RuntimeError, match="prefetch"):
         w.image(its[2], its[3])
+    # without a next item too: the stale prefetch must not be silently kept
+    with pytest.raises(RuntimeError, match="prefetch"):
+        w.image(its[2], None)
     w.close()

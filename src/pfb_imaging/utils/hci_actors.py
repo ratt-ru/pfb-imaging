@@ -76,6 +76,10 @@ class CubeWriterImpl:
             self._w2sum = np.zeros(nstokes)
         self._slabs: dict[tuple[int, int], dict[str, np.ndarray]] = {}
         self._counts: dict[tuple[int, int], int] = {}
+        # the imported stack is ~300k tracked objects and a full collect costs ~0.4 s; freezing
+        # them makes the per-call collect below scan only what each call allocated
+        gc.collect()  # frozen garbage would never be collected
+        gc.freeze()
 
     def open_blocks(self) -> int:
         """Number of slabs currently held in memory."""
@@ -245,6 +249,8 @@ class HciWorkerImpl:
         self._beam_model = beam_model
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hci-read")
         self._pending = None  # (key, Future[ItemData])
+        gc.collect()
+        gc.freeze()  # as CubeWriterImpl: the per-call collects then cost milliseconds, not ~0.4 s
 
     def _read(self, item):
         node = self._dts[item.ms_index].instance[item.node_path]
@@ -263,20 +269,20 @@ class HciWorkerImpl:
             goes to the writer and only the small telemetry returns to the driver.
 
         Raises:
-            RuntimeError: A prefetch is still pending for a different item (driver bug).
+            RuntimeError: A prefetch is pending for an item other than ``item`` (driver bug).
         """
         try:
-            if self._pending is not None and self._pending[0] == _key(item):
+            # refuse before reading: a synchronous read now would race the pending prefetch
+            if self._pending is not None and self._pending[0] != _key(item):
+                raise RuntimeError(f"prefetch pending for {self._pending[0]} while asked to image {_key(item)}")
+            if self._pending is not None:
                 _, fut = self._pending
                 self._pending = None  # cleared first so a failed read surfaces here, once
                 inp = fut.result()
+                del fut  # the Future holds the ItemData too; the telemetry below must not count it
             else:
                 inp = self._read(item)
             if next_item is not None:
-                if self._pending is not None:
-                    raise RuntimeError(
-                        f"prefetch pending for {self._pending[0]} while asked to prefetch {_key(next_item)}"
-                    )
                 self._pending = (_key(next_item), self._executor.submit(self._read, next_item))
             result = image_item(inp, self._cfg, self._beam_model, self._nx_psf, self._ny_psf)
             result["time_index"] = item.time_index

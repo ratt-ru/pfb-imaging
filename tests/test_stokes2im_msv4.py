@@ -89,13 +89,18 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
         assert out[key].shape == (1,) and np.isnan(out[key]).all()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
 def test_matches_stokes_image(ms_name, node, phase_dir):
-    """Same single-integration image through the legacy dask-ms path."""
+    """Same single-integration image through the legacy dask-ms path.
+
+    The legacy side gets its phase centre and antenna positions from the MSv2 FIELD and
+    ANTENNA tables, as hci reads them, so the port's own MSv4 reads are checked too.
+    """
     pytest.importorskip("daskms")
     if phase_dir is not None:
         pytest.importorskip("pyrap.measures")
-    from daskms import xds_from_storage_ms  # deferred: [casacore] extra, legacy reference only
+    from daskms import xds_from_storage_ms, xds_from_table  # deferred: [casacore] extra, legacy reference only
 
     from pfb_imaging.utils.stokes2im import stokes_image  # deferred: imports pyrap at module scope ([casacore])
 
@@ -118,7 +123,9 @@ def test_matches_stokes_image(ms_name, node, phase_dir):
     wspec = np.broadcast_to(dsi.WEIGHT.values[:, None, :], dsi.DATA.shape).copy()
     dsi = dsi.assign(WEIGHT_SPECTRUM=(("row", "chan", "corr"), wspec))
     assert nchan == inp.freq.size
-    antpos = tree["antenna_xds"].ANTENNA_POSITION.values
+    antpos = xds_from_table(f"{ms_name}::ANTENNA")[0].POSITION.values
+    radec = xds_from_table(f"{ms_name}::FIELD")[0].PHASE_DIR.values[int(ds.FIELD_ID), 0].copy()
+    radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings
     old = stokes_image._function(
         dc1="DATA",
         ds=dsi,
@@ -129,7 +136,7 @@ def test_matches_stokes_image(ms_name, node, phase_dir):
         utime=utime[:1],
         tbin_idx=ridx[:1],
         tbin_counts=rcnt[:1],
-        radec=inp.radec,
+        radec=radec,
         antpos=antpos,
         poltype=inp.poltype,
         bandid=0,
