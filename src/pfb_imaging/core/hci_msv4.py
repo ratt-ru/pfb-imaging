@@ -383,7 +383,8 @@ def hci_msv4(
         log.error_and_raise(f"nworkers must be >= 1 (got {nworkers})", ValueError)
     if sigma_column is not None:
         log.error_and_raise(
-            "--sigma-column is not supported by hci-msv4: MSv4 has no SIGMA. Use --weight-column", NotImplementedError
+            "--sigma-column is not supported by hci-msv4: xarray-ms does not expose SIGMA. Use --weight-column",
+            NotImplementedError,
         )
     if gain_table is not None:
         if len(gain_table) != len(ms):
@@ -656,7 +657,9 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
     """Deal items to workers with a one-item lookahead; at most ``max_open`` time blocks in the writer.
 
     Each worker's next item is promised at call time so its prefetch is always for an item it
-    will receive. Image refs go straight from worker to writer; the driver only sees telemetry.
+    will receive. A promise is made only when the allowed window still holds an item for every
+    other idle, unpromised worker, so a narrow window keeps every worker busy, not half. Image
+    refs go straight from worker to writer; the driver only sees telemetry.
     A worker is free again as soon as its own image call finishes, not when the writer has
     stored the image: Ray runs an actor's calls in submission order, so gating on the writer
     would make every worker wait on every earlier writer call (head-of-line blocking). Writer
@@ -687,6 +690,17 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
         lowest_open = min(slabs_left) if slabs_left else np.iinfo(np.int64).max
         return item.block < lowest_open + max_open
 
+    def spare(nwanted: int) -> bool:
+        """More than ``nwanted`` allowed items are queued (the queue is sorted by block)."""
+        n = 0
+        for it in queue:
+            if not allowed(it):
+                return False
+            n += 1
+            if n > nwanted:
+                return True
+        return False
+
     while queue or promised or imaging or writing:
         for w in list(idle):
             if len(writing) >= max_writing:
@@ -697,7 +711,10 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
                 item = queue.popleft()
             else:
                 continue
-            nxt = queue.popleft() if queue and allowed(queue[0]) else None
+            # promise a next item only if every other idle, unpromised worker can still get one
+            # now: in a window narrower than the pool, lookahead would idle half the workers
+            waiting = sum(1 for v in idle if v != w and v not in promised)
+            nxt = queue.popleft() if spare(waiting) else None
             if nxt is not None:
                 promised[w] = nxt
             img_ref, mem_ref = workers[w].image.options(num_returns=2).remote(item, nxt)

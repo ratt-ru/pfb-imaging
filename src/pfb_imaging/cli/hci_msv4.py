@@ -183,7 +183,8 @@ def hci_msv4(
     sigma_column: Annotated[
         str | None,
         typer.Option(
-            help="Not supported by hci-msv4 and refused, since MSv4 has no SIGMA. Use --weight-column instead.",
+            help="Not supported by hci-msv4 and refused, since xarray-ms does not expose SIGMA. "
+            "Use --weight-column instead.",
             rich_help_panel="Data Selection",
         ),
     ] = None,

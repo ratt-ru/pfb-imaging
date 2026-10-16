@@ -98,7 +98,7 @@ cabs:
           rich_help_panel: Data Selection
       sigma-column:
         info:
-          Not supported by hci-msv4 and refused, since MSv4 has no SIGMA.
+          Not supported by hci-msv4 and refused, since xarray-ms does not expose SIGMA.
           Use --weight-column instead.
         dtype: Optional[str]
         metadata:

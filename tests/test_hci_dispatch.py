@@ -115,6 +115,8 @@ class _FakeRay:
     def __init__(self, seed: int):
         self.rng = random.Random(seed)
         self.actors = []
+        self.workers = []  # actors whose concurrent busyness is tracked
+        self.max_busy = 0
 
     def actor(self, obj):
         a = _FakeActor(obj)
@@ -122,6 +124,7 @@ class _FakeRay:
         return a
 
     def _step(self):
+        self.max_busy = max(self.max_busy, sum(1 for a in self.workers if a.queue))
         runnable = [a for a in self.actors if a.queue and all(r.done for r in a.queue[0][2] if isinstance(r, _Ref))]
         if not runnable:
             raise RuntimeError("fake Ray deadlock")
@@ -233,3 +236,24 @@ def test_dispatch_on_ray_with_stub_actors():
     finally:
         for a in workers + [writer]:
             ray.kill(a)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_narrow_window_keeps_every_worker_busy(monkeypatch, seed):
+    """One band, four images per block, two blocks open: eight allowed items for eight workers.
+
+    Promising each dispatched worker its next item as well would hand the eight items to four
+    workers and idle the other four.
+    """
+    item_cls, stub_worker, stub_writer = _stubs()
+    fake = _FakeRay(seed)
+    monkeypatch.setattr(hci_msv4, "ray", fake)
+    plan = _plan(item_cls, ntime=32, nband=1, ipc=4)
+    workers = [stub_worker() for _ in range(8)]
+    writer = stub_writer()
+    writer.reset(plan.expected, 4)
+    handles = [fake.actor(w) for w in workers]
+    fake.workers = handles
+    _dispatch(plan, handles, fake.actor(writer), 2)
+    assert fake.max_busy == 8
+    assert sorted(it.time_index for w in workers for it in w.got) == list(range(32))

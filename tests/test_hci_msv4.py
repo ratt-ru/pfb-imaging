@@ -244,7 +244,7 @@ def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
     "over, err, match",
     [
         ({"nworkers": 0}, ValueError, "nworkers must be >= 1"),
-        ({"sigma_column": "SIGMA"}, NotImplementedError, "MSv4 has no SIGMA"),
+        ({"sigma_column": "SIGMA"}, NotImplementedError, "does not expose SIGMA"),
         ({"natural_grad": True, "psf_relative_size": 1.0}, ValueError, "natural-grad needs a PSF twice"),
     ],
 )
