@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-16T06:44:11Z
-last_verified_commit: 9e05b33
+timestamp: 2026-10-16T08:13:06Z
+last_verified_commit: 2324a2c
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1775,7 +1775,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   own image call finishes, not when the writer acks the image: Ray runs an actor's calls in
   submission order, so gating on writer acks makes every worker wait behind every earlier
   `add` (head-of-line blocking). Acks drive only the slab accounting that bounds open time
-  blocks, with at most `2 x nworkers` outstanding (`_dispatch`).
+  blocks, with at most `2 x nworkers` outstanding (`_dispatch`). A worker is promised its next
+  item (the prefetch) only when the allowed window still holds one for every other idle,
+  unpromised worker; otherwise a window narrower than the pool (say one band, four images per
+  block, two blocks open, eight workers) hands two items each to half the workers and idles the
+  rest (`tests/test_hci_dispatch.py::test_narrow_window_keeps_every_worker_busy`).
 - **Rationale:** one writer per chunk removes the need for a lock that does not exist in zarr 3
   and does not cross nodes. Visibilities stay out of the object store (D10, #339), and only
   images travel -- worker to writer as Ray refs, the one deliberate exception to "large arrays
@@ -1798,7 +1802,7 @@ update it (and this page's `last_verified_commit`) in the same session.
     fails in seconds rather than in a worker hours in. Gain flags are honoured.
   - **Refused before Ray**, as is every planning or column error, all before `--overwrite`
     deletes an existing cube: `--weight-grid-out`, `--transfer-model-from`, `--sigma-column`
-    (MSv4 has no SIGMA), `nworkers < 1`, `--natural-grad` without a PSF twice the image size
+    (xarray-ms does not expose SIGMA, `docs/msv4_issues.md` issue 8), `nworkers < 1`, `--natural-grad` without a PSF twice the image size
     (its Hessian assumes it), rephasing or `--target` without python-casacore, and correlations
     in a non-canonical order.
   - **Behaviour that differs from `hci`, and will show in the side-by-side runs:**
@@ -1836,6 +1840,15 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_stokes2im_msv4.py::test_l2_reweight_is_per_stokes`; review of PR #358.
 
 ## Known debt
+
+- **`hci-msv4` has no antenna-dependent gain test.** Both end-to-end gain tests give every
+  antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a
+  mis-ordered Jones antenna axis or a dropped conjugate would all pass. The reader's antenna
+  mapping is unit-tested (`tests/test_gains.py`) and `weight_data_msv4` matches the legacy
+  kernel with random gains (`tests/test_weight_data_msv4.py`), but nothing checks the two
+  joined through `read_item`. **Follow-up:** at `image_item` level, corrupt an item's data
+  with random per-antenna complex gains (`g_p V g_q^H`), image it with those gains, and
+  compare with imaging the uncorrupted data without gains. Raised in the review of PR #358.
 
 - **`imager` does not apply gains.** The MSv4 rewrite never carried the MSv2
   `stokes2vis` gain application across: `--gain-table` was validated, globbed and
