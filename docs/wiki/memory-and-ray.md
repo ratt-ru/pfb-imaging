@@ -2,9 +2,9 @@
 type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
-tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-13T09:00:00Z
-last_verified_commit: 36b2a22
+tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
+timestamp: 2026-10-17T15:45:00Z
+last_verified_commit: cc05d7f
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -104,9 +104,10 @@ Pass-1/2 tasks and `degrid` work items return `utils/memprof.task_memory()` --
 which reach the run's log file as well as the terminal (#348; they were bare
 `print`s before, so a cluster or stimela run kept them only in scrollback). (The deconv band workers'
 `get_mem` still returns the older `{pid, rss_gb, peak_gb}`; the deconv driver
-logs it per-worker once per major cycle at `verbosity > 1`.)
+logs it per-worker once per major cycle at `verbosity > 1`.) The task bodies run
+under `memprof.profile_task`, which adds the task's `wall_s` and `cpu_s`:
 
-    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]
+    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB | wall 2.1 s cpu 2.6 s (1.3 cores)]
 
 `anon` is `RssAnon` (the process's private heap); `shm` is `RssShmem`, which
 for a Ray worker is **Ray object-store pages** it has touched: every large
@@ -136,6 +137,34 @@ take timings and peaks from a run without it: native tracking slows
 everything, and one local run under it hit 26.7 GiB RSS in a pass-1 task with
 2.8 GiB tracked -- allocations memray cannot hook (Arrow's mimalloc, most
 likely) -- where the same code without memray peaked at 3.5 GB.
+
+## Where the time goes
+
+Stimela's stats give one wall time per step. Three finer sources, all read by
+`scripts/profile_report.py` (its docstring is the how-to):
+
+- **Driver phases, always on.** `memprof.PhaseClock` ends the imager and
+  `degrid` logs with a `Time by phase:` line. Task submission is its own phase
+  because `.remote` pickles each task's datatree node in the driver.
+- **The Ray timeline, `PFB_RAY_TIMELINE=<file.json>`.** The driver dumps
+  `ray.timeline()` before shutting Ray down. Ray already splits each task into
+  argument deserialisation, execution and output storage, so the report gives
+  per task name the counts, total/p50/p95/max, those overheads, the workers'
+  busy fraction and the time with no task running anywhere (driver-bound).
+- **Per-task cProfile, `PFB_CPROFILE_DIR=<dir>`.** `profile_task` writes one
+  `.pstats` per task, beside memray's `.bin` when both are set; the report
+  merges them per task name.
+
+`cpu_s / wall_s` in the progress line is the cores a task kept busy, counted
+over the whole worker process, so ducc0 and numba threads are included. cProfile
+sees only the task's own thread and charges compiled code to the Python call
+that entered it.
+
+On the test MS (`--nworkers 2 --nthreads 2`, 4 images), numba JIT compilation
+was 80% of the profiled `stokes_vis` time and 50% of `grid_image`'s (p50 0.27 s
+against a 9.3 s first task per worker). It is paid once per worker process, so
+on a real run it shrinks to a per-worker constant -- but a small test run's
+timings are mostly compilation.
 
 Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
@@ -239,8 +268,9 @@ same rules as pass 1: `Degridder.degrid` calls `gc.collect()` in a `finally`
 and must never wipe the class-level Multiton cache (see layer 3: a wholesale
 clear evicts the deployment's own model/mask Multitons), and returns the same
 post-gc `task_memory()` telemetry, logged per item as `Completed:` lines; the
-item body runs under `memray_task("degrid")` and the driver forwards
-`memray_env()`, so `PFB_MEMRAY_DIR` profiles replicas as it does pass 1. The
+item body runs under `profile_task("degrid")` and the driver forwards
+`profile_env()`, so `PFB_MEMRAY_DIR` and `PFB_CPROFILE_DIR` profile replicas as
+they do pass 1. The
 replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.

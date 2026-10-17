@@ -17,7 +17,7 @@ from scipy.constants import c as lightspeed
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
-from pfb_imaging.utils.memprof import memray_task, task_memory
+from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
 from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
@@ -31,7 +31,7 @@ def safe_stokes_vis(*args, **kwargs):
     # each completed task would otherwise leave its fully loaded node behind
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
-    with memray_task("stokes_vis"):
+    with profile_task("stokes_vis") as clock:
         try:
             ret = stokes_vis(*args, **kwargs)
         finally:
@@ -40,7 +40,7 @@ def safe_stokes_vis(*args, **kwargs):
     # RSS that ratchets up across a worker's sequential tasks indicates
     # retention below Python (arcae/casacore caches, allocator arenas), which
     # gc cannot touch; shm growth is Ray object-store pages (see memprof).
-    return ret, task_memory()
+    return ret, {**task_memory(), **clock}
 
 
 def real_beam_maps(maps):

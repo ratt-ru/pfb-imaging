@@ -87,8 +87,10 @@ rediscovery:
 * **Profiling loop:** the maintainer drops stimela logs into `tmp/` for comparison (e.g.
   `tmp/logs_dirty_and_init` as the legacy baseline vs `tmp/logs_imager*`). Start with
   `stimela.stats.summary.txt` (wall / CPU% / peak-mem / total-I/O per step), then the per-step
-  logs. The imager progress lines carry per-task post-gc RSS telemetry — read it before
-  theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`).
+  logs. The imager progress lines carry per-task post-gc RSS, wall and CPU telemetry — read it
+  before theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`). For
+  where the time goes inside the remote calls, set `PFB_RAY_TIMELINE` and `PFB_CPROFILE_DIR`
+  and read them with `scripts/profile_report.py`.
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
   (serialisation, lazy loading, retention) reproduces on `tests/data/test_ascii_1h60.0s.MS`
   with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
