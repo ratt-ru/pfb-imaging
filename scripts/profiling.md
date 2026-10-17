@@ -1,5 +1,10 @@
 # Profiling scripts
 
+For a pipeline run (`pfb imager`, `pfb degrid`) rather than a kernel, start with
+`scripts/profile_report.py`: driver phases, the Ray task timeline and per-task
+cProfile captures (`PFB_RAY_TIMELINE`, `PFB_CPROFILE_DIR`). Its docstring is the
+how-to. Memory is `scripts/memray_report.py`.
+
 The profiling scripts are layered bottom-up: low-level kernels first,
 then composite operators built from them. Run the lower-level scripts
 to isolate regressions before looking at the full operator benchmarks.

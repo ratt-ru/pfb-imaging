@@ -52,7 +52,7 @@ from pfb_imaging.utils.degrid import (
     ensure_model_columns,
     flux_scale_warning,
 )
-from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.msv4 import (
     SelectedNode,
     get_engine,
@@ -305,7 +305,7 @@ class Degridder:
         return await asyncio.get_running_loop().run_in_executor(self._executor, self._degrid, item)
 
     def _degrid(self, item: WorkItem) -> dict:
-        with memray_task("degrid"):
+        with profile_task("degrid") as clock:
             try:
                 if self._model_ds is None:
                     self._model_ds = self._model.instance
@@ -356,7 +356,7 @@ class Degridder:
         # Measured after the collect, as pass 1 does: post-gc anon that ratchets
         # for a pid across items is retention below Python; shm is Ray
         # object-store pages (wiki memory-and-ray).
-        return task_memory()
+        return {**task_memory(), **clock}
 
 
 def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int):
@@ -465,6 +465,7 @@ def degrid(
     """
     opts_dict = locals().copy()
     time_start = time.time()
+    phases = PhaseClock(log)
 
     # a negative step other than -1 would reach range(0, ntime, step) as a
     # negative stride, yielding zero work items -- the command would start
@@ -673,7 +674,7 @@ def degrid(
     init_ray(
         nworkers + 1,
         ray_address=ray_address,
-        runtime_env={"env_vars": {**env_vars, **memray_env()}, "worker_process_setup_hook": setup_ray_worker},
+        runtime_env={"env_vars": {**env_vars, **profile_env()}, "worker_process_setup_hook": setup_ray_worker},
         log=log,
     )
 
@@ -761,6 +762,7 @@ def degrid(
     # controller's lifecycle INFO (replicas added, upscaling) goes through its
     # log_level; its warnings, e.g. a replica slow to start, still show. The
     # "Completed:" telemetry names each replica pid anyway.
+    phases.lap("Setup")
     log.info(f"Starting Ray Serve with up to {nworkers} Degridder replica(s)")
     serve_log = logging.getLogger("ray.serve")
     serve_level = serve_log.level
@@ -772,6 +774,7 @@ def degrid(
         serve_log.setLevel(serve_level)
         raise
     serve_log.setLevel(logging.WARNING)
+    phases.lap("Serve start")
 
     try:
         # Bounded in-flight queue: drain the oldest response once more than
@@ -812,11 +815,15 @@ def degrid(
             drain(max_inflight - 1)
             inflight.append(handle.degrid.remote(item))
         drain(0)
+        phases.lap("Degridding")
     finally:
         # delete only this application. serve.shutdown() is cluster-wide --
         # it deletes every app and tears down the Serve system actors -- so on
         # a shared --ray-address cluster it would kill unrelated workloads.
         serve.delete(_SERVE_APP_NAME)
         serve_log.setLevel(serve_level)
+    phases.lap("Serve delete")
 
+    phases.summary()
     log.info(f"All done after {time.time() - time_start}s.")
+    dump_timeline(log)

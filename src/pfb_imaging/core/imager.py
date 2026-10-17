@@ -26,7 +26,7 @@ from pfb_imaging.utils.baselines import (
 )
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
-from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.misc import (
     check_gridder_epsilon,
     fitcleanbeam,
@@ -362,9 +362,11 @@ def _concat_pieces(plist):
 
 @ray.remote
 def _grid_image(*args, **kwargs):
-    """Ray entry point for :func:`_grid_image_body` (opt-in memray tracking)."""
-    with memray_task("grid_image"):
-        return _grid_image_body(*args, **kwargs)
+    """Ray entry point for :func:`_grid_image_body` (opt-in profiling, see memprof)."""
+    with profile_task("grid_image") as clock:
+        res = _grid_image_body(*args, **kwargs)
+    res["mem"].update(clock)
+    return res
 
 
 def _grid_image_body(
@@ -723,6 +725,7 @@ def imager(
     # for logging options
     opts_dict = locals().copy()
     time_start = time.time()
+    phases = PhaseClock(log)
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -1055,7 +1058,7 @@ def imager(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": {**env_vars, **memray_env()},
+            "env_vars": {**env_vars, **profile_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
@@ -1078,6 +1081,7 @@ def imager(
             # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
             beam_model = BeamWizard(band=beam_model)
 
+    phases.lap("Setup")
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
@@ -1162,6 +1166,8 @@ def imager(
                     )
                     tasks.append(fut)
 
+    # submission pickles every task's datatree node, so it is timed on its own
+    phases.lap("Pass 1 submission")
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1188,7 +1194,7 @@ def imager(
     nband_out = len(set(bandids_out))
 
     log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_url}")
-    log.info(f"Pass 1 done after {time.time() - time_start}s")
+    phases.lap("Pass 1")
 
     # consolidate the scratch metadata once, single-threaded, now that all
     # workers have finished (workers wrote with consolidated=False to avoid
@@ -1338,6 +1344,7 @@ def imager(
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
     # per-worker cached model: one load per process, not per task (degrid's pattern)
     transfer = Multiton(_load_transfer_model, transfer_model_from) if transfer_model_from else None
+    phases.lap("Counts and .dt set-up")
     tasks = []
     for out_name, src_names, meta in work:
         fut = _grid_image.remote(
@@ -1370,6 +1377,7 @@ def imager(
         )
         tasks.append(fut)
 
+    phases.lap("Pass 2 submission")
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1403,6 +1411,7 @@ def imager(
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)
     zarr.consolidate_metadata(dt_url)
+    phases.lap("Pass 2")
 
     # MFS beam parameters per time chunk, from the wsum-normalised sum of the band
     # PSFs. Read back from the .dt one band at a time rather than returned by the
@@ -1430,6 +1439,8 @@ def imager(
     for tid in psf_mfs:
         psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
     del psf_mfs
+    if psf:
+        phases.lap("MFS PSF fit")
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:
@@ -1462,13 +1473,17 @@ def imager(
         ]
         for task in fits_tasks:
             ray.get(task)
+        phases.lap("FITS")
 
     if not keep_scratch:
         log.info(f"Removing scratch store {scratch_url}")
         scratch_fs.rm(scratch_url, recursive=True)
+        phases.lap("Scratch removal")
 
+    phases.summary()
     log.info(f"All done after {time.time() - time_start}s")
 
+    dump_timeline(log)
     if not keep_ray_alive:
         ray.shutdown()
 
