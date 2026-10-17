@@ -2,6 +2,7 @@
 
 import dataclasses
 
+import arcae
 import numpy as np
 import pytest
 import xarray as xr
@@ -202,9 +203,19 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
 
 
 @pytest.mark.slow  # numba compiles the CORRECTED_DATA path: ~30 s cold (D45)
-def test_model_column_is_subtracted_like_the_column_difference(node):
+def test_model_column_is_subtracted_like_the_column_difference(writable_ms):
     """--model-column never worked in hci (a broadcast error); pin it against dc1 - dc2."""
-    tree, sel = node
+    # The downloaded MS ships CORRECTED_DATA and MODEL_DATA all zero, so the
+    # comparison is vacuous (0 - 0) unless both are filled, and differently.
+    rng = np.random.default_rng(7)
+    with arcae.table(writable_ms, readonly=False) as tab:
+        shape = np.asarray(tab.getcol("DATA")).shape
+        for col in ("CORRECTED_DATA", "MODEL_DATA"):
+            vis = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+            tab.putcol(col, vis.astype(np.complex64))
+    dt = xr.open_datatree(writable_ms, **get_engine(writable_ms))
+    sel = select_vis_nodes(dt)[0]
+    tree = dt[sel.path]
     region = {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}
     cfg_m = _cfg(dc1="CORRECTED_DATA", model_column="MODEL_DATA", robustness=None, psf_out=False)
     cfg_d = _cfg(dc1="CORRECTED_DATA", dc2="MODEL_DATA", operator="-", robustness=None, psf_out=False)
