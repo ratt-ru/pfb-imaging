@@ -20,9 +20,9 @@ from pfb_imaging.operators.gridder import grid_partition, residual_from_partitio
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
-    missing_group_beams,
     node_baseline_groups,
     preflight_baseline_groups,
+    resolve_group_beam_cache,
 )
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
@@ -1024,18 +1024,6 @@ def imager(
         # pass-2 workers load their own copy through a Multiton; the driver holds none
         del transfer_ds
 
-    # only now: every refusal above, the transfer geometry included, needs the
-    # MS metadata but no cluster
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env={
-            "env_vars": {**env_vars, **memray_env()},
-            "worker_process_setup_hook": setup_ray_worker,
-        },
-        log=log,
-    )
-
     # Baseline-group masks, one dict per selected node. Computed here rather
     # than inside the dispatch loop so the set of groups that actually exist is
     # known before any BeamWizard is built -- an eager wizard for an absent
@@ -1054,6 +1042,24 @@ def imager(
     if baseline_groups:
         present_groups = sorted({g for m in node_masks_list for g in m}, key=GROUP_LABELS.index)
         log.info("Baseline groups present: " + ", ".join(present_groups))
+        if beam_model is not None and not isinstance(beam_model, BeamWizard):
+            # may repoint MBEAMS_CACHE_DIR, so before the workers inherit it
+            missing = resolve_group_beam_cache(str(beam_model).upper(), present_groups)
+            if missing:
+                log.error_and_raise(missing, RuntimeError)
+            env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
+
+    # only now: every refusal above, the transfer geometry included, needs the
+    # MS metadata but no cluster
+    init_ray(
+        nworkers,
+        ray_address=ray_address,
+        runtime_env={
+            "env_vars": {**env_vars, **memray_env()},
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+        log=log,
+    )
 
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
@@ -1065,9 +1071,6 @@ def imager(
             # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
             # file-backed) and pass 1 emits hundreds of tasks, so passing it by
             # value per task would serialise it hundreds of times.
-            missing = missing_group_beams(str(beam_model).upper(), present_groups)
-            if missing:
-                log.error_and_raise(missing, RuntimeError)
             log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
             beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
         else:

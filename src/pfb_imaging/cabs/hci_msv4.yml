@@ -6,7 +6,7 @@ cabs:
     info:
       High cadence imaging of MSv4 data.
       Same output as hci with larger time chunks.
-    image: ghcr.io/ratt-ru/pfb-imaging:issue353
+    image: ghcr.io/ratt-ru/pfb-imaging:hciconvert
     inputs:
       ms:
         info:

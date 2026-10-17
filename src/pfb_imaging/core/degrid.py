@@ -15,6 +15,7 @@ with an unrecognised-option error rather than silently doing the wrong thing.
 
 import asyncio
 import gc
+import logging
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
@@ -27,7 +28,7 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from meerkat_beams.utils import BeamWizard
+from meerkat_beams.utils import BeamWizard, set_console_logging_level
 from pfb_model_spec.utils.degrid import RegionMask, model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
@@ -36,10 +37,10 @@ from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
-    missing_group_beams,
     node_baseline_groups,
     parse_antenna_groups,
     preflight_baseline_groups,
+    resolve_group_beam_cache,
 )
 from pfb_imaging.utils.degrid import (
     assert_writable,
@@ -267,6 +268,10 @@ class Degridder:
         self._mask_list: list[np.ndarray] | None = None
         # Beam wizards are Multitons too (D38: bind recipes, never loaded objects)
         self._beams = beams
+        # The driver already built every wizard once, so its meerkat-beams INFO
+        # (download, staging, "opening BDS ...") is in the log; a replica's
+        # rebuild from the warm cache would only repeat it per replica
+        set_console_logging_level(logging.WARNING)
         self._override = antenna_groups
         self._use_groups = baseline_groups
         self._wizards: dict | None = None
@@ -616,7 +621,7 @@ def degrid(
     if beam_model is not None:
         if use_groups:
             labels = sorted(present_groups, key=GROUP_LABELS.index)
-            if (missing := missing_group_beams(str(beam_model).upper(), labels)) is not None:
+            if (missing := resolve_group_beam_cache(str(beam_model).upper(), labels)) is not None:
                 log.error_and_raise(missing, RuntimeError)
             log.info(f"Beam {beam_model} for baseline groups {', '.join(labels)}")
             kwargs = {g: {"band": beam_model, "group": g} for g in labels}
@@ -697,6 +702,10 @@ def degrid(
         # second request simply awaits that executor, which is harmless now
         # that `degrid` is async and the event loop stays free.
         max_ongoing_requests=_MAX_ONGOING_REQUESTS,
+        # Serve's per-request "CALL degrid OK" access lines duplicate the
+        # driver's "Completed:" progress line and are streamed to the terminal
+        # interleaved with it
+        logging_config={"enable_access_log": False},
         autoscaling_config={
             "upscale_delay_s": 1.0,
             "min_replicas": 1,
@@ -743,8 +752,26 @@ def degrid(
     # `RuntimeError: Failed to bind to address '127.0.0.1:8000'`. We drive the
     # deployment entirely through the handle returned below, so the proxy is a
     # port dependency we never use. location="NoServer" removes it.
-    serve.start(http_options={"location": "NoServer"})
-    handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    #
+    # Serve's own chatter is silenced. The driver-side "ray.serve" logger is
+    # held at WARNING for the app's lifetime (start-up, router and delete INFO
+    # lines), and at ERROR across start/run, where serve.run re-calls
+    # serve_start with its EveryNode default and WARNs that our NoServer is
+    # already in force -- benign, and unavoidable through the public API. The
+    # controller's lifecycle INFO (replicas added, upscaling) goes through its
+    # log_level; its warnings, e.g. a replica slow to start, still show. The
+    # "Completed:" telemetry names each replica pid anyway.
+    log.info(f"Starting Ray Serve with up to {nworkers} Degridder replica(s)")
+    serve_log = logging.getLogger("ray.serve")
+    serve_level = serve_log.level
+    serve_log.setLevel(logging.ERROR)
+    try:
+        serve.start(http_options={"location": "NoServer"}, logging_config={"log_level": "WARNING"})
+        handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    except BaseException:
+        serve_log.setLevel(serve_level)
+        raise
+    serve_log.setLevel(logging.WARNING)
 
     try:
         # Bounded in-flight queue: drain the oldest response once more than
@@ -790,5 +817,6 @@ def degrid(
         # it deletes every app and tears down the Serve system actors -- so on
         # a shared --ray-address cluster it would kill unrelated workloads.
         serve.delete(_SERVE_APP_NAME)
+        serve_log.setLevel(serve_level)
 
     log.info(f"All done after {time.time() - time_start}s.")

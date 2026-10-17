@@ -87,7 +87,7 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 967 tests, ~115 s -- run THIS
+uv run pytest tests/          # 969 tests, ~115 s -- run THIS
 ```
 
 (One of those skips without the `[casacore]` extra; the rest pass. Counts here are *collected*
@@ -117,7 +117,7 @@ Which workflow passes what is the whole design:
 | `acceptance.yml` | `-m slow` | push to `main`; `/test-acceptance` on a PR; `workflow_dispatch` |
 | `publish.yml` | `-m ""` | version tags — a release is gated on the whole suite |
 
-The slow set is 67 of the 1034 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 67 of the 1036 collected tests and ~80% of the suite's wall time, so running it
 on all six legs of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters
