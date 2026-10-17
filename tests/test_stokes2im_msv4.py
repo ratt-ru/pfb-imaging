@@ -94,7 +94,7 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
-def test_matches_stokes_image(ms_name, node, phase_dir):
+def test_matches_stokes_image(ms_name, sky_truth, node, phase_dir):
     """Same single-integration image through the legacy dask-ms path.
 
     The legacy side gets its phase centre and antenna positions from the MSv2 FIELD and
@@ -156,6 +156,7 @@ def test_matches_stokes_image(ms_name, node, phase_dir):
         wgt_mode="l2",
     )
     scale = np.abs(old.cube.values).max()
+    assert scale > 0  # else the cube comparison below is 0 == 0 at atol=0
     assert_allclose(new["cube"], old.cube.values[:, 0, 0], atol=1e-6 * scale)
     assert_allclose(new["psf"], old.psf.values[:, 0, 0], atol=1e-6)
     assert_allclose(new["weight"], old.weight.values[:, 0, 0], rtol=1e-6)
@@ -226,7 +227,7 @@ def test_model_column_is_subtracted_like_the_column_difference(writable_ms):
 
 
 @pytest.mark.slow  # numba compiles the IQUV kernel: ~30 s cold (D45)
-def test_l2_reweight_is_per_stokes(node):
+def test_l2_reweight_is_per_stokes(sky_truth, node):
     """--l2-reweight-dof never worked in hci; each Stokes is reweighted by its own variance."""
     tree, sel = node
     region = {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}

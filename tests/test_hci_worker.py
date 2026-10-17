@@ -30,7 +30,7 @@ def items(ms_name):
 
 
 @pytest.mark.slow  # two worker inits and three images: ~5 s (D45)
-def test_prefetched_item_matches_a_synchronous_read(ms_name, items, monkeypatch):
+def test_prefetched_item_matches_a_synchronous_read(ms_name, sky_truth, items, monkeypatch):
     its, dt = items
     calls = []
     real = hci_actors.read_item
@@ -47,6 +47,7 @@ def test_prefetched_item_matches_a_synchronous_read(ms_name, items, monkeypatch)
     assert {"pid", "rss_gb", "peak_gb"} <= set(mem0)
     assert (r1["time_index"], r1["band_index"]) == (its[1].time_index, its[1].band_index)
     ref = image_item(read_item(dt[its[1].node_path], its[1].region, _cfg()), _cfg(), None, 128, 128)
+    assert np.abs(ref["cube"]).max() > 0  # else a wrong-region prefetch would compare 0 == 0
     assert_array_equal(r1["cube"], ref["cube"])
     w.close()
 

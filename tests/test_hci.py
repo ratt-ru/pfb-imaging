@@ -197,7 +197,7 @@ def test_make_fits_header_does_not_mutate_input():
 
 
 @pytest.mark.slow
-def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
+def test_hci_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
     """channels_per_bin must not change hci output when no beam model is supplied.
 
     With channels_per_image=-1 (a single image per spw) and no beam correction,
@@ -249,6 +249,7 @@ def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
     # sanity: the run actually produced data
     assert np.any(weight_full > 0)
     assert np.any(weight_bin4 > 0)
+    assert np.abs(np.nan_to_num(cube_full)).max() > 0  # weights do not depend on the data; the cube does
 
     # weights telescope exactly: sum_b max(PSF_b) at the central pixel equals
     # max(PSF_full) since each band's PSF max sits at the same pixel.

@@ -80,7 +80,7 @@ def test_hci_msv4_output_layout(ms_name, tmp_path):
 @pytest.mark.slow
 @pytest.mark.timeout(900)  # two full runs (hci and hci-msv4) can exceed the 300 s default
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
-def test_hci_msv4_matches_hci(ms_name, tmp_path, phase_dir):
+def test_hci_msv4_matches_hci(ms_name, sky_truth, tmp_path, phase_dir):
     pytest.importorskip("daskms")
     from pfb_imaging.core.hci import hci as hci_core  # deferred: legacy reference needs the [casacore] extra
 
@@ -88,6 +88,7 @@ def test_hci_msv4_matches_hci(ms_name, tmp_path, phase_dir):
     hci_core([ms_name], old, images_per_chunk=4, phase_dir=phase_dir, **COMMON)
     hci_msv4_core([ms_name], new, images_per_chunk=8, phase_dir=phase_dir, **COMMON)
     a, b = xr.open_zarr(old), xr.open_zarr(new)
+    assert np.abs(np.nan_to_num(a.cube.values)).max() > 0  # else the comparison below is 0 == 0
     assert set(a.data_vars) == set(b.data_vars)
     assert a.attrs == b.attrs
     for c in ("STOKES", "X", "Y", "X_PSF", "Y_PSF"):
@@ -112,7 +113,7 @@ def test_hci_msv4_matches_hci(ms_name, tmp_path, phase_dir):
 
 
 @pytest.mark.slow
-def test_hci_msv4_constant_gain_scales_cube(ms_name, tmp_path):
+def test_hci_msv4_constant_gain_scales_cube(ms_name, sky_truth, tmp_path):
     """Applying a constant diagonal gain g divides the normalised image by |g|^2."""
     node = _vis_node(ms_name)
     _gain_term(f"{tmp_path}/gains.qc/NET/NET_0", node, to_mjd_time(node.ds.time.values[:1]), 2.0 + 0j)
@@ -120,11 +121,12 @@ def test_hci_msv4_constant_gain_scales_cube(ms_name, tmp_path):
     hci_msv4_core([ms_name], plain, **COMMON)
     hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **COMMON)
     a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
+    assert np.abs(a).max() > 0
     assert_allclose(b, a / 4.0, rtol=1e-6, atol=1e-9 * np.abs(a).max())
 
 
 @pytest.mark.slow
-def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, tmp_path):
+def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, sky_truth, tmp_path):
     """Per-time, per-channel gains with channels_per_image < nchan: each image scales by 1/|g|^2.
 
     |g| is constant within an image but differs between images and bands, and the phase varies
@@ -152,6 +154,7 @@ def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, tmp_path):
     hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **opts)
     a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
     nband = -(-nchan // cpi)
+    assert np.abs(a).max() > 0
     assert a.shape[1:3] == (nband, -(-ntime // ipi))
     scale = (t_amp[::ipi][None, :] * b_amp[::cpi][:, None]) ** 2  # (band, time)
     assert_allclose(b, a / scale[None, :, :, None, None], rtol=1e-6, atol=1e-9 * np.abs(a).max())

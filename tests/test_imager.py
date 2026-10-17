@@ -20,7 +20,7 @@ from pfb_imaging.core.imager import imager as imager_core
 
 
 @pytest.mark.slow
-def test_imager_writes_dt_tree(ms_name, tmp_path):
+def test_imager_writes_dt_tree(ms_name, sky_truth, tmp_path):
     """imager() runs both passes and writes a unified .dt DataTree plus FITS."""
     outname = str(tmp_path / "test_imager")
 
@@ -48,6 +48,7 @@ def test_imager_writes_dt_tree(ms_name, tmp_path):
     for v in ("DIRTY", "PSF", "WSUM", "PSFPARSN", "BEAM"):
         assert v in band.ds, f"band node missing {v}"
     assert np.isfinite(band.ds.DIRTY.values).all()
+    assert np.any(band.ds.DIRTY.values != 0)  # else the BDIRTY identity below is 0 == 0
     # residual is only computed when a model is passed in (future feature)
     assert "RESIDUAL" not in band.ds
     # band BEAM = wsum-weighted mean of the partition beams (linear-mosaic response)
@@ -108,7 +109,7 @@ def test_scratch_retained_by_default(ms_name, tmp_path):
 
 
 @pytest.mark.slow
-def test_imager_concat_row_collapses_time(ms_name, tmp_path):
+def test_imager_concat_row_collapses_time(ms_name, sky_truth, tmp_path):
     """concat_row=True collapses the time axis into one band node and agrees
     with concat_row=False on the MFS dirty.
 
@@ -163,6 +164,7 @@ def test_imager_concat_row_collapses_time(ms_name, tmp_path):
     b = mfs(dt_false, bands_false)
     assert a.shape == b.shape
     assert np.isfinite(a).all() and np.isfinite(b).all()
+    assert np.abs(a).max() > 0
     assert_allclose(1 + a, 1 + b, rtol=1e-4, atol=1e-4)
 
 
@@ -890,7 +892,7 @@ def _summed_band_products(dt_path):
 
 
 @pytest.mark.slow
-def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
+def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, sky_truth, tmp_path):
     """Summing the three groups reproduces the ungrouped image exactly.
 
     Imaging weights are reduced per band, not per partition, so both runs see
@@ -942,6 +944,7 @@ def test_baseline_groups_sum_to_the_ungrouped_image(ms_name, tmp_path):
     for name in ref:
         rd, rp, rw = ref[name]
         gd, gp, gw = got[name]
+        assert np.abs(rd).max() > 0  # else the DIRTY comparison is 0 == 0 at atol=0
         # wsum is a plain sum of weights and must agree to roundoff.
         assert_allclose(gw, rw, rtol=1e-10, atol=0)
         # DIRTY/PSF are compared against the image peak, not per pixel: summing
