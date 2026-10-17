@@ -9,6 +9,30 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
   **unconditionally** — the MS is read through arcae, so the casacore-free legs need it too.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
 
+### The shared MS is pristine per session, and mostly zeros
+
+Only the tarball is cached (`tests/data/test_ascii_1h60.0s.MS.tar.gz`). `pytest_sessionstart`
+extracts a fresh copy into a temp directory for every session and `ms_name` points at it, so
+local runs see exactly what CI sees. The MS used to persist in `tests/data` and accumulate
+writes, and a stray MODEL_DATA write from months earlier made a test pass locally that could
+never pass in CI. If you still have an extracted `tests/data/test_ascii_1h60.0s.MS`, nothing
+uses it any more; delete it.
+
+**DATA, CORRECTED_DATA and MODEL_DATA are all zero in that copy.** Only `sky_truth` fills DATA
+(plus FLAG/FLAG_ROW), and only once some test in the session requests it. So:
+
+* A test that asserts on anything derived from DATA requests `sky_truth` itself -- never rely
+  on an earlier test having filled it. Order is not a guarantee: `-k`, a single file, or
+  `-m slow` all change who ran first.
+* A test that reads CORRECTED_DATA or MODEL_DATA fills them itself, in a `writable_ms` copy.
+* A test comparing two code paths asserts the reference is non-zero first. `assert_allclose`
+  with an `atol` scaled by the reference's peak passes 0 == 0 at `atol=0`, so without the
+  guard a broken read cannot fail.
+
+`pytest_sessionfinish` fingerprints every MAIN-table column and fails the session (exit 1)
+if any column other than `sky_truth`'s DATA/FLAG/FLAG_ROW changed: the forgotten-writer bug
+below is caught by the run that introduces it.
+
 ### What skips without the `[casacore]` extra
 
 `ms_name` is only a path, and the test MS is *downloaded*, not built — `imager` and `degrid`

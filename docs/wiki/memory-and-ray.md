@@ -141,7 +141,7 @@ Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
 `psutil.Process().memory_info().rss` across iterations; then a manual
 `gc.collect()`. Growth that gc releases is layer 1; growth that survives gc
-is layer 3. `tests/data/test_ascii_1h60.0s.MS` works for this — but note
+is layer 3. The test MS (extract `tests/data/test_ascii_1h60.0s.MS.tar.gz`) works for this — but note
 that a single-node MS reuses the same cache keys, so layer 3 only *grows*
 when tasks span different partitions (as on real data).
 
