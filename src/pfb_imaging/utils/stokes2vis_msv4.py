@@ -16,7 +16,7 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG, eval_beam, reproject_and_interp_scat_beam
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
@@ -566,6 +566,8 @@ def stokes_vis(
                     i=p,
                     j=p,
                     verbose=0,
+                    nthreads=nthreads,
+                    pa_tolerance=BEAM_PA_TOLERANCE_DEG,
                 )
                 raw_maps.append(bmap)
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)

@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
+
 
 def test_write_support_and_kernel_available():
     """The three moving parts degrid rests on are importable and armed.
@@ -1765,8 +1767,28 @@ class _FakeWizard:
         self.bds = SimpleNamespace(X=SimpleNamespace(values=np.linspace(-2.0, 2.0, 401)))  # 0.01 deg pixels
         self.calls = []
 
-    def partition_mueller(self, *, field_centre, times, freq, l, m, stokes_out, stokes_in):  # noqa: E741
-        self.calls.append({"freq": freq, "ntime": times.size, "stokes": (stokes_out, stokes_in)})
+    def partition_mueller(
+        self,
+        *,
+        field_centre,
+        times,
+        freq,
+        l,  # noqa: E741
+        m,
+        stokes_out,
+        stokes_in,
+        nthreads=1,
+        pa_tolerance=0.0,
+    ):
+        self.calls.append(
+            {
+                "freq": freq,
+                "ntime": times.size,
+                "stokes": (stokes_out, stokes_in),
+                "nthreads": nthreads,
+                "pa_tolerance": pa_tolerance,
+            }
+        )
         ll, _ = np.meshgrid(l, m)  # (Y, X), like the real one
         field = self.value * (1.0 + self.slope * ll)
         out = np.zeros((len(stokes_out), len(stokes_in)) + ll.shape, dtype=np.result_type(self.value, np.float32))
@@ -1810,6 +1832,8 @@ def test_degrid_region_attenuates_by_the_beam_at_the_source(degrid_ms, simple_md
         assert abs(gain - mirrored) > 1e-3  # the test can tell the two apart
         np.testing.assert_allclose(beam, gain * bare, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
         assert wizard.calls and wizard.calls[0]["stokes"] == ("I", "I")
+        # the rotation average is threaded and merges angles (meerkat-beams#39)
+        assert wizard.calls[0]["pa_tolerance"] == BEAM_PA_TOLERANCE_DEG
     finally:
         dt.close()
 

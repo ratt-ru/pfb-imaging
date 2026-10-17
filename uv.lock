@@ -2821,21 +2821,17 @@ wheels = [
 [[package]]
 name = "meerkat-beams"
 version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/landmanbester/meerkat-beams?branch=issue39#13663e34abbbe0199d8a4439a8e4944a44870b7e" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/24/0b5fb05b2f2e81fa2ce5d14fe2c28c6feea9b338608ddca25e407bab25bb/meerkat_beams-0.1.0.tar.gz", hash = "sha256:b65005f05fa63164190d3e6158ea442af23e2b1d77f2ed6ce2ab33824757445e", size = 41352, upload-time = "2026-10-06T12:57:51.056Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/ff/f7d159bbe176e7d58f1a789630783e938a7880a771429962faf8b8203a0a/meerkat_beams-0.1.0-py3-none-any.whl", hash = "sha256:1ecb65a62f93a388e5c2064f4090c650920f130f996bb0b715d6e7b2388661b1", size = 51641, upload-time = "2026-10-06T12:57:49.788Z" },
 ]
 
 [package.optional-dependencies]
 full = [
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "dask", marker = "python_full_version >= '3.11'" },
-    { name = "dask-ms", extra = ["s3", "xarray", "zarr"], marker = "python_full_version >= '3.11'" },
     { name = "gdown", marker = "python_full_version >= '3.11'" },
+    { name = "hip-cargo", extra = ["s3"], marker = "python_full_version >= '3.11'" },
     { name = "katbeam", marker = "python_full_version >= '3.11'" },
     { name = "matplotlib", marker = "python_full_version >= '3.11'" },
     { name = "numcodecs", version = "0.15.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -3983,8 +3979,8 @@ requires-dist = [
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.1.0" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.1.0" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/landmanbester/meerkat-beams?branch=issue39" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", git = "https://github.com/landmanbester/meerkat-beams?branch=issue39" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },

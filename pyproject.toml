@@ -254,3 +254,6 @@ prerelease="allow"
 # tent frequency fit (#33) and the multi-region beam terms (#36) are on main but unreleased;
 # this goes away once 0.1.0 is on PyPI and the floor becomes >=0.1
 pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "main" }
+# nthreads/pa_tolerance on get_rotation_averaged_beam (landmanbester/meerkat-beams#40) are
+# unreleased; this goes away, and the floor moves, once they are on PyPI
+meerkat-beams = { git = "https://github.com/landmanbester/meerkat-beams", branch = "issue39" }
