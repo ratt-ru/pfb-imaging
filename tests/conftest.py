@@ -21,9 +21,11 @@ os.environ.setdefault("RAY_NUM_CPUS", "2")
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
 import functools  # noqa: E402
+import hashlib  # noqa: E402
 import importlib.util  # noqa: E402
 import shutil  # noqa: E402
 import tarfile  # noqa: E402
+import tempfile  # noqa: E402
 from pathlib import Path  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
@@ -62,8 +64,19 @@ test_data_path.mkdir(parents=True, exist_ok=True)
 _data_tar_name = "test_ascii_1h60.0s.MS.tar.gz"
 _ms_name = "test_ascii_1h60.0s.MS"
 
+# Only the download is cached. Every session extracts its own pristine copy
+# (`pytest_sessionstart`), so state written to the MS -- sky_truth's DATA, or
+# a test that forgot `writable_ms` -- never outlives the session that wrote
+# it. A persistent MS let a stray MODEL_DATA write from months earlier make a
+# test pass locally that could never pass in CI, which starts from the
+# download every time.
 data_tar_path = Path(test_data_path, _data_tar_name)
-ms_path = Path(test_data_path, _ms_name)
+ms_path = None  # set per session
+
+# The only columns a session may change in the shared MS: sky_truth's
+# injection. Anything else is a writer that should have used `writable_ms`.
+_SKY_TRUTH_COLUMNS = {"DATA", "FLAG", "FLAG_ROW"}
+_ms_fingerprint = {}
 
 # https://drive.google.com/file/d/1rfGXGjjJ2XtF26LImlyJzCJMCNQZgEFT/view?usp=sharing
 
@@ -146,30 +159,66 @@ def require_daskms():
         pytest.skip(reason)
 
 
+def _fingerprint(path):
+    """{column: digest} of the MAIN table, so a session can tell what it changed."""
+    import arcae
+
+    digests = {}
+    with arcae.table(str(path)) as tab:
+        for col in tab.columns():
+            try:
+                values = np.asarray(tab.getcol(col))
+            except Exception:  # noqa: S112 - FLAG_CATEGORY and friends are unset
+                continue
+            digests[col] = hashlib.sha1(values.tobytes()).hexdigest()
+    return digests
+
+
 def pytest_sessionstart(session):
-    """Called after Session object has been created, before run test loop."""
+    """Extract a pristine copy of the test MS for this session."""
+    global ms_path
 
     # Downloaded unconditionally: arcae reads this MS without dask-ms or
     # python-casacore, so the [casacore]-free legs need it too (they run the
     # imager and degrid tests against it).
-    if ms_path.exists():
-        print("Test data already present - not downloading.")
-    else:
+    if not data_tar_path.exists():
         print("Test data not found - downloading...")
         download = requests.get(url)  # , params={"dl": 1}
-        with open(data_tar_path, "wb") as f:
-            f.write(download.content)
-        with tarfile.open(data_tar_path, "r:gz") as tar:
-            tar.extractall(path=test_data_path)
-        data_tar_path.unlink()
-        print("Test data successfully downloaded.")
+        download.raise_for_status()
+        tmp = data_tar_path.with_suffix(".part")
+        tmp.write_bytes(download.content)
+        tmp.rename(data_tar_path)
+    session_dir = Path(tempfile.mkdtemp(prefix="pfb-test-ms-"))
+    with tarfile.open(data_tar_path, "r:gz") as tar:
+        tar.extractall(path=session_dir, filter="data")
+    ms_path = session_dir / _ms_name
+    _ms_fingerprint.update(_fingerprint(ms_path))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the session if anything but sky_truth wrote to the shared MS."""
+    if ms_path is None:
+        return
+    try:
+        after = _fingerprint(ms_path)
+        changed = sorted(c for c in set(_ms_fingerprint) | set(after) if _ms_fingerprint.get(c) != after.get(c))
+        rogue = [c for c in changed if c not in _SKY_TRUTH_COLUMNS]
+        if rogue:
+            print(
+                f"\nERROR: the session wrote {', '.join(rogue)} in the shared test MS. Only sky_truth may "
+                "write to it; a test that writes must take the `writable_ms` fixture (testing-and-ci.md §1)."
+            )
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    finally:
+        shutil.rmtree(ms_path.parent, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
 def ms_name():
     """Path to the shared MSv2 test set.
 
-    This is just a path, and the MS is *downloaded*, not built -- `imager` and
+    This is just a path to this session's pristine copy (see
+    `pytest_sessionstart`), and the MS is *downloaded*, not built -- `imager` and
     `degrid` read MSv2 tables through arcae, which vendors casacore. So this
     fixture deliberately does NOT require the [casacore] extra.
 
@@ -485,7 +534,8 @@ def sky_truth(ms_name, ms_meta, image_geometry):
     Writes DATA (predicted vis, Stokes I into XX/YY), FLAG (~10% random
     samples plus one fully flagged channel) and FLAG_ROW into the shared MS.
     Session-scoped: the injection is seeded and idempotent (same DATA/FLAG
-    every time) and this is the only writer to the shared MS -- every
+    every time) and this is the only writer to the shared MS (enforced by
+    `pytest_sessionfinish`) -- every
     test_degrid writer and both drop_column callers target a function-scoped
     copy. Session scope is required, not merely cheaper: the gt_dt pipeline
     fixtures are session-scoped and pytest refuses to let them reach a

@@ -16,6 +16,7 @@ import pytest
 import xarray as xr
 import yaml
 from africanus.coordinates import radec_to_lm
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 from daskms import xds_from_table
@@ -196,7 +197,7 @@ def test_make_fits_header_does_not_mutate_input():
 
 
 @pytest.mark.slow
-def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
+def test_hci_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
     """channels_per_bin must not change hci output when no beam model is supplied.
 
     With channels_per_image=-1 (a single image per spw) and no beam correction,
@@ -248,6 +249,7 @@ def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
     # sanity: the run actually produced data
     assert np.any(weight_full > 0)
     assert np.any(weight_bin4 > 0)
+    assert np.abs(np.nan_to_num(cube_full)).max() > 0  # weights do not depend on the data; the cube does
 
     # weights telescope exactly: sum_b max(PSF_b) at the central pixel equals
     # max(PSF_full) since each band's PSF max sits at the same pixel.
@@ -471,7 +473,6 @@ def test_hci_inject_transients_location_vs_distance(writable_ms, ms_meta, tmp_pa
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from astropy.io import fits
     from astropy.wcs import WCS
     from daskms import xds_from_ms, xds_to_table
@@ -589,7 +590,6 @@ def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_to_table
 
     xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
@@ -826,7 +826,6 @@ def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, ms_meta, t
     mechanism -- see wiki design-decisions D36 (#155) before deleting either.
     """
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
 
     field = xds_from_table(f"{ms_name}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
@@ -897,7 +896,6 @@ def test_hci_target_recentres_the_grid(writable_ms, ms_meta, tmp_path):
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_from_table, xds_to_table
 
     xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]

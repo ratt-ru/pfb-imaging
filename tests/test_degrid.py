@@ -178,7 +178,7 @@ def test_ensure_model_columns_creates_a_non_canonical_column(degrid_ms):
         assert np.asarray(tab.getcol("MODEL_DATA1")).shape == (21060, 8, 4)
 
 
-def test_handles_open_before_a_column_is_added_still_read(degrid_ms):
+def test_handles_open_before_a_column_is_added_still_read(sky_truth, degrid_ms):
     """A tree opened before ensure_model_columns keeps reading afterwards.
 
     Adding a column used to leave every table handle already cached in the
@@ -195,6 +195,7 @@ def test_handles_open_before_a_column_is_added_still_read(degrid_ms):
     try:
         node = next(iter(before.children.values()))
         first = node.ds.VISIBILITY.isel(time=0).values
+        assert np.any(first != 0)  # else a stale handle reading zeros would pass
 
         writer = xr.open_datatree(degrid_ms, **get_engine(degrid_ms, main_ninstances=1))
         try:

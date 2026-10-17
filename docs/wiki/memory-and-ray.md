@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-13T09:00:00Z
-last_verified_commit: 36b2a22
+timestamp: 2026-10-16T06:44:11Z
+last_verified_commit: 9e05b33
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -141,7 +141,7 @@ Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
 `psutil.Process().memory_info().rss` across iterations; then a manual
 `gc.collect()`. Growth that gc releases is layer 1; growth that survives gc
-is layer 3. `tests/data/test_ascii_1h60.0s.MS` works for this — but note
+is layer 3. The test MS (extract `tests/data/test_ascii_1h60.0s.MS.tar.gz`) works for this — but note
 that a single-node MS reuses the same cache keys, so layer 3 only *grows*
 when tasks span different partitions (as on real data).
 
@@ -286,6 +286,36 @@ Four Serve-specific notes:
   `lambdify` on **every** render, so a run pays sympy once per chunk and
   sympy's caches are global. Caching the compiled model expression belongs in
   pfb-model-spec.
+
+## The hci-msv4 workers and writer
+
+- Workers and the writer claim nominal CPUs (D8 reasoning) and the local cluster is sized
+  `nworkers + 2`.
+- On a multi-node cluster every path is opened by whichever process needs it -- workers open
+  the measurement sets, gain terms and transient spectra, the writer the output store -- so all
+  of them must be on a filesystem every node can see. Nothing is shipped through Ray instead.
+- Each `HciWorker.image` call returns post-gc `task_memory()` alongside the image; the driver
+  logs it as `Imaged: i / n [...]`. `CubeWriter.add` returns its own post-gc telemetry when it
+  writes a slab, logged as `Wrote band b block k: writer [...]` -- the line to read for the
+  writer's plateau. `CubeWriterImpl.add`/`finalise` and `HciWorkerImpl.image`
+  wrap their bodies in `try/finally gc.collect()`, which is cheap only because each actor
+  `gc.freeze()`s the imported stack at the end of `__init__`: unfrozen, every collect walks
+  ~324k objects for ~0.5 s, a serial ceiling of ~2.5 images/s on the single writer (D56). A
+  per-call collect that suddenly costs tenths of a second means something re-grew that heap.
+- Gain terms are opened once per process and cached (a Multiton), but only each item's
+  `(time, frequency)` region is read, so a term costs coordinates, not data, between calls.
+  Reading a whole variable with `.values` would keep the full partition resident for the
+  process's life through xarray's `MemoryCachedArray` -- ~30 GB for an 8 h, 8 s,
+  4096-channel, 64-antenna data-resolution term (`tests/test_gains.py` pins `_in_memory`).
+- A worker's `shm` should stay within a few images (see the writer cap below): images travel to the writer, visibilities
+  do not. A ratchet there means arrays are being shipped through the object store.
+- The writer's RSS is flat at about `max_simul_chunks` slabs (each `nband x images_per_chunk x nstokes` images) plus the float64 running sums
+  `(nstokes, nband, ny, nx)`. Expect a plateau, not a ratchet (D56).
+- The prefetch doubles a worker's visibility footprint: two images' data are resident at once.
+- Workers are freed when their image is done, so images can queue at the writer: at most
+  `2 x nworkers` unacked `add` calls, each pinning one image in the object store, before the
+  driver stops dispatching. A worker's `shm` can therefore sit at a few images while the writer
+  catches up; the cap bounds it, and a ratchet beyond that is still the signal above.
 
 ## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
 

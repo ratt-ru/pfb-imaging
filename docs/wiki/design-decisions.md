@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-12T19:00:00Z
-last_verified_commit: 043f50d
+timestamp: 2026-10-16T08:13:06Z
+last_verified_commit: 2324a2c
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -318,7 +318,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   exception on the hci path; D25 deleted it, so no transpose or flip remains there either.
   Changing any transpose/flip on this path must keep `tests/test_beam_orientation.py` green.
 - **Source:** `src/pfb_imaging/utils/beam.py`; `src/pfb_imaging/utils/stokes2im.py`
-  (`stokes_image`, `beam_for_band`); `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
+  (`stokes_image`); `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`);
+  `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
   `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits `547458f`,
   `330bc5d`, `a516530`; meerkat-beams `616906b` / PR landmanbester/meerkat-beams#8;
   ratt-ru/breifast#208.
@@ -573,7 +574,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `if beam_model is not None and beam_model.lower() != "meerkat-beams": raise … else: assert band …`,
   whose `else` also catches `beam_model is None` — it needs three branches, not two.
 - **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
-  `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, `beam_gain_for_source`);
+  `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`, `beam_gain_for_source`);
   `tests/test_hci.py`; image-and-beam-orientation.md §5, §7.
 
 ### D26 — `--eta-mode` shapes eta over the image, in the preconditioner only
@@ -1107,9 +1108,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   new array were found in the original store`. Issue #155 recorded the rounding needed to make
   them match and asked why it was ever necessary.
 - **Decision:** both sides quantise with `np.round(..., decimals=12)` before building the
-  coords (`core/hci.py`, `utils/stokes2im.py`), **and** the driver mirrors the worker's
-  conversion arithmetic exactly — `np.rad2deg(np.deg2rad(coord.ra.value))`, not
-  `coord.ra.value` (`core/hci.py`, the `phase_dir is not None` branch).
+  coords (`utils/hci_common.py::build_scaffold`, `utils/stokes2im.py`), **and** the driver
+  mirrors the worker's conversion arithmetic exactly — `np.rad2deg(np.deg2rad(coord.ra.value))`,
+  not `coord.ra.value` (`utils/hci_common.py::image_centre_deg`, the `phase_dir is not None`
+  branch; shared by `hci` and `hci-msv4`).
 - **Rationale:** the divergence was an arithmetic asymmetry in how the reference coordinate
   reached degrees. The driver took astropy's degrees directly; the worker went
   degrees → radians (`np.deg2rad`) → degrees (`np.rad2deg`), because everything between
@@ -1135,9 +1137,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   *genuinely* different, which is what D37 was: `--target` moved the worker's grid a whole
   degree away from the scaffold, and no rounding reaches that.
 - **Source:** issue #155; `src/pfb_imaging/core/hci.py` (`make_dummy_dataset`);
+  `src/pfb_imaging/utils/hci_common.py` (`build_scaffold`, `image_centre_deg`);
   `src/pfb_imaging/utils/stokes2im.py` (`batch_stokes_image`'s `region="auto"` write and
   `stokes_image`'s coord construction); xarray `to_zarr` region resolution;
   `tests/test_hci.py::test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre`.
+- **Amendment (D56):** `hci-msv4` writes integer regions, so the 1e-12 deg quantisation is kept
+  there for coordinate parity with `hci` only, not for a region lookup.
 
 ### D37 — `--target` recentres hci's grid, so one resolver serves the driver and the worker
 
@@ -1181,7 +1186,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   not implement.
 - **Source:** issue #155 (found while documenting D36); `src/pfb_imaging/utils/astrometry.py`
   (`resolve_target_radec`); `src/pfb_imaging/core/hci.py` (`make_dummy_dataset`);
-  `src/pfb_imaging/utils/stokes2im.py`;
+  `src/pfb_imaging/utils/hci_common.py` (`image_centre_deg`, which calls the resolver for the
+  driver); `src/pfb_imaging/utils/stokes2im.py`;
   `tests/test_hci.py::test_hci_target_recentres_the_grid` (astrometry: sources injected about
   the target land at their predicted pixels about the image centre),
   `…::test_hci_rejects_a_moving_target_across_multiple_time_bins`,
@@ -1750,7 +1756,99 @@ update it (and this page's `last_verified_commit`) in the same session.
   `PFB_TEST_BEAM_L=1`). The spec's imager-vs-degrid round trip was replaced by this staged
   real-beam Serve test because of the east-west inconsistency above.
 
+### D56 — hci-msv4 writes through one actor writer
+
+- **Context:** legacy `hci` has every Ray worker write its own `(TIME, FREQ)` slab with
+  `to_zarr(region="auto")` into a scaffold, relying on a node-local lock for chunk safety.
+  zarr 3 has no `ProcessSynchronizer`, and the lock never spanned nodes (#279, #257 item 4).
+  Workers also read visibilities as task inputs. `hci-msv4` must run on MSv4 for long
+  observations (breifast) where TIME chunks are long.
+- **Decision:** `HciWorker` actors read and image one image per call, prefetching the next item
+  on a thread, and return only the image to a single `CubeWriter` actor. The writer assembles
+  `(band, time-block)` slabs, so each slab is one set of zarr chunks with exactly one writer, and
+  writes each once to integer regions (`core/hci_msv4.py`, `utils/hci_actors.py`). No
+  synchronizer, no `region="auto"`. The driver kills all actors in its `finally`, on success and
+  on failure, and shuts Ray down unless `keep_ray_alive`; it does not `ray.cancel`, because Ray
+  rejects `force=True` for actor tasks ("Only `force=False` is allowed for an Actor Task" in
+  `ray.cancel`'s docstring), so killing the actor, which fails its pending tasks, is the way out. Worker errors reach the driver as
+  `RayTaskError(<OriginalType>)` with a `while imaging <item>` note. A worker is freed when its
+  own image call finishes, not when the writer acks the image: Ray runs an actor's calls in
+  submission order, so gating on writer acks makes every worker wait behind every earlier
+  `add` (head-of-line blocking). Acks drive only the slab accounting that bounds open time
+  blocks, with at most `2 x nworkers` outstanding (`_dispatch`). A worker is promised its next
+  item (the prefetch) only when the allowed window still holds one for every other idle,
+  unpromised worker; otherwise a window narrower than the pool (say one band, four images per
+  block, two blocks open, eight workers) hands two items each to half the workers and idles the
+  rest (`tests/test_hci_dispatch.py::test_narrow_window_keeps_every_worker_busy`).
+- **Rationale:** one writer per chunk removes the need for a lock that does not exist in zarr 3
+  and does not cross nodes. Visibilities stay out of the object store (D10, #339), and only
+  images travel -- worker to writer as Ray refs, the one deliberate exception to "large arrays
+  never travel as task arguments" (architecture §8), because the writer is what assembles the
+  slabs. Long TIME chunks (`--images-per-chunk`, default 128) keep chunk counts small.
+- **Consequences:**
+  - **Memory.** Writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image
+    bytes`, the knob for 128 GB nodes (`--max-simul-chunks`, default 2).
+  - **gc.** Both actors `gc.collect()` at every method boundary as §8 requires, but first
+    `gc.freeze()` the imported stack at the end of `__init__`: it is ~324k tracked objects and a
+    full collect costs ~0.5 s, which the single writer paid per `add` -- a serial ceiling of
+    ~2.5 images/s whatever `--nworkers`. Frozen, a collect costs ~2.5e-5 s.
+  - **Gains.** A partition matches a node when every wanted channel is a gain channel (so channel
+    subsets and descending `gain_freq` work), on `FIELD_NAME` and `SCAN_NUMBER` when the term
+    records them, then on time overlap. Only the item's region is read from the store (axes by
+    name, sorted-unique indices) so nothing of a term stays resident in the process-lifetime
+    Multiton. A term sharing no antenna name with the data is refused; antennas absent from it
+    are flagged, with a driver warning. The driver runs the same selection and alignment on
+    coordinates only (`gains.check_node_grid`) for every node before Ray starts, so a bad term
+    fails in seconds rather than in a worker hours in. Gain flags are honoured.
+  - **Refused before Ray**, as is every planning or column error, all before `--overwrite`
+    deletes an existing cube: `--weight-grid-out`, `--transfer-model-from`, `--sigma-column`
+    (xarray-ms does not expose SIGMA, `docs/msv4_issues.md` issue 8), `nworkers < 1`, `--natural-grad` without a PSF twice the image size
+    (its Hessian assumes it), rephasing or `--target` without python-casacore, and correlations
+    in a non-canonical order.
+  - **Behaviour that differs from `hci`, and will show in the side-by-side runs:**
+    - Two partitions mapping to one output image raise.
+    - `FLAG_ROW` is ignored: xarray-ms reads it only when `FLAG` is absent, so a row flagged only
+      through `FLAG_ROW` enters `hci-msv4` images but not `hci`'s, which ORs it in itself
+      (`docs/msv4_issues.md` issue 7). Documented, deliberately not worked around.
+    - `--integrations-per-image` of -1 or 0 means one image per scan; `hci` refuses values < 1.
+    - Antennas are indexed in `antenna_xds` order. `hci` renumbers ANTENNA1/2 to the antennas
+      present in the chunk, then indexes the full-table positions and gains with those
+      renumbered ids, so on an MS where some antenna has no rows in a partition its rephasing
+      and gain application use the wrong antenna; `hci-msv4`'s are correct.
+    - The PSF size is the driver's throughout. `hci`'s worker recomputes it with a 128 px floor,
+      which no longer matches its scaffold when `--psf-relative-size` x n < 128.
+    - `--model-column` and `--l2-reweight-dof` work; in `hci` both die on a broadcast error
+      (`(nrow, nchan, ns)` against an `(nrow, nchan)` mask). The l2 variance is per Stokes, and a
+      Stokes with an exactly-zero residual keeps its weights.
+    - `--temp-dir` is dropped and `--check-ants` is removed.
+  - **Numerics.** Zero-weight images keep NaN `psf_maj`/`psf_min`/`psf_pa` exactly as `hci`; the
+    only deliberate numerical deviation is in `cube_mean`, which excludes unreceived images and
+    is 0 where the masked weight sum is 0. `TIME` stays MJD seconds for parity.
+    `test_hci_msv4_matches_hci` enforces `atol = 1e-5 * max|hci|` per variable; the agreement
+    measured by that test when it was added is at most 2.4e-7 (`cube_mean`, of 2.4; cube 8.5e-8,
+    `psf2` 1.2e-7). `test_matches_stokes_image` holds one image to `1e-6 x max` against
+    `stokes_image`, the legacy side reading its phase centre and antenna positions from MSv2.
+  - **Tests.** Every end-to-end `hci-msv4` run is `slow` under D45, as are the equivalence,
+    model-column and l2 tests (numba compiles); the fast set has the refusals and the unit tests
+    of the gain reader, writer, worker refusals and dispatch loop.
+- **Source:** #279, #257, #320 (fix 77978ce); `src/pfb_imaging/core/hci_msv4.py`,
+  `src/pfb_imaging/utils/hci_actors.py`, `src/pfb_imaging/utils/gains.py`,
+  `tests/test_hci_writer.py`, `tests/test_hci_dispatch.py`, `tests/test_gains.py`,
+  `tests/test_hci_msv4.py::test_hci_msv4_matches_hci`,
+  `…::test_hci_msv4_refuses_off_grid_gains_before_ray`, `…::test_hci_msv4_refusals_before_ray`,
+  `…::test_hci_msv4_overwrite_keeps_the_cube_when_validation_fails`;
+  `tests/test_stokes2im_msv4.py::test_l2_reweight_is_per_stokes`; review of PR #358.
+
 ## Known debt
+
+- **`hci-msv4` has no antenna-dependent gain test.** Both end-to-end gain tests give every
+  antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a
+  mis-ordered Jones antenna axis or a dropped conjugate would all pass. The reader's antenna
+  mapping is unit-tested (`tests/test_gains.py`) and `weight_data_msv4` matches the legacy
+  kernel with random gains (`tests/test_weight_data_msv4.py`), but nothing checks the two
+  joined through `read_item`. **Follow-up:** at `image_item` level, corrupt an item's data
+  with random per-antenna complex gains (`g_p V g_q^H`), image it with those gains, and
+  compare with imaging the uncorrupted data without gains. Raised in the review of PR #358.
 
 - **`imager` does not apply gains.** The MSv4 rewrite never carried the MSv2
   `stokes2vis` gain application across: `--gain-table` was validated, globbed and

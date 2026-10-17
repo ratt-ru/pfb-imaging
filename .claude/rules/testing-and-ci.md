@@ -9,6 +9,30 @@ Read this when editing `tests/**/*.py` or `.github/workflows/*.yml` files.
   **unconditionally** — the MS is read through arcae, so the casacore-free legs need it too.
 * Session-scoped fixtures in `conftest.py` for efficient data reuse.
 
+### The shared MS is pristine per session, and mostly zeros
+
+Only the tarball is cached (`tests/data/test_ascii_1h60.0s.MS.tar.gz`). `pytest_sessionstart`
+extracts a fresh copy into a temp directory for every session and `ms_name` points at it, so
+local runs see exactly what CI sees. The MS used to persist in `tests/data` and accumulate
+writes, and a stray MODEL_DATA write from months earlier made a test pass locally that could
+never pass in CI. If you still have an extracted `tests/data/test_ascii_1h60.0s.MS`, nothing
+uses it any more; delete it.
+
+**DATA, CORRECTED_DATA and MODEL_DATA are all zero in that copy.** Only `sky_truth` fills DATA
+(plus FLAG/FLAG_ROW), and only once some test in the session requests it. So:
+
+* A test that asserts on anything derived from DATA requests `sky_truth` itself -- never rely
+  on an earlier test having filled it. Order is not a guarantee: `-k`, a single file, or
+  `-m slow` all change who ran first.
+* A test that reads CORRECTED_DATA or MODEL_DATA fills them itself, in a `writable_ms` copy.
+* A test comparing two code paths asserts the reference is non-zero first. `assert_allclose`
+  with an `atol` scaled by the reference's peak passes 0 == 0 at `atol=0`, so without the
+  guard a broken read cannot fail.
+
+`pytest_sessionfinish` fingerprints every MAIN-table column and fails the session (exit 1)
+if any column other than `sky_truth`'s DATA/FLAG/FLAG_ROW changed: the forgotten-writer bug
+below is caught by the run that introduces it.
+
 ### What skips without the `[casacore]` extra
 
 `ms_name` is only a path, and the test MS is *downloaded*, not built — `imager` and `degrid`
@@ -26,6 +50,7 @@ What skips now is only what genuinely needs the extra, and each declares it for 
 | the `pctable` fixture | python-casacore | casacore's *write* API — `addrows`, `putcell` on subtables, `removecols` — which arcae does not expose |
 | `drop_column`, `make_multi_spw_ms` | python-casacore | same |
 | `test_stokes_vis_beam_on_image_grid` | pyrap | rephasing calls africanus' `synthesize_uvw` |
+| `test_stokes2im_msv4.py::test_matches_stokes_image` | dask-ms (+ pyrap for its rephased case) | its reference is the legacy `stokes_image` reading MSv2 through dask-ms |
 | `test_hci.py`, `test_imager_pol.py` | dask-ms | module-scope imports, so `collect_ignore` rather than a skip (pytest reports a collection-time ImportError as an error, not a skip) |
 
 A test needing casacore's write API takes the `pctable` fixture rather than importing it —
@@ -86,7 +111,7 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 887 tests, ~115 s -- run THIS
+uv run pytest tests/          # 969 tests, ~115 s -- run THIS
 ```
 
 (One of those skips without the `[casacore]` extra; the rest pass. Counts here are *collected*
@@ -94,7 +119,7 @@ counts, which `scripts/check_docs.py` measures and checks — pass/skip totals a
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 54 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+runs the 67 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
 already runs the fast set on every push across six legs — x86_64 3.11/3.12/3.13 and aarch64,
 each with `--extra all` and `--extra full` — and the slow set separately (see below).
 Reproducing one leg locally costs more than a push and covers less. Run fast, push, read the
@@ -116,7 +141,7 @@ Which workflow passes what is the whole design:
 | `acceptance.yml` | `-m slow` | push to `main`; `/test-acceptance` on a PR; `workflow_dispatch` |
 | `publish.yml` | `-m ""` | version tags — a release is gated on the whole suite |
 
-The slow set is 54 of the 941 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 67 of the 1036 collected tests and ~80% of the suite's wall time, so running it
 on all six legs of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters

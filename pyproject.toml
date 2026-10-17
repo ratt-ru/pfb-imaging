@@ -80,10 +80,12 @@ full = [
     # casacore straight back onto the cross-platform path. Revert to
     # meerkat-beams[<extra>] once dask-ms is split out upstream.
     #
-    # zarr<3 mirrors meerkat-beams[full]'s own pin rather than relaxing a third
-    # party's constraint. It costs a numcodecs source build on aarch64
-    # (numcodecs only gained aarch64 wheels at 0.16.0, and zarr 2.18 pins
-    # numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
+    # zarr<3 is kept because dask-ms still pins it. dask-ms comes in behind
+    # [casacore] (the legacy `hci`) and through meerkat-beams' [full] extra, which
+    # [all] pulls; pfb-model-spec and meerkat-beams' core dependencies do not pin
+    # zarr<3. Leave it until the legacy `hci`, and with it dask-ms, is removed. It costs
+    # a numcodecs source build on aarch64 (numcodecs only gained aarch64 wheels
+    # at 0.16.0, and zarr 2.18 pins numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
     "meerkat-beams>=0.1.0 ; python_version >= '3.11'",
     "xarray",
     "xarray-fits",
@@ -111,8 +113,11 @@ full = [
 
 # python-casacore (via dask-ms and africanus). EXACTLY three things need it:
 #
-#   1. `pfb hci`               -- dask-ms `xds_from_ms`/`construct_mappings`, and
-#                                 QuartiCal gains via `xds_from_zarr`;
+#   1. `pfb hci` (legacy)      -- dask-ms `xds_from_ms`/`construct_mappings`, and
+#                                 QuartiCal gains via `xds_from_zarr`. `pfb hci-msv4`
+#                                 does not need dask-ms, but still needs
+#                                 python-casacore when it rephases (2): `utils/
+#                                 astrometry.synthesize_uvw` uses `pyrap.measures`;
 #   2. rephasing               -- `--phase-dir`, and any multi-field selection,
 #                                 which barycentres. `utils/astrometry.py` wraps
 #                                 pyrap measures for `synthesize_uvw`;

@@ -42,7 +42,7 @@ reasoning about. The rules say what you must do; the wiki says why.
 
 **The front-ends.** `pfb imager` (MSv4 -> `.dt`), `pfb deconv` (`.dt` -> model),
 `pfb restore` (`.dt` -> restored FITS) and `pfb degrid` (`.mds` -> MSv4), plus `pfb hci` for
-high-cadence imaging. `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
+high-cadence imaging and `pfb hci-msv4`, its MSv4 successor (run side by side for now). `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
 imager's invariants; `docs/wiki/imager-pipeline.md` has the tree layout.
 
 **Two things that bite hardest, so they are stated here as well as there:** never
@@ -90,8 +90,8 @@ rediscovery:
   logs. The imager progress lines carry per-task post-gc RSS telemetry — read it before
   theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`).
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
-  (serialisation, lazy loading, retention) reproduces on `tests/data/test_ascii_1h60.0s.MS`
-  with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
+  (serialisation, lazy loading, retention) reproduces on the test MS (extract
+  `tests/data/test_ascii_1h60.0s.MS.tar.gz` to scratch) with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
   args — plus `psutil` RSS sampling and a manual `gc.collect()` to separate cycle retention
   from below-Python retention.
 * **Quantify before ranking hypotheses:** estimate per-task bytes from array shapes/dtypes.
