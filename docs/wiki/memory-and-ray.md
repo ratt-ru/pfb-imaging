@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-08T12:00:00Z
-last_verified_commit: fc0af87
+timestamp: 2026-10-13T09:00:00Z
+last_verified_commit: 36b2a22
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -98,11 +98,11 @@ helper is gone from pass 1 and from `degrid`:
 
 ## The diagnostic that separates the layers
 
-Pass-1/2 tasks return `utils/memprof.task_memory()` -- `{pid, rss_gb,
-anon_gb, shmem_gb, peak_gb}` measured **after** the task's `gc.collect()` --
-and the imager logs it in its progress lines, which reach the run's log
-file as well as the terminal (#348; they were bare `print`s before, so a
-cluster or stimela run kept them only in scrollback). (The deconv band workers'
+Pass-1/2 tasks and `degrid` work items return `utils/memprof.task_memory()` --
+`{pid, rss_gb, anon_gb, shmem_gb, peak_gb}` measured **after** the task's
+`gc.collect()` -- and the imager and `degrid` log it in their progress lines,
+which reach the run's log file as well as the terminal (#348; they were bare
+`print`s before, so a cluster or stimela run kept them only in scrollback). (The deconv band workers'
 `get_mem` still returns the older `{pid, rss_gb, peak_gb}`; the deconv driver
 logs it per-worker once per major cycle at `verbosity > 1`.)
 
@@ -237,7 +237,10 @@ and exact-residual inputs. Its memory/scheduling rules:
 and writing that region straight back to the MS (wiki D38). It inherits the
 same rules as pass 1: `Degridder.degrid` calls `gc.collect()` in a `finally`
 and must never wipe the class-level Multiton cache (see layer 3: a wholesale
-clear evicts the deployment's own model/mask Multitons), and returns the same `{pid, rss_gb, peak_gb}` telemetry, logged per item. The
+clear evicts the deployment's own model/mask Multitons), and returns the same
+post-gc `task_memory()` telemetry, logged per item as `Completed:` lines; the
+item body runs under `memray_task("degrid")` and the driver forwards
+`memray_env()`, so `PFB_MEMRAY_DIR` profiles replicas as it does pass 1. The
 replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.

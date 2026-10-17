@@ -15,8 +15,7 @@ with an unrecognised-option error rather than silently doing the wrong thing.
 
 import asyncio
 import gc
-import os
-import resource
+import logging
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
@@ -29,14 +28,21 @@ import numpy as np
 import psutil
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from pfb_model_spec.utils.degrid import model_geometry, model_sampling
+from meerkat_beams.utils import BeamWizard, set_console_logging_level
+from pfb_model_spec.utils.degrid import RegionMask, model_geometry, model_sampling
 from rarg_python_patterns.multiton import Multiton
 from ray import serve
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.baselines import (
+    GROUP_LABELS,
+    node_baseline_groups,
+    parse_antenna_groups,
+    preflight_baseline_groups,
+    resolve_group_beam_cache,
+)
 from pfb_imaging.utils.degrid import (
-    RegionMask,
     assert_writable,
     build_region_masks,
     check_stokes_subset,
@@ -46,10 +52,19 @@ from pfb_imaging.utils.degrid import (
     ensure_model_columns,
     flux_scale_warning,
 )
-from pfb_imaging.utils.msv4 import SelectedNode, get_engine, select_vis_nodes, wrapped_angle_diff
+from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
+from pfb_imaging.utils.msv4 import (
+    SelectedNode,
+    get_engine,
+    ignore_xarray_ms_warnings,
+    select_vis_nodes,
+    wrapped_angle_diff,
+)
 from pfb_imaging.utils.naming import glob_uris, set_output_names
 
-log = pfb_logging.get_logger("DEGRID_MSV4")
+ignore_xarray_ms_warnings()
+
+log = pfb_logging.get_logger("DEGRID")
 
 # Ray Serve application name. Used for both serve.run and the targeted
 # serve.delete that replaces a cluster-wide serve.shutdown.
@@ -96,17 +111,19 @@ def _default_mds(output_filename: str, suffix: str) -> str:
     raise ValueError(f"No mds found. Looked for {' and '.join(candidates)}. Pass --mds to name one explicitly.")
 
 
-def check_model(model_ds: xr.Dataset, product: str) -> dict:
+def check_model(model_ds: xr.Dataset, product: str, *, beam: bool = False) -> dict:
     """Validate the `.mds` and the requested product before any work starts.
 
     `model_geometry` already raises on an unknown `spec` and on non-square
     pixels; calling it here means those fire before a Ray cluster is stood up
-    and before a column is added to the user's MS. The product must be a
-    subset of the model's Stokes planes (`check_stokes_subset`).
+    and before a column is added to the user's MS. Without a beam the product
+    must be a subset of the model's Stokes planes (`check_stokes_subset`).
 
     Args:
         model_ds: An opened `.mds` dataset.
         product: The `--product` string.
+        beam: Whether `--beam-model` is set, which lets the product name planes
+            the model lacks (leakage, D55).
 
     Returns:
         `model_geometry(model_ds)`: nx, ny, cell_rad, x0, y0, flip_u/v/w, stokes.
@@ -116,7 +133,7 @@ def check_model(model_ds: xr.Dataset, product: str) -> dict:
             the spec or the pixel shape.
     """
     geom = model_geometry(model_ds)  # raises on unknown spec / non-square pixels
-    check_stokes_subset(product, geom["stokes"])
+    check_stokes_subset(product, geom["stokes"], beam=beam)
     return geom
 
 
@@ -225,6 +242,9 @@ class Degridder:
         epsilon: float = 1e-5,
         do_wgridding: bool = True,
         nthreads: int = 1,
+        beams: Mapping[str, Multiton] | None = None,
+        antenna_groups: tuple[str, str] | None = None,
+        baseline_groups: bool = False,
     ):
         # Multitons, not DataTrees: each replica reconstructs its own tree
         # rather than receiving a pickled one. The driver must not touch
@@ -246,6 +266,16 @@ class Degridder:
         # behind it would let a quiet replica drop and reload it mid-run.
         self._model_ds: xr.Dataset | None = None
         self._mask_list: list[np.ndarray] | None = None
+        # Beam wizards are Multitons too (D38: bind recipes, never loaded objects)
+        self._beams = beams
+        # The driver already built every wizard once, so its meerkat-beams INFO
+        # (download, staging, "opening BDS ...") is in the log; a replica's
+        # rebuild from the warm cache would only repeat it per replica
+        set_console_logging_level(logging.WARNING)
+        self._override = antenna_groups
+        self._use_groups = baseline_groups
+        self._wizards: dict | None = None
+        self._node_groups: dict = {}
         self._columns = list(columns)
         self._stokes = list(stokes)
         self._accumulate = accumulate
@@ -275,48 +305,58 @@ class Degridder:
         return await asyncio.get_running_loop().run_in_executor(self._executor, self._degrid, item)
 
     def _degrid(self, item: WorkItem) -> dict:
-        try:
-            if self._model_ds is None:
-                self._model_ds = self._model.instance
-                self._mask_list = self._masks.instance
-            dt = self._datatrees[item.ms_index].instance
-            node_ds = dt[item.node_path].ds
-            write_ds = degrid_region(
-                node_ds,
-                region=item.region,
-                model_ds=self._model_ds,
-                masks=self._mask_list,
-                columns=self._columns,
-                corr_types=tuple(str(p) for p in node_ds.polarization.values),
-                stokes=self._stokes,
-                accumulate=self._accumulate,
-                epsilon=self._epsilon,
-                do_wgridding=self._do_wgridding,
-                nthreads=self._nthreads,
-            )
-            assert_writable(write_ds)
-            # region MUST be explicit: the default "auto" expands each dim to
-            # slice(0, size) and would write every chunk to the start of the
-            # array. write_map is identity so MSV4_WRITE_MAP cannot redirect a
-            # column that happens to share an MSv4 variable name.
-            write_ds.to_msv2(
-                compute=True,
-                region=dict(item.region),
-                write_map={c: c for c in self._columns},
-            )
-        finally:
-            # Never wipe xarray-ms's class-level Multiton cache here: this
-            # deployment keys its model and masks on Multitons, and a wholesale
-            # clear reloaded a 633 MB .mds on every work item (wiki
-            # memory-and-ray). Reference cycles in deserialised xarray objects
-            # still need the collect.
-            gc.collect()
-
-        return {
-            "pid": os.getpid(),
-            "rss_gb": psutil.Process().memory_info().rss / 2**30,
-            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-        }
+        with memray_task("degrid"):
+            try:
+                if self._model_ds is None:
+                    self._model_ds = self._model.instance
+                    self._mask_list = self._masks.instance
+                # dereferenced once and held; a Multiton's TTL is inactivity-based
+                if self._wizards is None and self._beams is not None:
+                    self._wizards = {k: v.instance for k, v in self._beams.items()}
+                dt = self._datatrees[item.ms_index].instance
+                groups = None
+                if self._use_groups:
+                    key = (item.ms_index, item.node_path)
+                    if key not in self._node_groups:
+                        self._node_groups[key] = node_baseline_groups(dt[item.node_path], self._override)
+                    groups = self._node_groups[key]
+                node_ds = dt[item.node_path].ds
+                write_ds = degrid_region(
+                    node_ds,
+                    region=item.region,
+                    model_ds=self._model_ds,
+                    masks=self._mask_list,
+                    columns=self._columns,
+                    corr_types=tuple(str(p) for p in node_ds.polarization.values),
+                    stokes=self._stokes,
+                    accumulate=self._accumulate,
+                    epsilon=self._epsilon,
+                    do_wgridding=self._do_wgridding,
+                    nthreads=self._nthreads,
+                    wizards=self._wizards,
+                    groups=groups,
+                )
+                assert_writable(write_ds)
+                # region MUST be explicit: the default "auto" expands each dim to
+                # slice(0, size) and would write every chunk to the start of the
+                # array. write_map is identity so MSV4_WRITE_MAP cannot redirect a
+                # column that happens to share an MSv4 variable name.
+                write_ds.to_msv2(
+                    compute=True,
+                    region=dict(item.region),
+                    write_map={c: c for c in self._columns},
+                )
+            finally:
+                # Never wipe xarray-ms's class-level Multiton cache here: this
+                # deployment keys its model and masks on Multitons, and a wholesale
+                # clear reloaded a 633 MB .mds on every work item (wiki
+                # memory-and-ray). Reference cycles in deserialised xarray objects
+                # still need the collect.
+                gc.collect()
+        # Measured after the collect, as pass 1 does: post-gc anon that ratchets
+        # for a pid across items is retention below Python; shm is Ray
+        # object-store pages (wiki memory-and-ray).
+        return task_memory()
 
 
 def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int):
@@ -370,6 +410,9 @@ def degrid(
     region_file: str | None = None,
     epsilon: float = 1e-5,
     do_wgridding: bool = True,
+    beam_model: str | None = None,
+    baseline_groups: bool = False,
+    antenna_groups: str | None = None,
     ray_address: str = "local",
     nworkers: int = 1,
     nthreads: int | None = None,
@@ -403,6 +446,12 @@ def degrid(
         region_file: Region file splitting the model across columns (#115).
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.
+        beam_model: meerkat-beams band name of the primary beam to apply. The
+            model must be in intrinsic flux; katbeam is refused.
+        baseline_groups: Apply a separate beam per MeerKAT baseline group.
+            Requires `beam_model`.
+        antenna_groups: Two comma separated glob patterns naming the MeerKAT
+            and MeerKAT+ antennas. Requires `baseline_groups`.
         ray_address: Ray cluster address, or `"local"` for a private one.
         nworkers: Maximum `Degridder` replicas.
         nthreads: ducc threads per replica. Defaults to half the logical CPUs.
@@ -470,7 +519,7 @@ def degrid(
     # the driver loads it for the guards below; replicas reopen it themselves
     model_ds = _load_model(mds)
 
-    geom = check_model(model_ds, product)
+    geom = check_model(model_ds, product, beam=beam_model is not None)
     log.info(
         f"Model grid {geom['nx']}x{geom['ny']} at {np.rad2deg(geom['cell_rad']) * 3600:.4e} arcsec, "
         f"stokes {geom['stokes']}"
@@ -481,8 +530,43 @@ def degrid(
             "channels-per-chunk was not given and the model records no freq_bounds to derive it "
             "from. Pass --channels-per-chunk, or regenerate the .mds with a current pfb deconv."
         )
-    if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
-        log.warning(msg)
+    if beam_model is None:
+        if (msg := flux_scale_warning(sampling["flux_scale"])) is not None:
+            log.warning(msg)
+        if baseline_groups:
+            # without a beam, groups change nothing in a prediction (D47's reasoning)
+            log.warning("--baseline-groups does nothing without --beam-model; predicting one group")
+    else:
+        if str(beam_model).lower() == "katbeam":
+            log.error_and_raise(
+                "degrid --beam-model needs a meerkat-beams band (for example L): katbeam has no "
+                "Stokes Mueller block, and partition_mueller refuses it (meerkat-beams D17).",
+                ValueError,
+            )
+        if sampling["flux_scale"] == "apparent":
+            log.error_and_raise(
+                "The model is already in apparent flux; applying --beam-model would attenuate it twice.",
+                ValueError,
+            )
+        if sampling["flux_scale"] is None:
+            log.warning("The model records no flux_scale; assuming intrinsic flux and applying the beam.")
+    if antenna_groups is not None:
+        if not baseline_groups:
+            # Refuse rather than ignore, as the imager does
+            log.error_and_raise(
+                "--antenna-groups only has an effect with --baseline-groups, which is not set. "
+                "Add --baseline-groups, or drop --antenna-groups.",
+                ValueError,
+            )
+        # parsed even when --baseline-groups is dropped for lack of a beam
+        try:
+            parse_antenna_groups(antenna_groups)
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+    use_groups = beam_model is not None and baseline_groups
+    group_override = (
+        preflight_baseline_groups(msnames, partition_columns, beam_model, antenna_groups) if use_groups else None
+    )
 
     freq_min, freq_max = -np.inf, np.inf
     if freq_range:
@@ -496,16 +580,15 @@ def degrid(
     columns = [model_column] + [f"{model_column}{i}" for i in range(1, len(masks))]
     log.info(f"Writing {len(columns)} column(s): {', '.join(columns)}")
 
-    # --- guards, then column creation, then close -----------------------
+    # --- guards, then the beam preflight, then column creation ----------
     selected: list[tuple[int, SelectedNode]] = []
+    present_groups: set[str] = set()
     for ims, ms_name in enumerate(msnames):
         # before opening anything: degrid writes, and only the CASA backend can
         # be written back to
         check_writable_backend(ms_name)
-        # one MAIN instance: this tree adds columns, and with several instances
-        # arcae can answer the follow-up reads from one that has not seen them
-        # (see get_engine). It only reads metadata and is closed before any
-        # replica starts, so there is no parallelism to lose.
+        # metadata only, closed before any replica starts: one MAIN instance
+        # loses no parallelism and matches the column pass below
         dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
         dt = xr.open_datatree(ms_name, **dt_kwargs)
         try:
@@ -521,16 +604,53 @@ def degrid(
             if not nodes:
                 continue
             check_tangent_point(model_ds, nodes)
-            ensure_model_columns(ms_name, dt, columns)
+            if use_groups:
+                for node in nodes:
+                    try:
+                        present_groups |= set(node_baseline_groups(dt[node.path], group_override)[0])
+                    except ValueError as e:
+                        log.error_and_raise(str(e), ValueError)
             selected += [(ims, node) for node in nodes]
+        finally:
+            dt.close()
+
+    if not selected:
+        raise ValueError("Selection matched no data")
+
+    beams = None
+    if beam_model is not None:
+        if use_groups:
+            labels = sorted(present_groups, key=GROUP_LABELS.index)
+            if (missing := resolve_group_beam_cache(str(beam_model).upper(), labels)) is not None:
+                log.error_and_raise(missing, RuntimeError)
+            log.info(f"Beam {beam_model} for baseline groups {', '.join(labels)}")
+            kwargs = {g: {"band": beam_model, "group": g} for g in labels}
+        else:
+            log.info(f"Beam {beam_model}")
+            kwargs = {"all": {"band": beam_model}}
+        # Build each wizard once here, single process: meerkat-beams does not
+        # guard concurrent first downloads, and a staging error should stop the
+        # run before Serve starts. Replicas rebuild their own from the warmed
+        # cache through a Multiton (D38: bind recipes, never loaded objects).
+        for kw in kwargs.values():
+            BeamWizard(**kw)
+        beams = {label: Multiton(BeamWizard, **kw) for label, kw in kwargs.items()}
+
+    # Columns last, so a failed guard or beam leaves every MS untouched. One
+    # MAIN instance: with several, arcae can answer the follow-up reads from one
+    # that has not seen the new column (see get_engine).
+    for ims in sorted({ims for ims, _ in selected}):
+        ms_name = msnames[ims]
+        dt = xr.open_datatree(
+            ms_name, **get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
+        )
+        try:
+            ensure_model_columns(ms_name, dt, columns)
         finally:
             # LOAD BEARING, do not tidy away: newly added columns are invisible
             # to other processes until the table is closed (CTDS property), and
             # every Ray replica is another process.
             dt.close()
-
-    if not selected:
-        raise ValueError("Selection matched no data")
 
     # No cache eviction after creating columns: arcae >= 0.4.0a13 resyncs table
     # handles that were already open when a column was added (ska-sa/arcae#241,
@@ -553,7 +673,7 @@ def degrid(
     init_ray(
         nworkers + 1,
         ray_address=ray_address,
-        runtime_env={"env_vars": env_vars, "worker_process_setup_hook": setup_ray_worker},
+        runtime_env={"env_vars": {**env_vars, **memray_env()}, "worker_process_setup_hook": setup_ray_worker},
         log=log,
     )
 
@@ -582,6 +702,10 @@ def degrid(
         # second request simply awaits that executor, which is harmless now
         # that `degrid` is async and the event loop stays free.
         max_ongoing_requests=_MAX_ONGOING_REQUESTS,
+        # Serve's per-request "CALL degrid OK" access lines duplicate the
+        # driver's "Completed:" progress line and are streamed to the terminal
+        # interleaved with it
+        logging_config={"enable_access_log": False},
         autoscaling_config={
             "upscale_delay_s": 1.0,
             "min_replicas": 1,
@@ -596,11 +720,14 @@ def degrid(
         model=Multiton(_load_model, mds),
         masks=Multiton(_load_masks, mds, region_file),
         columns=columns,
-        stokes=check_stokes_subset(product, geom["stokes"]),
+        stokes=check_stokes_subset(product, geom["stokes"], beam=beam_model is not None),
         accumulate=accumulate,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         nthreads=nthreads,
+        beams=beams,
+        antenna_groups=group_override,
+        baseline_groups=use_groups,
     )
     # build the work list before standing the app up, so a bad chunk spec
     # cannot leave a Serve deployment running with nothing to shut it down
@@ -625,8 +752,26 @@ def degrid(
     # `RuntimeError: Failed to bind to address '127.0.0.1:8000'`. We drive the
     # deployment entirely through the handle returned below, so the proxy is a
     # port dependency we never use. location="NoServer" removes it.
-    serve.start(http_options={"location": "NoServer"})
-    handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    #
+    # Serve's own chatter is silenced. The driver-side "ray.serve" logger is
+    # held at WARNING for the app's lifetime (start-up, router and delete INFO
+    # lines), and at ERROR across start/run, where serve.run re-calls
+    # serve_start with its EveryNode default and WARNs that our NoServer is
+    # already in force -- benign, and unavoidable through the public API. The
+    # controller's lifecycle INFO (replicas added, upscaling) goes through its
+    # log_level; its warnings, e.g. a replica slow to start, still show. The
+    # "Completed:" telemetry names each replica pid anyway.
+    log.info(f"Starting Ray Serve with up to {nworkers} Degridder replica(s)")
+    serve_log = logging.getLogger("ray.serve")
+    serve_level = serve_log.level
+    serve_log.setLevel(logging.ERROR)
+    try:
+        serve.start(http_options={"location": "NoServer"}, logging_config={"log_level": "WARNING"})
+        handle = serve.run(app, name=_SERVE_APP_NAME, route_prefix=None)
+    except BaseException:
+        serve_log.setLevel(serve_level)
+        raise
+    serve_log.setLevel(logging.WARNING)
 
     try:
         # Bounded in-flight queue: drain the oldest response once more than
@@ -652,9 +797,7 @@ def degrid(
                     # a post-gc rss that ratchets for a pid across items means
                     # retention below Python; peak is the lifetime high-water
                     log.info(
-                        f"Completed: {ncomplete} / {len(items)} "
-                        f"[pid {mem['pid']} rss {mem['rss_gb']:.2f} GB peak {mem['peak_gb']:.2f} GB]",
-                        extra=pfb_logging.NO_MARKUP,
+                        f"Completed: {ncomplete} / {len(items)} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP
                     )
 
         for item in items:
@@ -674,5 +817,6 @@ def degrid(
         # it deletes every app and tears down the Serve system actors -- so on
         # a shared --ray-address cluster it would kill unrelated workloads.
         serve.delete(_SERVE_APP_NAME)
+        serve_log.setLevel(serve_level)
 
     log.info(f"All done after {time.time() - time_start}s.")

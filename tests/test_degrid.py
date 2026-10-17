@@ -25,7 +25,7 @@ def test_write_support_and_kernel_available():
     import xarray_ms
     from pfb_model_spec.utils.degrid import (  # noqa: F401
         model_geometry,
-        model_to_apparent_vis_for_region,
+        model_to_apparent_vis_for_regions,
         render_model_region,
         stokes_vis_to_corr,
     )
@@ -471,29 +471,13 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
     dtype cast and the reshape back -- so compare against the kernel driven
     with independently constructed arguments.
     """
-    from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_region
-
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
         region = {"time": slice(5, 15), "frequency": slice(2, 6)}
-        sub = node_ds.isel(**region)
-        uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
-        freq = sub.frequency.values
-        valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
-        mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
-        expected = model_to_apparent_vis_for_region(
-            mds_ds,
-            uvw=uvw,
-            freq=freq,
-            corr_types=node.corr_types,
-            time=float(sub.time.values.mean()),
-            freq_out=float(freq.mean()),
-            mask=mask,
-            region_mask=None,
-            divide_by_n=False,
-        ).astype(np.complex64)
+        expected = _direct_reference(node_ds, node, mds_ds, region, True).astype(np.complex64)
+        freq = node_ds.isel(**region).frequency.values
 
         out = degrid_region(
             node_ds,
@@ -503,9 +487,62 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
             columns=["MODEL_DATA"],
             corr_types=node.corr_types,
             stokes=["I"],
+            epsilon=1e-9,
         )
         got = out.MODEL_DATA.values.reshape(-1, freq.size, len(node.corr_types))
         np.testing.assert_array_equal(got, expected)
+    finally:
+        dt.close()
+
+
+def _direct_reference(node_ds, node, model_ds, region, divide_by_n):
+    """Call the plural kernel directly with independently built arguments."""
+    from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_regions
+
+    sub = node_ds.isel(**region)
+    uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
+    valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
+    freq = sub.frequency.values
+    mask = np.ascontiguousarray(np.broadcast_to(valid[:, None], (uvw.shape[0], freq.size)).astype(np.uint8))
+    (vis,) = model_to_apparent_vis_for_regions(
+        model_ds,
+        divide_by_n=divide_by_n,
+        uvw=uvw,
+        freq=freq,
+        corr_types=node.corr_types,
+        time=float(sub.time.values.mean()),
+        freq_out=float(freq.mean()),
+        stokes_out=["I"],
+        mask=mask,
+        epsilon=1e-9,
+    )
+    return vis
+
+
+def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
+    """No beam still means ducc folds 1/n in (D55). A wide cell makes n matter."""
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wide = mds_ds.assign_attrs(cell_rad_x=2e-3, cell_rad_y=2e-3)
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        got = degrid_region(
+            node_ds,
+            region=region,
+            model_ds=wide,
+            masks=build_region_masks(wide, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+            stokes=["I"],
+            epsilon=1e-9,
+        ).MODEL_DATA.values
+        with_n = _direct_reference(node_ds, node, wide, region, True)
+        without_n = _direct_reference(node_ds, node, wide, region, False)
+        got = got.reshape(with_n.shape)
+        scale = np.abs(with_n).max()
+        np.testing.assert_allclose(got, with_n.astype(np.complex64), rtol=0, atol=1e-6 * scale)
+        assert np.abs(got - without_n).max() > 1e-5 * scale
     finally:
         dt.close()
 
@@ -516,7 +553,8 @@ def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_md
     The model is a continuous function of frequency, re-rendered once per
     chunk, so this is the feature `--channels-per-chunk` exists for. A single
     point source degrids to a visibility of constant magnitude equal to its
-    flux (`divide_by_n=False`, so no n-term scaling), which makes the assertion
+    flux (ducc divides by n, which is 1 to ~3e-9 this close to the
+    phase centre), which makes the assertion
     direct: |vis| per chunk == the model's flux at that chunk's mean frequency.
     """
     from pfb_model_spec.utils.degrid import render_model_region
@@ -724,6 +762,19 @@ def test_check_model_refuses_a_product_beyond_the_models_planes(simple_mds):
         check_model(ds, "IQ")
 
 
+def test_check_model_lets_a_beam_predict_planes_the_model_lacks(simple_mds):
+    """With a beam, --product names apparent planes: an I-only model can be
+    asked for IQUV, and the beam's leakage fills Q, U and V (opt-in, D55)."""
+    from pfb_imaging.core.degrid import check_model
+    from pfb_imaging.utils.degrid import check_stokes_subset
+
+    _, ds = simple_mds
+    assert check_model(ds, "IQUV", beam=True)["stokes"] == ["I"]
+    assert check_stokes_subset("QI", ["I"], beam=True) == ["Q", "I"]
+    with pytest.raises(ValueError, match="repeats"):
+        check_stokes_subset("II", ["I"], beam=True)
+
+
 @pytest.mark.parametrize(
     "product, model_stokes, expected",
     [("I", ["I"], ["I"]), ("I", ["I", "Q", "U", "V"], ["I"]), ("VI", ["I", "V"], ["V", "I"])],
@@ -924,6 +975,68 @@ def test_degrid_writes_the_whole_ms(degrid_ms, simple_mds, tmp_path, pctable):
                     columns=["MODEL_DATA"],
                     corr_types=node.corr_types,
                     stokes=["I"],
+                ).MODEL_DATA.values
+        np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-8)
+        assert np.any(got != 0), "nothing was written"
+    finally:
+        dt.close()
+
+
+@pytest.mark.slow
+def test_degrid_with_a_real_beam_matches_the_in_process_region(degrid_ms, simple_mds, tmp_path, pctable):
+    """The Serve path with a real L-band wizard writes what degrid_region computes in-process.
+
+    Skips unless PFB_TEST_BEAM_L=1: building the wizard reads (or downloads) the
+    legacy L product from the beam cache, which CI does not stage.
+    """
+    import os
+
+    if os.environ.get("PFB_TEST_BEAM_L") != "1":
+        pytest.skip("set PFB_TEST_BEAM_L=1 with the L product in the beam cache")
+    from meerkat_beams.utils import BeamWizard
+
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+    from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+
+    mds_path, mds_ds = simple_mds
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+
+    degrid(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        mds=mds_path,
+        product="I",
+        beam_model="L",
+        integrations_per_chunk=20,
+        channels_per_chunk=4,
+        nworkers=2,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+        epsilon=1e-7,
+    )
+
+    wizards = {"all": BeamWizard(band="L")}
+    dt = xr.open_datatree(degrid_ms, **get_engine(degrid_ms))
+    try:
+        node = select_vis_nodes(dt)[0]
+        node_ds = dt[node.path].ds
+        got = node_ds.MODEL_DATA.values
+        expected = np.zeros_like(got)
+        for t0 in range(0, 60, 20):
+            for f0 in range(0, 8, 4):
+                region = {"time": slice(t0, t0 + 20), "frequency": slice(f0, f0 + 4)}
+                expected[t0 : t0 + 20, :, f0 : f0 + 4, :] = degrid_region(
+                    node_ds,
+                    region=region,
+                    model_ds=mds_ds,
+                    masks=build_region_masks(mds_ds, None),
+                    columns=["MODEL_DATA"],
+                    corr_types=node.corr_types,
+                    stokes=["I"],
+                    wizards=wizards,
                 ).MODEL_DATA.values
         np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-8)
         assert np.any(got != 0), "nothing was written"
@@ -1372,82 +1485,6 @@ def test_degrid_writes_every_spectral_window(multi_spw_ms, simple_mds, tmp_path,
         dt.close()
 
 
-@pytest.mark.parametrize("flip_u", [False, True])
-@pytest.mark.parametrize("flip_v", [False, True])
-def test_crop_phase_centre_reproduces_the_full_grid_degrid(flip_u, flip_v):
-    """Degridding a cropped sub-grid must equal degridding the full one.
-
-    This is the guard on `crop_phase_centre`'s arithmetic, and it has to run
-    over every flip combination: each axis's offset sign is set by its flip
-    convention, and a sign error moves the model on the sky rather than
-    changing it slightly, so it would sail past any loose tolerance. The
-    check is that a wrong sign is order-unity wrong, not that the right one
-    is merely close.
-    """
-    from ducc0.wgridder import dirty2vis
-
-    from pfb_imaging.utils.degrid import crop_bbox, crop_phase_centre
-
-    rng = np.random.default_rng(42)
-    nx, ny, cell = 64, 48, 1e-5
-    x0, y0 = -3e-4, 2e-4
-
-    uvw = rng.normal(0.0, 3000.0, (500, 3))
-    uvw[:, 2] *= 0.05
-    freq = np.linspace(1.0e9, 1.1e9, 4)
-
-    # flux confined to a box away from the grid centre, so a mis-set centre
-    # cannot be masked by symmetry. (Y, X) like the .mds; ducc is x-major, so
-    # it is handed the transpose
-    image = np.zeros((ny, nx))
-    image[30:42, 10:26] = rng.normal(size=(12, 16))
-
-    kw = dict(
-        uvw=uvw,
-        freq=freq,
-        pixsize_x=cell,
-        pixsize_y=cell,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=False,
-        epsilon=1e-9,
-        do_wgridding=True,
-        divide_by_n=False,
-        nthreads=1,
-    )
-    ref = dirty2vis(dirty=np.ascontiguousarray(image.T), center_x=x0, center_y=y0, **kw)
-
-    rm = crop_bbox(np.where(image != 0.0, 1.0, 0.0))
-    assert (rm.mask.shape, rm.i0, rm.j0) == ((12, 16), 30, 10)
-    nyc, nxc = rm.mask.shape
-    sub = np.ascontiguousarray(image[rm.i0 : rm.i0 + nyc, rm.j0 : rm.j0 + nxc].T)
-
-    geom = dict(x0=x0, y0=y0, cell_rad=cell, flip_u=flip_u, flip_v=flip_v, nx=nx, ny=ny)
-    xc, yc = crop_phase_centre(rm=rm, **geom)
-    got = dirty2vis(dirty=sub, center_x=xc, center_y=yc, **kw)
-    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
-
-    # every other sign choice is order-unity wrong
-    for sx, sy in ((1, -1), (-1, 1), (-1, -1)):
-        bad = dirty2vis(
-            dirty=sub,
-            center_x=x0 + sx * (xc - x0),
-            center_y=y0 + sy * (yc - y0),
-            **kw,
-        )
-        assert np.abs(bad - ref).max() > 0.1 * np.abs(ref).max()
-
-
-def test_crop_bbox_of_an_empty_mask_is_degenerate():
-    """An empty region must not crop to a zero-sized grid ducc would reject."""
-    from pfb_imaging.utils.degrid import crop_bbox
-
-    rm = crop_bbox(np.zeros((16, 8)))
-    assert rm.mask.shape == (2, 2)
-    assert (rm.i0, rm.j0) == (0, 0)
-    assert not rm.mask.any()
-
-
 def test_workitem_is_hashable_with_slice_regions():
     """`region` holds slices, which are unhashable before Python 3.12.
 
@@ -1656,9 +1693,31 @@ def test_flux_scale_warning():
     from pfb_imaging.utils.degrid import flux_scale_warning
 
     assert "primary beam" in flux_scale_warning("intrinsic")
-    assert "issues/353" in flux_scale_warning("intrinsic")
+    assert "--beam-model" in flux_scale_warning("intrinsic")
     assert flux_scale_warning("apparent") is None
     assert flux_scale_warning(None) is None
+
+
+def test_ignore_xarray_ms_warnings():
+    import warnings
+
+    from xarray_ms.errors import (
+        ColumnShapeImputationWarning,
+        FrameConversionWarning,
+        IrregularGridWarning,
+        MissingMetadataWarning,
+    )
+
+    from pfb_imaging.utils.msv4 import ignore_xarray_ms_warnings
+
+    noisy = (IrregularGridWarning, MissingMetadataWarning, FrameConversionWarning, ColumnShapeImputationWarning)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ignore_xarray_ms_warnings()
+        for category in noisy:
+            warnings.warn("noise", category, stacklevel=1)
+        warnings.warn("signal", UserWarning, stacklevel=1)
+    assert [w.category for w in caught] == [UserWarning]
 
 
 def test_degrid_refuses_a_model_without_freq_bounds_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
@@ -1693,3 +1752,203 @@ def test_selected_nodes_carry_a_positive_channel_width(ms_name):
     finally:
         dt.close()
     assert nodes and all(n.chan_width > 0 for n in nodes)
+
+
+class _FakeWizard:
+    """Stands in for meerkat_beams' BeamWizard: a diagonal Mueller block
+    value * (1 + slope * l_deg), constant in m, so an E-W mirror changes the answer."""
+
+    def __init__(self, value=1.0, slope_deg=0.0, leak_q=0.0):
+        from types import SimpleNamespace
+
+        self.value, self.slope, self.leak_q = value, slope_deg, leak_q
+        self.bds = SimpleNamespace(X=SimpleNamespace(values=np.linspace(-2.0, 2.0, 401)))  # 0.01 deg pixels
+        self.calls = []
+
+    def partition_mueller(self, *, field_centre, times, freq, l, m, stokes_out, stokes_in):  # noqa: E741
+        self.calls.append({"freq": freq, "ntime": times.size, "stokes": (stokes_out, stokes_in)})
+        ll, _ = np.meshgrid(l, m)  # (Y, X), like the real one
+        field = self.value * (1.0 + self.slope * ll)
+        out = np.zeros((len(stokes_out), len(stokes_in)) + ll.shape, dtype=np.result_type(self.value, np.float32))
+        for o, s in enumerate(stokes_out):
+            if s in stokes_in:
+                out[o, stokes_in.index(s)] = field
+        if "Q" in stokes_out and "I" in stokes_in:
+            out[stokes_out.index("Q"), stokes_in.index("I")] += self.leak_q * field
+        return out
+
+
+def _region_vis(node_ds, node, mds_ds, **kw):
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    out = degrid_region(
+        node_ds,
+        region={"time": slice(0, 6), "frequency": slice(0, 4)},
+        model_ds=mds_ds,
+        masks=build_region_masks(mds_ds, None),
+        columns=["MODEL_DATA"],
+        corr_types=node.corr_types,
+        epsilon=1e-9,
+        **{"stokes": ["I"], **kw},
+    )
+    return out.MODEL_DATA.values
+
+
+def test_degrid_region_attenuates_by_the_beam_at_the_source(degrid_ms, simple_mds):
+    """One component at (x=40, y=9): the beam scales it by the beam's value there,
+    and by the mirrored position's value only if l has the wrong sign."""
+    from pfb_model_spec.utils.degrid import model_geometry, pixel_lm
+
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wizard = _FakeWizard(slope_deg=30.0)
+        beam = _region_vis(node_ds, node, mds_ds, wizards={"all": wizard})
+        bare = _region_vis(node_ds, node, mds_ds)
+        l_px, _ = pixel_lm(model_geometry(mds_ds))
+        gain = 1.0 + 30.0 * np.rad2deg(l_px[40])
+        mirrored = 1.0 + 30.0 * np.rad2deg(-l_px[40])
+        assert abs(gain - mirrored) > 1e-3  # the test can tell the two apart
+        np.testing.assert_allclose(beam, gain * bare, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
+        assert wizard.calls and wizard.calls[0]["stokes"] == ("I", "I")
+    finally:
+        dt.close()
+
+
+def test_degrid_region_predicts_leakage_when_the_product_asks_for_it(degrid_ms, simple_mds):
+    """An I-only model, --product IQ and an I->Q leak of 0.1: XX = I + Q and
+    YY = I - Q, so the two correlations differ by exactly the leak."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        assert list(node.corr_types) == ["XX", "XY", "YX", "YY"]
+        bare = _region_vis(node_ds, node, mds_ds)
+        leaky = _region_vis(node_ds, node, mds_ds, stokes=["I", "Q"], wizards={"all": _FakeWizard(leak_q=0.1)})
+        atol = 1e-6 * np.abs(bare).max()
+        np.testing.assert_allclose(leaky[..., 0], 1.1 * bare[..., 0], rtol=1e-6, atol=atol)
+        np.testing.assert_allclose(leaky[..., 3], 0.9 * bare[..., 3], rtol=1e-6, atol=atol)
+        np.testing.assert_allclose(leaky[..., 1:3], 0, atol=atol)
+    finally:
+        dt.close()
+
+
+def test_degrid_region_with_a_beam_lets_ducc_divide_by_n(degrid_ms, simple_mds):
+    """Pins the 1/n convention on the beam path (D55): the wizard's B is used bare
+    and ducc divides. Fails if the beam path folds 1/n itself or the flag flips."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wide = mds_ds.assign_attrs(cell_rad_x=2e-3, cell_rad_y=2e-3)
+        beam = _region_vis(node_ds, node, wide, wizards={"all": _FakeWizard()})
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        with_n = _direct_reference(node_ds, node, wide, region, True)
+        without_n = _direct_reference(node_ds, node, wide, region, False)
+        got = beam.reshape(with_n.shape)
+        scale = np.abs(with_n).max()
+        np.testing.assert_allclose(got, with_n.astype(np.complex64), rtol=0, atol=1e-6 * scale)
+        assert np.abs(got - without_n).max() > 1e-5 * scale
+    finally:
+        dt.close()
+
+
+def test_degrid_region_groups_take_their_own_beam_and_conjugate(degrid_ms, simple_mds):
+    """MM rows get 0.5, MPM rows c and their reversed rows conj(c), exactly."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        nbl = int(node_ds.sizes["baseline_id"])
+        idx = np.arange(nbl)
+        conj = (idx % 4) == 1
+        groups = ({"MM": idx[idx % 2 == 0], "MPM": idx[idx % 2 == 1]}, conj)
+        c = 0.8 + 0.2j
+        wizards = {"MM": _FakeWizard(0.5), "MPM": _FakeWizard(c)}
+        beam = _region_vis(node_ds, node, mds_ds, wizards=wizards, groups=groups)
+        bare = _region_vis(node_ds, node, mds_ds)
+        factor = np.where(idx % 2 == 0, 0.5, np.where(conj, np.conj(c), c))
+        expected = bare * factor[None, :, None, None]
+        np.testing.assert_allclose(beam, expected, rtol=1e-6, atol=1e-6 * np.abs(bare).max())
+    finally:
+        dt.close()
+
+
+def test_beam_terms_must_cover_every_baseline(degrid_ms, simple_mds):
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        nbl = int(node_ds.sizes["baseline_id"])
+        groups = ({"MM": np.arange(nbl - 1)}, np.zeros(nbl, dtype=bool))
+        with pytest.raises(ValueError, match="baseline"):
+            _region_vis(node_ds, node, mds_ds, wizards={"MM": _FakeWizard()}, groups=groups)
+    finally:
+        dt.close()
+
+
+def _no_ray(monkeypatch):
+    import pfb_imaging.core.degrid as degrid_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(degrid_mod, "init_ray", _boom)
+    return degrid_mod
+
+
+def test_degrid_refuses_katbeam_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="katbeam"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="katbeam")
+
+
+def test_degrid_beam_failure_leaves_the_ms_untouched(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    """A beam that cannot be built must fail before any column is added."""
+    import arcae
+
+    degrid_mod = _no_ray(monkeypatch)
+
+    def _unstaged(**kw):
+        raise RuntimeError("beam products not staged")
+
+    monkeypatch.setattr(degrid_mod, "BeamWizard", _unstaged)
+    with pytest.raises(RuntimeError, match="not staged"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=simple_mds[0],
+            product="I",
+            beam_model="L",
+            model_column="BEAM_MODEL_DATA",
+        )
+    with arcae.table(degrid_ms) as tab:
+        assert "BEAM_MODEL_DATA" not in tab.columns()
+
+
+def test_degrid_refuses_a_beam_on_an_apparent_model(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    apparent = str(tmp_path / "apparent.mds")
+    simple_mds[1].assign_attrs(flux_scale="apparent").to_zarr(apparent, mode="w")
+    with pytest.raises(ValueError, match="twice"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=apparent, product="I", beam_model="L")
+
+
+def test_degrid_group_beams_refuse_a_non_meerkat_array(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="MeerKAT"):
+        degrid_mod.degrid(
+            [degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="L", baseline_groups=True
+        )
+
+
+def test_degrid_refuses_antenna_groups_without_baseline_groups(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="only has an effect with --baseline-groups"):
+        degrid_mod.degrid(
+            [degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", beam_model="L", antenna_groups="m*,e*"
+        )
+
+
+def test_degrid_refuses_malformed_antenna_groups_without_a_beam(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="exactly two comma-separated patterns"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=simple_mds[0],
+            product="I",
+            baseline_groups=True,
+            antenna_groups="m*",
+        )

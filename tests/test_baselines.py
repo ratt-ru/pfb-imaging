@@ -201,3 +201,24 @@ def test_two_close_but_distinct_diameters_are_two_classes():
     names = np.array(["ant0", "ant1", "ant2"])
     is_ext = classify_antennas(names, np.array([13.5, 13.5, 13.8]))
     assert is_ext.tolist() == [False, False, True]
+
+
+def test_node_baseline_groups_marks_reversed_cross_baselines():
+    import xarray as xr
+
+    from pfb_imaging.utils.baselines import node_baseline_groups
+
+    ant = xr.Dataset(
+        {"ANTENNA_DISH_DIAMETER": ("antenna_name", [13.5, 13.5, 15.0])},
+        coords={"antenna_name": ["m000", "m001", "e000"]},
+    )
+    vis = xr.Dataset(
+        coords={
+            "baseline_antenna1_name": ("baseline_id", ["m000", "m000", "e000", "m001"]),
+            "baseline_antenna2_name": ("baseline_id", ["m001", "e000", "m001", "e000"]),
+        }
+    )
+    node = xr.DataTree(vis, children={"antenna_xds": xr.DataTree(ant)})
+    groups, conj = node_baseline_groups(node, None)
+    assert {k: v.tolist() for k, v in groups.items()} == {"MM": [0], "MPM": [1, 2, 3]}
+    assert conj.tolist() == [False, False, True, False]

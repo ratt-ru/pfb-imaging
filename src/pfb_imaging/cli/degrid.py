@@ -40,6 +40,16 @@ URI = NewType("URI", Path)
     mkdir=False,
     path_policies={"write_parent": True},
 )
+@stimela_output(
+    dtype="Directory",
+    name="beam-cache-dir",
+    info="Implicit output ensuring the beam cache location is mounted. "
+    "The cache defaults to a per-user directory under /tmp. "
+    "Override it by setting the MBEAMS_CACHE_DIR environment variable.",
+    implicit="/tmp/mbeams-cache",
+    must_exist=False,
+    path_policies={"write_parent": True},
+)
 def degrid(
     ms: Annotated[
         list[URI],
@@ -99,7 +109,9 @@ def degrid(
     product: Annotated[
         str,
         typer.Option(
-            help="Stokes product to degrid. Every Stokes parameter named must be one the model carries.",
+            help="Stokes product to degrid. "
+            "Without --beam-model every Stokes parameter named must be one the model carries. "
+            "With it any of IQUV may be named, which predicts the beam's leakage into those planes.",
             rich_help_panel="Data Selection",
         ),
     ] = "I",
@@ -207,6 +219,34 @@ def degrid(
             rich_help_panel="WGridder",
         ),
     ] = True,
+    beam_model: Annotated[
+        str | None,
+        typer.Option(
+            help="Primary beam to apply, as a meerkat-beams band name such as L. "
+            "The model must be in intrinsic flux. "
+            "katbeam is not supported here. "
+            "Multi-node clusters need MBEAMS_CACHE_DIR on shared storage.",
+            rich_help_panel="Beam",
+        ),
+    ] = None,
+    baseline_groups: Annotated[
+        bool,
+        typer.Option(
+            help="Apply a separate beam to each MeerKAT baseline group. "
+            "MM, MPM and MPMP baselines each get their own beam. "
+            "Requires --beam-model, a MeerKAT array and L band.",
+            rich_help_panel="Beam",
+        ),
+    ] = False,
+    antenna_groups: Annotated[
+        str | None,
+        typer.Option(
+            help="Name the two dish classes explicitly as two comma separated glob patterns. "
+            "The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas. "
+            "Requires --baseline-groups.",
+            rich_help_panel="Beam",
+        ),
+    ] = None,
     ray_address: Annotated[
         str,
         typer.Option(
@@ -302,6 +342,9 @@ def degrid(
                     region_file=region_file,
                     epsilon=epsilon,
                     do_wgridding=do_wgridding,
+                    beam_model=beam_model,
+                    baseline_groups=baseline_groups,
+                    antenna_groups=antenna_groups,
                     ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
@@ -334,6 +377,9 @@ def degrid(
                 region_file=region_file,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
+                beam_model=beam_model,
+                baseline_groups=baseline_groups,
+                antenna_groups=antenna_groups,
                 ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
@@ -375,6 +421,9 @@ def degrid(
             region_file=region_file,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
+            beam_model=beam_model,
+            baseline_groups=baseline_groups,
+            antenna_groups=antenna_groups,
             ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,

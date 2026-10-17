@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-12T19:00:00Z
-last_verified_commit: 043f50d
+timestamp: 2026-10-13T12:00:00Z
+last_verified_commit: e2e33ba
 ---
 
 # MSv4 DataTree imager pipeline
@@ -89,7 +89,7 @@ D27. Pinned by `tests/test_imager_precision.py`.
 `--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
 and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
 carry a `BEAMINCN` card because the stored beam includes the folded n-term. Without `--transfer-model-from` the imager does not write `RESIDUAL`, so **`deconv` falls back to `DIRTY` when it is absent**
-(`core/deconv.py:277`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
+(`core/deconv.py:281`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
 apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point (D52) right after it; all of them before Ray starts. Frequency coverage is checked after pass 2, against each band's effective `freq_out`, the frequency the model was rendered at (D52).
@@ -257,3 +257,12 @@ selects through `select_vis_nodes` (name-based selection, the frequency window
 and `chan0`, so the two front ends cannot drift; commit `08a5697`) and adds its
 own imaging geometry, channel widths and rephasing barycentre on top, and its
 transfer tangent-point check (D52) uses `wrapped_angle_diff`.
+
+`degrid` also shares the baseline-group machinery in `utils/baselines.py`
+(`preflight_baseline_groups`, `node_baseline_groups`), but none of the `.dt`: it applies the
+primary beam itself (#353). `--beam-model` names a meerkat-beams band (katbeam is refused),
+`--baseline-groups` gives each `MM`/`MPM`/`MPMP` group its own beam, and `--antenna-groups`
+overrides the dish classification exactly as in the imager. The beam is the bare `B`, a full
+Stokes Mueller block, and every degrid prediction calls ducc with `divide_by_n=True`, beam or
+not, which is the opposite of the imager's folded `B/n` (D22). The cross group is predicted
+exactly rather than as `Re(B)`. D55 has the reasoning and the guards.

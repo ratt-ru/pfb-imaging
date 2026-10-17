@@ -14,18 +14,25 @@ pfb-model-spec's business (`degrid_stokes`).
 """
 
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from typing import Any
 
 import numpy as np
 import xarray as xr
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from pfb_model_spec.utils.degrid import (
-    degrid_stokes,
+    BeamTerm,
+    RegionMask,
+    crop_bbox,
     model_geometry,
-    render_model_region,
-    stokes_vis_to_corr,
+    model_to_apparent_vis_for_regions,
+    pixel_lm,
 )
+
+from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
@@ -155,130 +162,27 @@ def ensure_model_columns(
     dt.sync_msv2(write_map={c: c for c in columns})
 
 
-class RegionMask(NamedTuple):
-    """A region's weights, cropped to the region's bounding box.
-
-    Cropping is a pure optimisation, and a large one: a region is degridded by
-    its own `dirty2vis` call, whose cost scales with the grid it is handed, not
-    with the flux on it. Measured on a 6720^2 model with three regions, the
-    per-chunk gridder time fell from 3 x 5.29 s to 5.29 + 0.64 + 0.51 s. It
-    also shrinks what the driver ships to each replica -- a full-grid float64
-    mask is 361 MB at 6720^2, and a small region's is under 1 MB.
-
-    Attributes:
-        mask: `(nyc, nxc)` float64 weights, (Y, X) like the model.
-        i0: Index along y of the mask's origin in the full model grid.
-        j0: Index along x of the mask's origin in the full model grid.
-    """
-
-    mask: np.ndarray
-    i0: int
-    j0: int
-
-
-def _even_span(lo: int, hi: int, n: int) -> tuple[int, int]:
-    """Grow `[lo, hi)` to an even length without leaving `[0, n)`.
-
-    ducc's wgridder asserts `nx_dirty must be even`, so a bounding box of odd
-    extent cannot be handed to it. Growing outwards keeps the box a window on
-    real model pixels, which padding with zeros would not.
-    """
-    if (hi - lo) % 2 == 0:
-        return lo, hi
-    if hi < n:
-        return lo, hi + 1
-    if lo > 0:
-        return lo - 1, hi
-    # the full axis is odd, so no even window exists; the uncropped grid would
-    # fail the same assertion, and that is the error worth surfacing
-    return lo, hi
-
-
-def crop_bbox(mask: np.ndarray) -> RegionMask:
-    """Crop a full-grid mask to the bounding box of its non-zero pixels.
-
-    The box is grown by at most one pixel per axis so that both extents are
-    even, which ducc requires (see `_even_span`).
-
-    Args:
-        mask: `(ny, nx)` weights, (Y, X) like the model.
-
-    Returns:
-        The cropped mask and its origin. An all-zero mask crops to a `(2, 2)`
-        zero box at the origin -- `degrid_stokes` skips an empty plane
-        outright, so the degenerate box is never gridded.
-    """
-    ny, nx = mask.shape
-    ys = np.flatnonzero(mask.any(axis=1))
-    xs = np.flatnonzero(mask.any(axis=0))
-    if xs.size == 0 or ys.size == 0:
-        return RegionMask(np.zeros((min(2, ny), min(2, nx)), dtype=mask.dtype), 0, 0)
-    i0, i1 = _even_span(int(ys[0]), int(ys[-1]) + 1, ny)
-    j0, j1 = _even_span(int(xs[0]), int(xs[-1]) + 1, nx)
-    return RegionMask(np.ascontiguousarray(mask[i0:i1, j0:j1]), i0, j0)
-
-
-def crop_phase_centre(
-    *,
-    x0: float,
-    y0: float,
-    cell_rad: float,
-    flip_u: bool,
-    flip_v: bool,
-    nx: int,
-    ny: int,
-    rm: RegionMask,
-) -> tuple[float, float]:
-    """The `center_x`/`center_y` a cropped sub-grid must be degridded with.
-
-    ducc places image pixel `i` at `(i - nx // 2) * cell` from the image
-    centre, so cropping moves the centre by the shift in that origin --
-    `j0 + nxc // 2 - nx // 2` pixels along x and `i0 + nyc // 2 - ny // 2`
-    along y. The sign is the axis's flip convention: `flip_u`/`flip_v` negate
-    the direction the offset is measured in. Getting either sign wrong is not
-    a small error -- it puts the model in the wrong place on the sky, and the
-    visibilities come back order-unity wrong (`tests/test_degrid.py`, the
-    crop-parity test, checks all four flip combinations).
-
-    Args:
-        x0: The model's own `center_x`, from `model_geometry`.
-        y0: The model's own `center_y`.
-        cell_rad: Pixel size in radians (square pixels).
-        flip_u: The model's U-axis flip convention.
-        flip_v: The model's V-axis flip convention.
-        nx: Full model grid size along x.
-        ny: Full model grid size along y.
-        rm: The cropped mask whose grid the offsets are wanted for.
-
-    Returns:
-        `(center_x, center_y)` for `degrid_stokes`.
-    """
-    nyc, nxc = rm.mask.shape
-    sx = -1.0 if flip_u else 1.0
-    sy = -1.0 if flip_v else 1.0
-    return (
-        x0 + sx * (rm.j0 + nxc // 2 - nx // 2) * cell_rad,
-        y0 + sy * (rm.i0 + nyc // 2 - ny // 2) * cell_rad,
-    )
-
-
-def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
+def check_stokes_subset(product: str, model_stokes: Sequence[str], *, beam: bool = False) -> list[str]:
     """Validate that `product` names Stokes planes the model actually carries.
 
     Shared by `degrid` and `imager --transfer-model-from`: rendering a model as
     a Stokes product it does not hold produces confidently wrong data, so a
-    missing plane is refused rather than zero-filled.
+    missing plane is refused rather than zero-filled. With a beam the product
+    names apparent planes, which the Mueller block fills from the model's
+    planes, so any of IQUV is allowed: naming more is how a user opts into
+    beam leakage (D55).
 
     Args:
         product: The `--product` string, for example `"I"` or `"IQUV"`.
         model_stokes: The model's `stokes` coord, from `model_geometry`.
+        beam: Whether a beam maps the model's planes onto the product.
 
     Returns:
         The requested Stokes labels, in `product` order.
 
     Raises:
         ValueError: If `product` is empty, has a letter outside IQUV, repeats
-            one, or names a plane absent from `model_stokes`.
+            one, or, without a beam, names a plane absent from `model_stokes`.
     """
     requested = list(product.upper().strip())
     if not requested:
@@ -289,7 +193,7 @@ def check_stokes_subset(product: str, model_stokes: Sequence[str]) -> list[str]:
     if len(set(requested)) != len(requested):
         raise ValueError(f"Product {product!r} repeats a Stokes parameter")
     missing = [s for s in requested if s not in model_stokes]
-    if missing:
+    if missing and not beam:
         raise ValueError(
             f"Requested product {product!r} but the model carries Stokes {list(model_stokes)}; "
             f"{''.join(missing)} is missing. Rendering a model as a Stokes product it does not "
@@ -404,6 +308,99 @@ def assert_writable(ds: xr.Dataset) -> None:
         )
 
 
+def _coarse_axes(wizard: Any, l_px: np.ndarray, m_px: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Ascending coarse (l, m) axes covering the model grid at half a beam-cube pixel.
+
+    The beam is smooth on that scale, so evaluating there and interpolating is
+    exact to the beam's own resolution while costing a few thousand points
+    instead of the model's millions.
+    """
+    step = 0.5 * np.deg2rad(np.abs(np.diff(np.asarray(wizard.bds.X.values, dtype=float))).min())
+
+    def axis(v: np.ndarray) -> np.ndarray:
+        lo, hi = float(v.min()) - step, float(v.max()) + step
+        return lo + step * np.arange(max(2, int(np.ceil((hi - lo) / step)) + 1))
+
+    return axis(l_px), axis(m_px)
+
+
+def chunk_beam_terms(
+    wizards: Mapping[str, Any],
+    groups: tuple[dict[str, np.ndarray], np.ndarray] | None,
+    *,
+    nbl: int,
+    ntime: int,
+    geom: dict,
+    radec: tuple[float, float],
+    times: np.ndarray,
+    freq_out: float,
+    stokes_out: Sequence[str],
+) -> list[BeamTerm]:
+    """Build one work item's beam terms from meerkat-beams wizards.
+
+    Evaluated at the chunk's own times and its unweighted mean frequency (D39),
+    pointing at the model's tangent point, which `check_tangent_point` has
+    already required to be the field centre. The beam is the bare B from
+    `partition_mueller`: the caller degrids with `divide_by_n=True` (D55).
+
+    Args:
+        wizards: `{"all": wizard}` without groups, else `{label: wizard}`.
+        groups: `node_baseline_groups` output for the node, or None.
+        nbl: Baselines on the node.
+        ntime: Times in the chunk; rows are `(time, baseline)` C-ordered.
+        geom: `model_geometry` of the model.
+        radec: Model tangent point, radians.
+        times: The chunk's unix-second times.
+        freq_out: The chunk's unweighted mean frequency, Hz.
+        stokes_out: Stokes planes predicted, in output order.
+
+    Returns:
+        One `BeamTerm` per group present (one in all without groups).
+
+    Raises:
+        ValueError: If the groups leave a baseline uncovered or name a group
+            with no wizard.
+    """
+    l_px, m_px = pixel_lm(geom)
+    field_centre = SkyCoord(ra=radec[0] * u.rad, dec=radec[1] * u.rad)
+    # D13: MSv4 time is unix seconds; astropy Time wants MJD days
+    t = Time(to_mjd_time(np.unique(times)) / 86400.0, format="mjd")
+    if groups is None:
+        items = [("all", None, None)]
+    else:
+        index, conj = groups
+        covered = np.zeros(nbl, dtype=bool)
+        for idx in index.values():
+            covered[idx] = True
+        if not covered.all():
+            raise ValueError(f"{int((~covered).sum())} baseline(s) belong to no baseline group")
+        items = [(label, idx, conj) for label, idx in index.items()]
+
+    terms = []
+    for label, idx, conj in items:
+        if label not in wizards:
+            raise ValueError(f"no beam for baseline group {label!r}")
+        wizard = wizards[label]
+        l_axis, m_axis = _coarse_axes(wizard, l_px, m_px)
+        block = wizard.partition_mueller(
+            field_centre=field_centre,
+            times=t,
+            freq=float(freq_out),
+            l=np.rad2deg(l_axis),
+            m=np.rad2deg(m_axis),
+            stokes_out="".join(stokes_out),
+            stokes_in="".join(geom["stokes"]),
+        )
+        rows = conj_rows = None
+        if idx is not None:
+            mine = np.zeros(nbl, dtype=bool)
+            mine[idx] = True
+            rows = np.tile(mine, ntime)
+            conj_rows = np.tile(conj & mine, ntime)
+        terms.append(BeamTerm(np.asarray(block), l_axis, m_axis, rows, conj_rows))
+    return terms
+
+
 def degrid_region(
     node_ds: xr.Dataset,
     *,
@@ -417,6 +414,8 @@ def degrid_region(
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     nthreads: int = 1,
+    wizards: Mapping[str, Any] | None = None,
+    groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -431,12 +430,15 @@ def degrid_region(
             of `columns` and in the same order.
         columns: Output column names, aligned with `masks`.
         corr_types: Correlation names, i.e. the node's `polarization` values.
-        stokes: Stokes planes to degrid, in output order; a subset of the
-            model's, validated by `check_stokes_subset`.
+        stokes: Stokes planes to degrid, in output order, validated by
+            `check_stokes_subset`: a subset of the model's without `wizards`,
+            any of IQUV with them (the beam's leakage fills the rest).
         accumulate: Add to what the column already holds in this region.
         epsilon: Gridder accuracy.
         do_wgridding: Perform w-correction via improved w-stacking.
         nthreads: ducc threads.
+        wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
+        groups: `node_baseline_groups` output, or None.
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
@@ -478,51 +480,44 @@ def degrid_region(
     time_out = float(ds.time.values.mean())
     freq_out = float(freq.mean())
 
-    # Render once for the whole chunk rather than once per region: the model is
-    # a function of (time, freq) alone, so every region sees the same image.
-    # `model_to_apparent_vis_for_region` renders inside its own per-region call,
-    # which is why this composes its primitives instead (pfb-model-spec#27, which
-    # would move this loop -- and the crop arithmetic -- behind that seam).
-    geom = model_geometry(model_ds)
-    planes = [geom["stokes"].index(s) for s in stokes]
-    image = render_model_region(model_ds, time=time_out, freq_out=freq_out)
-    if planes != list(range(len(geom["stokes"]))):
-        # fancy indexing copies the whole grid (361 MB at 6720^2), so only
-        # pay for it when the selection is not the identity
-        image = image[planes]
+    beam_terms = None
+    if wizards is not None:
+        beam_terms = chunk_beam_terms(
+            wizards,
+            groups,
+            nbl=nbl,
+            ntime=ntime,
+            geom=model_geometry(model_ds),
+            radec=(float(model_ds.ra), float(model_ds.dec)),
+            times=ds.time.values,
+            freq_out=freq_out,
+            stokes_out=stokes,
+        )
 
+    # Render once and degrid each region's cropped box: pfb-model-spec's
+    # multi-region entry point (#27). No FLAG is read: the model is predicted on
+    # every real row so flagging can be rerun against it; `mask` only hides
+    # xarray-ms's NaN-padded cells, which are not MS rows (#287).
+    per_region = model_to_apparent_vis_for_regions(
+        model_ds,
+        uvw=uvw,
+        freq=freq,
+        corr_types=tuple(corr_types),
+        time=time_out,
+        freq_out=freq_out,
+        region_masks=masks,
+        stokes_out=list(stokes),
+        mask=mask,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        # 1/n is never folded into a beam on this path, so ducc always applies
+        # it, beam or not (D55); the pre-#353 False dropped it off-axis
+        divide_by_n=True,
+        nthreads=nthreads,
+        beam_terms=beam_terms,
+    )
     assigned = {}
-    for column, rm in zip(columns, masks, strict=True):
-        nyc, nxc = rm.mask.shape
-        sub = image[:, rm.i0 : rm.i0 + nyc, rm.j0 : rm.j0 + nxc] * rm.mask[None]
-        x0, y0 = crop_phase_centre(
-            x0=geom["x0"],
-            y0=geom["y0"],
-            cell_rad=geom["cell_rad"],
-            flip_u=geom["flip_u"],
-            flip_v=geom["flip_v"],
-            nx=geom["nx"],
-            ny=geom["ny"],
-            rm=rm,
-        )
-        stokes_vis = degrid_stokes(
-            uvw,
-            freq,
-            np.ascontiguousarray(sub),
-            cell_rad=geom["cell_rad"],
-            x0=x0,
-            y0=y0,
-            flip_u=geom["flip_u"],
-            flip_v=geom["flip_v"],
-            flip_w=geom["flip_w"],
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            # the .mds records no beam, so nothing folds 1/n in (wiki D22)
-            divide_by_n=False,
-            nthreads=nthreads,
-            mask=mask,
-        )
-        vis = stokes_vis_to_corr(stokes_vis, list(stokes), tuple(corr_types))
+    for column, vis in zip(columns, per_region, strict=True):
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
         if accumulate:
             vis += ds[column].values.astype(np.complex64)
@@ -552,10 +547,11 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:
-    """The warning to log for a model's flux scale, if any.
+    """The warning to log when an intrinsic model is degridded without --beam-model.
 
-    `degrid` applies no primary beam, so an intrinsic model yields intrinsic
-    visibilities -- correct only where the beam is close to 1.
+    Without a beam an intrinsic model yields intrinsic visibilities, correct
+    only where the beam is close to 1. Only logged when degrid runs without
+    --beam-model.
 
     Args:
         flux_scale: The `.mds` `flux_scale`, from `model_sampling`.
@@ -566,7 +562,7 @@ def flux_scale_warning(flux_scale: str | None) -> str | None:
     if flux_scale != "intrinsic":
         return None
     return (
-        "The model is in intrinsic flux and degrid applies no primary beam, so the model "
+        "The model is in intrinsic flux and no primary beam is applied, so the model "
         "visibilities are only correct where the beam is close to 1. "
-        "Beam application is tracked in https://github.com/ratt-ru/pfb-imaging/issues/353."
+        "Pass --beam-model to predict apparent visibilities."
     )

@@ -6,7 +6,7 @@ cabs:
     info:
       Degrid visibilities from a component model into MSv4 measurement sets.
       The model image needs to be in component format.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:issue353
     inputs:
       ms:
         info:
@@ -60,7 +60,8 @@ cabs:
       product:
         info:
           Stokes product to degrid.
-          Every Stokes parameter named must be one the model carries.
+          Without --beam-model every Stokes parameter named must be one the model carries.
+          With it any of IQUV may be named, which predicts the beam's leakage into those planes.
         default: I
         metadata:
           rich_help_panel: Data Selection
@@ -159,6 +160,32 @@ cabs:
         default: true
         metadata:
           rich_help_panel: WGridder
+      beam-model:
+        info:
+          Primary beam to apply, as a meerkat-beams band name such as L.
+          The model must be in intrinsic flux.
+          katbeam is not supported here.
+          Multi-node clusters need MBEAMS_CACHE_DIR on shared storage.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Beam
+      baseline-groups:
+        info:
+          Apply a separate beam to each MeerKAT baseline group.
+          MM, MPM and MPMP baselines each get their own beam.
+          Requires --beam-model, a MeerKAT array and L band.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Beam
+      antenna-groups:
+        info:
+          Name the two dish classes explicitly as two comma separated glob patterns.
+          The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas.
+          Requires --baseline-groups.
+        dtype: Optional[str]
+        metadata:
+          rich_help_panel: Beam
       ray-address:
         info:
           Address of the ray cluster to connect to.
@@ -210,5 +237,15 @@ cabs:
         implicit: '/tmp/numba'
         must_exist: false
         mkdir: false
+        path_policies:
+          write_parent: true
+      beam-cache-dir:
+        dtype: Directory
+        info:
+          Implicit output ensuring the beam cache location is mounted.
+          The cache defaults to a per-user directory under /tmp.
+          Override it by setting the MBEAMS_CACHE_DIR environment variable.
+        implicit: '/tmp/mbeams-cache'
+        must_exist: false
         path_policies:
           write_parent: true

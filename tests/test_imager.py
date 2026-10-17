@@ -1031,6 +1031,7 @@ def test_single_class_array_writes_one_partition_not_three(ms_name, tmp_path):
 def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypatch):
     """Three groups -> three wizards, each constructed with its own group label."""
     import pfb_imaging.core.imager as imager_mod
+    import pfb_imaging.utils.baselines as baselines_mod
 
     built = []
 
@@ -1039,9 +1040,9 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
             built.append((band, group))
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
-    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+    monkeypatch.setattr(baselines_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
     # the fake wizard needs no staged beams
-    monkeypatch.setattr(imager_mod, "_missing_group_beams", lambda *a, **kw: None)
+    monkeypatch.setattr(imager_mod, "resolve_group_beam_cache", lambda *a, **kw: None)
 
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
@@ -1174,6 +1175,7 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
     task would ever consume.
     """
     import pfb_imaging.core.imager as imager_mod
+    import pfb_imaging.utils.baselines as baselines_mod
 
     built = []
 
@@ -1182,9 +1184,9 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
             built.append((band, group))
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
-    monkeypatch.setattr(imager_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
+    monkeypatch.setattr(baselines_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
     # the fake wizard needs no staged beams
-    monkeypatch.setattr(imager_mod, "_missing_group_beams", lambda *a, **kw: None)
+    monkeypatch.setattr(imager_mod, "resolve_group_beam_cache", lambda *a, **kw: None)
 
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
@@ -1331,32 +1333,66 @@ def beam_caches(tmp_path, monkeypatch):
     return in_use, usual
 
 
-def test_missing_group_beam_points_at_the_cache_that_has_it(beam_caches):
-    from pfb_imaging.core.imager import _missing_group_beams
+def test_explicit_beam_cache_is_kept_but_points_at_the_cache_that_has_it(beam_caches):
+    import os
+
+    from pfb_imaging.utils.baselines import resolve_group_beam_cache
 
     in_use, usual = beam_caches
     (in_use / "bds" / "MeerKAT_L_mdv2026.bds.zarr").mkdir(parents=True)
+    (usual / "inputs" / "MeerKAT_L_mdv2026.zarr").mkdir(parents=True)
     (usual / "inputs" / "MKE_L.zarr").mkdir(parents=True)
-    msg = _missing_group_beams("L", ["MM", "MPM", "MPMP"])
+    msg = resolve_group_beam_cache("L", ["MM", "MPM", "MPMP"])
     assert "MKE_L" in msg and "MeerKAT_L_mdv2026" not in msg
     assert f"MBEAMS_CACHE_DIR={in_use}" in msg
     assert f"export MBEAMS_CACHE_DIR={usual}" in msg
+    assert "lost on reboot" not in msg
+    assert os.environ["MBEAMS_CACHE_DIR"] == str(in_use)
+
+
+def test_default_beam_cache_falls_back_to_meerkat_beams_default(beam_caches, monkeypatch):
+    import os
+
+    from pfb_imaging.utils import baselines
+    from pfb_imaging.utils.baselines import resolve_group_beam_cache
+
+    in_use, usual = beam_caches
+    monkeypatch.setattr(baselines, "MBEAMS_CACHE_DEFAULT", str(in_use))  # in use is pfb's default
+    (usual / "inputs" / "MeerKAT_L_mdv2026.zarr").mkdir(parents=True)
+    (usual / "inputs" / "MKE_L.zarr").mkdir(parents=True)
+    assert resolve_group_beam_cache("L", ["MM", "MPM", "MPMP"]) is None
+    assert os.environ["MBEAMS_CACHE_DIR"] == str(usual)
+
+
+def test_no_fallback_that_loses_a_product_only_the_default_has(beam_caches, monkeypatch):
+    import os
+
+    from pfb_imaging.utils import baselines
+    from pfb_imaging.utils.baselines import resolve_group_beam_cache
+
+    in_use, usual = beam_caches
+    monkeypatch.setattr(baselines, "MBEAMS_CACHE_DEFAULT", str(in_use))
+    (in_use / "inputs" / "MeerKAT_L_mdv2026.zarr").mkdir(parents=True)
+    (usual / "inputs" / "MKE_L.zarr").mkdir(parents=True)
+    msg = resolve_group_beam_cache("L", ["MM", "MPM", "MPMP"])
+    assert "MKE_L" in msg and "lost on reboot" in msg
+    assert os.environ["MBEAMS_CACHE_DIR"] == str(in_use)
 
 
 def test_missing_group_beam_says_where_to_stage_it(beam_caches):
-    from pfb_imaging.core.imager import _missing_group_beams
+    from pfb_imaging.utils.baselines import resolve_group_beam_cache
 
     in_use, _ = beam_caches
-    msg = _missing_group_beams("L", ["MM"])
+    msg = resolve_group_beam_cache("L", ["MM"])
     assert "MeerKAT_L_mdv2026" in msg and "MKE_L" not in msg  # MM needs MeerKAT beams only
     assert f"{in_use / 'inputs'}/<product>.zarr" in msg
     assert "export" not in msg
 
 
 def test_staged_group_beams_need_no_message(beam_caches):
-    from pfb_imaging.core.imager import _missing_group_beams
+    from pfb_imaging.utils.baselines import resolve_group_beam_cache
 
     in_use, _ = beam_caches
     (in_use / "bds" / "MeerKAT_L_mdv2026.bds.zarr").mkdir(parents=True)
     (in_use / "inputs" / "MKE_L.zarr").mkdir(parents=True)
-    assert _missing_group_beams("L", ["MM", "MPM", "MPMP"]) is None
+    assert resolve_group_beam_cache("L", ["MM", "MPM", "MPMP"]) is None
