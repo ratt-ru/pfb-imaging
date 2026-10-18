@@ -164,7 +164,8 @@ def stokes_vis(
             body); resolved to an in-plane (l0, m0) at this piece's own time.
         nx, ny: output image size; the piece's BEAM is placed on this grid here
             in pass 1 (#281) so pass 2 consumes it as is.
-        nthreads: threads available to the task (parallelises the COUNTS gridding).
+        nthreads: threads available to the task (parallelises the COUNTS gridding
+            and meerkat-beams' rotation average).
         compute_counts: grid and store the piece's uv counts. Only robust
             weighting reads them, so natural weighting skips a full padded-grid
             allocation and gridding per piece.
@@ -668,6 +669,7 @@ def stokes_vis(
     data_vars["BEAM"] = (("corr", "y", "x"), beam)
     if compute_counts:
         data_vars.update(sparse_counts(counts))
+        del counts  # the dense grid is not needed through the zarr write
 
     coords = {
         "chan": (("chan",), freq),

@@ -24,6 +24,7 @@ import resource
 import socket
 import time
 import uuid
+import warnings
 
 MEMRAY_DIR_ENV = "PFB_MEMRAY_DIR"
 MEMRAY_NATIVE_ENV = "PFB_MEMRAY_NATIVE"
@@ -148,9 +149,13 @@ def profile_env() -> dict:
 def cprofile_task(name: str):
     """cProfile the block when ``PFB_CPROFILE_DIR`` is set, else do nothing.
 
-    Writes ``<dir>/<name>-<host>-<pid>-<seq>-<token>.pstats``. Only the thread
-    that enters the block is profiled, and time inside compiled code (ducc0,
-    numba, arcae) is charged to the Python call that entered it.
+    Writes ``<dir>/<name>-<host>-<pid>-<seq>-<token>.pstats``. Time inside
+    compiled code (ducc0, numba, arcae) is charged to the Python call that
+    entered it. Which Python threads are seen depends on the interpreter: on
+    3.11 only the thread that enters the block, so work a task hands to a
+    Python thread pool (meerkat-beams' ``nthreads``) shows up as a wait; from
+    3.12 cProfile is built on ``sys.monitoring`` and records every thread, so
+    the self times of concurrent threads add up and can exceed the wall time.
 
     Args:
         name: capture-file prefix, normally the task name.
@@ -223,6 +228,10 @@ def dump_timeline(log=None) -> None:
     open it in https://ui.perfetto.dev or summarise it with
     ``scripts/profile_report.py``. It covers every task the cluster still
     remembers, so on a shared ``--ray-address`` cluster it includes other jobs.
+
+    A failure to write it is reported, not raised: the run's work is done by
+    the time this is called, and a diagnostic must not fail it or skip the
+    caller's ``ray.shutdown()``.
     """
     path = os.environ.get(TIMELINE_ENV)
     if not path:
@@ -230,7 +239,15 @@ def dump_timeline(log=None) -> None:
     # deferred: optional heavy runtime (ray)
     import ray
 
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    ray.timeline(filename=path)
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        ray.timeline(filename=path)
+    except Exception as e:
+        msg = f"Could not write the Ray task timeline to {path}: {e!r}"
+        if log is not None:
+            log.warning(msg)
+        else:
+            warnings.warn(msg, stacklevel=2)
+        return
     if log is not None:
         log.info(f"Wrote the Ray task timeline to {path}")

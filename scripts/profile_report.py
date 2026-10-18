@@ -35,8 +35,10 @@ line, and all three combine in one run. ``pfb imager`` and ``pfb degrid`` honour
    to the Python call that entered it, so ``vis2dirty`` or an arcae read is one
    line. That is usually the right resolution for choosing what to optimise. It
    also adds overhead per Python call, so xarray-heavy code looks somewhat more
-   expensive than it is; check against the wall times of a run without it. Only
-   the thread that runs the task is profiled.
+   expensive than it is; check against the wall times of a run without it. On
+   Python 3.11 only the thread that runs the task is profiled, so work handed to
+   a Python thread pool (the beam's ``nthreads``) shows as a wait; from 3.12
+   every thread is, and the self times of concurrent threads add up.
 
 Every progress line also carries the task's wall and CPU time; CPU/wall is the
 cores it kept busy, so a task that should use ``--nthreads`` threads but shows
@@ -82,7 +84,7 @@ def timeline_report(path: Path) -> None:
         print(f"== {path.name}: no task events")
         return
     # sub-phases carry no task name: attribute each to the task span on the
-    # same worker that contains it
+    # same worker that contains it (the first one, if overlapping spans do)
     spans = defaultdict(list)
     for e in tasks:
         spans[e["tid"]].append((e["ts"], e["ts"] + e["dur"], _short_task(e["name"])))
@@ -104,7 +106,11 @@ def timeline_report(path: Path) -> None:
     t0 = min(e["ts"] for e in tasks)
     t1 = max(e["ts"] + e["dur"] for e in tasks)
     span = (t1 - t0) / 1e6
-    busy = sum(e["dur"] for e in tasks) / 1e6
+    # per worker the union of its task spans: an async actor (degrid's Serve
+    # replica) runs overlapping requests on one tid, and a plain sum would
+    # count that time twice
+    busy = sum(_union_length([(lo, hi) for lo, hi, _ in v]) for v in spans.values()) / 1e6
+    # every worker process that ran any task, FITS tasks and replaced workers included
     nworkers = len(spans)
     covered = _union_length([(e["ts"], e["ts"] + e["dur"]) for e in tasks]) / 1e6
 

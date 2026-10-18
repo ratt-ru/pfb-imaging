@@ -158,3 +158,12 @@ def test_dump_timeline_writes_the_task_events(tmp_path, monkeypatch):
     dump_timeline()
     events = json.loads(path.read_text())
     assert any(e.get("cat", "").startswith("task::") for e in events)
+
+
+def test_dump_timeline_warns_instead_of_failing_the_run(tmp_path, monkeypatch):
+    """The run's work is done when the timeline is written; a bad path must not fail it."""
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv(TIMELINE_ENV, str(blocker / "timeline.json"))  # parent is a file
+    with pytest.warns(UserWarning, match="Could not write the Ray task timeline"):
+        dump_timeline()

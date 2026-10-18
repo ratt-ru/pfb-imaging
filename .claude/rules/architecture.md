@@ -129,7 +129,8 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
   Classify antennas on `ANTENNA_DISH_DIAMETER`, never on `telescope_name` (it is
   broadcast from `OBSERVATION::TELESCOPE_NAME` and is identical for every
   antenna). The cross group's beam is stored as `Re(B)` (D46).
-* **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8) and `MASK` (u1).
+* **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8), `MASK` (u1) and
+  the scratch's `COUNTS_INDEX` (i8 cell indices).
   ducc enforces this; it is not a memory optimisation (D27).
 * **Memory discipline — do not regress** (`docs/wiki/memory-and-ray.md` has the measured
   story; D44 is the test-harness equivalent):

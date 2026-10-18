@@ -165,7 +165,10 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
-   Natural weighting is `robustness None` or `> 2`: counts are skipped entirely.
+   Natural weighting (`robustness None`) skips counts entirely: pass 1 does not grid
+   them and the driver does not reduce them. The CLI help also calls `> 2` natural,
+   but nothing maps such a value to `None`: it is Briggs-weighted (close to natural)
+   and pays the full counts cost.
    Counts are reduced per `weight_grouping` group, **not** per partition, so
    baseline groups share one counts grid exactly as multiple fields do. Robust
    weighting is therefore computed over the whole array rather than

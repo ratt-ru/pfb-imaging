@@ -157,8 +157,10 @@ Stimela's stats give one wall time per step. Three finer sources, all read by
 
 `cpu_s / wall_s` in the progress line is the cores a task kept busy, counted
 over the whole worker process, so ducc0 and numba threads are included. cProfile
-sees only the task's own thread and charges compiled code to the Python call
-that entered it.
+charges compiled code to the Python call that entered it. On Python 3.11 (the
+container) it sees only the task's own thread, so the beam's thread-pool work
+(meerkat-beams `nthreads`) appears as a wait; from 3.12 it records every Python
+thread, so concurrent threads' self times add up and can exceed the wall time.
 
 On the test MS (`--nworkers 2 --nthreads 2`, 4 images), numba JIT compilation
 was 80% of the profiled `stokes_vis` time and 50% of `grid_image`'s (p50 0.27 s
