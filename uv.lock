@@ -2821,7 +2821,7 @@ wheels = [
 [[package]]
 name = "meerkat-beams"
 version = "0.1.0"
-source = { git = "https://github.com/landmanbester/meerkat-beams?branch=issue39#13663e34abbbe0199d8a4439a8e4944a44870b7e" }
+source = { git = "https://github.com/landmanbester/meerkat-beams?branch=issue39#14d455c96f4df356f2489f0769db2d80e4fc6cf8" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
 ]
