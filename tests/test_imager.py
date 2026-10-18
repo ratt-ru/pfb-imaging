@@ -408,6 +408,24 @@ def _run_stokes_vis(
     return ds.load()
 
 
+@pytest.mark.parametrize("given, expected", [(None, None), (-2.0, -2.0), (0.5, 0.5), (2.0, 2.0), (2.5, None)])
+def test_effective_robustness_maps_above_two_to_natural(given, expected):
+    from pfb_imaging.core.imager import effective_robustness
+
+    assert effective_robustness(given) == expected
+
+
+def test_stokes_vis_resolves_a_multiton_beam(ms_name, tmp_path):
+    """Pass 1 gets the beam as a Multiton recipe, built once per worker."""
+    from rarg_python_patterns.multiton import Multiton
+
+    cell = 2e-5
+    direct = _run_stokes_vis(ms_name, str(tmp_path / "d.scratch"), beam_model="katbeam", cell_rad=cell)
+    recipe = _run_stokes_vis(ms_name, str(tmp_path / "m.scratch"), beam_model=Multiton(str, "katbeam"), cell_rad=cell)
+    np.testing.assert_array_equal(recipe.BEAM.values, direct.BEAM.values)
+    assert recipe.attrs["beam_model"] == "katbeam"
+
+
 def test_stokes_vis_skips_counts_when_asked(ms_name, tmp_path):
     """Natural weighting never reads the counts, so the driver turns them off."""
     with_counts = _run_stokes_vis(ms_name, str(tmp_path / "c.scratch"))

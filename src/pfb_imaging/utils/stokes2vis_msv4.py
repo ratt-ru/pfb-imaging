@@ -11,6 +11,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard
+from rarg_python_patterns.multiton import Multiton
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
@@ -156,7 +157,8 @@ def stokes_vis(
         chan_average: number of channels to average together.
         bda_decorr: decorrelation threshold for baseline dependent averaging.
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
-        beam_model: model to use for beam correction. Can be "katbeam" or None.
+        beam_model: model to use for beam correction: "katbeam", None, a
+            BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
         radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
             phase centre / tangent point). None means image about the field centre.
@@ -537,6 +539,10 @@ def stokes_vis(
     nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
 
     beam_imre_ratio = 0.0
+    if isinstance(beam_model, Multiton):
+        # the driver ships a recipe; this worker's wizard, prefilters and all,
+        # persists across its tasks
+        beam_model = beam_model.instance
     if beam_model is None:
         # no aperture beam: the stored response is 1/n (compresses well in zarr)
         beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)

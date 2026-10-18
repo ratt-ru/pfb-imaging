@@ -130,6 +130,17 @@ def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
         slab.to_zarr(store, group=group, mode="a", append_dim="row", consolidated=False)
 
 
+def effective_robustness(robustness: float | None) -> float | None:
+    """Map the CLI's robustness onto the imager's: ``> 2`` is natural (``None``).
+
+    The documented contract, and not a no-op: Briggs at R > 2 is close to
+    natural but not equal to it, and only ``None`` skips the uv counts.
+    """
+    if robustness is not None and robustness > 2:
+        return None
+    return robustness
+
+
 def _load_piece(node):
     """Load one scratch piece into memory, minus its sparse COUNTS.
 
@@ -759,6 +770,10 @@ def imager(
     except ValueError as e:
         log.error_and_raise(str(e), ValueError)
 
+    if (eff := effective_robustness(robustness)) != robustness:
+        log.info(f"robustness {robustness} > 2: using natural weighting")
+        robustness = eff
+
     msnames = []
     for ms_path in ms:
         matches = glob_uris(ms_path)
@@ -1068,18 +1083,23 @@ def imager(
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
     beam_refs = None
     if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        # Each wizard is built once here, single process, so a staging error
+        # stops the run before pass 1 and concurrent first downloads cannot
+        # race. The tasks then get a Multiton recipe rather than the wizard: a
+        # worker builds its own once from the warmed cache and keeps it across
+        # tasks, and with it the spline prefilters, which a wizard shipped by
+        # value arrives without -- ~0.8 s per correlation per task to rebuild
+        # (degrid does the same, D38). No image_name: detached mode, pass 1
+        # supplies explicit l/m/times/freq.
         if baseline_groups:
-            # One wizard per baseline group. ray.put is load-bearing, not
-            # tidiness: a group wizard holds an IN-MEMORY cross-multiplied
-            # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
-            # file-backed) and pass 1 emits hundreds of tasks, so passing it by
-            # value per task would serialise it hundreds of times.
             log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
-            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
+            for g in present_groups:
+                BeamWizard(band=beam_model, group=g)
+            beam_refs = {g: Multiton(BeamWizard, band=beam_model, group=g) for g in present_groups}
         else:
             log.info("Assuming MeerKAT data and initialising BeamWizard")
-            # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
-            beam_model = BeamWizard(band=beam_model)
+            BeamWizard(band=beam_model)
+            beam_model = Multiton(BeamWizard, band=beam_model)
 
     phases.lap("Setup")
     tasks = []

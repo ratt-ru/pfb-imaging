@@ -138,7 +138,11 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    counts under robust weighting (natural weighting skips gridding them,
    `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
    with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
-   unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The counts
+   unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The driver
+   builds each wizard once (staging, validation) but ships pass 1 a `Multiton` recipe,
+   so each worker builds its own once and keeps it, spline prefilters included, across
+   its tasks; a wizard shipped by value arrived with an empty prefilter cache and
+   rebuilt it per correlation per task (~0.8 s each). The counts
    are stored **sparse**, as `COUNTS_INDEX`/`COUNTS_VALUE` (`utils/weighting.sparse_counts`):
    a piece fills a sliver of the padded uv plane, 0.05% of a 491 MB float64 grid at
    4608², so a dense grid cost a 491 MB encode per piece and a 491 MB decode and add per
@@ -165,10 +169,10 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
-   Natural weighting (`robustness None`) skips counts entirely: pass 1 does not grid
-   them and the driver does not reduce them. The CLI help also calls `> 2` natural,
-   but nothing maps such a value to `None`: it is Briggs-weighted (close to natural)
-   and pays the full counts cost.
+   Natural weighting (`robustness None`, or `> 2`, which `effective_robustness` maps to
+   `None` up front) skips counts entirely: pass 1 does not grid them and the driver
+   does not reduce them. Before that mapping a value above 2 was Briggs-weighted
+   (close to natural, not equal to it) and paid the full counts cost.
    Counts are reduced per `weight_grouping` group, **not** per partition, so
    baseline groups share one counts grid exactly as multiple fields do. Robust
    weighting is therefore computed over the whole array rather than
