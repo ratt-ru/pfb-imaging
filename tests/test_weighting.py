@@ -15,6 +15,7 @@ from pfb_imaging.utils.weighting import (
     counts_to_weights,
     filter_extreme_counts,
     reduce_counts,
+    sparse_counts,
     write_group_counts,
 )
 
@@ -221,7 +222,7 @@ def test_as_contiguous_readonly_view_flags():
 
 
 def _write_piece(store, path, grid):
-    xr.Dataset({"COUNTS": (("corr", "u", "v"), grid)}).to_zarr(store, group=path, mode="a", consolidated=False)
+    xr.Dataset(sparse_counts(grid)).to_zarr(store, group=path, mode="a", consolidated=False)
 
 
 def _sparse_grid(rng, n, fill):
@@ -248,6 +249,16 @@ def test_write_group_counts_matches_in_memory_reduction(tmp_path, npix_super):
     for key, paths in sources.items():
         ref = box_sum_counts(filter_extreme_counts(sum(grids[p] for p in paths), level=5.0), npix_super)
         np.testing.assert_array_equal(dt[out[key]].ds.COUNTS.values, ref)
+
+
+def test_sparse_counts_round_trips_and_handles_an_empty_piece():
+    rng = np.random.default_rng(1)
+    for grid in (_sparse_grid(rng, 32, 1.0), np.zeros((1, 32, 32))):
+        sv = sparse_counts(grid)
+        dense = np.zeros(sv["COUNTS_INDEX"][2]["shape"])
+        dense.reshape(-1)[sv["COUNTS_INDEX"][1]] = sv["COUNTS_VALUE"][1]
+        np.testing.assert_array_equal(dense, grid)
+        assert sv["COUNTS_INDEX"][1].size == np.count_nonzero(grid)
 
 
 def test_write_group_counts_streams(tmp_path):

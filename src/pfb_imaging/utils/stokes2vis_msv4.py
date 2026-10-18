@@ -20,7 +20,7 @@ from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG, eval_beam, reproject_a
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
-from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
+from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, sparse_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -141,7 +141,8 @@ def stokes_vis(
             ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
         nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
-            COUNTS grid used to build imaging weights in pass 2.
+            COUNTS grid used to build imaging weights in pass 2 (stored sparse,
+            see ``weighting.sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -660,7 +661,7 @@ def stokes_vis(
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
     data_vars["BEAM"] = (("corr", "y", "x"), beam)
-    data_vars["COUNTS"] = (("corr", "u", "v"), counts)
+    data_vars.update(sparse_counts(counts))
 
     coords = {
         "chan": (("chan",), freq),

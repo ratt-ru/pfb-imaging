@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-13T12:00:00Z
-last_verified_commit: e2e33ba
+timestamp: 2026-10-18T19:30:00Z
+last_verified_commit: 8e71d5a
 ---
 
 # MSv4 DataTree imager pipeline
@@ -77,8 +77,8 @@ child with its own `BEAM`.
 
 **Every float array above carries the requested `--precision`** — f4/c4 for `single`,
 f8/c8 for `double` — in both the `.dt` and the `.scratch`. The only exceptions are `UVW`
-and `FREQ` (always f8: ducc takes those as double whatever the vis precision) and `MASK`
-(u1). This is an invariant ducc enforces, not a memory optimisation: see design-decisions
+and `FREQ` (always f8: ducc takes those as double whatever the vis precision), `MASK`
+(u1) and the scratch's `COUNTS_INDEX` (i8, cell indices rather than data). This is an invariant ducc enforces, not a memory optimisation: see design-decisions
 D27. Pinned by `tests/test_imager_precision.py`.
 
 ## Product selection
@@ -133,9 +133,15 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
    over surviving channels — this is what the beam is evaluated at, D28), beam on the
-   small grid, write the piece keyed
-   `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, and return the
-   piece's uv `COUNTS` contribution. Fine granularity (per scan /
+   small grid, and write the piece keyed
+   `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
+   counts. The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
+   with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
+   unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The counts
+   are stored **sparse**, as `COUNTS_INDEX`/`COUNTS_VALUE` (`utils/weighting.sparse_counts`):
+   a piece fills a sliver of the padded uv plane, 0.05% of a 491 MB float64 grid at
+   4608², so a dense grid cost a 491 MB encode per piece and a 491 MB decode and add per
+   piece in the driver. Fine granularity (per scan /
    `integrations_per_image`) is needed because pass 1 reads raw unaveraged data.
    Under `--baseline-groups` the driver emits one pass-1 task per group per
    (node, time block, channel block), slicing the node with
@@ -148,13 +154,15 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
    time), `per-band` (sum over time), `per-time` (`counts_key` in
    `core/imager.imager`; semantics in `utils/weighting.reduce_counts`).
-   `utils/weighting.write_group_counts` does it one group at a time — one
-   accumulator plus one piece grid resident, whatever the number of pieces — applies
+   `utils/weighting.write_group_counts` does it one group at a time — one dense
+   accumulator, into which each piece's occupied cells are added — applies
    `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result
    to `.scratch` as `counts/group####` (`COUNTS (corr, u, v)`). Pass-2 tasks receive
    that node path and read the grid themselves: a counts grid is `(ncorr, nx_pad,
    ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
-   in the object store (#339). Summing counts across pieces is valid because the
+   in the object store (#339). Before the pieces went sparse this step read every
+   piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
+   MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
    Natural weighting is `robustness None` or `> 2`: counts are skipped entirely.
    Counts are reduced per `weight_grouping` group, **not** per partition, so
@@ -262,7 +270,8 @@ transfer tangent-point check (D52) uses `wrapped_angle_diff`.
 (`preflight_baseline_groups`, `node_baseline_groups`), but none of the `.dt`: it applies the
 primary beam itself (#353). `--beam-model` names a meerkat-beams band (katbeam is refused),
 `--baseline-groups` gives each `MM`/`MPM`/`MPMP` group its own beam, and `--antenna-groups`
-overrides the dish classification exactly as in the imager. The beam is the bare `B`, a full
+overrides the dish classification exactly as in the imager. `partition_mueller` gets the
+replica's `--nthreads` and the same `BEAM_PA_TOLERANCE_DEG` as pass 1. The beam is the bare `B`, a full
 Stokes Mueller block, and every degrid prediction calls ducc with `divide_by_n=True`, beam or
 not, which is the opposite of the imager's folded `B/n` (D22). The cross group is predicted
 exactly rather than as `Re(B)`. D55 has the reasoning and the guards.

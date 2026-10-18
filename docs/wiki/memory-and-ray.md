@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-17T15:45:00Z
-last_verified_commit: cc05d7f
+timestamp: 2026-10-18T19:30:00Z
+last_verified_commit: 8e71d5a
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -362,8 +362,9 @@ Check before killing anything.
   switch.
 - Driver-side counts are reduced **at the applied `weight_grouping`
   granularity** (`counts_key` in `core/imager`), one group at a time by
-  `utils/weighting.write_group_counts`, which holds one accumulator and one
-  piece grid and writes each group's grid to `.scratch` for pass 2 to read;
+  `utils/weighting.write_group_counts`, which holds one dense accumulator, adds
+  each piece's sparse counts into it (`sparse_counts`; a piece fills ~0.05% of the
+  grid) and writes each group's grid to `.scratch` for pass 2 to read;
   natural weighting (`robustness=None`) skips counts entirely. **Open a zarr
   tree whose arrays you read with `.values` using `cache=False`**: xarray's
   default memoises every such read on the open tree. The driver's counts loop

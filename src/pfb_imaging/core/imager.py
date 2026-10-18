@@ -131,10 +131,10 @@ def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
 
 
 def _load_piece(node):
-    """Load one scratch piece into memory, minus its COUNTS.
+    """Load one scratch piece into memory, minus its sparse COUNTS.
 
     COUNTS is only consumed by the driver's weight reduction, which has
-    already happened, and it is by far the largest piece variable. Loaded
+    already happened. Loaded
     detached from the open scratch tree (see ``load_detached``), or every piece
     would stay reachable from it -- through its concat, past ``del plist`` and
     into the worker's next task.
@@ -145,7 +145,7 @@ def _load_piece(node):
     Returns:
         The piece as an in-memory Dataset.
     """
-    return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
+    return load_detached(node.ds.drop_vars(["COUNTS_INDEX", "COUNTS_VALUE"], errors="ignore"))
 
 
 def _load_transfer_model(path: str) -> xr.Dataset:
