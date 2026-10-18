@@ -2820,10 +2820,14 @@ wheels = [
 
 [[package]]
 name = "meerkat-beams"
-version = "0.1.0"
-source = { git = "https://github.com/landmanbester/meerkat-beams?branch=issue39#14d455c96f4df356f2489f0769db2d80e4fc6cf8" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/c7/ddc44b6569fc78edb4f9d5b699153bdbe261dafd0c529506112e28c5f122/meerkat_beams-0.2.0.tar.gz", hash = "sha256:f07af415abb60121e51a7ae083b51bfe5d7d5d7fe280a260ce38b8fdfe57285e", size = 45551, upload-time = "2026-10-18T20:07:35.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/b4/47c3327cd1a421ab332a70ca0907c5f8dee501b0038475c4abd0ad231885/meerkat_beams-0.2.0-py3-none-any.whl", hash = "sha256:886bec9ddb8121436fbb5bda59ec7cca21a79188939f4494b7860b95cc3001fa", size = 54139, upload-time = "2026-10-18T20:07:34.347Z" },
 ]
 
 [package.optional-dependencies]
@@ -3979,8 +3983,8 @@ requires-dist = [
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
-    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/landmanbester/meerkat-beams?branch=issue39" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", git = "https://github.com/landmanbester/meerkat-beams?branch=issue39" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.2.0" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.2.0" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
