@@ -1163,6 +1163,8 @@ def imager(
                         nx=nx,
                         ny=ny,
                         nthreads=nthreads,
+                        # only robust weighting reads the counts (see counts_sources)
+                        compute_counts=robustness is not None,
                     )
                     tasks.append(fut)
 

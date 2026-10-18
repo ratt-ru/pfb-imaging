@@ -135,7 +135,8 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    over surviving channels — this is what the beam is evaluated at, D28), beam on the
    small grid, and write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
-   counts. The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
+   counts under robust weighting (natural weighting skips gridding them,
+   `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
    with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
    unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The counts
    are stored **sparse**, as `COUNTS_INDEX`/`COUNTS_VALUE` (`utils/weighting.sparse_counts`):

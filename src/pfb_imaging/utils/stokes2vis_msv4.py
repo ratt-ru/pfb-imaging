@@ -130,6 +130,7 @@ def stokes_vis(
     nx=None,
     ny=None,
     nthreads=1,
+    compute_counts=True,
 ):
     """
     MSv4 version of stokes2vis.
@@ -164,6 +165,9 @@ def stokes_vis(
         nx, ny: output image size; the piece's BEAM is placed on this grid here
             in pass 1 (#281) so pass 2 consumes it as is.
         nthreads: threads available to the task (parallelises the COUNTS gridding).
+        compute_counts: grid and store the piece's uv counts. Only robust
+            weighting reads them, so natural weighting skips a full padded-grid
+            allocation and gridding per piece.
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
     # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
@@ -640,19 +644,20 @@ def stokes_vis(
 
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
-    counts = _compute_counts(
-        uvw,
-        freq,
-        mask,
-        wgt_cf,
-        nx_pad,
-        ny_pad,
-        cell_rad,
-        cell_rad,
-        wgt_cf.dtype,
-        usign=1.0 if flip_u else -1.0,
-        vsign=1.0 if flip_v else -1.0,
-    )
+    if compute_counts:
+        counts = _compute_counts(
+            uvw,
+            freq,
+            mask,
+            wgt_cf,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            wgt_cf.dtype,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
 
     data_vars = {}
     data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
@@ -661,7 +666,8 @@ def stokes_vis(
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
     data_vars["BEAM"] = (("corr", "y", "x"), beam)
-    data_vars.update(sparse_counts(counts))
+    if compute_counts:
+        data_vars.update(sparse_counts(counts))
 
     coords = {
         "chan": (("chan",), freq),
