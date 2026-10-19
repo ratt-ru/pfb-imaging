@@ -245,13 +245,15 @@ class _BandWorkerImpl:
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
         # rasters are (Y, X)-ordered end to end (wiki D19): axis 0 = ny
-        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel)
+        # every synthesis here consumes its coefficients (hdot_inplace), so
+        # the jitclass needs no coefficient-sized working copy
+        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel, synthesis_scratch=False)
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
         self._xo = self._image_out(1, ny, nx)[0]
         self._psib.dot(np.zeros((ny, nx)), self._alphao)
-        self._psib.hdot(self._alphao, self._xo)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 
     @_timed
@@ -261,7 +263,9 @@ class _BandWorkerImpl:
 
     @_timed
     def psi_hdot(self, alpha):
-        self._psib.hdot(alpha, self._xo)
+        # Ray hands over a read-only view, and the synthesis consumes its input
+        inplace.copy(self._alphao, alpha)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
 
     # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
@@ -297,7 +301,7 @@ class _BandWorkerImpl:
         from pfb_imaging.prox.prox_21m import l21_dual_finish
 
         l21_dual_finish(self._alphao, self._v, scale)
-        self._psib.hdot(self._alphao, self._xo)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
 
     # --- exact residual role ---

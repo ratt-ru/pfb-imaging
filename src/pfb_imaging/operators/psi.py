@@ -14,6 +14,7 @@ from pfb_imaging.wavelets import (
     dwt2d_nocopyt,
     idwt2d,
     idwt2d_nocopyt,
+    idwt2d_nocopyt_inplace,
     signal_size,
 )
 
@@ -348,14 +349,19 @@ class PsiBand(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
-def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel):
+def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel, synthesis_scratch=True):
+    """One band's ``PsiBandNocopyt``.
+
+    ``synthesis_scratch=False`` skips the coefficient-sized working copy that
+    ``hdot`` needs, for callers that only synthesise with ``hdot_inplace``.
+    """
     bk = _build_wavelet_bookkeeping(nxi, nyi, bases, nlevel)
 
     # cbuff only needs (nxmax, 2*symax) — no cbufft or approx needed
     symax = int(np.max(bk["sy"])) if bk["sy"].size > 0 else nyi
     cbuff = np.zeros((bk["nxmax"], 2 * symax))
     # alpha working copy for idwt2d_nocopyt
-    alpha = np.zeros((bk["nxmax"], bk["nymax"]))
+    alpha = np.zeros((bk["nxmax"], bk["nymax"]) if synthesis_scratch else (0, 0))
     image = np.zeros((nxi, nyi))
 
     return PsiBandNocopyt(
@@ -502,6 +508,8 @@ class PsiBandNocopyt(object):
         alpha   - (nbasis, nxmax, nymax) per basis coeffs (x-first layout)
         xo      - (nx, ny) output signal
         """
+        if self.alpha.shape[0] < self.nxmax:
+            raise ValueError("made without synthesis scratch: use hdot_inplace")
         xo[...] = 0.0
         for i in range(self.nbasis):
             if self.is_self[i]:
@@ -516,6 +524,36 @@ class PsiBandNocopyt(object):
                 alpha[i, 0:ntotx, 0:ntoty],
                 self.image,
                 self.alpha[0:ntotx, 0:ntoty],
+                self.cbuff,
+                self.ix[wi],
+                self.iy[wi],
+                self.sx[wi],
+                self.sy[wi],
+                self.spx[wi],
+                self.spy[wi],
+                self.rec_lo[wi],
+                self.rec_hi[wi],
+                self.nlevel,
+            )
+
+            xo += self.image
+
+        return xo
+
+    def hdot_inplace(self, alpha, xo):
+        """``hdot`` that consumes ``alpha`` (overwritten), needing no working copy."""
+        xo[...] = 0.0
+        for i in range(self.nbasis):
+            if self.is_self[i]:
+                xo += alpha[i, 0 : self.nx, 0 : self.ny]
+                continue
+            wi = self.wavelet_map[i]
+            ntotx = self.ntotx[wi]
+            ntoty = self.ntoty[wi]
+
+            idwt2d_nocopyt_inplace(
+                alpha[i, 0:ntotx, 0:ntoty],
+                self.image,
                 self.cbuff,
                 self.ix[wi],
                 self.iy[wi],
