@@ -252,13 +252,17 @@ class _BandWorkerImpl:
     # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
 
     def init_dual(self):
-        """Allocate this band's dual at zero; it persists across solves (warm start)."""
+        """Allocate this band's dual at zero; it persists across solves (warm start).
+
+        One buffer: ``vt`` lives in ``_alphao`` between ``dual_begin`` and
+        ``dual_finish``, which saves a coefficient buffer per band
+        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases).
+        """
         self._v = np.zeros_like(self._alphao)
-        self._vt = np.zeros_like(self._alphao)
 
     @_timed
     def dual_begin(self, x, sigma, return_coeffs=False):
-        """Hold ``vt = v + sigma * Psi^T x`` for ``dual_finish``.
+        """Hold ``vt = v + sigma * Psi^T x`` in ``_alphao`` for ``dual_finish``.
 
         Returns ``Psi^T x`` only when asked: the in-process single-band path
         uses it as the band sum, and a multi-band driver never needs it.
@@ -267,8 +271,9 @@ class _BandWorkerImpl:
         from pfb_imaging.prox.prox_21m import l21_dual_begin
 
         self._psib.dot(x, self._alphao)
-        l21_dual_begin(self._vt, self._v, self._alphao, sigma)
-        return self._alphao.copy() if return_coeffs else None
+        coeffs = self._alphao.copy() if return_coeffs else None
+        l21_dual_begin(self._alphao, self._v, sigma)
+        return coeffs
 
     @_timed
     def dual_finish(self, scale):
@@ -276,8 +281,7 @@ class _BandWorkerImpl:
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.prox.prox_21m import l21_dual_finish
 
-        l21_dual_finish(self._vt, self._v, scale, self._alphao)
-        self._v, self._vt = self._vt, self._v
+        l21_dual_finish(self._alphao, self._v, scale)
         self._psib.hdot(self._alphao, self._xo)
         return self._xo
 
