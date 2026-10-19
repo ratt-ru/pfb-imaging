@@ -240,6 +240,34 @@ class PhaseClock:
         self.log.info(f"Time by phase: {', '.join(parts)}")
 
 
+class CallClock:
+    """Per-call wall and CPU time of a long-lived actor's methods.
+
+    ``profile_task`` suits a Ray task that runs once. A deconv band worker is an
+    actor that serves thousands of millisecond-to-second calls, so it keeps one
+    of these instead and hands the record to the driver on request. Set against
+    the driver's round trip for the same calls, it separates the work done in
+    the worker from the cost of getting arguments and results through Ray.
+    """
+
+    def __init__(self):
+        self.calls = {}
+
+    @contextlib.contextmanager
+    def call(self, method: str):
+        """Time the block as one call of ``method``; CPU is the whole process's."""
+        wall0, cpu0 = time.perf_counter(), _cpu_seconds()
+        try:
+            yield
+        finally:
+            self.calls.setdefault(method, []).append((time.perf_counter() - wall0, _cpu_seconds() - cpu0))
+
+    def take(self) -> dict:
+        """Return ``{method: [(wall_s, cpu_s), ...]}`` in call order and start afresh."""
+        out, self.calls = self.calls, {}
+        return out
+
+
 class SectionClock:
     """Accumulated wall time per named section of an iterative loop.
 

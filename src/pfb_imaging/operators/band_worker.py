@@ -17,7 +17,23 @@ runs a single in-process worker (no Ray overhead), matching the facades'
 historical local fallback.
 """
 
+import functools
+import time
+
 import numpy as np
+
+from pfb_imaging.utils.memprof import CallClock, format_memory, task_memory
+
+
+def _timed(method):
+    """Run a worker role method under the worker's ``CallClock`` (see ``BandWorkerPool.call_stats``)."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._clock.call(method.__name__):
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 def _uv_profile(uvw, freq, wgt, mask, rvis, nbins=20):
@@ -75,6 +91,7 @@ class _BandWorkerImpl:
 
         resize_thread_pool(nthreads)
         self._nthreads = nthreads
+        self._clock = CallClock()
         self._hess = None
         self._psib = None
         self._parts = None
@@ -83,6 +100,7 @@ class _BandWorkerImpl:
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
+    @_timed
     def load_band(self, store_url, node_name):
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
@@ -138,6 +156,7 @@ class _BandWorkerImpl:
 
     # --- Hessian role ---
 
+    @_timed
     def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum, eta_mode=None, eta_cap=1e2):
         # deferred: import cycle with operators.hessian
         from pfb_imaging.operators.hessian import HessianTree
@@ -160,6 +179,7 @@ class _BandWorkerImpl:
         )
         self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
 
+    @_timed
     def hess_dot(self, x):
         return self._hess.dot(x)
 
@@ -171,6 +191,7 @@ class _BandWorkerImpl:
         """
         return self._hess.eta
 
+    @_timed
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.opt.pcg import pcg_numba
@@ -191,6 +212,7 @@ class _BandWorkerImpl:
 
     # --- Psi (wavelet dictionary) role ---
 
+    @_timed
     def init_psi(self, nx, ny, bases, nlevel):
         # deferred: import cycle with operators.psi
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
@@ -205,16 +227,19 @@ class _BandWorkerImpl:
         self._psib.hdot(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 
+    @_timed
     def psi_dot(self, x):
         self._psib.dot(x, self._alphao)
         return self._alphao
 
+    @_timed
     def psi_hdot(self, alpha):
         self._psib.hdot(alpha, self._xo)
         return self._xo
 
     # --- exact residual role ---
 
+    @_timed
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.operators.gridder import residual_from_partitions
@@ -276,6 +301,7 @@ class _BandWorkerImpl:
                 rvis[c] = vis[c] - dirty2vis(dirty=(beam[c] * model[c]).T, **common)
             yield cname, pds, vis, rvis, common
 
+    @_timed
     def partition_debug(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         """Per-partition debug products for mosaic misfit analysis (D23 aid).
 
@@ -323,6 +349,7 @@ class _BandWorkerImpl:
             )
         return out
 
+    @_timed
     def partition_chi2(self, model, cell_rad, epsilon, do_wgridding):
         """Per-partition vis-space chi2 against the current model (per-iteration debug).
 
@@ -344,6 +371,7 @@ class _BandWorkerImpl:
             )
         return out
 
+    @_timed
     def partition_uvprofile(self, model, cell_rad, epsilon, do_wgridding, nbins):
         """Baseline-length-binned weighted residual power per partition (debug).
 
@@ -368,21 +396,17 @@ class _BandWorkerImpl:
 
     # --- telemetry ---
 
+    def take_call_stats(self):
+        """This worker's per-call times since the last take (``CallClock.take``)."""
+        return self._clock.take()
+
     def get_mem(self):
-        """Post-gc memory telemetry (docs/wiki/memory-and-ray.md)."""
+        """Post-gc ``task_memory()``: RSS split into anon and shm (docs/wiki/memory-and-ray.md)."""
         # deferred: telemetry-only, worker-side
         import gc
-        import os
-        import resource
-
-        import psutil
 
         gc.collect()
-        return {
-            "pid": os.getpid(),
-            "rss_gb": psutil.Process().memory_info().rss / 2**30,
-            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-        }
+        return task_memory()
 
     def get_memory_mb(self):
         """RSS/USS in MB (rss includes shared pages; uss is private only)."""
@@ -422,15 +446,22 @@ class BandWorkerPool:
             self._local = None
             worker_cls = ray.remote(num_cpus=1e-2)(_BandWorkerImpl)
             self.actors = [worker_cls.remote(self.nthreads_per_band) for _ in range(nband)]
+        # driver-side round trip per _map call, paired with the workers' own
+        # clocks in call_stats
+        self._roundtrip = {}
 
     def _map(self, method, per_band_args):
         """Run ``method(*args)`` on every band worker; return per-band results."""
-        if self.actors is None:
-            return [getattr(self._local, method)(*per_band_args[0])]
-        # deferred: optional heavy runtime (ray)
-        import ray
+        t0 = time.perf_counter()
+        try:
+            if self.actors is None:
+                return [getattr(self._local, method)(*per_band_args[0])]
+            # deferred: optional heavy runtime (ray)
+            import ray
 
-        return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
+            return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
+        finally:
+            self._roundtrip.setdefault(method, []).append(time.perf_counter() - t0)
 
     # --- band loading ---
 
@@ -545,6 +576,65 @@ class BandWorkerPool:
         return self._map("partition_uvprofile", args)
 
     # --- telemetry ---
+
+    def call_stats(self):
+        """Per-method call statistics since the previous call, then reset.
+
+        Every ``_map`` call reaches each worker once and in order, so the i-th
+        worker record of a method pairs with the i-th driver round trip. Per
+        method:
+
+        * ``calls``, ``roundtrip_s``: driver wall time from dispatch until
+          every band's result is back (``ray.get`` included);
+        * ``exec_max_s``: the slowest band's execution summed over calls --
+          what the round trip would be if Ray were free;
+        * ``exec_mean_s``: one band's execution time, averaged over bands;
+          ``exec_max_s - exec_mean_s`` is load imbalance;
+        * ``cores``: worker CPU time over execution time, i.e. how many of its
+          threads a worker kept busy.
+
+        ``roundtrip_s - exec_max_s`` is the Ray overhead: pickling arguments
+        into the object store, reading them in the worker, storing results and
+        reading them back. Copying a result into the caller's cube happens
+        after ``_map`` returns and is not in any of these; the backward solver's
+        own clock (``PrimalDual.clock``) includes it.
+        """
+        if self.actors is None:
+            per_band = [self._local.take_call_stats()]
+        else:
+            # deferred: optional heavy runtime (ray)
+            import ray
+
+            per_band = ray.get([a.take_call_stats.remote() for a in self.actors])
+        roundtrip, self._roundtrip = self._roundtrip, {}
+        stats = {}
+        for method, rt in roundtrip.items():
+            rec = [band.get(method, []) for band in per_band]
+            entry = {"calls": len(rt), "roundtrip_s": float(sum(rt))}
+            if all(len(r) == len(rt) for r in rec):
+                wall = np.array([[w for w, _ in r] for r in rec])  # (nband, ncall)
+                cpu = sum(c for r in rec for _, c in r)
+                entry["exec_max_s"] = float(wall.max(axis=0).sum())
+                entry["exec_mean_s"] = float(wall.sum(axis=1).mean())
+                entry["cores"] = cpu / wall.sum() if wall.sum() > 0 else 0.0
+            # else an untimed method (get_eta): the round trip is all there is
+            stats[method] = entry
+        return stats
+
+    def log_telemetry(self, log):
+        """Log ``call_stats`` (which resets them) and every worker's ``get_mem``."""
+        for method, s in self.call_stats().items():
+            line = f"band workers {method}: {s['calls']} calls, round trip {s['roundtrip_s']:.1f} s"
+            if "exec_max_s" in s:
+                over = s["roundtrip_s"] - s["exec_max_s"]
+                share = 100 * over / s["roundtrip_s"] if s["roundtrip_s"] > 0 else 0.0
+                line += (
+                    f", slowest band {s['exec_max_s']:.1f} s, mean band {s['exec_mean_s']:.1f} s, "
+                    f"Ray overhead {over:.1f} s ({share:.0f}%), {s['cores']:.1f} cores"
+                )
+            log.info(line)
+        for m in self.get_mem():
+            log.info(f"band worker {format_memory(m)}")
 
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""

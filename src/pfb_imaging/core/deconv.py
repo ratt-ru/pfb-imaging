@@ -349,6 +349,10 @@ def deconv(
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
     phases.lap("build solver", mem=True)
+    # band-worker time against Ray round trips, and per-worker post-gc memory
+    # (docs/wiki/memory-and-ray.md); each call reports since the previous one
+    if verbosity:
+        workers.log_telemetry(log)
 
     # dump the Tikhonov profile once per run: it is the preconditioner's only
     # tunable spatial structure, so seeing it is the way to sanity-check an
@@ -531,11 +535,6 @@ def deconv(
         solver.last()
         phases.lap("reweight")
 
-        # per-actor post-gc memory telemetry (docs/wiki/memory-and-ray.md)
-        if verbosity > 1 and hasattr(getattr(solver, "hess", None), "get_mem"):
-            for m in solver.hess.get_mem():
-                log.info(f"hess actor pid {m['pid']} rss {m['rss_gb']:.2f} GB peak {m['peak_gb']:.2f} GB")
-
         rmsp, rmaxp = rms, rmax
         if rms_outside_model:
             rms = np.std(residual_mfs[model_mfs == 0])
@@ -580,6 +579,8 @@ def deconv(
             ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
             ds_out.to_zarr(dt_name, group=n, mode="a")
         phases.lap("write", mem=True)
+        if verbosity:
+            workers.log_telemetry(log)
 
         log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
@@ -731,5 +732,7 @@ def deconv(
             log.info(f"Done writing {column}")
         phases.lap("FITS")
 
+    if verbosity:
+        workers.log_telemetry(log)
     phases.summary()
     log.info(f"All done after {time.time() - time_start:.1f}s")
