@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-10-05T12:44:06Z
-last_verified_commit: ec5e7f7
+timestamp: 2026-10-19T14:30:00Z
+last_verified_commit: 4d5ebb6
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -126,6 +126,19 @@ internal warm-started state and `reset()`.
   major cycles). Dual update prefers the regulariser's fused `dual_update` fast path
   (sniffed via `hasattr`; `L21` wraps `dual_update_numba_fast`), else generic Moreau:
   `v = ṽ − σ·prox_{g/σ}(ṽ/σ)`.
+  **Exception — the dual held in the band workers.** When the regulariser's
+  `holds_dual` is true (`L21` over `PsiNocopytRay`, i.e. every `pfb deconv` sara run),
+  `PrimalDual` holds no dual: each band worker keeps its band's `v_b`, and the dual
+  half of an iteration is one `reg.dual_step(xp, xout, lam, σ)`. It rests on the l21
+  coupling being only the **band sum** of `ṽ_b = v_b + σΨᵀx_b`, and Ψ being one linear
+  map for every band: `Σ_b ṽ_b = Σ_b v_b + σΨᵀ(Σ_b x_b)`. The driver keeps `Σ_b v_b`
+  and analyses the band-summed image (while the workers analyse their own bands),
+  turns that into the band-independent shrink factor `min(1, λw/|Σ_b ṽ_b|)`
+  (`prox_21m.l21_dual_scale`), and broadcasts it once; each worker shrinks, extrapolates
+  and synthesises its own band. Same iterates as the driver-held path to rounding
+  (`tests/test_primal_dual.py::test_worker_held_dual_matches_the_driver_held_dual`); the
+  `(nband, nbasis, nymax, nxmax)` dual cubes never exist on the driver or in the object
+  store.
 - **`ForwardBackward`** (`opt/forward_backward.py`): generic tight-frame primal prox
   written ONCE against the Regulariser Protocol:
   `x + (1/ν)·Ψ(prox_g(Ψᵀx) − Ψᵀx)`.

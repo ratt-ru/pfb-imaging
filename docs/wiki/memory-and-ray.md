@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-19T09:45:00Z
-last_verified_commit: 7ff6efb
+timestamp: 2026-10-19T14:30:00Z
+last_verified_commit: 4d5ebb6
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -177,10 +177,12 @@ sources sit between the phase line and the opt-in captures:
 
 - **The backward solver's section clock.** `PrimalDual.solve` and
   `ForwardBackward.solve` log one line per solve (`memprof.SectionClock`):
-  ms/iter and the share of `psi_dot`, `dual_update`, `extrapolate`,
-  `psi_hdot`, `grad`, `primal`, `convergence`, `reweight` and `copy`. For a
-  multi-band run `psi_dot`, `psi_hdot` and `grad` are Ray round trips; the
-  rest are driver-side passes over the `(nband, nbasis, nymax, nxmax)` dual.
+  ms/iter and the share of each section. With the dual held in the band
+  workers (every sara run; deconv-primer, Backward solvers) the sections are
+  `dual_step` (both band-worker calls plus the driver's band-summed analysis),
+  `grad` (a Ray round trip), `primal`, `convergence`, `reweight` and `copy`;
+  a driver-held dual instead splits `dual_step` into `psi_dot`,
+  `dual_update`, `extrapolate` and `psi_hdot`.
 - **Band-worker call stats.** Every role method runs under a `CallClock` and
   `BandWorkerPool._map` times the driver's round trip for the same call.
   `BandWorkerPool.log_telemetry` prints, per method and per major cycle,
@@ -190,14 +192,18 @@ sources sit between the phase line and the opt-in captures:
   into the driver's cube is after the round trip, so it is in the solver's
   clock and not here.
 
-What to look for first: `psi_dot` returns, and `psi_hdot` sends, an
-`nbasis`-times-image-sized coefficient cube per band per primal-dual
-iteration -- about 17 GB across 8 bands at 8192² with four bases, against
-about 4 GB for the image cube that `grad` moves each way. An estimate, not a
-measurement: whether that traffic or the wavelet work dominates is exactly
-what the `Ray overhead` share of `psi_dot`/`psi_hdot` answers. Spilling, when
-the object store overflows, shows in neither; grep the raylet log for
-`Spilled`.
+What moves per primal-dual iteration: the image cube each way for
+`dual_begin`/`dual_finish` and for `grad`, plus one broadcast shrink factor
+the size of one band's coefficients. Before the dual moved into the workers,
+`psi_dot` returned and `psi_hdot` sent an `nbasis`-times-image-sized
+coefficient cube per band (~17 GB across 8 bands at 8192² with four bases)
+and the driver made three passes over it. Measured at 7 bands × 2048², four
+bases, 16 threads on one node: 873 -> 814 ms/iter and driver RSS 8.2 -> 5.9
+GB -- on one node the dual passes cost the same memory bandwidth wherever
+they run, so the time gain is the object-store copies only. What remained
+was band-worker execution: `psi_dot` 95, `psi_hdot` 144, `hess_dot` 202
+ms/iter at 2–3 cores per worker. Spilling, when the object store overflows,
+shows in no clock; grep the raylet log for `Spilled`.
 
 The opt-in captures work as for the imager, except that each band actor
 writes **one** capture for its whole life (`memprof.ActorCapture`):

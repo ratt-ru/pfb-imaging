@@ -133,3 +133,57 @@ def dual_update_numba_fast(vp, v, lam, sigma=1.0, weight=None):
                     scale = threshold / abs_band_sum
                     for k in range(nband):
                         v[k, b, i, j] *= scale
+
+
+# The l21 dual update split for a dual held per band in the band workers
+# (PsiNocopytRay.dual_begin/dual_finish). The bands couple only through the
+# band sum of vtilde = vp + sigma * Psi^T x, and Psi is the same linear map for
+# every band, so that sum is sum_b vp_b + sigma * Psi^T(sum_b x_b): the driver
+# needs one analysis of the band-summed image and the band-summed dual, never a
+# per-band coefficient cube. The shrink factor does not depend on the band, so
+# applying it per band reproduces dual_update_numba_fast exactly in exact
+# arithmetic.
+
+
+@njit(nogil=True, cache=True, parallel=True, fastmath=True)
+def l21_dual_scale(vsum, c, lam, sigma, weight):
+    """Band-summed half of the split l21 dual update, in place.
+
+    On entry ``c`` is ``Psi^T(sum_b x_b)`` and ``vsum`` is ``sum_b v_b``. On
+    exit ``c`` holds the per-coefficient shrink factor
+    ``min(1, lam*w / |vsum + sigma*c|)`` and ``vsum`` the updated band-summed
+    dual. All three arrays are ``(nbasis, n1, n2)``.
+    """
+    nbasis, n1, n2 = c.shape
+    for b in range(nbasis):
+        for i in prange(n1):
+            for j in range(n2):
+                s = vsum[b, i, j] + sigma * c[b, i, j]
+                threshold = lam * weight[b, i, j]
+                abs_s = np.abs(s)
+                scale = threshold / abs_s if abs_s > threshold else 1.0
+                c[b, i, j] = scale
+                vsum[b, i, j] = s * scale
+
+
+@njit(nogil=True, cache=True, parallel=True, fastmath=True)
+def l21_dual_begin(vt, v, c, sigma):
+    """One band's ``vt = v + sigma * c`` (``c = Psi^T x_b``)."""
+    vt_f = vt.ravel()
+    v_f = v.ravel()
+    c_f = c.ravel()
+    for i in prange(vt_f.size):
+        vt_f[i] = v_f[i] + sigma * c_f[i]
+
+
+@njit(nogil=True, cache=True, parallel=True, fastmath=True)
+def l21_dual_finish(vt, v, scale, out):
+    """One band's shrink and extrapolation: ``vt *= scale; out = 2*vt - v``."""
+    vt_f = vt.ravel()
+    v_f = v.ravel()
+    s_f = scale.ravel()
+    o_f = out.ravel()
+    for i in prange(vt_f.size):
+        vn = vt_f[i] * s_f[i]
+        vt_f[i] = vn
+        o_f[i] = 2.0 * vn - v_f[i]

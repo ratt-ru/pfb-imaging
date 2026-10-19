@@ -234,7 +234,10 @@ class PrimalDual:
     provides one, falling back to the generic Moreau decomposition
     ``v = vtilde - sigma * prox_{(lam/sigma) g}(vtilde/sigma)`` via
     ``reg.prox``.  The dual variable is internal state, warm-started
-    across ``solve`` calls; ``reset()`` zeros it.
+    across ``solve`` calls; ``reset()`` zeros it. When the regulariser's
+    ``holds_dual`` is true (``L21`` over band workers) the dual lives with the
+    regulariser instead and each iteration's dual half is one
+    ``reg.dual_step(xp, xout, lam, sigma)``.
 
     Args:
         tol: Convergence tolerance on relative primal change.
@@ -270,6 +273,7 @@ class PrimalDual:
         self._grad = None
         self._reg = None
         self._v = None
+        self._held = False
 
     def setup(self, prox, hessnorm: float) -> None:
         """Bind the regulariser, compute step sizes, allocate the dual."""
@@ -284,7 +288,15 @@ class PrimalDual:
         self.sigma = sigma
         self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu**2)
         psi = prox.psi
-        self._v = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
+        # a regulariser whose psi holds the dual per band (L21 over band
+        # workers) runs the dual half of the iteration itself, and the
+        # driver never holds the (nband, nbasis, ...) dual cube
+        self._held = getattr(prox, "holds_dual", False)
+        if self._held:
+            prox.reset_dual()
+            self._v = None
+        else:
+            self._v = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
 
     def set_grad(self, grad) -> None:
         """Set the gradient of the smooth data-fidelity term."""
@@ -292,7 +304,9 @@ class PrimalDual:
 
     def reset(self) -> None:
         """Drop the warm-started dual variable."""
-        if self._v is not None:
+        if self._held:
+            self._reg.reset_dual()
+        elif self._v is not None:
             self._v[...] = 0.0
 
     def _dual_update(self, v, vp, lam):
@@ -314,27 +328,32 @@ class PrimalDual:
             raise RuntimeError("grad not set; call set_grad() before solve()")
 
         xp = x.copy()
-        v = self._v
-        vp = v.copy()
+        held = self._held
+        if not held:
+            v = self._v
+            vp = v.copy()
         xout = np.zeros_like(x)
 
         eps = 1.0
         # always on: psi_dot/psi_hdot/grad are Ray round trips for a
         # multi-band run, and this split is what says whether an iteration's
         # time is wavelet work, transfers or the driver-side dual passes
-        clock = SectionClock(
-            ("psi_dot", "dual_update", "extrapolate", "psi_hdot", "grad", "primal", "convergence", "reweight", "copy")
-        )
+        dual_sections = ("dual_step",) if held else ("psi_dot", "dual_update", "extrapolate", "psi_hdot")
+        clock = SectionClock((*dual_sections, "grad", "primal", "convergence", "reweight", "copy"))
         for k in range(self.maxit):
             clock.start()
-            self._reg.psi.dot(xp, v)
-            clock.tick("psi_dot")
-            self._dual_update(v, vp, lam)
-            clock.tick("dual_update")
-            _nb_extrapolate_dual(v, vp)
-            clock.tick("extrapolate")
-            self._reg.psi.hdot(vp, xout)
-            clock.tick("psi_hdot")
+            if held:
+                self._reg.dual_step(xp, xout, lam, sigma=self.sigma)
+                clock.tick("dual_step")
+            else:
+                self._reg.psi.dot(xp, v)
+                clock.tick("psi_dot")
+                self._dual_update(v, vp, lam)
+                clock.tick("dual_update")
+                _nb_extrapolate_dual(v, vp)
+                clock.tick("extrapolate")
+                self._reg.psi.hdot(vp, xout)
+                clock.tick("psi_hdot")
             xout += self._grad(xp)
             clock.tick("grad")
             _nb_primal_step(x, xp, xout, self.tau)
@@ -351,7 +370,8 @@ class PrimalDual:
                     break
 
             np.copyto(xp, x)
-            np.copyto(vp, v)
+            if not held:
+                np.copyto(vp, v)
             clock.tick("copy")
 
             if not k % self.report_freq and self.verbosity > 1:

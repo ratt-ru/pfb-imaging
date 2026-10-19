@@ -697,6 +697,9 @@ class PsiNocopytRay:
             raise ValueError(f"workers pool has {workers.nband} bands, expected {nband}")
         self._pool = workers
         self.nxmax, self.nymax = self._pool.init_psi(nx, ny, bases, nlevel)
+        self._bases = tuple(bases)
+        self._nlevel = nlevel
+        self._psib_sum = None
 
     def dot(self, x, alphao):
         """
@@ -709,6 +712,40 @@ class PsiNocopytRay:
         coeffs to image
         """
         self._pool.psi_hdot(alpha, xo)
+
+    # --- a dual held per band in the workers (L21.dual_step) ---
+
+    def init_dual(self):
+        """Zero every band's worker-held dual."""
+        self._pool.init_dual()
+        if self._pool.actors is not None and self._psib_sum is None:
+            # the driver's own dictionary, for the band-summed analysis
+            self._psib_sum = psi_band_maker_nocopyt(self.ny, self.nx, self._bases, self._nlevel)
+            self._csum = np.empty((self.nbasis, self._psib_sum.nxmax, self._psib_sum.nymax))
+            self._xsum = np.empty((self.ny, self.nx))
+            self._psib_sum.dot(np.zeros((self.ny, self.nx)), self._csum)  # JIT warm-up
+
+    def dual_begin(self, x, sigma):
+        """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.
+
+        Returns ``Psi^T(sum_b x_b)``, computed on the driver while the workers
+        run (the band coupling of the l21 dual needs only that and the
+        band-summed dual; see ``prox_21m.l21_dual_scale``). The caller turns it
+        into the shrink factor in place and passes it to ``dual_finish``.
+        """
+        pending = self._pool.dual_begin(x, sigma)
+        if self._pool.actors is None:
+            # one band: its own coefficients are the band sum
+            self._pending = None
+            return pending
+        self._pending = pending
+        self._psib_sum.dot(np.sum(x, axis=0, out=self._xsum), self._csum)
+        return self._csum
+
+    def dual_finish(self, scale, xo):
+        """Shrink every band's dual by ``scale`` and synthesise ``xo[b] = Psi(2 v_new_b - v_b)``."""
+        pending, self._pending = self._pending, None
+        self._pool.dual_finish(pending, scale, xo)
 
 
 class IdentityPsi:

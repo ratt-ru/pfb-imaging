@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 
 from pfb_imaging.operators import PsiOperator, require_protocol
-from pfb_imaging.prox.prox_21m import dual_update_numba_fast, prox_21m_numba
+from pfb_imaging.prox.prox_21m import dual_update_numba_fast, l21_dual_scale, prox_21m_numba
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import l1reweight_func
 
@@ -35,6 +35,7 @@ class L21:
         self.l1weight = np.ones((psi.nbasis, psi.nymax, psi.nxmax))
         self._outvar = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
         self._reweighter = None
+        self._vsum = None
 
     def prox(self, v, vout, lam, sigma=1.0):
         """vout = prox_{(lam/sigma) ||W .||_{21}}(v/sigma), in-place."""
@@ -43,6 +44,33 @@ class L21:
     def dual_update(self, vp, v, lam, sigma=1.0):
         """Fused primal-dual dual update (fast path sniffed by PrimalDual)."""
         dual_update_numba_fast(vp, v, lam, sigma=sigma, weight=self.l1weight)
+
+    @property
+    def holds_dual(self) -> bool:
+        """True when ``psi`` keeps the dual per band in its workers, so ``dual_step`` applies."""
+        return hasattr(self.psi, "dual_begin")
+
+    def reset_dual(self):
+        """Zero the dual held by ``psi``'s workers and its band sum held here."""
+        self.psi.init_dual()
+        self._vsum = None
+
+    def dual_step(self, xp, xout, lam, sigma=1.0):
+        """The whole dual half of a primal-dual iteration, with the dual held in ``psi``'s workers.
+
+        ``xout = Psi(2 v_new - v)`` with ``v_new = dual_update(v, Psi^T xp)``,
+        the same iterate as ``psi.dot`` + ``dual_update`` + extrapolation +
+        ``psi.hdot``. No per-band coefficient cube reaches the driver: it holds
+        only the band-summed dual, which is all the bands share
+        (``prox_21m.l21_dual_scale``).
+        """
+        c = self.psi.dual_begin(xp, sigma)
+        if c.shape != self.l1weight.shape:
+            raise ValueError(f"coefficients have shape {c.shape}, l1 weights {self.l1weight.shape}")
+        if self._vsum is None:
+            self._vsum = np.zeros_like(c)
+        l21_dual_scale(self._vsum, c, lam, sigma, self.l1weight)
+        self.psi.dual_finish(c, xout)
 
     @property
     def reweight_active(self) -> bool:

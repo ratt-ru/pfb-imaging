@@ -244,6 +244,38 @@ class _BandWorkerImpl:
         self._psib.hdot(alpha, self._xo)
         return self._xo
 
+    # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
+
+    def init_dual(self):
+        """Allocate this band's dual at zero; it persists across solves (warm start)."""
+        self._v = np.zeros_like(self._alphao)
+        self._vt = np.zeros_like(self._alphao)
+
+    @_timed
+    def dual_begin(self, x, sigma, return_coeffs=False):
+        """Hold ``vt = v + sigma * Psi^T x`` for ``dual_finish``.
+
+        Returns ``Psi^T x`` only when asked: the in-process single-band path
+        uses it as the band sum, and a multi-band driver never needs it.
+        """
+        # deferred: worker-side only; keeps driver-side import light
+        from pfb_imaging.prox.prox_21m import l21_dual_begin
+
+        self._psib.dot(x, self._alphao)
+        l21_dual_begin(self._vt, self._v, self._alphao, sigma)
+        return self._alphao.copy() if return_coeffs else None
+
+    @_timed
+    def dual_finish(self, scale):
+        """Shrink the held ``vt`` into the new dual and return ``Psi(2 v_new - v)``."""
+        # deferred: worker-side only; keeps driver-side import light
+        from pfb_imaging.prox.prox_21m import l21_dual_finish
+
+        l21_dual_finish(self._vt, self._v, scale, self._alphao)
+        self._v, self._vt = self._vt, self._v
+        self._psib.hdot(self._alphao, self._xo)
+        return self._xo
+
     # --- exact residual role ---
 
     @_timed
@@ -555,6 +587,38 @@ class BandWorkerPool:
 
     def psi_hdot(self, alpha, xo):
         for b, res in enumerate(self._map("psi_hdot", [(alpha[b],) for b in range(self.nband)])):
+            xo[b] = res
+
+    def init_dual(self):
+        """Allocate every band's worker-held dual at zero."""
+        self._map("init_dual", [()] * self.nband)
+
+    def dual_begin(self, x, sigma):
+        """Start every band's dual update without waiting for it.
+
+        Returns a handle for ``dual_finish``, so the driver can do its own work
+        (the band-summed analysis) while the workers run. On the in-process path
+        the call completes here and the handle is this band's ``Psi^T x``.
+        """
+        if self.actors is None:
+            return self._map("dual_begin", [(x[0], sigma, True)])[0]
+        t0 = time.perf_counter()
+        return t0, [a.dual_begin.remote(x[b], sigma) for b, a in enumerate(self.actors)]
+
+    def dual_finish(self, pending, scale, xo):
+        """Finish every band's dual update with the shared ``scale``; ``xo[b] = Psi(2 v_new - v)``."""
+        if self.actors is not None:
+            # deferred: optional heavy runtime (ray)
+            import ray
+
+            t0, refs = pending
+            try:
+                ray.get(refs)
+            finally:
+                self._roundtrip.setdefault("dual_begin", []).append(time.perf_counter() - t0)
+            # one copy in the object store, read zero-copy by every worker
+            scale = ray.put(scale)
+        for b, res in enumerate(self._map("dual_finish", [(scale,)] * self.nband)):
             xo[b] = res
 
     # --- exact residual role ---
