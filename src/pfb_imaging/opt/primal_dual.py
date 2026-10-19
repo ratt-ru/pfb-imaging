@@ -39,6 +39,17 @@ def _nb_primal_step(x, xp, xout, tau):
 
 
 @njit(**_FAST_JIT)
+def _nb_primal_step_keep(x, xout, tau):
+    """``x -= tau * xout`` and ``xout = x_old``: the step and the previous iterate in two cubes."""
+    x_f = x.ravel()
+    xo_f = xout.ravel()
+    for i in prange(x_f.size):
+        old = x_f[i]
+        x_f[i] = old - tau * xo_f[i]
+        xo_f[i] = old
+
+
+@njit(**_FAST_JIT)
 def _nb_norm_diff(x, xp):
     """Relative norm of difference: ||x - xp|| / ||x||."""
     n = x.size
@@ -332,7 +343,9 @@ class PrimalDual:
         if self._grad is None:
             raise RuntimeError("grad not set; call set_grad() before solve()")
 
-        xp = x.copy()
+        # no copy of the iterate: x is the previous iterate at the top of every
+        # iteration, and the primal step parks it in xout (rewritten by the
+        # next dual half) for the convergence test -- one cube less (D58)
         held = self._held
         if not held:
             v = self._v
@@ -348,10 +361,10 @@ class PrimalDual:
         for k in range(self.maxit):
             clock.start()
             if held:
-                self._reg.dual_step(xp, xout, lam, sigma=self.sigma)
+                self._reg.dual_step(x, xout, lam, sigma=self.sigma)
                 clock.tick("dual_step")
             else:
-                self._reg.psi.dot(xp, v)
+                self._reg.psi.dot(x, v)
                 clock.tick("psi_dot")
                 self._dual_update(v, vp, lam)
                 clock.tick("dual_update")
@@ -359,14 +372,14 @@ class PrimalDual:
                 clock.tick("extrapolate")
                 self._reg.psi.hdot(vp, xout)
                 clock.tick("psi_hdot")
-            inplace.add(xout, self._grad(xp))
+            inplace.add(xout, self._grad(x))
             clock.tick("grad")
-            _nb_primal_step(x, xp, xout, self.tau)
+            _nb_primal_step_keep(x, xout, self.tau)
             if self.primal_prox is not None:
                 self.primal_prox(x)
             clock.tick("primal")
 
-            eps = _nb_norm_diff(x, xp) if _nb_any_nonzero(x) else 1.0
+            eps = _nb_norm_diff(x, xout) if _nb_any_nonzero(x) else 1.0
             clock.tick("convergence")
             if eps < self.tol:
                 stop = self.on_converge is None or self.on_converge(x, k, eps)
@@ -374,7 +387,6 @@ class PrimalDual:
                 if stop:
                     break
 
-            inplace.copy(xp, x)
             if not held:
                 inplace.copy(vp, v)
             clock.tick("copy")
