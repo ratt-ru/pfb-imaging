@@ -414,6 +414,9 @@ def deconv(
     if eta_in_grad:
         log.info("Including the eta term in the gradient (--eta-in-grad)")
     residual_mfs, rhs = gradient()
+    # the apparent residual is only ever summed and written: hold it from its
+    # computation to the write, never through a solve
+    residual = None
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
@@ -600,6 +603,7 @@ def deconv(
             }
             ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
             ds_out.to_zarr(dt_name, group=n, mode="a")
+        residual = None
         phases.lap("write", mem=True)
         if verbosity:
             workers.log_telemetry(log)
@@ -645,19 +649,18 @@ def deconv(
         # went into rhs); the mopped model is formed in the update's own cube
         solver.first(bresidual)
         model_mopped = solver.forward(bresidual)
+        bresidual = None
         inplace.add(model_mopped, model)
         model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
         save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
 
         log.info("Mopping: computing the residual against the mopped model")
-        # into the residual cubes: nothing reads the deconvolved ones again
         residual_mopped_raw, _ = workers.residual(
             model_mopped[:, None],
             cell_rad,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            out=(residual[:, None], bresidual[:, None]),
         )
         residual_mopped_raw = residual_mopped_raw[:, 0]
         residual_mopped_mfs = np.sum(residual_mopped_raw, axis=0) / wsum
