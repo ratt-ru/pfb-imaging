@@ -1780,6 +1780,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   iterations: 894 → 813 ms/iter (cycle 1) and 817 → 744 ms/iter (cycle 2). The driver's share
   of `grad` went from ~130 to ~55 ms. The page-fault cost grows with the cube, so the com08
   gain should be proportionally larger; that is to be measured.
+- **The same rule inside the band workers.** `HessianTree.dot` takes `out=` and reuses its FFT
+  scratch. The worker's Hessian role returns one persistent image, which Ray copies into the
+  object store as the call returns. Only the first `ny` rows of the padded raster can be
+  nonzero, so the real FFT runs per axis: the forward `r2c` covers those rows, a `c2c` handles
+  the columns, and the inverse `c2r` produces only those rows. That spares ~30% of each
+  row-transform stage. The real buffers' padding is zeroed once and never refilled, and the
+  beam, PSF and accumulate passes are fused parallel kernels. Pinned against the full-raster
+  numpy convolution by `test_tree_dot_matches_the_full_raster_numpy_form`. Measured: one band
+  at com08's size (8748², PSF grid 12250², three partitions, complex `PSFHAT`, 8 threads) went
+  3.50 → 2.09 s. Per call at 7 bands × 2048² it went 207 → 119 ms on 2.1 → 3.3 cores.
 
 ## Known debt
 

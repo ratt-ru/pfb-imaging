@@ -543,3 +543,43 @@ def test_dot_into_out_matches_a_fresh_result(band_pool):
     got = hess.dot(x, out=buf)
     assert got is buf
     assert_allclose(got, hess.dot(x), rtol=0, atol=0)
+
+
+def _numpy_tree_dot(parts, x, nx_psf, ny_psf, eta, wsum):
+    """The plain full-raster numpy form HessianTree.dot is pinned against."""
+    ncorr, ny, nx = x.shape
+    out = np.zeros_like(x)
+    for p in parts:
+        for c in range(ncorr):
+            xpad = np.zeros((ny_psf, nx_psf))
+            xpad[:ny, :nx] = x[c] * p["beam"][c]
+            xhat = np.fft.rfft2(xpad) * p["psfhat"][c]
+            out[c] += p["beam"][c] * np.fft.irfft2(xhat, s=(ny_psf, nx_psf))[:ny, :nx]
+    return out / wsum[:, None, None] + eta * x
+
+
+@pmp("complex_psfhat", [False, True])
+@pmp("eta_mode", [None, "radial"])
+def test_tree_dot_matches_the_full_raster_numpy_form(complex_psfhat, eta_mode):
+    """Pruned per-axis FFTs and fused kernels == the textbook zero-padded convolution.
+
+    Non-square image and PSF grids, two correlations, three partitions with
+    their own beams and wsums.
+    """
+    rng = np.random.default_rng(21)
+    ncorr, ny, nx, ny_psf, nx_psf = 2, 12, 10, 26, 22
+    parts = []
+    for _ in range(3):
+        psfhat = rng.uniform(0.1, 1.0, size=(ncorr, ny_psf, nx_psf // 2 + 1))
+        if complex_psfhat:
+            psfhat = psfhat + 1j * rng.uniform(-0.5, 0.5, size=psfhat.shape)
+        parts.append(
+            {"psfhat": psfhat, "beam": rng.uniform(0.5, 1.0, size=(ncorr, ny, nx)), "wsum": rng.uniform(1, 2, ncorr)}
+        )
+    hess = HessianTree(parts, nx, ny, nx_psf, ny_psf, eta=0.03, eta_mode=eta_mode)
+    x = rng.standard_normal((ncorr, ny, nx))
+    want = _numpy_tree_dot(parts, x, nx_psf, ny_psf, hess.eta, hess.wsum)
+    assert_allclose(hess.dot(x), want, rtol=1e-12, atol=1e-14)
+    buf = np.full_like(x, np.nan)
+    assert hess.dot(x, out=buf) is buf
+    assert_allclose(buf, want, rtol=1e-12, atol=1e-14)

@@ -3,9 +3,10 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
-from ducc0.fft import c2r, r2c
+from ducc0.fft import c2c, c2r, r2c
 from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
+from numba import njit, prange
 
 from pfb_imaging.operators.gauss import eta_freq_mul
 from pfb_imaging.opt.pcg import pcg_numba as pcg
@@ -518,6 +519,54 @@ def freq_precision(freq_out, length_scale, cap=10.0):
     return (evec * prec) @ evec.T
 
 
+_FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
+
+
+@njit(**_FAST_JIT)
+def _pad_product(xpad, x, beam):
+    """``xpad[:ny, :nx] = x * beam``; the rest of ``xpad`` is left as it is (zero)."""
+    ny, nx = x.shape
+    for i in prange(ny):
+        for j in range(nx):
+            xpad[i, j] = x[i, j] * beam[i, j]
+
+
+@njit(**_FAST_JIT)
+def _zero_rows(a, start):
+    """``a[start:] = 0``."""
+    n1, n2 = a.shape
+    for i in prange(start, n1):
+        for j in range(n2):
+            a[i, j] = 0.0
+
+
+@njit(**_FAST_JIT)
+def _multiply(xhat, psfhat):
+    """``xhat *= psfhat`` (complex or real ``psfhat``)."""
+    n1, n2 = xhat.shape
+    for i in prange(n1):
+        for j in range(n2):
+            xhat[i, j] *= psfhat[i, j]
+
+
+@njit(**_FAST_JIT)
+def _accumulate(out, beam, ypad, scale):
+    """``out += scale * beam * ypad[:, :nx]``."""
+    ny, nx = out.shape
+    for i in prange(ny):
+        for j in range(nx):
+            out[i, j] += scale * beam[i, j] * ypad[i, j]
+
+
+@njit(**_FAST_JIT)
+def _scaled(out, eta, x):
+    """``out = eta * x`` for a scalar ``eta``."""
+    o = out.ravel()
+    xf = x.ravel()
+    for i in prange(o.size):
+        o[i] = eta * xf[i]
+
+
 class HessianTree(object):
     """Sum-over-partitions PSF-convolution Hessian for the DataTree imager.
 
@@ -572,44 +621,60 @@ class HessianTree(object):
             # explicit normalisation (e.g. TOTAL wsum across all bands so the
             # per-band operator matches the legacy total-normalised convention)
             self.wsum = np.broadcast_to(np.asarray(wsum, dtype=float), (self.ncorr,)).copy()
-        # preallocate FFT scratch so a (future) Ray actor reused across minor-cycle
-        # iterations does not reallocate each dot(); safe because actor calls are
-        # single-threaded (matches HessPSF)
-        self.xpad = empty_noncritical((self.ny_psf, self.nx_psf), dtype="f8")
+        # preallocated FFT scratch, reused by every dot() (actor calls are
+        # single-threaded). Only the first ny rows of the padded raster can be
+        # nonzero, so the real buffers hold just those rows: xpad's columns
+        # beyond nx are zeroed once here and never written again, and the
+        # inverse transform's output lands in ypad.
+        self.xpad = empty_noncritical((self.ny, self.nx_psf), dtype="f8")
+        self.xpad.fill(0.0)
+        self.ypad = empty_noncritical((self.ny, self.nx_psf), dtype="f8")
         self.xhat = empty_noncritical((self.ny_psf, self.nx_psf // 2 + 1), dtype="c16")
 
-    def dot(self, x):
-        # leading axis is the correlation axis (HessianTree acts per output image;
-        # the band/time axis is distributed by Ray, not carried here)
+    def dot(self, x, out=None):
+        """``H x`` for a ``(ncorr, ny, nx)`` image (or ``(ny, nx)`` with one correlation).
+
+        The zero-padded 2D real FFT is split by axis so the rows known to be
+        zero are never transformed: the forward real transform runs over the
+        first ``ny`` rows only, and the inverse one produces only those rows.
+        Every other pass is a fused parallel kernel. ``out`` (``(ncorr, ny,
+        nx)``), when given, is written and returned instead of a fresh image.
+        """
+        # leading axis is the correlation axis (HessianTree acts per output image)
         xtmp = x if x.ndim == 3 else x[None, :, :]
         ncorr, ny, nx = xtmp.shape
         assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
         assert ny == self.ny and nx == self.nx
-        out = np.zeros_like(xtmp)
-        xpad = self.xpad
-        xhat = self.xhat
+        if out is None:
+            out = np.empty_like(xtmp)
+        if np.ndim(self.eta) == 0:
+            _scaled(out, float(self.eta), xtmp)
+        else:
+            np.multiply(self.eta, xtmp, out=out)
+        xpad, ypad, xhat = self.xpad, self.ypad, self.xhat
+        nt = self.nthreads
         for p in self.parts:
             beam = p["beam"]
             psfhat = p["psfhat"]
             for c in range(self.ncorr):
-                xpad.fill(0.0)
-                xpad[0:ny, 0:nx] = xtmp[c] * beam[c]
-                r2c(xpad, axes=(0, 1), nthreads=self.nthreads, forward=True, inorm=0, out=xhat)
-                xhat *= psfhat[c]
+                _pad_product(xpad, xtmp[c], beam[c])
+                r2c(xpad, axes=(1,), forward=True, inorm=0, out=xhat[:ny], nthreads=nt)
+                _zero_rows(xhat, ny)
+                c2c(xhat, axes=(0,), forward=True, inorm=0, out=xhat, nthreads=nt)
+                _multiply(xhat, psfhat[c])
+                # inorm=2 on each axis: 1/(ny_psf * nx_psf) overall
+                c2c(xhat, axes=(0,), forward=False, inorm=2, out=xhat, nthreads=nt)
                 c2r(
-                    xhat,
-                    axes=(0, 1),
+                    xhat[:ny],
+                    axes=(1,),
                     forward=False,
-                    out=xpad,
-                    # last (real-FFT) axis is x in (Y, X) order
+                    out=ypad,
                     lastsize=self.nx_psf,
                     inorm=2,
-                    nthreads=self.nthreads,
+                    nthreads=nt,
                     allow_overwriting_input=True,
                 )
-                out[c] += beam[c] * xpad[0:ny, 0:nx]
-        out /= self.wsum[:, None, None]
-        out += self.eta * xtmp
+                _accumulate(out[c], beam[c], ypad, 1.0 / self.wsum[c])
         return out
 
     def hdot(self, x):

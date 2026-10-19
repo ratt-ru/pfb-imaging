@@ -185,11 +185,15 @@ class _BandWorkerImpl:
             eta_mode=eta_mode,
             eta_cap=eta_cap,
         )
-        self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
+        # one output image for every call: Ray copies a returned array into the
+        # object store as the call returns, and pool.hess_dot / pcg_numba
+        # consume it before the next call (D56)
+        self._hout = np.empty((self._hess.ncorr, ny, nx))
+        self._hess.dot(np.zeros((ny, nx)), out=self._hout)  # warm up the FFT plans ((Y, X) rasters)
 
     @_timed
     def hess_dot(self, x):
-        return self._hess.dot(x)
+        return self._hess.dot(x, out=self._hout)
 
     def get_eta(self):
         """This band's Tikhonov coefficient: a float, or the ``eta_mode`` profile.
@@ -209,7 +213,7 @@ class _BandWorkerImpl:
             # pcg_numba updates x0 in place
             x0 = x0.copy()
         return pcg_numba(
-            lambda z: self._hess.dot(z)[0],
+            lambda z: self._hess.dot(z, out=self._hout)[0],
             rhs,
             x0=x0,
             tol=tol,
