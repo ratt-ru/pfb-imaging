@@ -8,6 +8,7 @@ from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.prox.positivity import positivity as _positivity_fn
 from pfb_imaging.prox.positivity import positivity_band as _positivity_band_fn
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.memprof import SectionClock
 
@@ -354,7 +355,7 @@ class PrimalDual:
                 clock.tick("extrapolate")
                 self._reg.psi.hdot(vp, xout)
                 clock.tick("psi_hdot")
-            xout += self._grad(xp)
+            inplace.add(xout, self._grad(xp))
             clock.tick("grad")
             _nb_primal_step(x, xp, xout, self.tau)
             if self.primal_prox is not None:
@@ -369,9 +370,9 @@ class PrimalDual:
                 if stop:
                     break
 
-            np.copyto(xp, x)
+            inplace.copy(xp, x)
             if not held:
-                np.copyto(vp, v)
+                inplace.copy(vp, v)
             clock.tick("copy")
 
             if not k % self.report_freq and self.verbosity > 1:

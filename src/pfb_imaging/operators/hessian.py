@@ -721,8 +721,13 @@ class HessTreeRay:
             # touching the process-wide numba thread count
             self._nchunk = max(1, int(nthreads))
 
-    def dot(self, x):
-        out = self._pool.hess_dot(x)
+    def dot(self, x, out=None):
+        """``M x`` for an ``(nband, ny, nx)`` cube, into ``out`` when given.
+
+        Pass ``out`` on any path that applies the operator repeatedly: a fresh
+        cube per call pays first-touch page faults over all of it (D56).
+        """
+        out = self._pool.hess_dot(x, out=out)
         if self._dC is not None:
             s = self._prior_s()
             # One fused numba pass instead of four numpy ones, and no scratch
@@ -815,8 +820,9 @@ class HessTreeRay:
         minit = self.cg_minit if minit is None else minit
         if self._dC is None:
             return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        buf = np.empty_like(rhs)
         return pcg(
-            self.dot,
+            lambda p: self.dot(p, out=buf),
             rhs,
             x0=x0,
             tol=tol,

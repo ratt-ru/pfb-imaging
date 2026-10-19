@@ -527,3 +527,19 @@ def test_prior_dot_does_not_mutate_its_argument(band_pool):
     before = x.copy()
     hess.prior_dot(x)
     assert_allclose(x, before, rtol=0, atol=0)
+
+
+def test_dot_into_out_matches_a_fresh_result(band_pool):
+    """dot(x, out=buf) overwrites buf, prior included, and returns it (D56)."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(11)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, workers=band_pool(nband))
+    x = rng.standard_normal((nband, nx, ny))
+    buf = np.full_like(x, np.nan)  # stale contents must not leak through
+    got = hess.dot(x, out=buf)
+    assert got is buf
+    assert_allclose(got, hess.dot(x), rtol=0, atol=0)

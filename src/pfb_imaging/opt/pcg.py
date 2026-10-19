@@ -4,6 +4,7 @@ import numpy as np
 from numba import njit, prange
 
 from pfb_imaging.operators import LinearOperator, require_protocol
+from pfb_imaging.utils import inplace
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -137,8 +138,8 @@ def pcg_numba(
     tii = time()
     while (eps > tol or k < minit) and k < maxit and stall_count < 5:
         ti = time()
-        np.copyto(xp, x)
-        np.copyto(rp, r)
+        inplace.copy(xp, x)
+        inplace.copy(rp, r)
         tcopy += time() - ti
         ti = time()
         aopp = aop(p)

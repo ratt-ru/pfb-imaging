@@ -22,6 +22,7 @@ import time
 
 import numpy as np
 
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils.memprof import ActorCapture, CallClock, format_memory, task_memory
 
 
@@ -536,7 +537,7 @@ class BandWorkerPool:
             ],
         )
 
-    def hess_dot(self, x):
+    def hess_dot(self, x, out=None):
         # empty, not zeros: every band is overwritten below, and zeroing costs a
         # full pass over the cube -- 1.07 s at 8 bands x 8000^2, paid once per
         # CG iteration on the band-coupled forward path. That makes "every band
@@ -547,10 +548,11 @@ class BandWorkerPool:
         # the old allocation happened to supply.
         if x.shape[0] != self.nband:
             raise ValueError(f"got {x.shape[0]} bands for {self.nband} workers")
-        out = np.empty_like(x)
+        if out is None:
+            out = np.empty_like(x)
         nwritten = 0
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
-            out[b] = res[0]
+            inplace.copy(out[b], res[0])
             nwritten += 1
         if nwritten != self.nband:
             raise ValueError(f"{nwritten} band results for {self.nband} workers")

@@ -1,14 +1,30 @@
 """PFBSolver: the concrete DeconvSolver composing (hess, forward, backward, prox)."""
 
+import inspect
+
 import numpy as np
 
 from pfb_imaging.deconv import Regulariser
 from pfb_imaging.operators import LinearOperator, require_protocol
 from pfb_imaging.opt import BackwardSolver, ForwardSolver
 from pfb_imaging.opt.power_method import power_method_numba as power_method
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 
 log = pfb_logging.get_logger("PFB")
+
+
+def reusing_dot(op, like):
+    """``op.dot`` writing into one buffer reused across calls, when ``op`` takes ``out``.
+
+    For loops that consume each result before the next call (gradient, CG,
+    power method): a fresh cube per call costs first-touch page faults over
+    all of it (D56). Operators without ``out`` fall back to plain ``dot``.
+    """
+    if "out" not in inspect.signature(op.dot).parameters:
+        return op.dot
+    buf = np.empty_like(like)
+    return lambda x: op.dot(x, out=buf)
 
 
 class ReweightOnConverge:
@@ -116,7 +132,7 @@ class PFBSolver:
         if hessnorm is None:
             log.info("Finding spectral norm of Hessian approximation")
             hessnorm, _ = power_method(
-                hess.dot,
+                reusing_dot(hess, model),
                 model.shape,
                 tol=pm_tol,
                 maxit=pm_maxit,
@@ -160,9 +176,17 @@ class PFBSolver:
         x0 = self._update if self._update.any() else None
         self._update = self.forward_alg.solve(self.hess, self._residual, x0=x0)
         xtilde = self._model + self._gamma * self._update
+        diff = np.empty_like(xtilde)
+        hdot = reusing_dot(self.hess, xtilde)
+        gscale = -1.0 / self._gamma
 
         def grad(x):
-            return -self.hess.dot(xtilde - x) / self._gamma
+            # -hess(xtilde - x) / gamma; the returned cube is reused by the
+            # next call, so callers consume it before calling again
+            inplace.axpby(diff, 1.0, xtilde, -1.0, x)
+            g = hdot(diff)
+            inplace.scale(g, gscale)
+            return g
 
         self.backward_alg.set_grad(grad)
         return self._update

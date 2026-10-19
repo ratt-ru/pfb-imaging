@@ -503,3 +503,36 @@ def test_build_hess_warns_when_the_prior_is_requested_but_undefinable(monkeypatc
 
     assert solver.hess._dC is None  # genuinely off, as freq_precision decided
     assert any("nothing to correlate" in w for w in warnings), warnings
+
+
+class DiagOutOp(DiagOp):
+    """DiagOp that writes into a caller buffer, as HessTreeRay does."""
+
+    def dot(self, x, out=None):
+        if out is None:
+            out = np.empty_like(x)
+        np.multiply(self.d, x, out=out)
+        return out
+
+
+@pytest.mark.parametrize("op_cls", [DiagOp, DiagOutOp])
+def test_grad_is_minus_hess_of_the_gap_over_gamma(op_cls):
+    """grad(x) = -hess(xtilde - x)/gamma, into one reused cube when hess takes out."""
+    rng = np.random.default_rng(5)
+    b = rng.standard_normal((2, 4, 4))
+    d = rng.uniform(0.5, 2.0, size=b.shape)
+    solver = _solver(b, hess=op_cls(d))
+    solver.first(b)
+    update = solver.forward(b)
+    grad = solver.backward_alg._grad
+    x1, x2 = rng.standard_normal(b.shape), rng.standard_normal(b.shape)
+    xtilde = solver._model + solver._gamma * update
+    g1 = grad(x1)
+    assert_allclose(g1, -d * (xtilde - x1) / solver._gamma, rtol=1e-13)
+    g1_copy = g1.copy()
+    g2 = grad(x2)
+    assert_allclose(g2, -d * (xtilde - x2) / solver._gamma, rtol=1e-13)
+    if op_cls is DiagOutOp:
+        assert g2 is g1  # the documented reuse: consume before the next call
+    else:
+        assert_allclose(g1, g1_copy, rtol=0, atol=0)

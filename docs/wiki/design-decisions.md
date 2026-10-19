@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-12T19:00:00Z
-last_verified_commit: 043f50d
+timestamp: 2026-10-19T16:00:00Z
+last_verified_commit: 8a048d9
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1749,6 +1749,37 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_degrid_with_a_real_beam_matches_the_in_process_region` (slow; staged, runs with
   `PFB_TEST_BEAM_L=1`). The spec's imager-vs-degrid round trip was replaced by this staged
   real-beam Serve test because of the east-west inconsistency above.
+
+### D56 — The deconv driver reuses its cubes and does its arithmetic in numba
+
+- **Context:** profiling `pfb deconv` on com08 (8 bands × 8748², three baseline-group
+  partitions per band, GP frequency prior) put a primal-dual iteration at 47.3 s, of which
+  `grad` was 27.9 s against a 15.6 s `hess_dot` round trip. The other ~12 s was the driver:
+  `-hess.dot(xtilde - x) / gamma` and `xout += ...` allocate three fresh 4.9 GB cubes per call
+  and run four single-threaded numpy passes, and `BandWorkerPool.hess_dot` allocated a fourth.
+  A fresh allocation pays first-touch page faults over the whole cube, measured locally at ~3×
+  the cost of a parallel numba pass into a reused buffer. The power method (26 s per iteration)
+  and the prior's driver-side CG (25 s per iteration) applied the operator through the same
+  allocating path.
+- **Decision:**
+  - `HessTreeRay.dot` and `BandWorkerPool.hess_dot` take `out=`. Loops that consume each
+    result before the next call apply the operator through `deconv.pfb.reusing_dot`, which owns
+    one buffer and falls back to plain `dot` for operators without `out`. Those loops are the
+    gradient closure, the power method, and the prior's driver-side CG in `HessTreeRay.cg`.
+  - The cube arithmetic on those paths goes through `utils/inplace` (`copy`, `add`, `scale`,
+    `axpby`), which writes into caller-owned buffers in parallel. That includes the result
+    copy out of the object store, the gradient, `PrimalDual`'s `xout +=` and copies,
+    `pcg_numba`'s copies, and the power method's norm, normalise and copy, which are now one
+    pass plus one write.
+  - **The gradient closure returns a cube it reuses on the next call.** Both backward solvers
+    consume it immediately (`PrimalDual` adds it into `xout`, `ForwardBackward` folds it into
+    the step), and `test_grad_is_minus_hess_of_the_gap_over_gamma` pins the reuse.
+- **Rationale:** the arithmetic is bandwidth-bound, so the wins are touching each cube fewer
+  times, never faulting in fresh pages, and using every core. No algorithm changes.
+- **Consequences:** measured locally, 7 bands × 2048² with the prior, 50 primal-dual
+  iterations: 894 → 813 ms/iter (cycle 1) and 817 → 744 ms/iter (cycle 2). The driver's share
+  of `grad` went from ~130 to ~55 ms. The page-fault cost grows with the cube, so the com08
+  gain should be proportionally larger; that is to be measured.
 
 ## Known debt
 
