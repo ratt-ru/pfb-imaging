@@ -103,8 +103,6 @@ class _BandWorkerImpl:
         self._hess = None
         self._psib = None
         self._parts = None
-        self._dirty = None
-        self._bdirty = None
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
@@ -126,9 +124,10 @@ class _BandWorkerImpl:
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
         Loads the per-partition gridding inputs (``UVW``/``WEIGHT``/``MASK``/
-        ``FREQ``/``BEAM``), the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
-        and the raw ``DIRTY`` in this process, so vis-scale data never enters
-        the driver or the Ray object store. Selective loads only, then the
+        ``FREQ``/``BEAM``) and the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
+        in this process, so vis-scale data never enters the driver or the Ray
+        object store. ``DIRTY``/``BDIRTY`` are not pinned: ``residual`` reads
+        them once per major cycle. Selective loads only, then the
         Dataset handles are released and cycles collected (the ``stokes_vis``
         discipline; docs/wiki/memory-and-ray.md). Everything loaded is held
         for the life of the run — a deliberate RSS-for-work trade, visible in
@@ -146,9 +145,6 @@ class _BandWorkerImpl:
             # cache=False: the tree would otherwise hold its own copy of every
             # variable read here (the complex PSFHATs among them) until gc
             band = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)[node_name]
-            self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
-            # beam-attenuated dirty: the model-free term of the exact gradient (D23)
-            self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
             parts = []
             hess_parts = []
             self._part_names = sorted(band.children)
@@ -309,11 +305,22 @@ class _BandWorkerImpl:
     @_timed
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         # deferred: worker-side only; keeps driver-side import light
+        import gc
+
+        import xarray as xr
+
         from pfb_imaging.operators.gridder import residual_from_partitions
 
+        # DIRTY/BDIRTY (the model-free terms, D23) are read here rather than
+        # pinned by load_band: once per major cycle, two images per band
+        band = xr.open_datatree(self._store_url, engine="zarr", chunks=None, cache=False)[self._node_name]
+        dirty = band.ds.DIRTY.values  # (corr, ny, nx)
+        bdirty = band.ds.BDIRTY.values
+        del band
+        gc.collect()  # the tree's reference cycles (memory-and-ray.md, layer 1)
         # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
-            self._dirty,
+            dirty,
             self._parts,
             model,
             cell_rad,
@@ -321,7 +328,7 @@ class _BandWorkerImpl:
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            bdirty=self._bdirty,
+            bdirty=bdirty,
         )
 
     def _iter_partition_rvis(self, model, cell_rad, epsilon, do_wgridding):
