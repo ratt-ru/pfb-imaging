@@ -715,15 +715,29 @@ class PsiNocopytRay:
 
     # --- a dual held per band in the workers (L21.dual_step) ---
 
-    def init_dual(self):
-        """Zero every band's worker-held dual."""
-        self._pool.init_dual()
-        if self._pool.actors is not None and self._psib_sum is None:
-            # the driver's own dictionary, for the band-summed analysis
+    def _init_sum(self):
+        """The driver's own dictionary, for the band-summed analysis."""
+        if self._psib_sum is None:
             self._psib_sum = psi_band_maker_nocopyt(self.ny, self.nx, self._bases, self._nlevel)
             self._csum = np.empty((self.nbasis, self._psib_sum.nxmax, self._psib_sum.nymax))
             self._xsum = np.empty((self.ny, self.nx))
             self._psib_sum.dot(np.zeros((self.ny, self.nx)), self._csum)  # JIT warm-up
+
+    def dot_sum(self, x):
+        """``sum_b Psi^T x_b`` as one analysis of ``sum_b x_b`` (linearity).
+
+        Returns a driver buffer that the next ``dot_sum`` or ``dual_begin``
+        overwrites.
+        """
+        self._init_sum()
+        self._psib_sum.dot(np.sum(x, axis=0, out=self._xsum), self._csum)
+        return self._csum
+
+    def init_dual(self):
+        """Zero every band's worker-held dual."""
+        self._pool.init_dual()
+        if self._pool.actors is not None:
+            self._init_sum()
 
     def dual_begin(self, x, sigma):
         """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.

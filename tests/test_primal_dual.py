@@ -240,3 +240,26 @@ def test_worker_held_dual_resets(band_pool):
     assert reg._vsum is None
     again = pd.solve(np.zeros((nband, nx, nx)), 0.1)
     assert_allclose(again, first, rtol=1e-12, atol=1e-14)
+
+
+@pmp("nband", [1, 2])
+def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
+    """L21 reweighting from one analysis of the band sum == summing the per-band coefficients."""
+    from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
+
+    nx, ny, bases, nlevel = 32, 32, ("self", "db1", "db2"), 2
+    rng = np.random.default_rng(11)
+    update = rng.standard_normal((nband, ny, nx))
+    model = np.abs(rng.standard_normal((nband, ny, nx)))
+    weights = {}
+    for name, p in (
+        ("sum", PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))),
+        ("cube", PsiNocopyt(nband, ny, nx, bases, nlevel, 1)),
+    ):
+        reg = L21(p, bases, nu=len(bases), rmsfactor=0.5, alpha=4)
+        assert hasattr(p, "dot_sum") == (name == "sum")
+        reg.init_reweighting(update)
+        reg.update_weights(model)
+        weights[name] = reg.l1weight
+    assert not np.allclose(weights["sum"], 1.5)
+    assert_allclose(weights["sum"], weights["cube"], rtol=1e-10)

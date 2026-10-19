@@ -33,7 +33,6 @@ class L21:
         self.rmsfactor = rmsfactor
         self.alpha = alpha
         self.l1weight = np.ones((psi.nbasis, psi.nymax, psi.nxmax))
-        self._outvar = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
         self._reweighter = None
         self._vsum = None
 
@@ -77,10 +76,23 @@ class L21:
         """True once reweighting has been initialised."""
         return self._reweighter is not None
 
+    def _coeff_sum(self, x):
+        """``sum_b Psi^T x_b``: all reweighting needs, and linear in ``x``.
+
+        A ``psi`` with ``dot_sum`` analyses the band sum once, so no
+        ``(nband, nbasis, ...)`` coefficient cube is ever allocated (4 cubes at
+        4 bases; ~20 GB at 8 bands x 8748^2).
+        """
+        dot_sum = getattr(self.psi, "dot_sum", None)
+        if dot_sum is not None:
+            return dot_sum(x)
+        out = np.zeros((self.psi.nband, self.psi.nbasis, self.psi.nymax, self.psi.nxmax))
+        self.psi.dot(x, out)
+        return np.sum(out, axis=0)
+
     def init_reweighting(self, update):
         """Estimate per-basis component rms from the update and arm reweighting."""
-        self.psi.dot(update, self._outvar)
-        tmp = np.sum(self._outvar, axis=0)
+        tmp = self._coeff_sum(update)
         rms_comps = np.ones(self.psi.nbasis, dtype=float)
         for i, base in enumerate(self.bases):
             nonzero = tmp[i][tmp[i] != 0]
@@ -93,8 +105,6 @@ class L21:
             log.info(f"rms_comps for base {base} is {rms_comps[i]:.3e}")
         self._reweighter = partial(
             l1reweight_func,
-            psih=self.psi.dot,
-            outvar=self._outvar,
             rmsfactor=self.rmsfactor,
             rms_comps=rms_comps,
             alpha=self.alpha,
@@ -102,4 +112,4 @@ class L21:
 
     def update_weights(self, x):
         """Recompute l1 weights from the current model/iterate."""
-        self.l1weight = self._reweighter(x)
+        self.l1weight = self._reweighter(self._coeff_sum(x))
