@@ -201,7 +201,8 @@ class PhaseClock:
 
     The driver's own work (planning, task submission, which pickles every task's
     arguments, and the reductions between passes) is invisible to the task
-    timeline and to per-task profiles; this is what accounts for it.
+    timeline and to per-task profiles; this is what accounts for it. A phase
+    that recurs (one lap per deconv major cycle) is totalled in the summary.
     """
 
     def __init__(self, log):
@@ -209,16 +210,34 @@ class PhaseClock:
         self.start = self.last = time.perf_counter()
         self.laps = []
 
-    def lap(self, name: str) -> None:
+    def lap(self, name: str, mem: bool = False) -> None:
+        """Close the current phase and log its duration.
+
+        Args:
+            name: the phase that just ended.
+            mem: also log this process's ``task_memory()``.
+        """
         now = time.perf_counter()
         self.laps.append((name, now - self.last))
         self.last = now
-        self.log.info(f"{name} took {self.laps[-1][1]:.1f} s")
+        line = f"{name} took {self.laps[-1][1]:.1f} s"
+        if mem:
+            line += f" | driver {format_memory(task_memory())}"
+        self.log.info(line)
 
     def summary(self) -> None:
         total = self.last - self.start
-        parts = ", ".join(f"{n} {dt:.1f} s ({100 * dt / total if total > 0 else 0:.0f}%)" for n, dt in self.laps)
-        self.log.info(f"Time by phase: {parts}")
+        totals, counts = {}, {}
+        for n, dt in self.laps:
+            totals[n] = totals.get(n, 0.0) + dt
+            counts[n] = counts.get(n, 0) + 1
+        parts = []
+        for n, dt in totals.items():
+            share = f"{100 * dt / total if total > 0 else 0:.0f}%"
+            if counts[n] > 1:
+                share += f", {counts[n]} laps"
+            parts.append(f"{n} {dt:.1f} s ({share})")
+        self.log.info(f"Time by phase: {', '.join(parts)}")
 
 
 def dump_timeline(log=None) -> None:

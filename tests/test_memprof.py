@@ -147,6 +147,25 @@ def test_phase_clock_logs_each_lap_and_a_summary():
     assert lines[2].startswith("Time by phase: A") and "B" in lines[2]
 
 
+def test_phase_clock_totals_a_recurring_phase():
+    """deconv laps the same phases once per major cycle; the summary totals them."""
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    phases = PhaseClock(Log())
+    for _ in range(3):
+        phases.lap("forward")
+        phases.lap("backward", mem=True)
+    phases.summary()
+    assert "driver pid" in lines[1] and "anon" in lines[1]
+    summary = lines[-1]
+    assert summary.count("forward") == 1 and summary.count("backward") == 1
+    assert "3 laps" in summary
+
+
 def test_dump_timeline_writes_the_task_events(tmp_path, monkeypatch):
     @ray.remote
     def tiny():

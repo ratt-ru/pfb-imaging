@@ -17,6 +17,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import ETA_MODES
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
+from pfb_imaging.utils.memprof import PhaseClock
 from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
@@ -170,6 +171,7 @@ def deconv(
     if fit_mode not in FIT_MODES:
         log.error_and_raise(f"fit_mode must be one of {FIT_MODES}, got '{fit_mode}'", ValueError)
     time_start = time.time()
+    phases = PhaseClock(log)
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -337,12 +339,16 @@ def deconv(
     # Each worker reads its own band's vis-scale inputs straight from the store and pins them for the life of the run.
     # TODO - this only works for a local cluster, nworkers not configurable on remote cluster.
     # Need to round robin bands across workers.
+    phases.lap("set-up", mem=True)
     workers = BandWorkerPool(nband, nthreads)
     workers.load_bands(dt_name, nodes)
+    phases.lap("load bands")
 
+    # includes the power method for hess_norm when it is not cached
     solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+    phases.lap("build solver", mem=True)
 
     # dump the Tikhonov profile once per run: it is the preconditioner's only
     # tunable spatial structure, so seeing it is the way to sanity-check an
@@ -435,11 +441,13 @@ def deconv(
         update = solver.forward(bresidual)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
+        phases.lap("forward")
 
         modelp = deepcopy(model)
         lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
         log.info(f"Solving for model with lambda = {lam:.3e}")
         model = solver.backward(lam)
+        phases.lap("backward", mem=True)
 
         # write component model (carried over from the legacy driver; .dt-native attrs)
         log.info(f"Writing model to {basename}_{suffix}.mds")
@@ -496,6 +504,7 @@ def deconv(
 
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
+        phases.lap("model fit")
 
         log.info("Computing residual")
         residual_raw, bresidual_raw = workers.residual(
@@ -516,9 +525,11 @@ def deconv(
 
         if debug:
             _chi2_snapshot(k + 1)
+        phases.lap("residual")
 
         # post-iteration hook (e.g. arming l1 reweighting)
         solver.last()
+        phases.lap("reweight")
 
         # per-actor post-gc memory telemetry (docs/wiki/memory-and-ray.md)
         if verbosity > 1 and hasattr(getattr(solver, "hess", None), "get_mem"):
@@ -568,6 +579,7 @@ def deconv(
             }
             ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
             ds_out.to_zarr(dt_name, group=n, mode="a")
+        phases.lap("write", mem=True)
 
         log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
@@ -637,6 +649,7 @@ def deconv(
                 },
                 attrs=final_attrs[b],
             ).to_zarr(dt_name, group=n, mode="a")
+        phases.lap("mop")
 
     if fits_per_partition:
         # per-partition misfit localisation (D23 debugging aid): re-gridded
@@ -688,6 +701,8 @@ def deconv(
                     f"resid_peak={float(np.abs(resid_n[0]).max()):.3e} rchi2={rchi2:.6e}"
                 )
 
+        phases.lap("partition FITS")
+
     if debug:
         # baseline-length-binned residual power per partition: flat for
         # noise-like residuals, structured when the misfit lives at specific
@@ -699,6 +714,7 @@ def deconv(
         with open(debug_name, "w") as f:
             json.dump(debug_record, f, indent=2)
         log.info(f"Debug record written to {debug_name}")
+        phases.lap("debug profiles")
 
     if fits_mfs or fits_cubes:
         log.info(f"Writing fits files to {fits_oname}_{suffix}")
@@ -713,5 +729,7 @@ def deconv(
                 do_cube=fits_cubes,
             )
             log.info(f"Done writing {column}")
+        phases.lap("FITS")
 
+    phases.summary()
     log.info(f"All done after {time.time() - time_start:.1f}s")
