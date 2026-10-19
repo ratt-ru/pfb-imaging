@@ -9,6 +9,7 @@ from pfb_imaging.prox.positivity import positivity as _positivity_fn
 from pfb_imaging.prox.positivity import positivity_band as _positivity_band_fn
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.memprof import SectionClock
 
 log = pfb_logging.get_logger("PD")
 
@@ -294,10 +295,9 @@ class PrimalDual:
         if self._v is not None:
             self._v[...] = 0.0
 
-    def _dual_step(self, xp, v, vp, lam):
-        """Analysis + dual proximal update; fused fast path when available."""
+    def _dual_update(self, v, vp, lam):
+        """Dual proximal update of ``v = Psi^T xp``; fused fast path when available."""
         reg = self._reg
-        reg.psi.dot(xp, v)
         if hasattr(reg, "dual_update"):
             reg.dual_update(vp, v, lam, sigma=self.sigma)
         else:
@@ -319,30 +319,47 @@ class PrimalDual:
         xout = np.zeros_like(x)
 
         eps = 1.0
-        tii = time()
+        # always on: psi_dot/psi_hdot/grad are Ray round trips for a
+        # multi-band run, and this split is what says whether an iteration's
+        # time is wavelet work, transfers or the driver-side dual passes
+        clock = SectionClock(
+            ("psi_dot", "dual_update", "extrapolate", "psi_hdot", "grad", "primal", "convergence", "reweight", "copy")
+        )
         for k in range(self.maxit):
-            self._dual_step(xp, v, vp, lam)
+            clock.start()
+            self._reg.psi.dot(xp, v)
+            clock.tick("psi_dot")
+            self._dual_update(v, vp, lam)
+            clock.tick("dual_update")
             _nb_extrapolate_dual(v, vp)
+            clock.tick("extrapolate")
             self._reg.psi.hdot(vp, xout)
+            clock.tick("psi_hdot")
             xout += self._grad(xp)
+            clock.tick("grad")
             _nb_primal_step(x, xp, xout, self.tau)
             if self.primal_prox is not None:
                 self.primal_prox(x)
+            clock.tick("primal")
 
             eps = _nb_norm_diff(x, xp) if _nb_any_nonzero(x) else 1.0
+            clock.tick("convergence")
             if eps < self.tol:
-                if self.on_converge is None or self.on_converge(x, k, eps):
+                stop = self.on_converge is None or self.on_converge(x, k, eps)
+                clock.tick("reweight")
+                if stop:
                     break
 
             np.copyto(xp, x)
             np.copyto(vp, v)
+            clock.tick("copy")
 
             if not k % self.report_freq and self.verbosity > 1:
                 log.info(f"At iteration {k} eps = {eps:.3e}")
 
-        ttot = time() - tii
-        if self.verbosity > 1:
-            log.info(f"Total time: {ttot:.3f}s  ({ttot / max(k + 1, 1) * 1e3:.1f} ms/iter)")
+        self.clock = clock
+        if self.verbosity:
+            log.info(f"Primal-dual took {clock.summary(k + 1)}")
         if k == self.maxit - 1:
             if self.verbosity:
                 log.info(f"Max iters reached. eps = {eps:.3e}")

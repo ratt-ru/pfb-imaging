@@ -150,3 +150,28 @@ def test_solve_raises_without_setup_or_grad():
     pd.setup(L1(IdentityPsi(1, 2, 2)), hessnorm=1.0)
     with pytest.raises(RuntimeError, match="set_grad"):
         pd.solve(np.zeros((1, 2, 2)), 1.0)
+
+
+def test_section_clock_charges_the_slow_section():
+    """The per-section clock attributes time to the section that spent it."""
+    import time
+
+    nband, nx = 1, 8
+    psi, grad, l1weight, hessnorm = _l21_problem(nband, nx, nx)
+    dot = psi.dot
+
+    def slow_dot(x, alphao):
+        time.sleep(0.005)
+        dot(x, alphao)
+
+    psi.dot = slow_dot
+    reg = L21(psi, bases=("self", "db1"))
+    reg.l1weight = l1weight
+    pd = PrimalDual(tol=0.0, maxit=10, verbosity=0)
+    pd.setup(reg, hessnorm)
+    pd.set_grad(grad)
+    pd.solve(np.zeros((nband, nx, nx)), 0.05)
+    totals = pd.clock.totals
+    assert totals["psi_dot"] >= 0.05
+    assert max(totals, key=totals.get) == "psi_dot"
+    assert "10 iterations" in pd.clock.summary(10)

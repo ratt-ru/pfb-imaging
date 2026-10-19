@@ -240,6 +240,37 @@ class PhaseClock:
         self.log.info(f"Time by phase: {', '.join(parts)}")
 
 
+class SectionClock:
+    """Accumulated wall time per named section of an iterative loop.
+
+    ``start`` at the top of an iteration, then ``tick(name)`` after each
+    section charges the time since the previous mark to ``name``. Two
+    ``perf_counter`` calls per section, so it is cheap enough to leave on in
+    loops whose sections take milliseconds (the deconv backward solvers).
+
+    Args:
+        names: the sections, in the order they are reported.
+    """
+
+    def __init__(self, names):
+        self.totals = dict.fromkeys(names, 0.0)
+        self._mark = time.perf_counter()
+
+    def start(self) -> None:
+        self._mark = time.perf_counter()
+
+    def tick(self, name: str) -> None:
+        now = time.perf_counter()
+        self.totals[name] += now - self._mark
+        self._mark = now
+
+    def summary(self, niter: int) -> str:
+        """``<total> s over <niter> iterations (<ms>/iter): <section> <share>, ...``."""
+        total = sum(self.totals.values())
+        parts = ", ".join(f"{n} {100 * dt / total if total > 0 else 0:.0f}%" for n, dt in self.totals.items())
+        return f"{total:.1f} s over {niter} iterations ({1e3 * total / max(niter, 1):.1f} ms/iter): {parts}"
+
+
 def dump_timeline(log=None) -> None:
     """Write Ray's task timeline to ``PFB_RAY_TIMELINE`` if it is set.
 

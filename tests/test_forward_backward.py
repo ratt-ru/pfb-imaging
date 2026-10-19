@@ -101,3 +101,16 @@ def test_solve_raises_without_setup_or_grad():
     fb.setup(L1(IdentityPsi(1, 2, 2)), hessnorm=1.0)
     with pytest.raises(RuntimeError, match="set_grad"):
         fb.solve(np.zeros((1, 2, 2)), 1.0)
+
+
+def test_section_clock_covers_every_iteration_section():
+    """Every section of the loop is charged, and the total is the loop's time."""
+    nband, nx, ny = 1, 16, 4
+    b = np.random.default_rng(1).standard_normal((nband, nx, ny))
+    fb = ForwardBackward(tol=0.0, maxit=5, verbosity=0, gamma=0.45)
+    fb.setup(L1(IdentityPsi(nband, nx, ny)), hessnorm=1.0)
+    fb.set_grad(lambda x: x - b)
+    fb.solve(np.zeros_like(b), 0.1)
+    assert set(fb.clock.totals) >= {"grad", "psi_dot", "prox", "psi_hdot", "primal", "momentum"}
+    assert all(dt >= 0.0 for dt in fb.clock.totals.values())
+    assert fb.clock.totals["psi_dot"] > 0.0
