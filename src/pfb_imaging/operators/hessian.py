@@ -9,6 +9,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from numba import njit, prange
 
 from pfb_imaging.operators.gauss import eta_freq_mul
+from pfb_imaging.opt.pcg import cg_inplace
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -878,7 +879,7 @@ class HessTreeRay:
 
         Warning:
             On the coupled path ``x0`` is bound as the iterate and updated
-            **in place** by ``pcg_numba``; the returned array IS ``x0``.
+            **in place** by ``cg_inplace``; the returned array IS ``x0``.
         """
         tol = self.cg_tol if tol is None else tol
         maxit = self.cg_maxit if maxit is None else maxit
@@ -886,7 +887,7 @@ class HessTreeRay:
         if self._dC is None:
             return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
         buf = np.empty_like(rhs)
-        return pcg(
+        return cg_inplace(
             lambda p: self.dot(p, out=buf),
             rhs,
             x0=x0,
