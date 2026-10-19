@@ -1809,6 +1809,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   by the objective, not `eps`): F after 50 iterations 4.436 → 4.273; the old step needs ~120
   iterations to get there. At the bound σ also matters: σ/10 and σ/100 reach in 100 iterations
   what the old steps need 400 for; σ/1000 is slower again (the dual cannot follow).
+  On com08's own subproblem (8 × 8748², cycle 7, same start F0 = 2.2186e-3) the objective at
+  k = 25/50/100 was 2.2111/2.2078/2.2043e-3 for the old step, **2.2062/2.2034/2.2001e-3** at
+  the default σ with the corrected τ, 2.2086/2.2042/2.2011e-3 at σ/10 and
+  2.2083/2.2049/2.2017e-3 at 2σ: the correction does in 50 iterations what the old step did
+  in 100, and the default σ is the best of the four there -- the local optimum (σ/10) does
+  not transfer, so the default stands.
 - **`eps` cannot compare step sizes.** It is the relative change per iteration, so a smaller τ
   makes it smaller at the same distance from the solution. Compare objectives.
 - **What bounds the rate is `M`'s conditioning, and it lives in Fourier space.** On com08
