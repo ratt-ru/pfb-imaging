@@ -22,15 +22,19 @@ import time
 
 import numpy as np
 
-from pfb_imaging.utils.memprof import CallClock, format_memory, task_memory
+from pfb_imaging.utils.memprof import ActorCapture, CallClock, format_memory, task_memory
 
 
 def _timed(method):
-    """Run a worker role method under the worker's ``CallClock`` (see ``BandWorkerPool.call_stats``)."""
+    """Run a worker role method under the worker's ``CallClock`` (see ``BandWorkerPool.call_stats``).
+
+    Also under its opt-in ``ActorCapture``, so a cProfile capture covers the
+    role methods and nothing else.
+    """
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        with self._clock.call(method.__name__):
+        with self._clock.call(method.__name__), self._capture.call():
             return method(self, *args, **kwargs)
 
     return wrapper
@@ -72,7 +76,7 @@ class _BandWorkerImpl:
     facades construct a ``BandWorkerPool``.
     """
 
-    def __init__(self, nthreads):
+    def __init__(self, nthreads, capture=False):
         # Load TBB in this process — ctypes.CDLL in the driver process does
         # not carry over to forked/spawned Ray workers. Off x86_64 there is no
         # TBB to load (no wheel, no sdist) and _load_tbb() is a no-op returning
@@ -92,6 +96,9 @@ class _BandWorkerImpl:
         resize_thread_pool(nthreads)
         self._nthreads = nthreads
         self._clock = CallClock()
+        # PFB_CPROFILE_DIR / PFB_MEMRAY_DIR captures for the actor's life;
+        # never for the in-process worker, which is the driver's process
+        self._capture = ActorCapture("band_worker", enabled=capture)
         self._hess = None
         self._psib = None
         self._parts = None
@@ -396,6 +403,10 @@ class _BandWorkerImpl:
 
     # --- telemetry ---
 
+    def stop_capture(self):
+        """Write this worker's cProfile/memray captures (``ActorCapture.stop``)."""
+        self._capture.stop()
+
     def take_call_stats(self):
         """This worker's per-call times since the last take (``CallClock.take``)."""
         return self._clock.take()
@@ -445,7 +456,7 @@ class BandWorkerPool:
             # nworkers=1 driver cluster).
             self._local = None
             worker_cls = ray.remote(num_cpus=1e-2)(_BandWorkerImpl)
-            self.actors = [worker_cls.remote(self.nthreads_per_band) for _ in range(nband)]
+            self.actors = [worker_cls.remote(self.nthreads_per_band, True) for _ in range(nband)]
         # driver-side round trip per _map call, paired with the workers' own
         # clocks in call_stats
         self._roundtrip = {}
@@ -636,6 +647,18 @@ class BandWorkerPool:
         for m in self.get_mem():
             log.info(f"band worker {format_memory(m)}")
 
+    def stop_capture(self):
+        """Write every worker's opt-in cProfile/memray captures; no-op in process.
+
+        Call before the run ends: a capture is only written when it is closed.
+        """
+        if not self.actors:
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        ray.get([a.stop_capture.remote() for a in self.actors])
+
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""
         if self.actors is None:
@@ -661,6 +684,7 @@ class BandWorkerPool:
         # deferred: optional heavy runtime (ray)
         import ray
 
+        self.stop_capture()
         for a in self.actors:
             ray.kill(a)
         self.actors = []

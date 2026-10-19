@@ -17,7 +17,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import ETA_MODES
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
-from pfb_imaging.utils.memprof import PhaseClock
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, profile_env
 from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
@@ -253,7 +253,8 @@ def deconv(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": env_vars,
+            # profile_env: PFB_CPROFILE_DIR / PFB_MEMRAY_DIR for the band workers
+            "env_vars": {**env_vars, **profile_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
@@ -734,5 +735,9 @@ def deconv(
 
     if verbosity:
         workers.log_telemetry(log)
+    # opt-in diagnostics (utils/memprof): the band workers' captures are only
+    # written when closed, and the timeline needs Ray still up
+    workers.stop_capture()
+    dump_timeline(log)
     phases.summary()
     log.info(f"All done after {time.time() - time_start:.1f}s")

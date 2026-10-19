@@ -11,6 +11,7 @@ from pfb_imaging.utils.memprof import (
     MEMRAY_DIR_ENV,
     MEMRAY_NATIVE_ENV,
     TIMELINE_ENV,
+    ActorCapture,
     PhaseClock,
     cprofile_task,
     dump_timeline,
@@ -186,3 +187,62 @@ def test_dump_timeline_warns_instead_of_failing_the_run(tmp_path, monkeypatch):
     monkeypatch.setenv(TIMELINE_ENV, str(blocker / "timeline.json"))  # parent is a file
     with pytest.warns(UserWarning, match="Could not write the Ray task timeline"):
         dump_timeline()
+
+
+def test_actor_capture_profiles_calls_only_and_writes_on_stop(tmp_path, monkeypatch):
+    """One capture per actor, covering the call blocks and not the idle time between them."""
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    cap = ActorCapture("actor")
+    for _ in range(2):
+        with cap.call():
+            _spin(0.02)
+    _spin(0.02)  # between calls: must not be charged
+    assert not any(tmp_path.iterdir())  # nothing until stop
+    cap.stop()
+    cap.stop()  # idempotent
+    (f,) = tmp_path.glob("actor-*.pstats")
+    st = pstats.Stats(str(f))
+    (stat,) = [v for k, v in st.stats.items() if k[2] == "_spin"]
+    _, ncalls, _, cumtime, _ = stat
+    assert ncalls == 2
+    assert 0.04 <= cumtime < 0.06
+
+
+def test_actor_capture_memray_spans_construction_to_stop(tmp_path, monkeypatch):
+    memray = pytest.importorskip("memray")
+    monkeypatch.delenv(CPROFILE_DIR_ENV, raising=False)
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(MEMRAY_NATIVE_ENV, "0")
+    cap = ActorCapture("actor")
+    a = np.ones(2**20)  # 8 MiB, outside any call block
+    del a
+    cap.stop()
+    (f,) = tmp_path.glob("actor-*.bin")
+    assert memray.FileReader(str(f)).metadata.peak_memory >= 8 * 2**20
+
+
+def test_actor_capture_disabled_ignores_the_environment(tmp_path, monkeypatch):
+    """The in-process worker shares the driver's process and so its profiler."""
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    cap = ActorCapture("actor", enabled=False)
+    with cap.call():
+        _spin(0.01)
+    cap.stop()
+    assert not any(tmp_path.iterdir())
+
+
+def test_band_worker_capture_covers_its_role_methods(tmp_path, monkeypatch):
+    """A band worker's role methods land in its capture under their own names."""
+    from pfb_imaging.operators.band_worker import _BandWorkerImpl
+
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    worker = _BandWorkerImpl(1, capture=True)
+    worker.init_psi(16, 16, ("self", "db1"), 1)
+    worker.psi_dot(np.ones((16, 16)))
+    worker.stop_capture()
+    (f,) = tmp_path.glob("band_worker-*.pstats")
+    names = {k[2] for k in pstats.Stats(str(f)).stats}
+    assert {"init_psi", "psi_dot"} <= names

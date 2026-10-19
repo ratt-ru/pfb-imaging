@@ -268,6 +268,62 @@ class CallClock:
         return out
 
 
+class ActorCapture:
+    """Opt-in cProfile and memray captures over a long-lived Ray actor's life.
+
+    The actor counterpart of ``profile_task``: one capture per actor rather
+    than one per call, because an actor serves thousands of calls. memray
+    tracks the whole process from construction until ``stop`` (when
+    ``PFB_MEMRAY_DIR`` is set); cProfile is enabled only inside ``call`` blocks
+    (when ``PFB_CPROFILE_DIR`` is set), so the actor's idle time between calls
+    is not profiled and, on Python 3.11, the thread that runs each call is the
+    one profiled. Files are named as ``profile_task``'s are, so
+    ``scripts/profile_report.py`` and ``scripts/memray_report.py`` read them
+    unchanged.
+
+    ``stop`` must run before the actor's process ends: memray writes its
+    capture on close and cProfile its stats on dump, and a killed process does
+    neither.
+
+    Args:
+        name: capture-file prefix; must not contain ``-``.
+        enabled: False makes every method a no-op whatever the environment --
+            for an in-process worker, which shares the driver's process and
+            so whatever profiler the driver itself runs under.
+    """
+
+    def __init__(self, name: str, enabled: bool = True):
+        self.name = name
+        self._stack = contextlib.ExitStack()
+        self._prof = None
+        if not enabled:
+            return
+        self._stack.enter_context(memray_task(name))
+        self._dir = os.environ.get(CPROFILE_DIR_ENV)
+        if self._dir:
+            self._prof = cProfile.Profile()
+
+    @contextlib.contextmanager
+    def call(self):
+        """cProfile the block, accumulating into this actor's single capture."""
+        if self._prof is None:
+            yield
+            return
+        self._prof.enable()
+        try:
+            yield
+        finally:
+            self._prof.disable()
+
+    def stop(self) -> None:
+        """Write the captures; later calls do nothing."""
+        if self._prof is not None:
+            os.makedirs(self._dir, exist_ok=True)
+            self._prof.dump_stats(os.path.join(self._dir, f"{_capture_stem(self.name)}.pstats"))
+            self._prof = None
+        self._stack.close()
+
+
 class SectionClock:
     """Accumulated wall time per named section of an iterative loop.
 
