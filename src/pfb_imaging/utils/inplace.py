@@ -10,6 +10,7 @@ out over numba's thread pool. All arrays must be C-contiguous and of equal
 size; sources may be read-only (Ray results are).
 """
 
+import numpy as np
 from numba import njit, prange
 
 _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
@@ -49,3 +50,18 @@ def axpby(dst, a, x, b, y):
     yf = y.ravel()
     for i in prange(d.size):
         d[i] = a * xf[i] + b * yf[i]
+
+
+@njit(**_FAST_JIT)
+def rel_diff(x, y, z, b):
+    """``||x - (y + b * z)|| / ||x||`` without forming ``y + b * z``."""
+    xf = x.ravel()
+    yf = y.ravel()
+    zf = z.ravel()
+    num = 0.0
+    den = 0.0
+    for i in prange(xf.size):
+        d = xf[i] - yf[i] - b * zf[i]
+        num += d * d
+        den += xf[i] * xf[i]
+    return np.sqrt(num / max(den, 1e-30))

@@ -130,7 +130,9 @@ class _BandWorkerImpl:
             # kept for lazy re-reads (partition_debug loads VIS on demand)
             self._store_url = store_url
             self._node_name = node_name
-            band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
+            # cache=False: the tree would otherwise hold its own copy of every
+            # variable read here (the complex PSFHATs among them) until gc
+            band = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)[node_name]
             self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
             # beam-attenuated dirty: the model-free term of the exact gradient (D23)
             self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
@@ -633,16 +635,22 @@ class BandWorkerPool:
 
     # --- exact residual role ---
 
-    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
+    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True, out=None):
         """Exact per-band ``(residual, bresidual)`` for a ``(nband, corr, nx, ny)`` model cube.
 
         ``residual`` is the apparent (once-attenuated) image; ``bresidual`` the
-        beam-attenuated gradient the forward solver consumes (D23).
+        beam-attenuated gradient the forward solver consumes (D23). Pass
+        ``out=(residual, bresidual)`` to fill the caller's cubes rather than
+        allocate two.
         """
         args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
-        out = self._map("residual", args)
-        res = np.stack([r for r, _ in out], axis=0)
-        bres = np.stack([g for _, g in out], axis=0)
+        results = self._map("residual", args)
+        if out is None:
+            out = tuple(np.empty((self.nband, *results[0][0].shape)) for _ in range(2))
+        res, bres = out
+        for b, (r, g) in enumerate(results):
+            inplace.copy(res[b], r)
+            inplace.copy(bres[b], g)
         return res, bres
 
     def partition_debug(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):

@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from copy import deepcopy
 
 import numpy as np
 import psutil
@@ -15,6 +14,7 @@ from pfb_imaging.deconv.presets import PRESETS
 from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import ETA_MODES
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, profile_env
@@ -195,7 +195,10 @@ def deconv(
     fits_oname = f"{fits_output_folder}/{oname}"
     dt_name = f"{basename}.dt"
 
-    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    # cache=False: xarray would otherwise keep every variable read below
+    # (RESIDUAL/BRESIDUAL/MODEL/UPDATE) alive in the tree, a second copy of
+    # four cubes for the whole run
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None, cache=False)
     image_names = sorted(n for n in dt.children if n.startswith("band"))
     if not image_names:
         log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
@@ -273,8 +276,10 @@ def deconv(
     # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
     # They never enter the driver or the Ray object store
     # image rasters are (Y, X)-ordered end to end (wiki D19)
-    residual_raw = np.zeros((nband, ny, nx))
-    bresidual_raw = np.zeros((nband, ny, nx))  # beam-attenuated gradient (D23)
+    # the data gradients, divided by the total wsum once it is known; the raw
+    # (stored) versions are recovered per band on write, never held as cubes
+    residual = np.zeros((nband, ny, nx))
+    bresidual = np.zeros((nband, ny, nx))  # beam-attenuated gradient (D23)
     model = np.zeros((nband, ny, nx))
     update = np.zeros((nband, ny, nx))
     wsums = np.zeros(nband)
@@ -283,16 +288,16 @@ def deconv(
     for b, n in enumerate(nodes):
         bds = dt[n].ds
         band_attrs.append(dict(bds.attrs))
-        residual_raw[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
+        residual[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
         if "MODEL" in bds:
             model[b] = bds.MODEL.values[0]
         if "UPDATE" in bds:
             update[b] = bds.UPDATE.values[0]
         if "BRESIDUAL" in bds:
-            bresidual_raw[b] = bds.BRESIDUAL.values[0]
+            bresidual[b] = bds.BRESIDUAL.values[0]
         elif not model[b].any():
             # fresh tree: with a zero model the gradient is its model-free term
-            bresidual_raw[b] = bds.BDIRTY.values[0]
+            bresidual[b] = bds.BDIRTY.values[0]
         else:
             log.error_and_raise(
                 f"{n} has a MODEL but no BRESIDUAL; resuming needs a .dt written by "
@@ -311,9 +316,8 @@ def deconv(
         time_bounds = np.array([[tb[:, 0].min(), tb[:, 1].max()]])
     else:
         freq_bounds = time_bounds = None
-    residual = residual_raw / wsum
-    bresidual = bresidual_raw / wsum
-    residual_mfs = np.sum(residual, axis=0)
+    inplace.scale(residual, 1.0 / wsum)
+    inplace.scale(bresidual, 1.0 / wsum)
     fsel = wsums > 0
     model_mfs = np.mean(model[fsel], axis=0)
     if nbasisf is None:
@@ -349,6 +353,10 @@ def deconv(
     solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+    # the solver keeps its own model and update; drop the driver's copies so
+    # neither is held twice
+    model = getattr(solver, "model", model)
+    update = getattr(solver, "update", update)
     phases.lap("build solver", mem=True)
     # band-worker time against Ray round trips, and per-worker post-gc memory
     # (docs/wiki/memory-and-ray.md); each call reports since the previous one
@@ -390,29 +398,35 @@ def deconv(
             f"{stats['lam_min']:.3e} to {stats['lam_max']:.3e}"
         )
 
+    def gradient():
+        """The MFS residual for the statistics and the forward solve's rhs.
+
+        ``residual``/``bresidual`` stay the pure data gradients (what is
+        stored and what the mop solves against); --eta-in-grad corrects copies.
+        """
+        if not eta_in_grad:
+            return np.sum(residual, axis=0), bresidual
+        res_g, rhs = _grad_with_prior(residual, bresidual, model, solver.hess)
+        return np.sum(res_g, axis=0), rhs
+
     # the initial gradient came from the tree (or is BDIRTY on a fresh one),
     # so it is the data term; correct it before the first forward solve
     if eta_in_grad:
         log.info("Including the eta term in the gradient (--eta-in-grad)")
-        residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
-        residual_mfs = np.sum(residual, axis=0)
+    residual_mfs, rhs = gradient()
 
     if rms_outside_model and model.any():
         rms = np.std(residual_mfs[model_mfs == 0])
     else:
         rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
+    # MODEL_BEST is written when a cycle improves on best_rms, so the best
+    # model never needs to be held in memory
     if "best_rms" in first.attrs:
         best_rms = first.attrs["best_rms"]
         best_rmax = first.attrs["best_rmax"]
-        best_model = np.zeros((nband, ny, nx))
-        for b, n in enumerate(nodes):
-            bds = dt[n].ds
-            if "MODEL_BEST" in bds:
-                best_model[b] = bds.MODEL_BEST.values[0]
     else:
         best_rms, best_rmax = rms, rmax
-        best_model = model.copy()
     diverge_count_curr = 0
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
@@ -442,13 +456,15 @@ def deconv(
         # the forward solve consumes the beam-attenuated gradient (D23):
         # H = B GtWG B, so its rhs is B*r, exactly legacy sara's
         # `residual *= beam`. Stats/FITS/lambda stay on the apparent residual.
-        solver.first(bresidual)
-        update = solver.forward(bresidual)
+        solver.first(rhs)
+        update = solver.forward(rhs)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
         phases.lap("forward")
 
-        modelp = deepcopy(model)
+        # a PFBSolver reports the relative model change itself; any other
+        # DeconvSolver costs a model copy
+        modelp = None if hasattr(solver, "model_change") else model.copy()
         lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
         log.info(f"Solving for model with lambda = {lam:.3e}")
         model = solver.backward(lam)
@@ -512,20 +528,18 @@ def deconv(
         phases.lap("model fit")
 
         log.info("Computing residual")
-        residual_raw, bresidual_raw = workers.residual(
+        workers.residual(
             model[:, None],
             cell_rad,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            out=(residual[:, None], bresidual[:, None]),
         )
-        residual_raw = residual_raw[:, 0]
-        bresidual_raw = bresidual_raw[:, 0]
-        residual = residual_raw / wsum
-        bresidual = bresidual_raw / wsum
-        if eta_in_grad:
-            residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
-        residual_mfs = np.sum(residual, axis=0)
+        inplace.scale(residual, 1.0 / wsum)
+        inplace.scale(bresidual, 1.0 / wsum)
+        rhs = None  # an --eta-in-grad rhs is a cube of its own
+        residual_mfs, rhs = gradient()
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 
         if debug:
@@ -542,25 +556,29 @@ def deconv(
         else:
             rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
-        eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
+        if modelp is None:
+            eps = solver.model_change
+        else:
+            eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
+            del modelp
 
-        if rms < best_rms:
+        is_best = rms < best_rms
+        if is_best:
             best_rms, best_rmax = rms, rmax
-            best_model = model.copy()
 
         hess_norm = getattr(solver, "hess_norm", hess_norm)
 
         # write back into the band nodes (native DataTree API)
-        is_best = (model == best_model).all()
         for b, n in enumerate(nodes):
             data_vars = {
                 "MODEL": (("corr", "y", "x"), model[b][None]),
                 "UPDATE": (("corr", "y", "x"), update[b][None]),
-                "RESIDUAL": (("corr", "y", "x"), residual_raw[b][None]),
-                "BRESIDUAL": (("corr", "y", "x"), bresidual_raw[b][None]),
+                # stored raw (the imager's convention); one band at a time
+                "RESIDUAL": (("corr", "y", "x"), (residual[b] * wsum)[None]),
+                "BRESIDUAL": (("corr", "y", "x"), (bresidual[b] * wsum)[None]),
             }
             if is_best:
-                data_vars["MODEL_BEST"] = (("corr", "y", "x"), best_model[b][None])
+                data_vars["MODEL_BEST"] = (("corr", "y", "x"), model[b][None])
             # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
             # variables, which merge), so start from the band's original
             # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the
@@ -620,23 +638,26 @@ def deconv(
         # It also keeps MODEL_MOPPED meaning the same thing with and without
         # --eta-in-grad, which is what makes the two comparable.
         log.info("Mopping: solving for the final update against the converged model")
-        bresidual_data = bresidual_raw / wsum
-        solver.first(bresidual_data)
-        update_mop = solver.forward(bresidual_data)
-        model_mopped = model + update_mop
+        # bresidual is the pure data gradient (the eta correction only ever
+        # went into rhs); the mopped model is formed in the update's own cube
+        solver.first(bresidual)
+        model_mopped = solver.forward(bresidual)
+        inplace.add(model_mopped, model)
         model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
         save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
 
         log.info("Mopping: computing the residual against the mopped model")
+        # into the residual cubes: nothing reads the deconvolved ones again
         residual_mopped_raw, _ = workers.residual(
             model_mopped[:, None],
             cell_rad,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
+            out=(residual[:, None], bresidual[:, None]),
         )
         residual_mopped_raw = residual_mopped_raw[:, 0]
-        residual_mopped_mfs = np.sum(residual_mopped_raw / wsum, axis=0)
+        residual_mopped_mfs = np.sum(residual_mopped_raw, axis=0) / wsum
         save_fits(residual_mopped_mfs, fits_oname + f"_{suffix}_residual_mopped.fits", hdr_mfs, yx_order=True)
         log.info(
             f"Mopped peak residual = {np.abs(residual_mopped_mfs).max():.3e} "

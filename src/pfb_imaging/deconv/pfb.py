@@ -125,6 +125,8 @@ class PFBSolver:
         self._model = model.copy()
         self._update = update.copy()
         self._residual = None  # set by first()
+        self._xtilde = None  # model + gamma * update, formed by the backward step
+        self.model_change = None  # relative model change of the last backward step
         self._gamma = gamma
         self._l1_reweight_from = l1_reweight_from
         self._iter = 0
@@ -173,17 +175,23 @@ class PFBSolver:
         """
         if self._residual is None:
             raise RuntimeError("residual not set; call first() before forward()")
+        # the previous cycle's gradient holds three cubes (xtilde, the gap and
+        # its image under hess); release them before CG allocates its own
+        self.backward_alg.set_grad(None)
+        self._xtilde = None
         x0 = self._update if self._update.any() else None
         self._update = self.forward_alg.solve(self.hess, self._residual, x0=x0)
-        xtilde = self._model + self._gamma * self._update
-        diff = np.empty_like(xtilde)
-        hdot = reusing_dot(self.hess, xtilde)
+        diff = None
+        hdot = reusing_dot(self.hess, self._update)
         gscale = -1.0 / self._gamma
 
         def grad(x):
             # -hess(xtilde - x) / gamma; the returned cube is reused by the
             # next call, so callers consume it before calling again
-            inplace.axpby(diff, 1.0, xtilde, -1.0, x)
+            nonlocal diff
+            if diff is None:
+                diff = np.empty_like(x)
+            inplace.axpby(diff, 1.0, self._form_xtilde(), -1.0, x)
             g = hdot(diff)
             inplace.scale(g, gscale)
             return g
@@ -191,13 +199,41 @@ class PFBSolver:
         self.backward_alg.set_grad(grad)
         return self._update
 
+    def _form_xtilde(self):
+        """``model + gamma * update`` at the start of the backward step.
+
+        Formed on first use, not in ``forward``, so a forward solve that no
+        backward step follows (the mop) never allocates it.
+        """
+        if self._xtilde is None:
+            self._xtilde = np.empty_like(self._model)
+            inplace.axpby(self._xtilde, 1.0, self._model, self._gamma, self._update)
+        return self._xtilde
+
     def backward(self, lam: float) -> np.ndarray:
-        """Backward (proximal) solve; returns the updated model."""
+        """Backward (proximal) solve; returns the updated model.
+
+        Also sets ``model_change``, ``||model_new - model_old|| / ||model_new||``,
+        from ``model_old = xtilde - gamma * update`` so that the driver needs no
+        copy of the model to measure it.
+        """
         if self._reweight_cb is not None:
             self._reweight_cb.reset()
+        xtilde = self._form_xtilde()
         self._model = self.backward_alg.solve(self._model, lam)
+        self.model_change = inplace.rel_diff(self._model, xtilde, self._update, -self._gamma)
         self._iter += 1
         return self._model
+
+    @property
+    def model(self) -> np.ndarray:
+        """The solver's model cube (updated in place by ``backward``)."""
+        return self._model
+
+    @property
+    def update(self) -> np.ndarray:
+        """The latest forward-step update cube."""
+        return self._update
 
     def last(self) -> None:
         """Arm/refresh l1 reweighting once the threshold is reached."""
