@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-19T16:00:00Z
-last_verified_commit: 8a048d9
+timestamp: 2026-10-19T21:00:00Z
+last_verified_commit: 4ba2821
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -43,7 +43,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   deleted in #336 after a grep showed zero callers.
 - **Still live:** `opt/primal_dual.py::primal_dual_numba` remains a frozen oracle and is **not to
   be modified**; pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`.
-  `pcg_numba` is not an oracle — `operators/hessian.py` imports it as the live `pcg`.
+  `pcg_numba` is not an oracle — it is the live CG in the band workers and `PCG`'s generic
+  path (the driver's band-coupled solve uses `cg_inplace`, D58).
 - **Source:** issues #277, #336.
 
 ### D3 — `nu = nbasis` for the SARA dictionary
@@ -851,7 +852,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **At production size the binding cost is transfer and driver memory, not arithmetic.** A
     150-iteration cube-level solve moves **1.12 TB** through the object store (the worker's read
     is zero-copy; the return path is not) and `pcg_numba` holds 7 cubes = **26.7 GB** at
-    8 × 8000², against 3.3 GB per worker band-parallel.
+    8 × 8000², against 3.3 GB per worker band-parallel. (The coupled solve now runs
+    `cg_inplace`: four cubes, D58.)
   - `λmax(D^½C⁻¹ₙD^½) = λmax(D)` **exactly**, so the prior's contribution to `M`'s spectrum has
     the same ceiling as the `η·I` it replaces. This **bounds** `λmax(M)`, it does not fix it:
     `C⁻¹ ⪯ I` gives `M_gp ⪯ M`, so `λmax` can only fall, and it does — `M`'s top mode is
@@ -1785,11 +1787,76 @@ update it (and this page's `last_verified_commit`) in the same session.
   object store as the call returns. Only the first `ny` rows of the padded raster can be
   nonzero, so the real FFT runs per axis: the forward `r2c` covers those rows, a `c2c` handles
   the columns, and the inverse `c2r` produces only those rows. That spares ~30% of each
-  row-transform stage. The real buffers' padding is zeroed once and never refilled, and the
+  row-transform stage. The inverse transform writes back into the padded input raster (one
+  real buffer, D58), so `_pad_product` rewrites its zero padding every call, and the
   beam, PSF and accumulate passes are fused parallel kernels. Pinned against the full-raster
   numpy convolution by `test_tree_dot_matches_the_full_raster_numpy_form`. Measured: one band
   at com08's size (8748², PSF grid 12250², three partitions, complex `PSFHAT`, 8 threads) went
   3.50 → 2.09 s. Per call at 7 bands × 2048² it went 207 → 119 ms on 2.1 → 3.3 cores.
+
+### D57 — `PrimalDual`'s step uses `nu` as `‖Ψ‖²`, and what limits its convergence
+
+- **Context:** `nu` is the squared frame bound `‖ΨΨᵀ‖`, measured at exactly 4.0 for
+  `self,db1,db2,db3` (any `nlevel`), and documented as such since D3. `PrimalDual.setup` set
+  `tau = 0.98/(hessnorm/(2γ) + sigma·nu²)`, squaring it again, so at the default σ the primal
+  step was 2.5× smaller than the Condat–Vũ bound `τ(L_f/2 + σ‖Ψ‖²) < 1`
+  (`L_f = hessnorm/γ`) allows. com08 runs stalled at `eps ~ 6e-4` after 100 iterations.
+- **Decision:** `tau = 0.98/(hessnorm/(2γ) + sigma·nu)`. The frozen `primal_dual_numba` keeps
+  `nu²`; its equivalence test runs at `nu = 1`, where the two agree.
+  `test_steps_use_nu_as_the_squared_frame_bound` pins the bound and that the solution matches
+  the old step's.
+- **Measured** on the local repro's backward subproblem (7 bands × 2048², same start, scored
+  by the objective, not `eps`): F after 50 iterations 4.436 → 4.273; the old step needs ~120
+  iterations to get there. At the bound σ also matters: σ/10 and σ/100 reach in 100 iterations
+  what the old steps need 400 for; σ/1000 is slower again (the dual cannot follow).
+- **`eps` cannot compare step sizes.** It is the relative change per iteration, so a smaller τ
+  makes it smaller at the same distance from the solution. Compare objectives.
+- **What bounds the rate is `M`'s conditioning, and it lives in Fourier space.** On com08
+  (band 0) the data part of `M`'s diagonal is ≤ 0.008 (PSF peak × B²) under η = 2e-2, so the
+  diagonal is nearly flat, while `‖M‖ = 3.46` comes from `|PSFHAT|` peaking ~110× above its
+  mean (short spacings). The GP prior floors `M` at η/`gp_cap` = 2e-3: κ ≈ 1700. Ruled out:
+  a per-pixel (diagonal) primal step, which has nothing to equalise, and the strongly convex
+  accelerated variant, whose momentum schedule only engages after ~1/(μτ) ≈ 2000
+  iterations at these numbers. A Fourier-diagonal step would match the spectrum but does not
+  compose with the positivity prox.
+
+### D58 — Where `pfb deconv`'s memory lives, and what grows with the band count
+
+- **Context:** at 8 bands × 8748² (com08) the driver peaked at 141–150 GB, ~29 cubes of 4.9 GB,
+  and each band worker held ~24 GB. More imaging bands multiply both: the driver's cubes and
+  the per-band image-scale state in the workers. The vis-scale inputs only redistribute.
+- **Decision — the driver holds each cube once, and only while it is live:**
+  - the `.dt` is opened with `cache=False` (xarray otherwise keeps every variable read alive in
+    the tree, four cubes for the run);
+  - the gradients are kept wsum-normalised and filled in place from the workers; raw values are
+    recovered per band on write. The apparent residual lives from its computation to the write
+    (it is only summed and stored), and both are freed while the backward step runs;
+  - `PFBSolver` installs the gradient (`xtilde`, the gap, its image under `hess`) for the
+    length of one solve, reports `model_change` from `xtilde − γ·update` so the driver needs
+    no model copy for eps, and drops the forward step's rhs once consumed;
+  - `PrimalDual` holds no copy of the iterate: `x` is the previous iterate at the top of
+    each iteration, and the primal step parks it in `xout` for the convergence test;
+  - l1 reweighting reads only `Σ_b Ψᵀx_b = Ψᵀ(Σ_b x_b)` (`PsiNocopytRay.dot_sum`), so the
+    `(nband, nbasis, …)` `L21._outvar` cube is gone;
+  - the band-coupled CG is `opt.pcg.cg_inplace`: `pcg_numba`'s iterates in `x`, `r`, `p` plus the
+    operator's output, using `‖x − xp‖ = |α|‖p‖`;
+  - `MODEL_BEST` is written when a cycle improves on `best_rms`, never held.
+- **Decision — a band worker holds only what its hot loops touch:** the l21 dual in two
+  coefficient buffers (`ṽ` lives in the analysis buffer between `dual_begin` and
+  `dual_finish`); one padded raster in `HessianTree.dot` (the inverse FFT writes back into
+  it); one output image shared by the Hessian and Psi roles; synthesis in place
+  (`hdot_inplace`, no coefficient-sized working copy); `DIRTY`/`BDIRTY` read from the store
+  once per residual instead of pinned.
+- **Consequences:** the local repro (7 × 2048², `hess_norm` pinned) peaks at 5.2 GB in the driver
+  against 9.2 GB, and its outputs agree with the old code to 1e-10 at the old τ. On com08,
+  with the first half of these changes (through `f4dd8bc`), the driver peaked at 55 GB in the
+  backward step against 103 GB, and the workers held 20.5–22 GB against 22.8–24.6 GB. What a
+  band worker holds per band at 8748² × 4 bases now: the dual and analysis buffers 4.9 GB,
+  BEAM 1.8 GB and |PSFHAT| 1.8 GB over three partitions, Hessian scratch 2.1 GB, two images
+  1.2 GB, plus that band's share of the vis-scale inputs (WEIGHT/MASK/UVW, 7.9 GB here). The
+  driver's floor is four cubes (model, update and the two gradients, one of them freed
+  outside its window) plus ~9 GB of band-summed dictionary state, which does not grow with
+  the band count.
 
 ## Known debt
 
@@ -1808,7 +1875,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch
   allocates a fresh `out` and leaves `x0` untouched; the coupled branch hands `x0` to
-  `pcg_numba`, which mutates it in place, so the returned array *is* `x0`. The one caller
+  `cg_inplace`, which mutates it in place, so the returned array *is* `x0`. The one caller
   (`PFBSolver.forward`) is correct either way but only by accident; a second caller that kept
   its `x0` would get branch-dependent behaviour with no error. Both docstrings warn — mitigation,
   not a fix. **Follow-up:** make the coupled branch copy (matching `_BandWorkerImpl.cg`) and drop

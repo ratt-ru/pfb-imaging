@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-10-19T14:30:00Z
-last_verified_commit: 4d5ebb6
+timestamp: 2026-10-19T21:00:00Z
+last_verified_commit: 4ba2821
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -80,9 +80,11 @@ issue #287 (D22).
 here), and Ψ is the concatenation of `nbasis` orthonormal bases (`self` + Daubechies,
 `bases` option). Because each basis is orthonormal, `Ψ Ψᵀ = nbasis · I`, so:
 
-- **`nu = nbasis` — not 1.0.** The primal-dual step sizes are
-  `sigma = hessnorm/(2γ)/nu` and `tau = 0.98/(hessnorm/(2γ) + sigma·nu²)`
-  (`opt/primal_dual.py`; the 0.98 holds for `PrimalDual` and `primal_dual_numba`). With the tight-frame default
+- **`nu = nbasis` — not 1.0.** `nu` is the squared frame bound `‖ΨΨᵀ‖ = ‖Ψ‖²`
+  (measured 4.0 for `self,db1,db2,db3`). `PrimalDual`'s step sizes are
+  `sigma = hessnorm/(2γ)/nu` and `tau = 0.98/(hessnorm/(2γ) + sigma·nu)`, the Condat–Vũ
+  bound `τ(L_f/2 + σ‖Ψ‖²) < 1` with `L_f = hessnorm/γ`. The frozen `primal_dual_numba`
+  still uses `sigma·nu²`, a τ 2.5× smaller at four bases (D57). With the tight-frame default
   `nu=1.0` the dual step is
   ~nbasis× too large and the backward solve **diverges on multi-band data** (single-band
   can survive on stability margin, which is why tests missed it). `deconv/presets.py`
@@ -135,7 +137,9 @@ internal warm-started state and `reset()`.
   and analyses the band-summed image (while the workers analyse their own bands),
   turns that into the band-independent shrink factor `min(1, λw/|Σ_b ṽ_b|)`
   (`prox_21m.l21_dual_scale`), and broadcasts it once; each worker shrinks, extrapolates
-  and synthesises its own band. Same iterates as the driver-held path to rounding
+  and synthesises its own band, holding `ṽ_b` in its analysis buffer between the two
+calls, so the dual costs one coefficient buffer per band on top of that one. Same
+iterates as the driver-held path to rounding
   (`tests/test_primal_dual.py::test_worker_held_dual_matches_the_driver_held_dual`); the
   `(nband, nbasis, nymax, nxmax)` dual cubes never exist on the driver or in the object
   store.
@@ -152,7 +156,11 @@ internal warm-started state and `reset()`.
 — calls `init_reweighting(update)` (per-basis `rms_comps = std` of the nonzero
 coefficients of the CG update; empty bases fall back to 1.0) then `update_weights(model)`
 (`l1reweight_func`). This re-estimates `rms_comps` **every major iteration**, matching
-legacy sara. Inside the backward solve, `ReweightOnConverge` (`deconv/pfb.py`) fires on
+legacy sara. Both read only the band sum of the coefficients, `Σ_b Ψᵀx_b = Ψᵀ(Σ_b x_b)`,
+so `L21` asks `psi.dot_sum` for one analysis of the band-summed image
+(`PsiNocopytRay` does it with the driver's own dictionary) and never allocates the
+`(nband, nbasis, ...)` coefficient cube; a `psi` without `dot_sum` gets the per-band
+analysis summed. Inside the backward solve, `ReweightOnConverge` (`deconv/pfb.py`) fires on
 inner convergence: reweight and continue, up to `maxreweight` consecutive times.
 
 **Semantics trap:** `PFBSolver.reweight_active` means "the driver should STOP at
@@ -197,15 +205,16 @@ memory discipline: see `memory-and-ray.md`.
 `opt.primal_dual.primal_dual_numba` is the unit-level validation oracle for the new
 framework (pinned by `tests/test_primal_dual.py::test_l21_matches_primal_dual_numba`) —
 **do not modify its behaviour**. (`fista` and the bare `primal_dual` were deleted as
-uncalled; `opt.pcg.pcg_numba` is not an oracle, it is the live `pcg` in
-`operators/hessian.py`.) (The e2e oracles `core/sara.py`/`core/kclean.py` were retired with the
+uncalled; `opt.pcg.pcg_numba` is not an oracle, it is the live CG in the band workers and
+`PCG`'s generic path; the driver's band-coupled solve runs `opt.pcg.cg_inplace`, the same
+iterates in three cubes, D58.) (The e2e oracles `core/sara.py`/`core/kclean.py` were retired with the
 legacy pipeline in 0.1.0 (#277, D2); e2e correctness is now pinned by the ground-truth
 tests against an injected sky in `tests/test_imager*.py`/`tests/test_deconv.py`.)
 Traps when reading them:
 
 - Argument naming in `primal_dual_numba` is inverted: `psih` is SYNTHESIS and `psi` is
   ANALYSIS (both in-place, two-arg). Check the call sites, not the names.
-- `pcg_numba` binds `x = x0` and updates it **in place** — callers see their `x0`
-  mutated (the Ray band worker copies before calling for exactly this reason).
+- `pcg_numba` (and `cg_inplace`) bind `x = x0` and update it **in place** — callers see
+  their `x0` mutated (the Ray band worker copies before calling for exactly this reason).
 - `primal_dual_numba` contains `pdb.set_trace()` breakpoints on its zero-model and
   NaN-eps paths — it will hang unattended runs if those trigger.
