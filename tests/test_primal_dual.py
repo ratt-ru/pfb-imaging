@@ -217,7 +217,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
             x = pd.solve(x, 0.05)
         out[name] = x
     assert np.any(out["driver"])
-    assert _rdiff(out["driver"], out["held"]) < 1e-10
+    assert _rdiff(out["driver"], out["held"]) < 1e-6  # float32 dual in the workers
 
 
 def test_worker_held_dual_resets(band_pool):

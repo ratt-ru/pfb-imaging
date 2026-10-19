@@ -273,7 +273,7 @@ class _BandWorkerImpl:
         ``dual_finish``, which saves a coefficient buffer per band
         (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases).
         """
-        self._v = np.zeros_like(self._alphao)
+        self._v = np.zeros_like(self._alphao, dtype=np.float32)
 
     @_timed
     def dual_begin(self, x, sigma, return_coeffs=False):
