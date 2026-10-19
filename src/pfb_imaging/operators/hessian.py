@@ -525,11 +525,18 @@ _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
 
 @njit(**_FAST_JIT)
 def _pad_product(xpad, x, beam):
-    """``xpad[:ny, :nx] = x * beam``; the rest of ``xpad`` is left as it is (zero)."""
+    """``xpad[:, :nx] = x * beam`` and ``xpad[:, nx:] = 0``.
+
+    The padding is rewritten every call because the inverse transform's
+    output lands in ``xpad`` too.
+    """
     ny, nx = x.shape
+    ncol = xpad.shape[1]
     for i in prange(ny):
         for j in range(nx):
             xpad[i, j] = x[i, j] * beam[i, j]
+        for j in range(nx, ncol):
+            xpad[i, j] = 0.0
 
 
 @njit(**_FAST_JIT)
@@ -624,12 +631,10 @@ class HessianTree(object):
             self.wsum = np.broadcast_to(np.asarray(wsum, dtype=float), (self.ncorr,)).copy()
         # preallocated FFT scratch, reused by every dot() (actor calls are
         # single-threaded). Only the first ny rows of the padded raster can be
-        # nonzero, so the real buffers hold just those rows: xpad's columns
-        # beyond nx are zeroed once here and never written again, and the
-        # inverse transform's output lands in ypad.
+        # nonzero, so the real buffer holds just those rows. The inverse
+        # transform writes back into it too (one (ny, nx_psf) raster per band
+        # instead of two), so _pad_product re-zeroes its padding every call.
         self.xpad = empty_noncritical((self.ny, self.nx_psf), dtype="f8")
-        self.xpad.fill(0.0)
-        self.ypad = empty_noncritical((self.ny, self.nx_psf), dtype="f8")
         self.xhat = empty_noncritical((self.ny_psf, self.nx_psf // 2 + 1), dtype="c16")
 
     def dot(self, x, out=None):
@@ -652,7 +657,7 @@ class HessianTree(object):
             _scaled(out, float(self.eta), xtmp)
         else:
             np.multiply(self.eta, xtmp, out=out)
-        xpad, ypad, xhat = self.xpad, self.ypad, self.xhat
+        xpad, xhat = self.xpad, self.xhat
         nt = self.nthreads
         for p in self.parts:
             beam = p["beam"]
@@ -669,13 +674,13 @@ class HessianTree(object):
                     xhat[:ny],
                     axes=(1,),
                     forward=False,
-                    out=ypad,
+                    out=xpad,
                     lastsize=self.nx_psf,
                     inorm=2,
                     nthreads=nt,
                     allow_overwriting_input=True,
                 )
-                _accumulate(out[c], beam[c], ypad, 1.0 / self.wsum[c])
+                _accumulate(out[c], beam[c], xpad, 1.0 / self.wsum[c])
         return out
 
     def hdot(self, x):
