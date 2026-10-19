@@ -461,6 +461,10 @@ def deconv(
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
         phases.lap("forward")
+        # the gradients are dead until the residual is recomputed after the
+        # backward step, and the solver has dropped its reference: free their
+        # cubes so the backward step's buffers take their place
+        residual = bresidual = rhs = None
 
         # a PFBSolver reports the relative model change itself; any other
         # DeconvSolver costs a model copy
@@ -528,17 +532,16 @@ def deconv(
         phases.lap("model fit")
 
         log.info("Computing residual")
-        workers.residual(
+        residual, bresidual = workers.residual(
             model[:, None],
             cell_rad,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            out=(residual[:, None], bresidual[:, None]),
         )
+        residual, bresidual = residual[:, 0], bresidual[:, 0]
         inplace.scale(residual, 1.0 / wsum)
         inplace.scale(bresidual, 1.0 / wsum)
-        rhs = None  # an --eta-in-grad rhs is a cube of its own
         residual_mfs, rhs = gradient()
         save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 

@@ -181,6 +181,9 @@ class PFBSolver:
         self._xtilde = None
         x0 = self._update if self._update.any() else None
         self._update = self.forward_alg.solve(self.hess, self._residual, x0=x0)
+        # consumed: dropping it lets the caller free the gradient's cube
+        # while the backward step runs (the next first() supplies a new one)
+        self._residual = None
         diff = None
         hdot = reusing_dot(self.hess, self._update)
         gscale = -1.0 / self._gamma

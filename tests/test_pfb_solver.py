@@ -552,5 +552,7 @@ def test_backward_reports_the_relative_model_change():
         want = np.linalg.norm(m_new - m_old) / np.linalg.norm(m_new)
         assert want > 0
         assert_allclose(solver.model_change, want, rtol=1e-10)
+    solver.first(b)
     solver.forward(b)
     assert solver.backward_alg._grad is not None and solver._xtilde is None
+    assert solver._residual is None  # consumed, so the caller can free it
