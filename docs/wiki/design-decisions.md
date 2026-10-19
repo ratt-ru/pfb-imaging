@@ -4,7 +4,7 @@ title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
 timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: 4ba2821
+last_verified_commit: dca9385
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1846,7 +1846,17 @@ update it (and this page's `last_verified_commit`) in the same session.
     `(nband, nbasis, …)` `L21._outvar` cube is gone;
   - the band-coupled CG is `opt.pcg.cg_inplace`: `pcg_numba`'s iterates in `x`, `r`, `p` plus the
     operator's output, using `‖x − xp‖ = |α|‖p‖`;
-  - `MODEL_BEST` is written when a cycle improves on `best_rms`, never held.
+  - `MODEL_BEST` is written when a cycle improves on `best_rms`, never held;
+  - `PFBSolver` owns the `model`/`update` it is given instead of copying them. **numba's type
+    inference keeps the caller frames of a jitclass compile alive for the life of the
+    process** (a list of typing errors holds their tracebacks), and jitclasses are never
+    cached, so the compile of the driver's band-summed dictionary -- reached from
+    `PFBSolver.__init__` through `setup → reset_dual → init_dual` -- pinned the frames of
+    `PFBSolver.__init__` and `make_sara`, and with them the caller's two cubes, while the
+    solver held copies. Counted from `/proc/self/smaps` mid-solve: 8 → 6 cube-sized mappings.
+    Any large array that is a local on the path to a first jitclass call is held for the run;
+    find such retention with `gc.get_referrers` on the frames, not with memray's
+    high-watermark stacks (which attributed these cubes plausibly but could not say why).
 - **Decision — a band worker holds only what its hot loops touch:** the l21 dual in two
   coefficient buffers (`ṽ` lives in the analysis buffer between `dual_begin` and
   `dual_finish`); one padded raster in `HessianTree.dot` (the inverse FFT writes back into
