@@ -100,6 +100,6 @@ class Regulariser(Protocol):
     """
 
     psi: Any  # PsiOperator; identity implementation for image-domain regularisers
-    nu: float  # spectral norm of psi
+    nu: float  # squared frame bound ||Psi Psi^T|| of psi
 
     def prox(self, v, vout, lam, sigma=1.0): ...

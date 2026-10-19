@@ -263,3 +263,37 @@ def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
         weights[name] = reg.l1weight
     assert not np.allclose(weights["sum"], 1.5)
     assert_allclose(weights["sum"], weights["cube"], rtol=1e-10)
+
+
+def test_steps_use_nu_as_the_squared_frame_bound():
+    """tau meets Condat-Vu with ||Psi||^2 = nu = nbasis, and the solve still converges.
+
+    Four orthonormal bases give ||Psi Psi^T|| = 4: the step is at the bound,
+    and the solution matches one reached with steps 2.5x smaller (the old nu**2).
+    """
+    from pfb_imaging.operators.psi import PsiNocopyt
+
+    nband, nx, bases = 2, 32, ("self", "db1", "db2", "db3")
+    rng = np.random.default_rng(21)
+    diag = rng.uniform(0.5, 2.0, size=(nband, nx, nx))
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, nx))
+
+    def grad(x):
+        return diag * diag * x - diag * dirty
+
+    hessnorm = float(np.max(diag * diag))
+    out = {}
+    for name in ("new", "old"):
+        psi = PsiNocopyt(nband, nx, nx, bases, 2, 1)
+        reg = L21(psi, bases, nu=len(bases))
+        reg.l1weight = np.ones_like(reg.l1weight)
+        pd = PrimalDual(tol=1e-10, maxit=3000, verbosity=0)
+        pd.setup(reg, hessnorm)
+        if name == "new":
+            assert_allclose(pd.tau * (hessnorm / (2 * pd.gamma) + pd.sigma * len(bases)), 0.98)
+        else:
+            pd.tau = 0.98 / (hessnorm / (2 * pd.gamma) + pd.sigma * len(bases) ** 2)
+        pd.set_grad(grad)
+        out[name] = pd.solve(np.zeros((nband, nx, nx)), 0.5)
+    assert np.any(out["new"])
+    assert _rdiff(out["old"], out["new"]) < 1e-5

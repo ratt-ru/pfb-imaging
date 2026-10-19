@@ -287,7 +287,11 @@ class PrimalDual:
         if sigma is None:
             sigma = hessnorm / (2.0 * self.gamma) / nu
         self.sigma = sigma
-        self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu**2)
+        # Condat-Vu: tau * (L_f/2 + sigma * ||Psi||^2) < 1 with L_f = hessnorm/gamma.
+        # nu is ||Psi Psi^T|| = ||Psi||^2 itself (nbasis for SARA); the legacy
+        # primal_dual_numba squares it again, a step nbasis/2.5 x too small at
+        # four bases for no gain in stability (wiki D57)
+        self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu)
         psi = prox.psi
         # a regulariser whose psi holds the dual per band (L21 over band
         # workers) runs the dual half of the iteration itself, and the

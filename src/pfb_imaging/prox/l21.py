@@ -20,7 +20,8 @@ class L21:
     Args:
         psi: Operator satisfying ``PsiOperator`` (e.g. ``Psi``/``PsiNocopytRay``).
         bases: Wavelet basis names, one per ``psi.nbasis`` (for logging).
-        nu: Spectral norm of ``psi`` (default 1.0; tight frame).
+        nu: Squared frame bound ``||Psi Psi^T||`` of ``psi`` (default 1.0;
+            ``nbasis`` for a concatenation of orthonormal bases).
         rmsfactor: Threshold factor in the reweighting formula.
         alpha: Exponent in the reweighting formula.
     """
