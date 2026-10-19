@@ -109,6 +109,19 @@ class _BandWorkerImpl:
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
     @_timed
+    def _image_out(self, ncorr, ny, nx):
+        """The one output image every role returns into.
+
+        Ray copies a returned array into the object store as the call returns
+        and the in-process path's callers copy it at once, and an actor runs
+        one call at a time, so the Hessian and Psi roles can share it: one
+        ``(ny, nx)`` raster per band worker instead of two.
+        """
+        size = ncorr * ny * nx
+        if getattr(self, "_img", None) is None or self._img.size < size:
+            self._img = np.empty(size)
+        return self._img[:size].reshape(ncorr, ny, nx)
+
     def load_band(self, store_url, node_name):
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
@@ -190,7 +203,7 @@ class _BandWorkerImpl:
         # one output image for every call: Ray copies a returned array into the
         # object store as the call returns, and pool.hess_dot / pcg_numba
         # consume it before the next call (D56)
-        self._hout = np.empty((self._hess.ncorr, ny, nx))
+        self._hout = self._image_out(self._hess.ncorr, ny, nx)
         self._hess.dot(np.zeros((ny, nx)), out=self._hout)  # warm up the FFT plans ((Y, X) rasters)
 
     @_timed
@@ -236,7 +249,7 @@ class _BandWorkerImpl:
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
-        self._xo = np.empty((ny, nx))
+        self._xo = self._image_out(1, ny, nx)[0]
         self._psib.dot(np.zeros((ny, nx)), self._alphao)
         self._psib.hdot(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
