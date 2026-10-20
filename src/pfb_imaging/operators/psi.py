@@ -775,7 +775,10 @@ class PsiNocopytRay:
     def _init_sum(self):
         """The driver's own dictionary, for the band-summed analysis."""
         if self._psib_sum is None:
-            self._psib_sum = psi_band_maker_nocopyt(self.ny, self.nx, self._bases, self._nlevel)
+            # analysis only: no synthesis scratch (one coefficient plane, ~0.6 GB at 8748^2)
+            self._psib_sum = psi_band_maker_nocopyt(
+                self.ny, self.nx, self._bases, self._nlevel, synthesis_scratch=False
+            )
             self._csum = np.empty((self.nbasis, self._psib_sum.nxmax, self._psib_sum.nymax))
             self._xsum = np.empty((self.ny, self.nx))
             self._psib_sum.dot(np.zeros((self.ny, self.nx)), self._csum)  # JIT warm-up
