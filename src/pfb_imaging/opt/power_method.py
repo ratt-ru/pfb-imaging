@@ -63,12 +63,11 @@ def power_method_numba(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, r
             log.info(f"At iteration {k} eps = {eps:.3e}")
     ttot = time() - tii
     if verbosity > 1:
-        print(f"power_method_numba timing breakdown (fraction of {ttot:.3f}s):")
-        print(f"  aop:      {taop / ttot:.3f}")
-        print(f"  norms:    {tnorm / ttot:.3f}")
-        print(f"  normalise:{tcopy / ttot:.3f}")
         ttally = taop + tnorm + tcopy
-        print(f"  accounted:{ttally / ttot:.3f}")
+        log.info(
+            f"power_method_numba timing breakdown (fraction of {ttot:.3f}s): aop {taop / ttot:.3f}, "
+            f"norms {tnorm / ttot:.3f}, normalise {tcopy / ttot:.3f}, accounted {ttally / ttot:.3f}"
+        )
 
     if k == maxit:
         if verbosity:
@@ -117,13 +116,12 @@ def power_method(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_
             log.info(f"At iteration {k} eps = {eps:.3e}")
     ttot = time() - tii
     if verbosity > 1:
-        print(f"power_method timing breakdown (fraction of {ttot:.3f}s):")
-        print(f"  aop:      {taop / ttot:.3f}")
-        print(f"  norm:     {tnorm / ttot:.3f}")
-        print(f"  vdot+div: {tvdot / ttot:.3f}")
-        print(f"  copyto:   {tcopy / ttot:.3f}")
         ttally = taop + tnorm + tvdot + tcopy
-        print(f"  accounted:{ttally / ttot:.3f}")
+        log.info(
+            f"power_method timing breakdown (fraction of {ttot:.3f}s): aop {taop / ttot:.3f}, "
+            f"norm {tnorm / ttot:.3f}, vdot+div {tvdot / ttot:.3f}, copyto {tcopy / ttot:.3f}, "
+            f"accounted {ttally / ttot:.3f}"
+        )
 
     if k == maxit:
         if verbosity:

@@ -227,7 +227,10 @@ class _BandWorkerImpl:
             # Ray deserialises task args as read-only zero-copy views;
             # pcg_numba updates x0 in place
             x0 = x0.copy()
-        return pcg_numba(
+        # the driver logs the outcome (log_cg_summary): this worker's log
+        # reaches the console but never the driver's log file
+        info = {}
+        x = pcg_numba(
             lambda z: self._hess.dot(z, out=self._hout)[0],
             rhs,
             x0=x0,
@@ -235,7 +238,9 @@ class _BandWorkerImpl:
             maxit=maxit,
             minit=minit,
             verbosity=verbosity,
+            info=info,
         )
+        return x, info
 
     # --- Psi (wavelet dictionary) role ---
 
@@ -617,11 +622,14 @@ class BandWorkerPool:
         return out
 
     def hess_cg(self, rhs, x0, tol, maxit, minit, verbosity):
+        """Band-parallel CG; returns the solution cube and one ``info`` dict per band."""
         out = np.zeros_like(rhs)
         args = [(rhs[b], None if x0 is None else x0[b], tol, maxit, minit, verbosity) for b in range(self.nband)]
-        for b, res in enumerate(self._map("cg", args)):
+        infos = []
+        for b, (res, info) in enumerate(self._map("cg", args)):
             out[b] = res
-        return out
+            infos.append(info)
+        return out, infos
 
     # --- Psi role ---
 

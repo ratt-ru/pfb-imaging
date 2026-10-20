@@ -71,3 +71,22 @@ def test_cg_inplace_matches_pcg_numba(warm):
     if warm:
         x0c = x0.copy()
         assert cg_inplace(aop, b, x0=x0c, **kw) is x0c  # updated in place
+
+
+@pytest.mark.parametrize("solver", ["cg_inplace", "pcg_numba"])
+@pytest.mark.parametrize("maxit, status", [(3, "maxit"), (500, "converged")])
+def test_cg_info_reports_how_the_solve_ended(solver, maxit, status, monkeypatch):
+    """A caller passing ``info`` gets the outcome back and the solver stays quiet."""
+    from pfb_imaging.opt import pcg
+
+    logged = []
+    monkeypatch.setattr(pcg.log, "info", lambda msg, *a, **k: logged.append(msg))
+    rng = np.random.default_rng(9)
+    d = rng.uniform(1.0, 2.0, size=(2, 8, 8))
+    b = rng.standard_normal((2, 8, 8))
+    info = {}
+    getattr(pcg, solver)(lambda x: d * x, b, tol=1e-6, maxit=maxit, minit=1, verbosity=1, info=info)
+    assert info["status"] == status
+    assert info["iters"] == 3 if status == "maxit" else 0 < info["iters"] < maxit
+    assert info["eps"] > 0.0 and info["time"] >= 0.0
+    assert logged == []

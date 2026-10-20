@@ -9,7 +9,7 @@ from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 from numba import njit, prange
 
 from pfb_imaging.operators.gauss import eta_freq_mul
-from pfb_imaging.opt.pcg import cg_inplace
+from pfb_imaging.opt.pcg import cg_inplace, log_cg_summary
 from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
@@ -890,17 +890,23 @@ class HessTreeRay:
         maxit = self.cg_maxit if maxit is None else maxit
         minit = self.cg_minit if minit is None else minit
         if self._dC is None:
-            return self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
-        buf = np.empty_like(rhs)
-        return cg_inplace(
-            lambda p: self.dot(p, out=buf),
-            rhs,
-            x0=x0,
-            tol=tol,
-            maxit=maxit,
-            minit=minit,
-            verbosity=self.cg_verbose,
-        )
+            out, infos = self._pool.hess_cg(rhs, x0, tol, maxit, minit, self.cg_verbose)
+        else:
+            buf = np.empty_like(rhs)
+            infos = [{}]
+            out = cg_inplace(
+                lambda p: self.dot(p, out=buf),
+                rhs,
+                x0=x0,
+                tol=tol,
+                maxit=maxit,
+                minit=minit,
+                verbosity=self.cg_verbose,
+                info=infos[0],
+            )
+        if self.cg_verbose:
+            log_cg_summary(infos, coupled=self._dC is not None)
+        return out
 
     def get_eta(self):
         """Tikhonov coefficient per band as an ``(nband, ny, nx)`` cube."""
