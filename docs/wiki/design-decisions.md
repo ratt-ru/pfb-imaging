@@ -4,7 +4,7 @@ title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
 timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: dca9385
+last_verified_commit: e12ca80
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1857,6 +1857,17 @@ update it (and this page's `last_verified_commit`) in the same session.
     Any large array that is a local on the path to a first jitclass call is held for the run;
     find such retention with `gc.get_referrers` on the frames, not with memray's
     high-watermark stacks (which attributed these cubes plausibly but could not say why).
+    `core.deconv` also calls `operators.psi.compile_band_dictionary()` before any cube
+    exists, so the driver's jitclass compile has nothing large to pin;
+  - after each cycle's band writes, and before the FITS rendering, the driver runs
+    `gc.collect()` (the written Datasets sit in reference cycles holding per-band
+    temporaries and views of the cubes) and, before FITS, drops the solver and every cube.
+    Two cubes stay reachable through a closure cell that no gc referrer, frame or thread
+    stack reaches; it is not the peak, and the hunt stopped there;
+  - `utils.fits.dt2fits` fills its cube one band at a time in the output dtype, accumulates
+    the MFS image alongside, and opens the tree with `cache=False`; `save_fits` requires C
+    order, so the cube is written without a copy. It held ~3.5 cubes, which made the final
+    FITS phase the driver's peak on com08 (~58 GiB anon against ~38 GiB in the solve).
 - **Decision — a band worker holds only what its hot loops touch:** the l21 dual in two
   coefficient buffers (`ṽ` lives in the analysis buffer between `dual_begin` and
   `dual_finish`); one padded raster in `HessianTree.dot` (the inverse FFT writes back into
