@@ -246,3 +246,16 @@ def test_band_worker_capture_covers_its_role_methods(tmp_path, monkeypatch):
     (f,) = tmp_path.glob("band_worker-*.pstats")
     names = {k[2] for k in pstats.Stats(str(f)).stats}
     assert {"init_psi", "psi_dot"} <= names
+
+
+def test_band_worker_times_its_role_methods_and_not_its_helpers():
+    """Only role methods are clocked: a nested clock re-enables the actor's cProfile.
+
+    Python >= 3.12 rejects the second ``enable()`` ("Another profiling tool is
+    already active"); earlier versions stop profiling at the inner ``disable()``.
+    """
+    from pfb_imaging.operators.band_worker import _BandWorkerImpl
+
+    for name in ("load_band", "init_hess", "init_psi", "hess_dot", "psi_dot", "residual"):
+        assert hasattr(getattr(_BandWorkerImpl, name), "__wrapped__"), name
+    assert not hasattr(_BandWorkerImpl._image_out, "__wrapped__")

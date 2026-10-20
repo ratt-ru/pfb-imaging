@@ -106,7 +106,6 @@ class _BandWorkerImpl:
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
-    @_timed
     def _image_out(self, ncorr, ny, nx):
         """The one output image every role returns into.
 
@@ -120,6 +119,7 @@ class _BandWorkerImpl:
             self._img = np.empty(size)
         return self._img[:size].reshape(ncorr, ny, nx)
 
+    @_timed
     def load_band(self, store_url, node_name):
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
