@@ -14,6 +14,7 @@ from pfb_imaging.wavelets import (
     dwt2d_nocopyt,
     idwt2d,
     idwt2d_nocopyt,
+    idwt2d_nocopyt_inplace,
     signal_size,
 )
 
@@ -348,14 +349,36 @@ class PsiBand(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
-def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel):
+def compile_band_dictionary():
+    """Compile ``PsiBandNocopyt``'s constructor and methods on a small band.
+
+    A jitclass is never cached, so its first use compiles it, and numba's type
+    inference keeps the caller frames of that compile -- and every array they
+    hold -- alive for the life of the process. Calling this where the stack
+    holds no large arrays (the top of ``core.deconv.deconv``) means the later
+    first use compiles nothing (D58).
+    """
+    band = psi_band_maker_nocopyt(64, 64, ("self", "db1"), 1)
+    alpha = np.zeros((band.nbasis, band.nxmax, band.nymax))
+    image = np.zeros((64, 64))
+    band.dot(image, alpha)
+    band.hdot(alpha, image)
+    band.hdot_inplace(alpha, image)
+
+
+def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel, synthesis_scratch=True):
+    """One band's ``PsiBandNocopyt``.
+
+    ``synthesis_scratch=False`` skips the coefficient-sized working copy that
+    ``hdot`` needs, for callers that only synthesise with ``hdot_inplace``.
+    """
     bk = _build_wavelet_bookkeeping(nxi, nyi, bases, nlevel)
 
     # cbuff only needs (nxmax, 2*symax) — no cbufft or approx needed
     symax = int(np.max(bk["sy"])) if bk["sy"].size > 0 else nyi
     cbuff = np.zeros((bk["nxmax"], 2 * symax))
     # alpha working copy for idwt2d_nocopyt
-    alpha = np.zeros((bk["nxmax"], bk["nymax"]))
+    alpha = np.zeros((bk["nxmax"], bk["nymax"]) if synthesis_scratch else (0, 0))
     image = np.zeros((nxi, nyi))
 
     return PsiBandNocopyt(
@@ -502,6 +525,8 @@ class PsiBandNocopyt(object):
         alpha   - (nbasis, nxmax, nymax) per basis coeffs (x-first layout)
         xo      - (nx, ny) output signal
         """
+        if self.alpha.shape[0] < self.nxmax:
+            raise ValueError("made without synthesis scratch: use hdot_inplace")
         xo[...] = 0.0
         for i in range(self.nbasis):
             if self.is_self[i]:
@@ -516,6 +541,36 @@ class PsiBandNocopyt(object):
                 alpha[i, 0:ntotx, 0:ntoty],
                 self.image,
                 self.alpha[0:ntotx, 0:ntoty],
+                self.cbuff,
+                self.ix[wi],
+                self.iy[wi],
+                self.sx[wi],
+                self.sy[wi],
+                self.spx[wi],
+                self.spy[wi],
+                self.rec_lo[wi],
+                self.rec_hi[wi],
+                self.nlevel,
+            )
+
+            xo += self.image
+
+        return xo
+
+    def hdot_inplace(self, alpha, xo):
+        """``hdot`` that consumes ``alpha`` (overwritten), needing no working copy."""
+        xo[...] = 0.0
+        for i in range(self.nbasis):
+            if self.is_self[i]:
+                xo += alpha[i, 0 : self.nx, 0 : self.ny]
+                continue
+            wi = self.wavelet_map[i]
+            ntotx = self.ntotx[wi]
+            ntoty = self.ntoty[wi]
+
+            idwt2d_nocopyt_inplace(
+                alpha[i, 0:ntotx, 0:ntoty],
+                self.image,
                 self.cbuff,
                 self.ix[wi],
                 self.iy[wi],
@@ -680,7 +735,7 @@ class PsiNocopytRay:
     For nband=1 the pool runs in-process (no Ray overhead).
     """
 
-    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None, dual_dtype=np.float64):
         # deferred to break the import cycle (band_worker imports psi helpers)
         # deferred: band_worker imports operators.psi (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
@@ -700,6 +755,8 @@ class PsiNocopytRay:
         self._bases = tuple(bases)
         self._nlevel = nlevel
         self._psib_sum = None
+        # float32 halves the worker-held dual (L21.dual_step); its update stays float64
+        self.dual_dtype = np.dtype(dual_dtype)
 
     def dot(self, x, alphao):
         """
@@ -735,9 +792,13 @@ class PsiNocopytRay:
 
     def init_dual(self):
         """Zero every band's worker-held dual."""
-        self._pool.init_dual()
+        self._pool.init_dual(self.dual_dtype)
         if self._pool.actors is not None:
             self._init_sum()
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b``, the band sum of the worker-held duals."""
+        self._pool.dual_sum(out)
 
     def dual_begin(self, x, sigma):
         """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.
