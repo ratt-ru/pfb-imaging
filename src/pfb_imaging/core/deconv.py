@@ -146,6 +146,7 @@ def deconv(
     pd_maxit: int = 1000,
     pd_verbose: int = 1,
     pd_report_freq: int = 100,
+    single_precision_dual: bool = False,
     fb_tol: float = 0.0003,
     fb_maxit: int = 1000,
     fb_verbose: int = 1,

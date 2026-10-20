@@ -396,6 +396,14 @@ def deconv(
             rich_help_panel="PrimalDual",
         ),
     ] = 50,
+    single_precision_dual: Annotated[
+        bool,
+        typer.Option(
+            help="Hold the band workers' l21 dual in float32. "
+            "Saves one coefficient buffer of nbasis images per band at the cost of float32 rounding of the dual.",
+            rich_help_panel="PrimalDual",
+        ),
+    ] = False,
     fb_tol: Annotated[
         float,
         typer.Option(
@@ -591,6 +599,7 @@ def deconv(
                     pd_maxit=pd_maxit,
                     pd_verbose=pd_verbose,
                     pd_report_freq=pd_report_freq,
+                    single_precision_dual=single_precision_dual,
                     fb_tol=fb_tol,
                     fb_maxit=fb_maxit,
                     fb_verbose=fb_verbose,
@@ -656,6 +665,7 @@ def deconv(
                 pd_maxit=pd_maxit,
                 pd_verbose=pd_verbose,
                 pd_report_freq=pd_report_freq,
+                single_precision_dual=single_precision_dual,
                 fb_tol=fb_tol,
                 fb_maxit=fb_maxit,
                 fb_verbose=fb_verbose,
@@ -730,6 +740,7 @@ def deconv(
             pd_maxit=pd_maxit,
             pd_verbose=pd_verbose,
             pd_report_freq=pd_report_freq,
+            single_precision_dual=single_precision_dual,
             fb_tol=fb_tol,
             fb_maxit=fb_maxit,
             fb_verbose=fb_verbose,

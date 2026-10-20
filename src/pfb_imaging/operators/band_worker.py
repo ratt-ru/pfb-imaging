@@ -266,14 +266,16 @@ class _BandWorkerImpl:
 
     # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
 
-    def init_dual(self):
+    def init_dual(self, dtype=np.float64):
         """Allocate this band's dual at zero; it persists across solves (warm start).
 
         One buffer: ``vt`` lives in ``_alphao`` between ``dual_begin`` and
         ``dual_finish``, which saves a coefficient buffer per band
-        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases).
+        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases). ``dtype=float32``
+        halves this one (``--single-precision-dual``); ``_alphao`` and the
+        update arithmetic stay float64, so only the stored dual rounds.
         """
-        self._v = np.zeros_like(self._alphao)
+        self._v = np.zeros_like(self._alphao, dtype=dtype)
 
     @_timed
     def dual_begin(self, x, sigma, return_coeffs=False):
@@ -625,9 +627,9 @@ class BandWorkerPool:
         for b, res in enumerate(self._map("psi_hdot", [(alpha[b],) for b in range(self.nband)])):
             xo[b] = res
 
-    def init_dual(self):
-        """Allocate every band's worker-held dual at zero."""
-        self._map("init_dual", [()] * self.nband)
+    def init_dual(self, dtype=np.float64):
+        """Allocate every band's worker-held dual at zero, in ``dtype``."""
+        self._map("init_dual", [(dtype,)] * self.nband)
 
     def dual_begin(self, x, sigma):
         """Start every band's dual update without waiting for it.

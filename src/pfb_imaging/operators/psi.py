@@ -735,7 +735,7 @@ class PsiNocopytRay:
     For nband=1 the pool runs in-process (no Ray overhead).
     """
 
-    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None, dual_dtype=np.float64):
         # deferred to break the import cycle (band_worker imports psi helpers)
         # deferred: band_worker imports operators.psi (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
@@ -755,6 +755,8 @@ class PsiNocopytRay:
         self._bases = tuple(bases)
         self._nlevel = nlevel
         self._psib_sum = None
+        # float32 halves the worker-held dual (L21.dual_step); its update stays float64
+        self.dual_dtype = np.dtype(dual_dtype)
 
     def dot(self, x, alphao):
         """
@@ -790,7 +792,7 @@ class PsiNocopytRay:
 
     def init_dual(self):
         """Zero every band's worker-held dual."""
-        self._pool.init_dual()
+        self._pool.init_dual(self.dual_dtype)
         if self._pool.actors is not None:
             self._init_sum()
 

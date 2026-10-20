@@ -137,7 +137,14 @@ def make_sara(partitions_per_band, geometry, model, update, opts, workers=None, 
         workers = BandWorkerPool(nband, opts["nthreads"])
     bases = tuple(opts["bases"]) if not isinstance(opts["bases"], str) else tuple(opts["bases"].split(","))
     psi = PsiNocopytRay(
-        nband, geometry["nx"], geometry["ny"], bases, opts["nlevels"], opts["nthreads"], workers=workers
+        nband,
+        geometry["nx"],
+        geometry["ny"],
+        bases,
+        opts["nlevels"],
+        opts["nthreads"],
+        workers=workers,
+        dual_dtype=np.float32 if opts.get("single_precision_dual", False) else np.float64,
     )
     # nu = ||Psi Psi^T|| = nbasis for a concatenation of orthonormal bases;
     # legacy sara passes nu=nbasis to primal_dual. Leaving the tight-frame

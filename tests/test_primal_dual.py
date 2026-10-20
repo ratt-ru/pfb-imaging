@@ -182,11 +182,13 @@ def _rdiff(a, b):
 
 
 @pmp("nband", [1, 2])
-def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
+@pmp("dual_dtype, rtol", [(np.float64, 1e-10), (np.float32, 1e-6)])
+def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dtype, rtol):
     """L21 over band workers (dual per band in the workers) == the driver-held dual cube.
 
     Two solves, so the warm-started dual is covered too, with different l1
-    weights between them as after a reweight.
+    weights between them as after a reweight. A float32 dual
+    (``--single-precision-dual``) only rounds the stored dual.
     """
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
 
@@ -199,7 +201,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
         return diag * diag * x - diag * dirty
 
     hessnorm = float(np.max(diag * diag))
-    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))
+    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband), dual_dtype=dual_dtype)
     psi = PsiNocopyt(nband, ny, nx, bases, nlevel, 1)
     shape = (len(bases), held_psi.nymax, held_psi.nxmax)
     weights = [rng.uniform(0.01, 0.1, size=shape) for _ in range(2)]
@@ -216,8 +218,10 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
             reg.l1weight = w
             x = pd.solve(x, 0.05)
         out[name] = x
+    if nband == 1:  # the in-process worker
+        assert held_psi._pool._local._v.dtype == dual_dtype
     assert np.any(out["driver"])
-    assert _rdiff(out["driver"], out["held"]) < 1e-10
+    assert _rdiff(out["driver"], out["held"]) < rtol
 
 
 def test_worker_held_dual_resets(band_pool):
