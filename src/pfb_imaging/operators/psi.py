@@ -796,6 +796,10 @@ class PsiNocopytRay:
         if self._pool.actors is not None:
             self._init_sum()
 
+    def dual_sum(self, out):
+        """``out = sum_b v_b``, the band sum of the worker-held duals."""
+        self._pool.dual_sum(out)
+
     def dual_begin(self, x, sigma):
         """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.
 

@@ -347,7 +347,9 @@ class PrimalDual:
         # iteration, and the primal step parks it in xout (rewritten by the
         # next dual half) for the convergence test -- one cube less (D58)
         held = self._held
-        if not held:
+        if held:
+            self._reg.sync_dual()
+        else:
             v = self._v
             vp = v.copy()
         xout = np.zeros_like(x)

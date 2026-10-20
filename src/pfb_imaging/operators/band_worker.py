@@ -302,6 +302,10 @@ class _BandWorkerImpl:
         self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
 
+    def dual_value(self):
+        """This band's held dual ``v``, for re-syncing the driver's band sum."""
+        return self._v
+
     # --- exact residual role ---
 
     @_timed
@@ -630,6 +634,22 @@ class BandWorkerPool:
     def init_dual(self, dtype=np.float64):
         """Allocate every band's worker-held dual at zero, in ``dtype``."""
         self._map("init_dual", [(dtype,)] * self.nband)
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b`` over the held duals, fetching one band at a time.
+
+        One band's dual is in flight at a time, so the object store holds one
+        coefficient buffer rather than ``nband`` of them.
+        """
+        if self.actors is None:
+            out[...] = self._local.dual_value()
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        out[...] = 0.0
+        for a in self.actors:
+            np.add(out, ray.get(a.dual_value.remote()), out=out)
 
     def dual_begin(self, x, sigma):
         """Start every band's dual update without waiting for it.

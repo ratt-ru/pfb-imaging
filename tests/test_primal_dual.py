@@ -224,6 +224,28 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dt
     assert _rdiff(out["driver"], out["held"]) < rtol
 
 
+@pmp("nband", [1, 2])
+def test_float32_dual_band_sum_resyncs_from_the_workers(band_pool, nband):
+    """With a float32 held dual, sync_dual re-forms the driver's band sum from the rounded v_b."""
+    from pfb_imaging.operators.psi import PsiNocopytRay
+
+    nx = 16
+    rng = np.random.default_rng(5)
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, nx))
+    psi = PsiNocopytRay(nband, nx, nx, ("self", "db1"), 1, 1, workers=band_pool(nband), dual_dtype=np.float32)
+    reg = L21(psi, ("self", "db1"), nu=2)
+    reg.l1weight = np.full_like(reg.l1weight, 0.05)
+    pd = PrimalDual(tol=0.0, maxit=30, verbosity=0)
+    pd.setup(reg, 1.0)
+    pd.set_grad(lambda x: x - dirty)
+    pd.solve(np.zeros((nband, nx, nx)), 0.1)
+    expected = np.zeros_like(reg._vsum)
+    psi.dual_sum(expected)
+    assert np.any(expected)
+    reg.sync_dual()
+    np.testing.assert_array_equal(reg._vsum, expected)
+
+
 def test_worker_held_dual_resets(band_pool):
     """reset() zeros the worker-held dual: a reset solve repeats the first one."""
     from pfb_imaging.operators.psi import PsiNocopytRay
