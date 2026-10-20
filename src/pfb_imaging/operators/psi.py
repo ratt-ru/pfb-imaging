@@ -14,6 +14,7 @@ from pfb_imaging.wavelets import (
     dwt2d_nocopyt,
     idwt2d,
     idwt2d_nocopyt,
+    idwt2d_nocopyt_inplace,
     signal_size,
 )
 
@@ -348,14 +349,36 @@ class PsiBand(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
-def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel):
+def compile_band_dictionary():
+    """Compile ``PsiBandNocopyt``'s constructor and methods on a small band.
+
+    A jitclass is never cached, so its first use compiles it, and numba's type
+    inference keeps the caller frames of that compile -- and every array they
+    hold -- alive for the life of the process. Calling this where the stack
+    holds no large arrays (the top of ``core.deconv.deconv``) means the later
+    first use compiles nothing (D58).
+    """
+    band = psi_band_maker_nocopyt(64, 64, ("self", "db1"), 1)
+    alpha = np.zeros((band.nbasis, band.nxmax, band.nymax))
+    image = np.zeros((64, 64))
+    band.dot(image, alpha)
+    band.hdot(alpha, image)
+    band.hdot_inplace(alpha, image)
+
+
+def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel, synthesis_scratch=True):
+    """One band's ``PsiBandNocopyt``.
+
+    ``synthesis_scratch=False`` skips the coefficient-sized working copy that
+    ``hdot`` needs, for callers that only synthesise with ``hdot_inplace``.
+    """
     bk = _build_wavelet_bookkeeping(nxi, nyi, bases, nlevel)
 
     # cbuff only needs (nxmax, 2*symax) — no cbufft or approx needed
     symax = int(np.max(bk["sy"])) if bk["sy"].size > 0 else nyi
     cbuff = np.zeros((bk["nxmax"], 2 * symax))
     # alpha working copy for idwt2d_nocopyt
-    alpha = np.zeros((bk["nxmax"], bk["nymax"]))
+    alpha = np.zeros((bk["nxmax"], bk["nymax"]) if synthesis_scratch else (0, 0))
     image = np.zeros((nxi, nyi))
 
     return PsiBandNocopyt(
@@ -502,6 +525,8 @@ class PsiBandNocopyt(object):
         alpha   - (nbasis, nxmax, nymax) per basis coeffs (x-first layout)
         xo      - (nx, ny) output signal
         """
+        if self.alpha.shape[0] < self.nxmax:
+            raise ValueError("made without synthesis scratch: use hdot_inplace")
         xo[...] = 0.0
         for i in range(self.nbasis):
             if self.is_self[i]:
@@ -516,6 +541,36 @@ class PsiBandNocopyt(object):
                 alpha[i, 0:ntotx, 0:ntoty],
                 self.image,
                 self.alpha[0:ntotx, 0:ntoty],
+                self.cbuff,
+                self.ix[wi],
+                self.iy[wi],
+                self.sx[wi],
+                self.sy[wi],
+                self.spx[wi],
+                self.spy[wi],
+                self.rec_lo[wi],
+                self.rec_hi[wi],
+                self.nlevel,
+            )
+
+            xo += self.image
+
+        return xo
+
+    def hdot_inplace(self, alpha, xo):
+        """``hdot`` that consumes ``alpha`` (overwritten), needing no working copy."""
+        xo[...] = 0.0
+        for i in range(self.nbasis):
+            if self.is_self[i]:
+                xo += alpha[i, 0 : self.nx, 0 : self.ny]
+                continue
+            wi = self.wavelet_map[i]
+            ntotx = self.ntotx[wi]
+            ntoty = self.ntoty[wi]
+
+            idwt2d_nocopyt_inplace(
+                alpha[i, 0:ntotx, 0:ntoty],
+                self.image,
                 self.cbuff,
                 self.ix[wi],
                 self.iy[wi],
@@ -680,7 +735,7 @@ class PsiNocopytRay:
     For nband=1 the pool runs in-process (no Ray overhead).
     """
 
-    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None, dual_dtype=np.float64):
         # deferred to break the import cycle (band_worker imports psi helpers)
         # deferred: band_worker imports operators.psi (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
@@ -697,6 +752,11 @@ class PsiNocopytRay:
             raise ValueError(f"workers pool has {workers.nband} bands, expected {nband}")
         self._pool = workers
         self.nxmax, self.nymax = self._pool.init_psi(nx, ny, bases, nlevel)
+        self._bases = tuple(bases)
+        self._nlevel = nlevel
+        self._psib_sum = None
+        # float32 halves the worker-held dual (L21.dual_step); its update stays float64
+        self.dual_dtype = np.dtype(dual_dtype)
 
     def dot(self, x, alphao):
         """
@@ -709,6 +769,58 @@ class PsiNocopytRay:
         coeffs to image
         """
         self._pool.psi_hdot(alpha, xo)
+
+    # --- a dual held per band in the workers (L21.dual_step) ---
+
+    def _init_sum(self):
+        """The driver's own dictionary, for the band-summed analysis."""
+        if self._psib_sum is None:
+            self._psib_sum = psi_band_maker_nocopyt(self.ny, self.nx, self._bases, self._nlevel)
+            self._csum = np.empty((self.nbasis, self._psib_sum.nxmax, self._psib_sum.nymax))
+            self._xsum = np.empty((self.ny, self.nx))
+            self._psib_sum.dot(np.zeros((self.ny, self.nx)), self._csum)  # JIT warm-up
+
+    def dot_sum(self, x):
+        """``sum_b Psi^T x_b`` as one analysis of ``sum_b x_b`` (linearity).
+
+        Returns a driver buffer that the next ``dot_sum`` or ``dual_begin``
+        overwrites.
+        """
+        self._init_sum()
+        self._psib_sum.dot(np.sum(x, axis=0, out=self._xsum), self._csum)
+        return self._csum
+
+    def init_dual(self):
+        """Zero every band's worker-held dual."""
+        self._pool.init_dual(self.dual_dtype)
+        if self._pool.actors is not None:
+            self._init_sum()
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b``, the band sum of the worker-held duals."""
+        self._pool.dual_sum(out)
+
+    def dual_begin(self, x, sigma):
+        """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.
+
+        Returns ``Psi^T(sum_b x_b)``, computed on the driver while the workers
+        run (the band coupling of the l21 dual needs only that and the
+        band-summed dual; see ``prox_21m.l21_dual_scale``). The caller turns it
+        into the shrink factor in place and passes it to ``dual_finish``.
+        """
+        pending = self._pool.dual_begin(x, sigma)
+        if self._pool.actors is None:
+            # one band: its own coefficients are the band sum
+            self._pending = None
+            return pending
+        self._pending = pending
+        self._psib_sum.dot(np.sum(x, axis=0, out=self._xsum), self._csum)
+        return self._csum
+
+    def dual_finish(self, scale, xo):
+        """Shrink every band's dual by ``scale`` and synthesise ``xo[b] = Psi(2 v_new_b - v_b)``."""
+        pending, self._pending = self._pending, None
+        self._pool.dual_finish(pending, scale, xo)
 
 
 class IdentityPsi:

@@ -4,6 +4,7 @@ import numpy as np
 from numba import njit, prange
 
 from pfb_imaging.operators import LinearOperator, require_protocol
+from pfb_imaging.utils import inplace
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
@@ -77,6 +78,80 @@ def _nb_norm_diff(x, xp):
     return np.sqrt(num / den)
 
 
+@njit(**_FAST_JIT)
+def _nb_cg_step(r, p, ap, x):
+    """``alpha = (r.r)/(p.ap)``, then ``x += alpha p`` and ``r += alpha ap`` in place.
+
+    Returns ``(r.r, alpha, p.p, x.x)``, the last two for the relative step.
+    """
+    r_f = r.ravel()
+    p_f = p.ravel()
+    a_f = ap.ravel()
+    x_f = x.ravel()
+    rnorm = 0.0
+    denom = 0.0
+    pp = 0.0
+    for i in prange(r_f.size):
+        rnorm += r_f[i] * r_f[i]
+        denom += p_f[i] * a_f[i]
+        pp += p_f[i] * p_f[i]
+    alpha = rnorm / denom
+    xx = 0.0
+    for i in prange(r_f.size):
+        x_f[i] += alpha * p_f[i]
+        r_f[i] += alpha * a_f[i]
+        xx += x_f[i] * x_f[i]
+    return rnorm, alpha, pp, xx
+
+
+def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, report_freq=10):
+    """Unpreconditioned CG of ``aop(x) = b`` holding three cubes besides ``aop``'s output.
+
+    The iterates of ``pcg_numba`` without a preconditioner, for the driver's
+    cube-level solve. ``pcg_numba`` keeps copies of the previous iterate and
+    residual only to form ``x = xp + alpha p`` and ``||x - xp||``; updating in
+    place and using ``||x - xp|| = |alpha| ||p||`` drops two cubes and two cube
+    copies per iteration (D56). Same stopping rules (``tol`` on the relative
+    step, ``minit``, ``maxit``, five stalled steps).
+
+    ``aop`` may return a buffer it reuses across calls. When ``x0`` is given it
+    is the iterate and is updated **in place** (the returned array IS ``x0``).
+    """
+    if x0 is None:
+        x = np.zeros(b.shape, dtype=b.dtype)
+        r = np.negative(b)  # aop(0) - b
+    else:
+        x = x0
+        r = np.empty_like(b)
+        inplace.axpby(r, 1.0, aop(x), -1.0, b)
+    if not np.any(r):
+        print("Initial residual is zero")
+        return x
+    p = np.negative(r)
+    k = 0
+    eps = 1.0
+    stall_count = 0
+    tii = time()
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
+        rnorm, alpha, pp, xx = _nb_cg_step(r, p, aop(p), x)
+        rnorm = _nb_fused_beta_update(r, r, p, rnorm)
+        k += 1
+        epsp = eps
+        eps = np.sqrt(alpha * alpha * pp / max(xx, 1e-12))
+        if np.abs(epsp - eps) < 1e-3 * tol:
+            stall_count += 1
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}")
+    if verbosity:
+        if k >= maxit:
+            print(f"Max iters reached. eps = {eps:.3e}")
+        elif stall_count >= 5:
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
+        else:
+            print(f"Success, converged after {k} iterations in {time() - tii:.1f}s")
+    return x
+
+
 def pcg_numba(
     aop,
     b,
@@ -137,8 +212,8 @@ def pcg_numba(
     tii = time()
     while (eps > tol or k < minit) and k < maxit and stall_count < 5:
         ti = time()
-        np.copyto(xp, x)
-        np.copyto(rp, r)
+        inplace.copy(xp, x)
+        inplace.copy(rp, r)
         tcopy += time() - ti
         ti = time()
         aopp = aop(p)

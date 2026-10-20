@@ -251,3 +251,22 @@ def test_dual_update_fast(nx, ny, nband, nlevels, lam, sigma):
     psi.dot(xp, v)
     dual_update_numba_fast(vp, v, lam, sigma=sigma, weight=weight21)
     assert_array_almost_equal(1 + res1, 1 + v, decimal=9)
+
+
+def test_hdot_inplace_matches_hdot_without_a_working_copy():
+    """The consuming synthesis equals the copying one, and a scratch-free band refuses hdot."""
+    from pfb_imaging.operators.psi import psi_band_maker_nocopyt
+
+    nx, ny, bases, nlevel = 48, 40, ("self", "db1", "db2", "db3"), 2
+    rng = np.random.default_rng(13)
+    full = psi_band_maker_nocopyt(nx, ny, bases, nlevel)
+    lean = psi_band_maker_nocopyt(nx, ny, bases, nlevel, synthesis_scratch=False)
+    alpha = np.zeros((full.nbasis, full.nxmax, full.nymax))
+    full.dot(rng.standard_normal((nx, ny)), alpha)
+    want = np.zeros((nx, ny))
+    full.hdot(alpha, want)
+    got = np.zeros((nx, ny))
+    lean.hdot_inplace(alpha.copy(), got)
+    np.testing.assert_allclose(got, want, rtol=1e-13, atol=1e-13)
+    with pytest.raises(ValueError, match="hdot_inplace"):
+        lean.hdot(alpha, got)

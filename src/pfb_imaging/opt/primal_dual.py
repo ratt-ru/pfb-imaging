@@ -8,6 +8,7 @@ from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.prox.positivity import positivity as _positivity_fn
 from pfb_imaging.prox.positivity import positivity_band as _positivity_band_fn
 from pfb_imaging.prox.prox_21m import dual_update_numba_fast
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.memprof import SectionClock
 
@@ -35,6 +36,17 @@ def _nb_primal_step(x, xp, xout, tau):
     xo_f = xout.ravel()
     for i in prange(n):
         x_f[i] = xp_f[i] - tau * xo_f[i]
+
+
+@njit(**_FAST_JIT)
+def _nb_primal_step_keep(x, xout, tau):
+    """``x -= tau * xout`` and ``xout = x_old``: the step and the previous iterate in two cubes."""
+    x_f = x.ravel()
+    xo_f = xout.ravel()
+    for i in prange(x_f.size):
+        old = x_f[i]
+        x_f[i] = old - tau * xo_f[i]
+        xo_f[i] = old
 
 
 @njit(**_FAST_JIT)
@@ -234,7 +246,10 @@ class PrimalDual:
     provides one, falling back to the generic Moreau decomposition
     ``v = vtilde - sigma * prox_{(lam/sigma) g}(vtilde/sigma)`` via
     ``reg.prox``.  The dual variable is internal state, warm-started
-    across ``solve`` calls; ``reset()`` zeros it.
+    across ``solve`` calls; ``reset()`` zeros it. When the regulariser's
+    ``holds_dual`` is true (``L21`` over band workers) the dual lives with the
+    regulariser instead and each iteration's dual half is one
+    ``reg.dual_step(xp, xout, lam, sigma)``.
 
     Args:
         tol: Convergence tolerance on relative primal change.
@@ -270,6 +285,7 @@ class PrimalDual:
         self._grad = None
         self._reg = None
         self._v = None
+        self._held = False
 
     def setup(self, prox, hessnorm: float) -> None:
         """Bind the regulariser, compute step sizes, allocate the dual."""
@@ -282,9 +298,21 @@ class PrimalDual:
         if sigma is None:
             sigma = hessnorm / (2.0 * self.gamma) / nu
         self.sigma = sigma
-        self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu**2)
+        # Condat-Vu: tau * (L_f/2 + sigma * ||Psi||^2) < 1 with L_f = hessnorm/gamma.
+        # nu is ||Psi Psi^T|| = ||Psi||^2 itself (nbasis for SARA); the legacy
+        # primal_dual_numba squares it again, a step nbasis/2.5 x too small at
+        # four bases for no gain in stability (wiki D57)
+        self.tau = 0.98 / (hessnorm / (2.0 * self.gamma) + sigma * nu)
         psi = prox.psi
-        self._v = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
+        # a regulariser whose psi holds the dual per band (L21 over band
+        # workers) runs the dual half of the iteration itself, and the
+        # driver never holds the (nband, nbasis, ...) dual cube
+        self._held = getattr(prox, "holds_dual", False)
+        if self._held:
+            prox.reset_dual()
+            self._v = None
+        else:
+            self._v = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
 
     def set_grad(self, grad) -> None:
         """Set the gradient of the smooth data-fidelity term."""
@@ -292,7 +320,9 @@ class PrimalDual:
 
     def reset(self) -> None:
         """Drop the warm-started dual variable."""
-        if self._v is not None:
+        if self._held:
+            self._reg.reset_dual()
+        elif self._v is not None:
             self._v[...] = 0.0
 
     def _dual_update(self, v, vp, lam):
@@ -313,36 +343,45 @@ class PrimalDual:
         if self._grad is None:
             raise RuntimeError("grad not set; call set_grad() before solve()")
 
-        xp = x.copy()
-        v = self._v
-        vp = v.copy()
+        # no copy of the iterate: x is the previous iterate at the top of every
+        # iteration, and the primal step parks it in xout (rewritten by the
+        # next dual half) for the convergence test -- one cube less (D58)
+        held = self._held
+        if held:
+            self._reg.sync_dual()
+        else:
+            v = self._v
+            vp = v.copy()
         xout = np.zeros_like(x)
 
         eps = 1.0
         # always on: psi_dot/psi_hdot/grad are Ray round trips for a
         # multi-band run, and this split is what says whether an iteration's
         # time is wavelet work, transfers or the driver-side dual passes
-        clock = SectionClock(
-            ("psi_dot", "dual_update", "extrapolate", "psi_hdot", "grad", "primal", "convergence", "reweight", "copy")
-        )
+        dual_sections = ("dual_step",) if held else ("psi_dot", "dual_update", "extrapolate", "psi_hdot")
+        clock = SectionClock((*dual_sections, "grad", "primal", "convergence", "reweight", "copy"))
         for k in range(self.maxit):
             clock.start()
-            self._reg.psi.dot(xp, v)
-            clock.tick("psi_dot")
-            self._dual_update(v, vp, lam)
-            clock.tick("dual_update")
-            _nb_extrapolate_dual(v, vp)
-            clock.tick("extrapolate")
-            self._reg.psi.hdot(vp, xout)
-            clock.tick("psi_hdot")
-            xout += self._grad(xp)
+            if held:
+                self._reg.dual_step(x, xout, lam, sigma=self.sigma)
+                clock.tick("dual_step")
+            else:
+                self._reg.psi.dot(x, v)
+                clock.tick("psi_dot")
+                self._dual_update(v, vp, lam)
+                clock.tick("dual_update")
+                _nb_extrapolate_dual(v, vp)
+                clock.tick("extrapolate")
+                self._reg.psi.hdot(vp, xout)
+                clock.tick("psi_hdot")
+            inplace.add(xout, self._grad(x))
             clock.tick("grad")
-            _nb_primal_step(x, xp, xout, self.tau)
+            _nb_primal_step_keep(x, xout, self.tau)
             if self.primal_prox is not None:
                 self.primal_prox(x)
             clock.tick("primal")
 
-            eps = _nb_norm_diff(x, xp) if _nb_any_nonzero(x) else 1.0
+            eps = _nb_norm_diff(x, xout) if _nb_any_nonzero(x) else 1.0
             clock.tick("convergence")
             if eps < self.tol:
                 stop = self.on_converge is None or self.on_converge(x, k, eps)
@@ -350,8 +389,8 @@ class PrimalDual:
                 if stop:
                     break
 
-            np.copyto(xp, x)
-            np.copyto(vp, v)
+            if not held:
+                inplace.copy(vp, v)
             clock.tick("copy")
 
             if not k % self.report_freq and self.verbosity > 1:
