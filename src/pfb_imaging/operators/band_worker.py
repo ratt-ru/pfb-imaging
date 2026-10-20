@@ -145,6 +145,10 @@ class _BandWorkerImpl:
             # cache=False: the tree would otherwise hold its own copy of every
             # variable read here (the complex PSFHATs among them) until gc
             band = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)[node_name]
+            # residual() reads these per major cycle; fail at load, not after a solve
+            missing = {"DIRTY", "BDIRTY"} - set(band.ds.data_vars)
+            if missing:
+                raise ValueError(f"{node_name} has no {sorted(missing)}; re-run pfb imager")
             parts = []
             hess_parts = []
             self._part_names = sorted(band.children)
@@ -319,10 +323,12 @@ class _BandWorkerImpl:
 
         # DIRTY/BDIRTY (the model-free terms, D23) are read here rather than
         # pinned by load_band: once per major cycle, two images per band
-        band = xr.open_datatree(self._store_url, engine="zarr", chunks=None, cache=False)[self._node_name]
-        dirty = band.ds.DIRTY.values  # (corr, ny, nx)
-        bdirty = band.ds.BDIRTY.values
-        del band
+        # only this band's group: opening the whole tree builds every band and
+        # partition node, which costs seconds per call on a many-partition .dt
+        ds = xr.open_zarr(self._store_url, group=self._node_name, chunks=None)
+        dirty = ds.DIRTY.values  # (corr, ny, nx)
+        bdirty = ds.BDIRTY.values
+        del ds
         gc.collect()  # the tree's reference cycles (memory-and-ray.md, layer 1)
         # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
