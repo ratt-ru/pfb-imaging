@@ -181,7 +181,7 @@ def _rdiff(a, b):
     return np.linalg.norm(a - b) / max(np.linalg.norm(a), 1e-12)
 
 
-@pmp("nband", [1, 2])
+@pmp("nband", [1, 3])
 @pmp("dual_dtype, rtol", [(np.float64, 1e-10), (np.float32, 1e-6)])
 def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dtype, rtol):
     """L21 over band workers (dual per band in the workers) == the driver-held dual cube.
@@ -224,7 +224,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dt
     assert _rdiff(out["driver"], out["held"]) < rtol
 
 
-@pmp("nband", [1, 2])
+@pmp("nband", [1, 3])
 def test_float32_dual_band_sum_resyncs_from_the_workers(band_pool, nband):
     """With a float32 held dual, sync_dual re-forms the driver's band sum from the rounded v_b."""
     from pfb_imaging.operators.psi import PsiNocopytRay
@@ -268,7 +268,7 @@ def test_worker_held_dual_resets(band_pool):
     assert_allclose(again, first, rtol=1e-12, atol=1e-14)
 
 
-@pmp("nband", [1, 2])
+@pmp("nband", [1, 3])
 def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
     """L21 reweighting from one analysis of the band sum == summing the per-band coefficients."""
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
