@@ -349,6 +349,23 @@ class PsiBand(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
+def compile_band_dictionary():
+    """Compile ``PsiBandNocopyt``'s constructor and methods on a small band.
+
+    A jitclass is never cached, so its first use compiles it, and numba's type
+    inference keeps the caller frames of that compile -- and every array they
+    hold -- alive for the life of the process. Calling this where the stack
+    holds no large arrays (the top of ``core.deconv.deconv``) means the later
+    first use compiles nothing (D58).
+    """
+    band = psi_band_maker_nocopyt(64, 64, ("self", "db1"), 1)
+    alpha = np.zeros((band.nbasis, band.nxmax, band.nymax))
+    image = np.zeros((64, 64))
+    band.dot(image, alpha)
+    band.hdot(alpha, image)
+    band.hdot_inplace(alpha, image)
+
+
 def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel, synthesis_scratch=True):
     """One band's ``PsiBandNocopyt``.
 
