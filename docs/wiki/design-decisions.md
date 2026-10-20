@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: e12ca80
+timestamp: 2026-10-20T08:00:00Z
+last_verified_commit: ba8c70a
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1884,6 +1884,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   driver's floor is four cubes (model, update and the two gradients, one of them freed
   outside its window) plus ~9 GB of band-summed dictionary state, which does not grow with
   the band count.
+- **Option — `--single-precision-dual`** (off by default) stores each band's dual `v` in
+  float32, saving half of the dual buffer (1.2 GB per band at 8748² × 4 bases). The analysis
+  buffer, the driver's band sum and the update arithmetic stay float64, so only the stored
+  dual rounds: on the local repro MODEL moved ~3e-9 relative after two cycles at the same
+  speed. It is opt-in because it changes the numerics; the held-vs-driver equivalence test
+  runs at 1e-10 for float64 and 1e-6 for float32
+  (`test_worker_held_dual_matches_the_driver_held_dual`).
 
 ## Known debt
 
