@@ -349,6 +349,23 @@ class PsiBand(object):
 # ══════════════════════════════════════════════════════════════════════
 
 
+def compile_band_dictionary():
+    """Compile ``PsiBandNocopyt``'s constructor and methods on a small band.
+
+    A jitclass is never cached, so its first use compiles it, and numba's type
+    inference keeps the caller frames of that compile -- and every array they
+    hold -- alive for the life of the process. Calling this where the stack
+    holds no large arrays (the top of ``core.deconv.deconv``) means the later
+    first use compiles nothing (D58).
+    """
+    band = psi_band_maker_nocopyt(64, 64, ("self", "db1"), 1)
+    alpha = np.zeros((band.nbasis, band.nxmax, band.nymax))
+    image = np.zeros((64, 64))
+    band.dot(image, alpha)
+    band.hdot(alpha, image)
+    band.hdot_inplace(alpha, image)
+
+
 def psi_band_maker_nocopyt(nxi, nyi, bases, nlevel, synthesis_scratch=True):
     """One band's ``PsiBandNocopyt``.
 
@@ -718,7 +735,7 @@ class PsiNocopytRay:
     For nband=1 the pool runs in-process (no Ray overhead).
     """
 
-    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None):
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads, workers=None, dual_dtype=np.float64):
         # deferred to break the import cycle (band_worker imports psi helpers)
         # deferred: band_worker imports operators.psi (import cycle)
         from pfb_imaging.operators.band_worker import BandWorkerPool
@@ -738,6 +755,8 @@ class PsiNocopytRay:
         self._bases = tuple(bases)
         self._nlevel = nlevel
         self._psib_sum = None
+        # float32 halves the worker-held dual (L21.dual_step); its update stays float64
+        self.dual_dtype = np.dtype(dual_dtype)
 
     def dot(self, x, alphao):
         """
@@ -773,9 +792,13 @@ class PsiNocopytRay:
 
     def init_dual(self):
         """Zero every band's worker-held dual."""
-        self._pool.init_dual()
+        self._pool.init_dual(self.dual_dtype)
         if self._pool.actors is not None:
             self._init_sum()
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b``, the band sum of the worker-held duals."""
+        self._pool.dual_sum(out)
 
     def dual_begin(self, x, sigma):
         """Start the dual update ``vt_b = v_b + sigma Psi^T x_b`` in every worker.

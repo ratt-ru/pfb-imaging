@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: 4ba2821
+timestamp: 2026-10-20T10:00:00Z
+last_verified_commit: 71a2292
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1846,7 +1846,29 @@ update it (and this page's `last_verified_commit`) in the same session.
     `(nband, nbasis, …)` `L21._outvar` cube is gone;
   - the band-coupled CG is `opt.pcg.cg_inplace`: `pcg_numba`'s iterates in `x`, `r`, `p` plus the
     operator's output, using `‖x − xp‖ = |α|‖p‖`;
-  - `MODEL_BEST` is written when a cycle improves on `best_rms`, never held.
+  - `MODEL_BEST` is written when a cycle improves on `best_rms`, never held;
+  - `PFBSolver` owns the `model`/`update` it is given instead of copying them. **numba's type
+    inference keeps the caller frames of a jitclass compile alive for the life of the
+    process** (a list of typing errors holds their tracebacks), and jitclasses are never
+    cached, so the compile of the driver's band-summed dictionary -- reached from
+    `PFBSolver.__init__` through `setup → reset_dual → init_dual` -- pinned the frames of
+    `PFBSolver.__init__` and `make_sara`, and with them the caller's two cubes, while the
+    solver held copies. Counted from `/proc/self/smaps` mid-solve: 8 → 6 cube-sized mappings.
+    Any large array that is a local on the path to a first jitclass call is held for the run;
+    find such retention with `gc.get_referrers` on the frames, not with memray's
+    high-watermark stacks (which attributed these cubes plausibly but could not say why).
+    `core.deconv` also calls `operators.psi.compile_band_dictionary()` before any cube
+    exists, so the driver's jitclass compile has nothing large to pin;
+  - after each cycle's band writes, and before the FITS rendering, the driver runs
+    `gc.collect()` (the written Datasets sit in reference cycles holding per-band
+    temporaries and views of the cubes) and, before FITS, drops the solver and every cube.
+    Two cubes stay reachable through a closure cell that no gc referrer, frame or thread
+    stack reaches; it is not the peak, and the hunt stopped there;
+  - `utils.fits.dt2fits` fills its cube one band at a time in the output dtype, accumulates
+    the MFS image alongside, and opens the tree with `cache=False`; `save_fits` requires C
+    order, so with one correlation the cube is written without a copy (with more, the
+    `(corr, band)` transpose is copied once). It held ~3.5 cubes, which made the final
+    FITS phase the driver's peak on com08 (~58 GiB anon against ~38 GiB in the solve).
 - **Decision — a band worker holds only what its hot loops touch:** the l21 dual in two
   coefficient buffers (`ṽ` lives in the analysis buffer between `dual_begin` and
   `dual_finish`); one padded raster in `HessianTree.dot` (the inverse FFT writes back into
@@ -1863,6 +1885,20 @@ update it (and this page's `last_verified_commit`) in the same session.
   driver's floor is four cubes (model, update and the two gradients, one of them freed
   outside its window) plus ~9 GB of band-summed dictionary state, which does not grow with
   the band count.
+- **Option — `--single-precision-dual`** (off by default) stores each band's dual `v` in
+  float32, saving half of the dual buffer (1.2 GB per band at 8748² × 4 bases). The analysis
+  buffer, the driver's band sum and the update arithmetic stay float64, so only the stored
+  dual rounds: on the local repro MODEL moved ~3e-9 relative after two cycles at the same
+  speed. It is opt-in because it changes the numerics; the held-vs-driver equivalence test
+  runs at 1e-10 for float64 and 1e-6 for float32
+  (`test_worker_held_dual_matches_the_driver_held_dual`). The rounding also separates the
+  driver's float64 band sum `_vsum` from `Σ_b v_b` — the dual is warm-started for the whole
+  run, so unchecked the gap grows (~1e-4 relative after 5000 iterations in a simulation of
+  these updates) — so `L21.sync_dual` re-forms `_vsum` from the workers at the start of every
+  solve, one band in flight at a time (1.2 GB of object store per band, once per major
+  cycle). The option only applies to `sara` with `--opt-backend primal-dual`; elsewhere it
+  logs that it is ignored. The driver compiles the wavelet jitclass up front only for `sara`
+  (the compile is ~7 s).
 
 ## Known debt
 

@@ -266,14 +266,16 @@ class _BandWorkerImpl:
 
     # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
 
-    def init_dual(self):
+    def init_dual(self, dtype=np.float64):
         """Allocate this band's dual at zero; it persists across solves (warm start).
 
         One buffer: ``vt`` lives in ``_alphao`` between ``dual_begin`` and
         ``dual_finish``, which saves a coefficient buffer per band
-        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases).
+        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases). ``dtype=float32``
+        halves this one (``--single-precision-dual``); ``_alphao`` and the
+        update arithmetic stay float64, so only the stored dual rounds.
         """
-        self._v = np.zeros_like(self._alphao)
+        self._v = np.zeros_like(self._alphao, dtype=dtype)
 
     @_timed
     def dual_begin(self, x, sigma, return_coeffs=False):
@@ -299,6 +301,10 @@ class _BandWorkerImpl:
         l21_dual_finish(self._alphao, self._v, scale)
         self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
+
+    def dual_value(self):
+        """This band's held dual ``v``, for re-syncing the driver's band sum."""
+        return self._v
 
     # --- exact residual role ---
 
@@ -625,9 +631,25 @@ class BandWorkerPool:
         for b, res in enumerate(self._map("psi_hdot", [(alpha[b],) for b in range(self.nband)])):
             xo[b] = res
 
-    def init_dual(self):
-        """Allocate every band's worker-held dual at zero."""
-        self._map("init_dual", [()] * self.nband)
+    def init_dual(self, dtype=np.float64):
+        """Allocate every band's worker-held dual at zero, in ``dtype``."""
+        self._map("init_dual", [(dtype,)] * self.nband)
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b`` over the held duals, fetching one band at a time.
+
+        One band's dual is in flight at a time, so the object store holds one
+        coefficient buffer rather than ``nband`` of them.
+        """
+        if self.actors is None:
+            out[...] = self._local.dual_value()
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        out[...] = 0.0
+        for a in self.actors:
+            np.add(out, ray.get(a.dual_value.remote()), out=out)
 
     def dual_begin(self, x, sigma):
         """Start every band's dual update without waiting for it.

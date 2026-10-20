@@ -84,8 +84,9 @@ class PFBSolver:
         forward_alg: ``ForwardSolver`` for ``update ≈ hess^{-1} residual``.
         backward_alg: ``BackwardSolver`` for the proximal step.
         prox: ``Regulariser``; may expose the optional reweighting trio.
-        model: Initial model image ``(nband, nx, ny)``.
-        update: Initial update image ``(nband, nx, ny)``.
+        model: Initial model image ``(nband, nx, ny)``; owned by the solver
+            (updated in place, not copied).
+        update: Initial update image ``(nband, nx, ny)``; owned likewise.
         gamma: PFB step size for ``xtilde = model + gamma * update``.
         hessnorm: Spectral norm of ``hess`` (power method when None).
         l1_reweight_from: Arm reweighting after this many major cycles
@@ -122,8 +123,13 @@ class PFBSolver:
         self.forward_alg = forward_alg
         self.backward_alg = backward_alg
         self.reg = prox
-        self._model = model.copy()
-        self._update = update.copy()
+        # owned, not copied: a copy would hold the caller's two cubes twice for
+        # the run whenever any frame on the construction path outlives it --
+        # and numba's type inference keeps the caller frames of a jitclass
+        # compile (the band-summed dictionary is built in here) alive for the
+        # life of the process (D58)
+        self._model = model
+        self._update = update if update is not model else update.copy()
         self._residual = None  # set by first()
         self._xtilde = None  # model + gamma * update, formed by the backward step
         self.model_change = None  # relative model change of the last backward step

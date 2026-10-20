@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import time
@@ -14,6 +15,7 @@ from pfb_imaging.deconv.presets import PRESETS
 from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import ETA_MODES
+from pfb_imaging.operators.psi import compile_band_dictionary
 from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
@@ -144,6 +146,7 @@ def deconv(
     pd_maxit: int = 1000,
     pd_verbose: int = 1,
     pd_report_freq: int = 100,
+    single_precision_dual: bool = False,
     fb_tol: float = 0.0003,
     fb_maxit: int = 1000,
     fb_verbose: int = 1,
@@ -276,6 +279,12 @@ def deconv(
     # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
     # They never enter the driver or the Ray object store
     # image rasters are (Y, X)-ordered end to end (wiki D19)
+    # before any cube exists: the first compile of a jitclass pins its caller
+    # frames for the life of the process (D58). Only sara builds a wavelet
+    # dictionary; the compile is ~7 s that other presets would pay for nothing.
+    if minor_cycle == "sara":
+        compile_band_dictionary()
+
     # the data gradients, divided by the total wsum once it is known; the raw
     # (stored) versions are recovered per band on write, never held as cubes
     residual = np.zeros((nband, ny, nx))
@@ -603,7 +612,10 @@ def deconv(
             }
             ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
             ds_out.to_zarr(dt_name, group=n, mode="a")
-        residual = None
+        residual = ds_out = None
+        # the written Datasets sit in reference cycles holding the per-band
+        # temporaries (and views of the cubes) until a collection
+        gc.collect()
         phases.lap("write", mem=True)
         if verbosity:
             workers.log_telemetry(log)
@@ -655,7 +667,7 @@ def deconv(
         save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
 
         log.info("Mopping: computing the residual against the mopped model")
-        residual_mopped_raw, _ = workers.residual(
+        residual_mopped_raw, bresidual = workers.residual(
             model_mopped[:, None],
             cell_rad,
             epsilon=epsilon,
@@ -663,6 +675,7 @@ def deconv(
             double_accum=double_accum,
         )
         residual_mopped_raw = residual_mopped_raw[:, 0]
+        bresidual = None  # the mop has no use for the beam-attenuated one
         residual_mopped_mfs = np.sum(residual_mopped_raw, axis=0) / wsum
         save_fits(residual_mopped_mfs, fits_oname + f"_{suffix}_residual_mopped.fits", hdr_mfs, yx_order=True)
         log.info(
@@ -745,6 +758,11 @@ def deconv(
         log.info(f"Debug record written to {debug_name}")
         phases.lap("debug profiles")
 
+    # nothing below reads the solver or the cubes; release them before the
+    # FITS rendering builds a cube of its own per column
+    solver = model = update = residual = bresidual = rhs = None
+    model_mopped = residual_mopped_raw = None
+    gc.collect()  # the written Datasets' reference cycles (see the write phase)
     if fits_mfs or fits_cubes:
         log.info(f"Writing fits files to {fits_oname}_{suffix}")
         for column, norm in (("RESIDUAL", True), ("MODEL", False), ("UPDATE", False)):

@@ -182,11 +182,13 @@ def _rdiff(a, b):
 
 
 @pmp("nband", [1, 2])
-def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
+@pmp("dual_dtype, rtol", [(np.float64, 1e-10), (np.float32, 1e-6)])
+def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dtype, rtol):
     """L21 over band workers (dual per band in the workers) == the driver-held dual cube.
 
     Two solves, so the warm-started dual is covered too, with different l1
-    weights between them as after a reweight.
+    weights between them as after a reweight. A float32 dual
+    (``--single-precision-dual``) only rounds the stored dual.
     """
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
 
@@ -199,7 +201,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
         return diag * diag * x - diag * dirty
 
     hessnorm = float(np.max(diag * diag))
-    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))
+    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband), dual_dtype=dual_dtype)
     psi = PsiNocopyt(nband, ny, nx, bases, nlevel, 1)
     shape = (len(bases), held_psi.nymax, held_psi.nxmax)
     weights = [rng.uniform(0.01, 0.1, size=shape) for _ in range(2)]
@@ -216,8 +218,32 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
             reg.l1weight = w
             x = pd.solve(x, 0.05)
         out[name] = x
+    if nband == 1:  # the in-process worker
+        assert held_psi._pool._local._v.dtype == dual_dtype
     assert np.any(out["driver"])
-    assert _rdiff(out["driver"], out["held"]) < 1e-10
+    assert _rdiff(out["driver"], out["held"]) < rtol
+
+
+@pmp("nband", [1, 2])
+def test_float32_dual_band_sum_resyncs_from_the_workers(band_pool, nband):
+    """With a float32 held dual, sync_dual re-forms the driver's band sum from the rounded v_b."""
+    from pfb_imaging.operators.psi import PsiNocopytRay
+
+    nx = 16
+    rng = np.random.default_rng(5)
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, nx))
+    psi = PsiNocopytRay(nband, nx, nx, ("self", "db1"), 1, 1, workers=band_pool(nband), dual_dtype=np.float32)
+    reg = L21(psi, ("self", "db1"), nu=2)
+    reg.l1weight = np.full_like(reg.l1weight, 0.05)
+    pd = PrimalDual(tol=0.0, maxit=30, verbosity=0)
+    pd.setup(reg, 1.0)
+    pd.set_grad(lambda x: x - dirty)
+    pd.solve(np.zeros((nband, nx, nx)), 0.1)
+    expected = np.zeros_like(reg._vsum)
+    psi.dual_sum(expected)
+    assert np.any(expected)
+    reg.sync_dual()
+    np.testing.assert_array_equal(reg._vsum, expected)
 
 
 def test_worker_held_dual_resets(band_pool):
