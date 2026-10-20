@@ -135,6 +135,8 @@ def make_sara(partitions_per_band, geometry, model, update, opts, workers=None, 
     nband = workers.nband if partitions_per_band is None else len(partitions_per_band)
     if workers is None:
         workers = BandWorkerPool(nband, opts["nthreads"])
+    if opts.get("single_precision_dual", False) and opts["opt_backend"] != "primal-dual":
+        log.warning(f"opt_backend='{opts['opt_backend']}' holds no l21 dual; single_precision_dual is ignored.")
     bases = tuple(opts["bases"]) if not isinstance(opts["bases"], str) else tuple(opts["bases"].split(","))
     psi = PsiNocopytRay(
         nband,
@@ -162,6 +164,8 @@ def make_ista(partitions_per_band, geometry, model, update, opts, workers=None, 
     """ISTA: image-domain l1, forward-backward without acceleration."""
     if opts.get("opt_backend") == "primal-dual":
         log.warning("ista always uses forward-backward; opt_backend='primal-dual' is ignored.")
+    if opts.get("single_precision_dual", False):
+        log.warning("ista holds no l21 dual; single_precision_dual is ignored.")
     if partitions_per_band is None and workers is None:
         raise ValueError("partitions_per_band=None requires a workers pool with loaded bands")
     nband = workers.nband if partitions_per_band is None else len(partitions_per_band)

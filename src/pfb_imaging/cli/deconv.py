@@ -400,7 +400,8 @@ def deconv(
         bool,
         typer.Option(
             help="Hold the band workers' l21 dual in float32. "
-            "Saves one coefficient buffer of nbasis images per band at the cost of float32 rounding of the dual.",
+            "Saves one coefficient buffer of nbasis images per band at the cost of float32 rounding of the dual. "
+            "Only applies to the sara minor cycle with the primal-dual backend.",
             rich_help_panel="PrimalDual",
         ),
     ] = False,
