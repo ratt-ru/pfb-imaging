@@ -92,11 +92,14 @@ class Regulariser(Protocol):
     Optional extensions sniffed by consumers (not required):
 
     - ``dual_update(vp, v, lam, sigma)``: fused primal-dual fast path
+    - ``holds_dual`` / ``reset_dual()`` / ``dual_step(xp, xout, lam, sigma)``:
+      the regulariser keeps the dual itself (per band, in the band workers)
+      and runs the whole dual half of a primal-dual iteration
     - ``init_reweighting(update)`` / ``update_weights(x)`` /
       ``reweight_active``: iterative reweighting state
     """
 
     psi: Any  # PsiOperator; identity implementation for image-domain regularisers
-    nu: float  # spectral norm of psi
+    nu: float  # squared frame bound ||Psi Psi^T|| of psi
 
     def prox(self, v, vout, lam, sigma=1.0): ...

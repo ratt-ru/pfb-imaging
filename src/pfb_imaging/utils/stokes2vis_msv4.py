@@ -11,16 +11,17 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard
+from rarg_python_patterns.multiton import Multiton
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
-from pfb_imaging.utils.memprof import memray_task, task_memory
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG, eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
-from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
+from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, sparse_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -31,7 +32,7 @@ def safe_stokes_vis(*args, **kwargs):
     # each completed task would otherwise leave its fully loaded node behind
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
-    with memray_task("stokes_vis"):
+    with profile_task("stokes_vis") as clock:
         try:
             ret = stokes_vis(*args, **kwargs)
         finally:
@@ -40,7 +41,7 @@ def safe_stokes_vis(*args, **kwargs):
     # RSS that ratchets up across a worker's sequential tasks indicates
     # retention below Python (arcae/casacore caches, allocator arenas), which
     # gc cannot touch; shm growth is Ray object-store pages (see memprof).
-    return ret, task_memory()
+    return ret, {**task_memory(), **clock}
 
 
 def real_beam_maps(maps):
@@ -130,6 +131,7 @@ def stokes_vis(
     nx=None,
     ny=None,
     nthreads=1,
+    compute_counts=True,
 ):
     """
     MSv4 version of stokes2vis.
@@ -141,7 +143,8 @@ def stokes_vis(
             ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
         nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
-            COUNTS grid used to build imaging weights in pass 2.
+            COUNTS grid used to build imaging weights in pass 2 (stored sparse,
+            see ``weighting.sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -154,7 +157,8 @@ def stokes_vis(
         chan_average: number of channels to average together.
         bda_decorr: decorrelation threshold for baseline dependent averaging.
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
-        beam_model: model to use for beam correction. Can be "katbeam" or None.
+        beam_model: model to use for beam correction: "katbeam", None, a
+            BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
         radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
             phase centre / tangent point). None means image about the field centre.
@@ -162,7 +166,11 @@ def stokes_vis(
             body); resolved to an in-plane (l0, m0) at this piece's own time.
         nx, ny: output image size; the piece's BEAM is placed on this grid here
             in pass 1 (#281) so pass 2 consumes it as is.
-        nthreads: threads available to the task (parallelises the COUNTS gridding).
+        nthreads: threads available to the task (parallelises the COUNTS gridding
+            and meerkat-beams' rotation average).
+        compute_counts: grid and store the piece's uv counts. Only robust
+            weighting reads them, so natural weighting skips a full padded-grid
+            allocation and gridding per piece.
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
     # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
@@ -531,6 +539,10 @@ def stokes_vis(
     nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
 
     beam_imre_ratio = 0.0
+    if isinstance(beam_model, Multiton):
+        # the driver ships a recipe; this worker's wizard, prefilters and all,
+        # persists across its tasks
+        beam_model = beam_model.instance
     if beam_model is None:
         # no aperture beam: the stored response is 1/n (compresses well in zarr)
         beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
@@ -566,6 +578,8 @@ def stokes_vis(
                     i=p,
                     j=p,
                     verbose=0,
+                    nthreads=nthreads,
+                    pa_tolerance=BEAM_PA_TOLERANCE_DEG,
                 )
                 raw_maps.append(bmap)
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
@@ -637,19 +651,20 @@ def stokes_vis(
 
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
-    counts = _compute_counts(
-        uvw,
-        freq,
-        mask,
-        wgt_cf,
-        nx_pad,
-        ny_pad,
-        cell_rad,
-        cell_rad,
-        wgt_cf.dtype,
-        usign=1.0 if flip_u else -1.0,
-        vsign=1.0 if flip_v else -1.0,
-    )
+    if compute_counts:
+        counts = _compute_counts(
+            uvw,
+            freq,
+            mask,
+            wgt_cf,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            wgt_cf.dtype,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
 
     data_vars = {}
     data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
@@ -658,7 +673,9 @@ def stokes_vis(
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
     data_vars["BEAM"] = (("corr", "y", "x"), beam)
-    data_vars["COUNTS"] = (("corr", "u", "v"), counts)
+    if compute_counts:
+        data_vars.update(sparse_counts(counts))
+        del counts  # the dense grid is not needed through the zarr write
 
     coords = {
         "chan": (("chan",), freq),

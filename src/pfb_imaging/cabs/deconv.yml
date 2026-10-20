@@ -5,7 +5,7 @@ cabs:
     name: deconv
     info:
       General deconvolution of the imager DataTree via composable forward/backward algorithms.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:profiling
     inputs:
       output-filename:
         info:
@@ -344,6 +344,15 @@ cabs:
           Report frequency of primal dual algorithm
         dtype: int
         default: 50
+        metadata:
+          rich_help_panel: PrimalDual
+      single-precision-dual:
+        info:
+          Hold the band workers' l21 dual in float32.
+          Saves one coefficient buffer of nbasis images per band at the cost of float32 rounding of the dual.
+          Only applies to the sara minor cycle with the primal-dual backend.
+        dtype: bool
+        default: false
         metadata:
           rich_help_panel: PrimalDual
       fb-tol:

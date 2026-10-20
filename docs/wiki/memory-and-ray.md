@@ -2,9 +2,9 @@
 type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
-tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, runbook]
-timestamp: 2026-10-13T09:00:00Z
-last_verified_commit: 36b2a22
+tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
+timestamp: 2026-10-20T15:00:00Z
+last_verified_commit: 743c4ad
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -102,11 +102,12 @@ Pass-1/2 tasks and `degrid` work items return `utils/memprof.task_memory()` --
 `{pid, rss_gb, anon_gb, shmem_gb, peak_gb}` measured **after** the task's
 `gc.collect()` -- and the imager and `degrid` log it in their progress lines,
 which reach the run's log file as well as the terminal (#348; they were bare
-`print`s before, so a cluster or stimela run kept them only in scrollback). (The deconv band workers'
-`get_mem` still returns the older `{pid, rss_gb, peak_gb}`; the deconv driver
-logs it per-worker once per major cycle at `verbosity > 1`.)
+`print`s before, so a cluster or stimela run kept them only in scrollback). The deconv band workers'
+`get_mem` returns the same `task_memory()`, and the deconv driver logs it per
+worker after every major cycle at `verbosity >= 1`. The task bodies run
+under `memprof.profile_task`, which adds the task's `wall_s` and `cpu_s`:
 
-    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB]
+    Gridded: 2 / 4 [pid 3403865 rss 3.68 GB (anon 2.51 shm 0.85) peak 5.40 GB | wall 2.1 s cpu 2.6 s (1.3 cores)]
 
 `anon` is `RssAnon` (the process's private heap); `shm` is `RssShmem`, which
 for a Ray worker is **Ray object-store pages** it has touched: every large
@@ -136,6 +137,104 @@ take timings and peaks from a run without it: native tracking slows
 everything, and one local run under it hit 26.7 GiB RSS in a pass-1 task with
 2.8 GiB tracked -- allocations memray cannot hook (Arrow's mimalloc, most
 likely) -- where the same code without memray peaked at 3.5 GB.
+
+## Where the time goes
+
+Stimela's stats give one wall time per step. Three finer sources, all read by
+`scripts/profile_report.py` (its docstring is the how-to):
+
+- **Driver phases, always on.** `memprof.PhaseClock` ends the imager,
+  `degrid` and `deconv` logs with a `Time by phase:` line (a phase that recurs,
+  like deconv's per-major-cycle `forward`/`backward`, is totalled). Task
+  submission is its own phase because `.remote` pickles each task's datatree
+  node in the driver.
+- **The Ray timeline, `PFB_RAY_TIMELINE=<file.json>`.** The driver dumps
+  `ray.timeline()` before shutting Ray down. Ray already splits each task into
+  argument deserialisation, execution and output storage, so the report gives
+  per task name the counts, total/p50/p95/max, those overheads, the workers'
+  busy fraction and the time with no task running anywhere (driver-bound).
+- **Per-task cProfile, `PFB_CPROFILE_DIR=<dir>`.** `profile_task` writes one
+  `.pstats` per task, beside memray's `.bin` when both are set; the report
+  merges them per task name.
+
+`cpu_s / wall_s` in the progress line is the cores a task kept busy, counted
+over the whole worker process, so ducc0 and numba threads are included. cProfile
+charges compiled code to the Python call that entered it. On Python 3.11 (the
+container) it sees only the task's own thread, so the beam's thread-pool work
+(meerkat-beams `nthreads`) appears as a wait; from 3.12 it records every Python
+thread, so concurrent threads' self times add up and can exceed the wall time.
+
+On the test MS (`--nworkers 2 --nthreads 2`, 4 images), numba JIT compilation
+was 80% of the profiled `stokes_vis` time and 50% of `grid_image`'s (p50 0.27 s
+against a 9.3 s first task per worker). It is paid once per worker process, so
+on a real run it shrinks to a per-worker constant -- but a small test run's
+timings are mostly compilation.
+
+### deconv
+
+`pfb deconv`'s band workers are actors, not tasks, so two more always-on
+sources sit between the phase line and the opt-in captures:
+
+- **The backward solver's section clock.** `PrimalDual.solve` and
+  `ForwardBackward.solve` log one line per solve (`memprof.SectionClock`):
+  ms/iter and the share of each section. With the dual held in the band
+  workers (every sara run; deconv-primer, Backward solvers) the sections are
+  `dual_step` (both band-worker calls plus the driver's band-summed analysis),
+  `grad` (a Ray round trip), `primal`, `convergence`, `reweight` and `copy`;
+  a driver-held dual instead splits `dual_step` into `psi_dot`,
+  `dual_update`, `extrapolate` and `psi_hdot`.
+- **Band-worker call stats.** Every role method runs under a `CallClock` and
+  `BandWorkerPool._map` times the driver's round trip for the same call.
+  `BandWorkerPool.log_telemetry` prints, per method and per major cycle,
+  `round trip`, `slowest band` (execution, summed over calls), `mean band`,
+  `Ray overhead` (round trip minus slowest band: argument pickling,
+  object-store reads and writes) and worker cores busy. The copy of a result
+  into the driver's cube is after the round trip, so it is in the solver's
+  clock and not here. `dual_begin` is dispatched without waiting and the
+  driver runs its band-summed analysis before the `ray.get`; that work is
+  reported as `driver work overlapped` and kept out of the round trip, and the
+  line gives no Ray overhead, because the workers may have finished during it.
+- **The forward solve's CG outcome.** `HessTreeRay.cg` logs one line per
+  solve at `--cg-verbose >= 1`: `CG over N bands: a-b iterations, max eps,
+  slowest band` (or `CG (bands coupled): ...` under the frequency prior), plus
+  a warning naming any band that hit `--cg-maxit` or stalled. The band workers
+  return each solve's `info` (`opt.pcg.log_cg_summary`) because a worker's log
+  reaches the console through Ray but never the driver's log file; the solvers
+  used to `print` their outcome, so it was not in the log at all. The CG's
+  wall time is the `forward` phase and the `cg` call stats (`hess_dot`, one
+  call per CG iteration, under the frequency prior).
+
+What moves per primal-dual iteration: the image cube each way for
+`dual_begin`/`dual_finish` and for `grad`, plus one broadcast shrink factor
+the size of one band's coefficients. Before the dual moved into the workers,
+`psi_dot` returned and `psi_hdot` sent an `nbasis`-times-image-sized
+coefficient cube per band (~17 GB across 8 bands at 8192² with four bases)
+and the driver made three passes over it. Measured at 7 bands × 2048², four
+bases, 16 threads on one node: 873 -> 814 ms/iter and driver RSS 8.2 -> 5.9
+GB -- on one node the dual passes cost the same memory bandwidth wherever
+they run, so the time gain is the object-store copies only. What remained
+was band-worker execution: `psi_dot` 95, `psi_hdot` 144, `hess_dot` 202
+ms/iter at 2–3 cores per worker. Spilling, when the object store overflows,
+shows in no clock; grep the raylet log for `Spilled`.
+
+The opt-in captures work as for the imager, except that each band actor
+writes **one** capture for its whole life (`memprof.ActorCapture`):
+`PFB_MEMRAY_DIR` tracks the process from actor construction, `PFB_CPROFILE_DIR`
+profiles only inside the role methods, and the driver closes both with
+`BandWorkerPool.stop_capture` before it exits -- a capture killed with its
+process is never written. The in-process `nband == 1` worker never captures;
+profile the driver instead. The timeline records every actor call (three per
+band per primal-dual iteration), and Ray keeps a bounded number of task events
+(`RAY_task_events_max_num_task_in_gcs`), so profile a short run: real image
+size, `--niter 2 --pd-maxit 100`.
+
+On the test MS imaged into 2 bands (420², 2 cycles of 30 iterations) the first
+cycle's `psi_dot` cost 1.4 s per worker against 0.1 s in the second, even
+though `init_psi` warms the jitclass up -- cProfile shows numba compilation. A
+plausible cause, not yet confirmed, is a second specialisation for the
+read-only arrays Ray deserialises (the warm-up passes writeable ones). It is a
+per-worker constant. Under memray (Python frames only) the same calls took
+41 s, so take timings from a run without it.
 
 Local repro needs no cluster: pickle-roundtrip a datatree node (that is
 exactly what Ray does to task args), `.load()` it, drop it, and watch
@@ -206,8 +305,8 @@ with the visibilities -- the next thing to measure.
 and exact-residual inputs. Its memory/scheduling rules:
 
 - **Worker-side loading.** Each worker reads its own band's vis-scale inputs
-  (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`/`DIRTY`) straight from the
-  `.dt` store (`load_bands`), layer-2 style (selective load → extract →
+  (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`) straight from the
+  `.dt` store (`load_bands`, `cache=False`), layer-2 style (selective load → extract →
   release → gc). Vis-scale data never enters the driver or the Ray object
   store; the driver holds only `(nband, ny, nx)` cubes and attrs. (Exception:
   for `nband == 1` the pool runs in-process, so the one band's data lives in
@@ -229,6 +328,17 @@ and exact-residual inputs. Its memory/scheduling rules:
   test images this dwarfs the data and dominates stimela's memory stats.
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
+- **Telemetry.** `BandWorkerPool.log_telemetry` logs each worker's post-gc
+  `task_memory()` and its call stats after the solver is built, after every
+  major cycle and at the end (see *Where the time goes*). A worker's `shm`
+  grows with what the backward step ships per iteration (its band of the
+  image cube each way, and the broadcast shrink factor), not its pinned inputs.
+- **What one worker holds** (D58): the l21 dual and its analysis buffer
+  (`2·nbasis` images), `BEAM` and `|PSFHAT|` per partition, the Hessian's padded
+  raster and spectrum, one shared output image and the synthesis' accumulator,
+  plus its band's vis-scale inputs. Everything but the vis-scale share is per
+  band, so it is what grows when a run uses more imaging bands; `DIRTY`/`BDIRTY`
+  are read from the store at each residual rather than held.
 
 ## The degrid replicas
 
@@ -239,8 +349,9 @@ same rules as pass 1: `Degridder.degrid` calls `gc.collect()` in a `finally`
 and must never wipe the class-level Multiton cache (see layer 3: a wholesale
 clear evicts the deployment's own model/mask Multitons), and returns the same
 post-gc `task_memory()` telemetry, logged per item as `Completed:` lines; the
-item body runs under `memray_task("degrid")` and the driver forwards
-`memray_env()`, so `PFB_MEMRAY_DIR` profiles replicas as it does pass 1. The
+item body runs under `profile_task("degrid")` and the driver forwards
+`profile_env()`, so `PFB_MEMRAY_DIR` and `PFB_CPROFILE_DIR` profile replicas as
+they do pass 1. The
 replica dereferences its model and masks once, on the first work item, and
 holds them: the Multiton TTL is *inactivity*-based, so a quiet replica would
 otherwise drop and reload a 633 MB `.mds` mid-run.
@@ -332,8 +443,9 @@ Check before killing anything.
   switch.
 - Driver-side counts are reduced **at the applied `weight_grouping`
   granularity** (`counts_key` in `core/imager`), one group at a time by
-  `utils/weighting.write_group_counts`, which holds one accumulator and one
-  piece grid and writes each group's grid to `.scratch` for pass 2 to read;
+  `utils/weighting.write_group_counts`, which holds one dense accumulator, adds
+  each piece's sparse counts into it (`sparse_counts`; a piece fills ~0.05% of the
+  grid) and writes each group's grid to `.scratch` for pass 2 to read;
   natural weighting (`robustness=None`) skips counts entirely. **Open a zarr
   tree whose arrays you read with `.values` using `cache=False`**: xarray's
   default memoises every such read on the open tree. The driver's counts loop

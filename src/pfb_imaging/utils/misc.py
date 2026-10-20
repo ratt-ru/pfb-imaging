@@ -1042,15 +1042,17 @@ def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     return tuple(row_chunks), time_bin_indices, time_bin_counts
 
 
-def l1reweight_func(model, psih=None, outvar=None, rmsfactor=None, rms_comps=None, alpha=4):
+def l1reweight_func(csum, rmsfactor=None, rms_comps=None, alpha=4):
     """
     The logic here is that weights should remain the same for model
     components that are rmsfactor times larger than the rms.
     High SNR values should experience relatively small thresholding
     whereas small values should be strongly thresholded
+
+    Args:
+        csum: ``(nbasis, ...)`` band-summed coefficients ``sum_b Psi^T x_b``.
     """
-    psih(model, outvar)
-    mcomps = np.abs(np.sum(outvar, axis=0))
+    mcomps = np.abs(csum)
     # rms_comps can be per basis
     if isinstance(rms_comps, np.ndarray):
         return (1 + rmsfactor) / (1 + mcomps**alpha / rms_comps[:, None, None] ** alpha)

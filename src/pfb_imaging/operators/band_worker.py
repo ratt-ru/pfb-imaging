@@ -17,7 +17,28 @@ runs a single in-process worker (no Ray overhead), matching the facades'
 historical local fallback.
 """
 
+import functools
+import time
+
 import numpy as np
+
+from pfb_imaging.utils import inplace
+from pfb_imaging.utils.memprof import ActorCapture, CallClock, format_memory, task_memory
+
+
+def _timed(method):
+    """Run a worker role method under the worker's ``CallClock`` (see ``BandWorkerPool.call_stats``).
+
+    Also under its opt-in ``ActorCapture``, so a cProfile capture covers the
+    role methods and nothing else.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._clock.call(method.__name__), self._capture.call():
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 def _uv_profile(uvw, freq, wgt, mask, rvis, nbins=20):
@@ -56,7 +77,7 @@ class _BandWorkerImpl:
     facades construct a ``BandWorkerPool``.
     """
 
-    def __init__(self, nthreads):
+    def __init__(self, nthreads, capture=False):
         # Load TBB in this process — ctypes.CDLL in the driver process does
         # not carry over to forked/spawned Ray workers. Off x86_64 there is no
         # TBB to load (no wheel, no sdist) and _load_tbb() is a no-op returning
@@ -75,21 +96,38 @@ class _BandWorkerImpl:
 
         resize_thread_pool(nthreads)
         self._nthreads = nthreads
+        self._clock = CallClock()
+        # PFB_CPROFILE_DIR / PFB_MEMRAY_DIR captures for the actor's life;
+        # never for the in-process worker, which is the driver's process
+        self._capture = ActorCapture("band_worker", enabled=capture)
         self._hess = None
         self._psib = None
         self._parts = None
-        self._dirty = None
-        self._bdirty = None
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
 
+    def _image_out(self, ncorr, ny, nx):
+        """The one output image every role returns into.
+
+        Ray copies a returned array into the object store as the call returns
+        and the in-process path's callers copy it at once, and an actor runs
+        one call at a time, so the Hessian and Psi roles can share it: one
+        ``(ny, nx)`` raster per band worker instead of two.
+        """
+        size = ncorr * ny * nx
+        if getattr(self, "_img", None) is None or self._img.size < size:
+            self._img = np.empty(size)
+        return self._img[:size].reshape(ncorr, ny, nx)
+
+    @_timed
     def load_band(self, store_url, node_name):
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
         Loads the per-partition gridding inputs (``UVW``/``WEIGHT``/``MASK``/
-        ``FREQ``/``BEAM``), the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
-        and the raw ``DIRTY`` in this process, so vis-scale data never enters
-        the driver or the Ray object store. Selective loads only, then the
+        ``FREQ``/``BEAM``) and the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
+        in this process, so vis-scale data never enters the driver or the Ray
+        object store. ``DIRTY``/``BDIRTY`` are not pinned: ``residual`` reads
+        them once per major cycle. Selective loads only, then the
         Dataset handles are released and cycles collected (the ``stokes_vis``
         discipline; docs/wiki/memory-and-ray.md). Everything loaded is held
         for the life of the run — a deliberate RSS-for-work trade, visible in
@@ -104,10 +142,13 @@ class _BandWorkerImpl:
             # kept for lazy re-reads (partition_debug loads VIS on demand)
             self._store_url = store_url
             self._node_name = node_name
-            band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
-            self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
-            # beam-attenuated dirty: the model-free term of the exact gradient (D23)
-            self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
+            # cache=False: the tree would otherwise hold its own copy of every
+            # variable read here (the complex PSFHATs among them) until gc
+            band = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)[node_name]
+            # residual() reads these per major cycle; fail at load, not after a solve
+            missing = {"DIRTY", "BDIRTY"} - set(band.ds.data_vars)
+            if missing:
+                raise ValueError(f"{node_name} has no {sorted(missing)}; re-run pfb imager")
             parts = []
             hess_parts = []
             self._part_names = sorted(band.children)
@@ -138,6 +179,7 @@ class _BandWorkerImpl:
 
     # --- Hessian role ---
 
+    @_timed
     def init_hess(self, partitions, nx, ny, nx_psf, ny_psf, eta, wsum, eta_mode=None, eta_cap=1e2):
         # deferred: import cycle with operators.hessian
         from pfb_imaging.operators.hessian import HessianTree
@@ -158,10 +200,15 @@ class _BandWorkerImpl:
             eta_mode=eta_mode,
             eta_cap=eta_cap,
         )
-        self._hess.dot(np.zeros((ny, nx)))  # warm up the FFT plans ((Y, X) rasters)
+        # one output image for every call: Ray copies a returned array into the
+        # object store as the call returns, and pool.hess_dot / pcg_numba
+        # consume it before the next call (D56)
+        self._hout = self._image_out(self._hess.ncorr, ny, nx)
+        self._hess.dot(np.zeros((ny, nx)), out=self._hout)  # warm up the FFT plans ((Y, X) rasters)
 
+    @_timed
     def hess_dot(self, x):
-        return self._hess.dot(x)
+        return self._hess.dot(x, out=self._hout)
 
     def get_eta(self):
         """This band's Tikhonov coefficient: a float, or the ``eta_mode`` profile.
@@ -171,6 +218,7 @@ class _BandWorkerImpl:
         """
         return self._hess.eta
 
+    @_timed
     def cg(self, rhs, x0, tol, maxit, minit, verbosity):
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.opt.pcg import pcg_numba
@@ -179,49 +227,117 @@ class _BandWorkerImpl:
             # Ray deserialises task args as read-only zero-copy views;
             # pcg_numba updates x0 in place
             x0 = x0.copy()
-        return pcg_numba(
-            lambda z: self._hess.dot(z)[0],
+        # the driver logs the outcome (log_cg_summary): this worker's log
+        # reaches the console but never the driver's log file
+        info = {}
+        x = pcg_numba(
+            lambda z: self._hess.dot(z, out=self._hout)[0],
             rhs,
             x0=x0,
             tol=tol,
             maxit=maxit,
             minit=minit,
             verbosity=verbosity,
+            info=info,
         )
+        return x, info
 
     # --- Psi (wavelet dictionary) role ---
 
+    @_timed
     def init_psi(self, nx, ny, bases, nlevel):
         # deferred: import cycle with operators.psi
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
         # rasters are (Y, X)-ordered end to end (wiki D19): axis 0 = ny
-        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel)
+        # every synthesis here consumes its coefficients (hdot_inplace), so
+        # the jitclass needs no coefficient-sized working copy
+        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel, synthesis_scratch=False)
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
-        self._xo = np.empty((ny, nx))
+        self._xo = self._image_out(1, ny, nx)[0]
         self._psib.dot(np.zeros((ny, nx)), self._alphao)
-        self._psib.hdot(self._alphao, self._xo)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 
+    @_timed
     def psi_dot(self, x):
         self._psib.dot(x, self._alphao)
         return self._alphao
 
+    @_timed
     def psi_hdot(self, alpha):
-        self._psib.hdot(alpha, self._xo)
+        # Ray hands over a read-only view, and the synthesis consumes its input
+        inplace.copy(self._alphao, alpha)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
+
+    # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
+
+    def init_dual(self, dtype=np.float64):
+        """Allocate this band's dual at zero; it persists across solves (warm start).
+
+        One buffer: ``vt`` lives in ``_alphao`` between ``dual_begin`` and
+        ``dual_finish``, which saves a coefficient buffer per band
+        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases). ``dtype=float32``
+        halves this one (``--single-precision-dual``); ``_alphao`` and the
+        update arithmetic stay float64, so only the stored dual rounds.
+        """
+        self._v = np.zeros_like(self._alphao, dtype=dtype)
+
+    @_timed
+    def dual_begin(self, x, sigma, return_coeffs=False):
+        """Hold ``vt = v + sigma * Psi^T x`` in ``_alphao`` for ``dual_finish``.
+
+        Returns ``Psi^T x`` only when asked: the in-process single-band path
+        uses it as the band sum, and a multi-band driver never needs it.
+        """
+        # deferred: worker-side only; keeps driver-side import light
+        from pfb_imaging.prox.prox_21m import l21_dual_begin
+
+        self._psib.dot(x, self._alphao)
+        coeffs = self._alphao.copy() if return_coeffs else None
+        l21_dual_begin(self._alphao, self._v, sigma)
+        return coeffs
+
+    @_timed
+    def dual_finish(self, scale):
+        """Shrink the held ``vt`` into the new dual and return ``Psi(2 v_new - v)``."""
+        # deferred: worker-side only; keeps driver-side import light
+        from pfb_imaging.prox.prox_21m import l21_dual_finish
+
+        l21_dual_finish(self._alphao, self._v, scale)
+        self._psib.hdot_inplace(self._alphao, self._xo)
+        return self._xo
+
+    def dual_value(self):
+        """This band's held dual ``v``, for re-syncing the driver's band sum."""
+        return self._v
 
     # --- exact residual role ---
 
+    @_timed
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         # deferred: worker-side only; keeps driver-side import light
+        import gc
+
+        import xarray as xr
+
         from pfb_imaging.operators.gridder import residual_from_partitions
 
+        # DIRTY/BDIRTY (the model-free terms, D23) are read here rather than
+        # pinned by load_band: once per major cycle, two images per band
+        # only this band's group: opening the whole tree builds every band and
+        # partition node, which costs seconds per call on a many-partition .dt
+        ds = xr.open_zarr(self._store_url, group=self._node_name, chunks=None)
+        dirty = ds.DIRTY.values  # (corr, ny, nx)
+        bdirty = ds.BDIRTY.values
+        del ds
+        gc.collect()  # the tree's reference cycles (memory-and-ray.md, layer 1)
         # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
-            self._dirty,
+            dirty,
             self._parts,
             model,
             cell_rad,
@@ -229,7 +345,7 @@ class _BandWorkerImpl:
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            bdirty=self._bdirty,
+            bdirty=bdirty,
         )
 
     def _iter_partition_rvis(self, model, cell_rad, epsilon, do_wgridding):
@@ -276,6 +392,7 @@ class _BandWorkerImpl:
                 rvis[c] = vis[c] - dirty2vis(dirty=(beam[c] * model[c]).T, **common)
             yield cname, pds, vis, rvis, common
 
+    @_timed
     def partition_debug(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         """Per-partition debug products for mosaic misfit analysis (D23 aid).
 
@@ -323,6 +440,7 @@ class _BandWorkerImpl:
             )
         return out
 
+    @_timed
     def partition_chi2(self, model, cell_rad, epsilon, do_wgridding):
         """Per-partition vis-space chi2 against the current model (per-iteration debug).
 
@@ -344,6 +462,7 @@ class _BandWorkerImpl:
             )
         return out
 
+    @_timed
     def partition_uvprofile(self, model, cell_rad, epsilon, do_wgridding, nbins):
         """Baseline-length-binned weighted residual power per partition (debug).
 
@@ -368,21 +487,21 @@ class _BandWorkerImpl:
 
     # --- telemetry ---
 
+    def stop_capture(self):
+        """Write this worker's cProfile/memray captures (``ActorCapture.stop``)."""
+        self._capture.stop()
+
+    def take_call_stats(self):
+        """This worker's per-call times since the last take (``CallClock.take``)."""
+        return self._clock.take()
+
     def get_mem(self):
-        """Post-gc memory telemetry (docs/wiki/memory-and-ray.md)."""
+        """Post-gc ``task_memory()``: RSS split into anon and shm (docs/wiki/memory-and-ray.md)."""
         # deferred: telemetry-only, worker-side
         import gc
-        import os
-        import resource
-
-        import psutil
 
         gc.collect()
-        return {
-            "pid": os.getpid(),
-            "rss_gb": psutil.Process().memory_info().rss / 2**30,
-            "peak_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / 2**30,
-        }
+        return task_memory()
 
     def get_memory_mb(self):
         """RSS/USS in MB (rss includes shared pages; uss is private only)."""
@@ -421,16 +540,26 @@ class BandWorkerPool:
             # nworkers=1 driver cluster).
             self._local = None
             worker_cls = ray.remote(num_cpus=1e-2)(_BandWorkerImpl)
-            self.actors = [worker_cls.remote(self.nthreads_per_band) for _ in range(nband)]
+            self.actors = [worker_cls.remote(self.nthreads_per_band, True) for _ in range(nband)]
+        # driver-side round trip per _map call, paired with the workers' own
+        # clocks in call_stats
+        self._roundtrip = {}
+        # driver work run between a non-blocking dispatch and its ray.get
+        # (dual_begin), kept out of the round trip
+        self._overlap = {}
 
     def _map(self, method, per_band_args):
         """Run ``method(*args)`` on every band worker; return per-band results."""
-        if self.actors is None:
-            return [getattr(self._local, method)(*per_band_args[0])]
-        # deferred: optional heavy runtime (ray)
-        import ray
+        t0 = time.perf_counter()
+        try:
+            if self.actors is None:
+                return [getattr(self._local, method)(*per_band_args[0])]
+            # deferred: optional heavy runtime (ray)
+            import ray
 
-        return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
+            return ray.get([getattr(a, method).remote(*args) for a, args in zip(self.actors, per_band_args)])
+        finally:
+            self._roundtrip.setdefault(method, []).append(time.perf_counter() - t0)
 
     # --- band loading ---
 
@@ -462,7 +591,7 @@ class BandWorkerPool:
             ],
         )
 
-    def hess_dot(self, x):
+    def hess_dot(self, x, out=None):
         # empty, not zeros: every band is overwritten below, and zeroing costs a
         # full pass over the cube -- 1.07 s at 8 bands x 8000^2, paid once per
         # CG iteration on the band-coupled forward path. That makes "every band
@@ -473,10 +602,11 @@ class BandWorkerPool:
         # the old allocation happened to supply.
         if x.shape[0] != self.nband:
             raise ValueError(f"got {x.shape[0]} bands for {self.nband} workers")
-        out = np.empty_like(x)
+        if out is None:
+            out = np.empty_like(x)
         nwritten = 0
         for b, res in enumerate(self._map("hess_dot", [(x[b],) for b in range(self.nband)])):
-            out[b] = res[0]
+            inplace.copy(out[b], res[0])
             nwritten += 1
         if nwritten != self.nband:
             raise ValueError(f"{nwritten} band results for {self.nband} workers")
@@ -495,11 +625,14 @@ class BandWorkerPool:
         return out
 
     def hess_cg(self, rhs, x0, tol, maxit, minit, verbosity):
+        """Band-parallel CG; returns the solution cube and one ``info`` dict per band."""
         out = np.zeros_like(rhs)
         args = [(rhs[b], None if x0 is None else x0[b], tol, maxit, minit, verbosity) for b in range(self.nband)]
-        for b, res in enumerate(self._map("cg", args)):
+        infos = []
+        for b, (res, info) in enumerate(self._map("cg", args)):
             out[b] = res
-        return out
+            infos.append(info)
+        return out, infos
 
     # --- Psi role ---
 
@@ -515,18 +648,79 @@ class BandWorkerPool:
         for b, res in enumerate(self._map("psi_hdot", [(alpha[b],) for b in range(self.nband)])):
             xo[b] = res
 
+    def init_dual(self, dtype=np.float64):
+        """Allocate every band's worker-held dual at zero, in ``dtype``."""
+        self._map("init_dual", [(dtype,)] * self.nband)
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b`` over the held duals, fetching one band at a time.
+
+        One band's dual is in flight at a time, so the object store holds one
+        coefficient buffer rather than ``nband`` of them.
+        """
+        if self.actors is None:
+            out[...] = self._local.dual_value()
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        out[...] = 0.0
+        for a in self.actors:
+            np.add(out, ray.get(a.dual_value.remote()), out=out)
+
+    def dual_begin(self, x, sigma):
+        """Start every band's dual update without waiting for it.
+
+        Returns a handle for ``dual_finish``, so the driver can do its own work
+        (the band-summed analysis) while the workers run. On the in-process path
+        the call completes here and the handle is this band's ``Psi^T x``.
+        """
+        if self.actors is None:
+            return self._map("dual_begin", [(x[0], sigma, True)])[0]
+        t0 = time.perf_counter()
+        refs = [a.dual_begin.remote(x[b], sigma) for b, a in enumerate(self.actors)]
+        return t0, time.perf_counter(), refs
+
+    def dual_finish(self, pending, scale, xo):
+        """Finish every band's dual update with the shared ``scale``; ``xo[b] = Psi(2 v_new - v)``."""
+        if self.actors is not None:
+            # deferred: optional heavy runtime (ray)
+            import ray
+
+            t0, t_sent, refs = pending
+            t_get = time.perf_counter()
+            try:
+                ray.get(refs)
+            finally:
+                # the driver's own work between dispatch and ray.get (the
+                # band-summed analysis) is not Ray's: record it apart, so the
+                # round trip is the time the driver spent on this call
+                overlap = t_get - t_sent
+                self._roundtrip.setdefault("dual_begin", []).append(time.perf_counter() - t0 - overlap)
+                self._overlap.setdefault("dual_begin", []).append(overlap)
+            # one copy in the object store, read zero-copy by every worker
+            scale = ray.put(scale)
+        for b, res in enumerate(self._map("dual_finish", [(scale,)] * self.nband)):
+            xo[b] = res
+
     # --- exact residual role ---
 
-    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
+    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True, out=None):
         """Exact per-band ``(residual, bresidual)`` for a ``(nband, corr, nx, ny)`` model cube.
 
         ``residual`` is the apparent (once-attenuated) image; ``bresidual`` the
-        beam-attenuated gradient the forward solver consumes (D23).
+        beam-attenuated gradient the forward solver consumes (D23). Pass
+        ``out=(residual, bresidual)`` to fill the caller's cubes rather than
+        allocate two.
         """
         args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
-        out = self._map("residual", args)
-        res = np.stack([r for r, _ in out], axis=0)
-        bres = np.stack([g for _, g in out], axis=0)
+        results = self._map("residual", args)
+        if out is None:
+            out = tuple(np.empty((self.nband, *results[0][0].shape)) for _ in range(2))
+        res, bres = out
+        for b, (r, g) in enumerate(results):
+            inplace.copy(res[b], r)
+            inplace.copy(bres[b], g)
         return res, bres
 
     def partition_debug(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
@@ -545,6 +739,89 @@ class BandWorkerPool:
         return self._map("partition_uvprofile", args)
 
     # --- telemetry ---
+
+    def call_stats(self):
+        """Per-method call statistics since the previous call, then reset.
+
+        Every ``_map`` call reaches each worker once and in order, so the i-th
+        worker record of a method pairs with the i-th driver round trip. Per
+        method:
+
+        * ``calls``, ``roundtrip_s``: driver wall time from dispatch until
+          every band's result is back (``ray.get`` included);
+        * ``exec_max_s``: the slowest band's execution summed over calls --
+          what the round trip would be if Ray were free;
+        * ``exec_mean_s``: one band's execution time, averaged over bands;
+          ``exec_max_s - exec_mean_s`` is load imbalance;
+        * ``cores``: worker CPU time over execution time, i.e. how many of its
+          threads a worker kept busy.
+
+        ``roundtrip_s - exec_max_s`` is the Ray overhead: pickling arguments
+        into the object store, reading them in the worker, storing results and
+        reading them back. Copying a result into the caller's cube happens
+        after ``_map`` returns and is not in any of these; the backward solver's
+        own clock (``PrimalDual.clock``) includes it.
+
+        A method dispatched without waiting (``dual_begin``) also has
+        ``overlap_s``, the driver's own work between dispatch and ``ray.get``.
+        It is excluded from ``roundtrip_s``, which is then the time the driver
+        spent dispatching and waiting. The workers may run during the overlap,
+        so ``roundtrip_s - exec_max_s`` is no longer the Ray overhead: it is
+        negative when the overlap hid the workers' execution.
+        """
+        if self.actors is None:
+            per_band = [self._local.take_call_stats()]
+        else:
+            # deferred: optional heavy runtime (ray)
+            import ray
+
+            per_band = ray.get([a.take_call_stats.remote() for a in self.actors])
+        roundtrip, self._roundtrip = self._roundtrip, {}
+        overlap, self._overlap = self._overlap, {}
+        stats = {}
+        for method, rt in roundtrip.items():
+            rec = [band.get(method, []) for band in per_band]
+            entry = {"calls": len(rt), "roundtrip_s": float(sum(rt))}
+            if method in overlap:
+                entry["overlap_s"] = float(sum(overlap[method]))
+            if all(len(r) == len(rt) for r in rec):
+                wall = np.array([[w for w, _ in r] for r in rec])  # (nband, ncall)
+                cpu = sum(c for r in rec for _, c in r)
+                entry["exec_max_s"] = float(wall.max(axis=0).sum())
+                entry["exec_mean_s"] = float(wall.sum(axis=1).mean())
+                entry["cores"] = cpu / wall.sum() if wall.sum() > 0 else 0.0
+            # else an untimed method (get_eta): the round trip is all there is
+            stats[method] = entry
+        return stats
+
+    def log_telemetry(self, log):
+        """Log ``call_stats`` (which resets them) and every worker's ``get_mem``."""
+        for method, s in self.call_stats().items():
+            line = f"band workers {method}: {s['calls']} calls, round trip {s['roundtrip_s']:.1f} s"
+            if "overlap_s" in s:
+                line += f" (+{s['overlap_s']:.1f} s of driver work overlapped)"
+            if "exec_max_s" in s:
+                line += f", slowest band {s['exec_max_s']:.1f} s, mean band {s['exec_mean_s']:.1f} s"
+                if "overlap_s" not in s:
+                    over = s["roundtrip_s"] - s["exec_max_s"]
+                    share = 100 * over / s["roundtrip_s"] if s["roundtrip_s"] > 0 else 0.0
+                    line += f", Ray overhead {over:.1f} s ({share:.0f}%)"
+                line += f", {s['cores']:.1f} cores"
+            log.info(line)
+        for m in self.get_mem():
+            log.info(f"band worker {format_memory(m)}")
+
+    def stop_capture(self):
+        """Write every worker's opt-in cProfile/memray captures; no-op in process.
+
+        Call before the run ends: a capture is only written when it is closed.
+        """
+        if not self.actors:
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        ray.get([a.stop_capture.remote() for a in self.actors])
 
     def get_mem(self):
         """Per-worker post-gc memory telemetry (empty for the local path)."""
@@ -571,6 +848,7 @@ class BandWorkerPool:
         # deferred: optional heavy runtime (ray)
         import ray
 
+        self.stop_capture()
         for a in self.actors:
             ray.kill(a)
         self.actors = []

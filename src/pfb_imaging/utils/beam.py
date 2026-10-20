@@ -8,6 +8,12 @@ from scipy.interpolate import RegularGridInterpolator
 
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 
+# meerkat-beams merges parallactic angles that agree to within this many degrees
+# before rotation-averaging (landmanbester/meerkat-beams#39). Within 1 deg of the
+# pointing centre merging at up to 1 deg moves the map by ~1e-7 of the peak, so
+# 0.1 deg costs nothing measurable and cuts a 37-integration piece to ~9 angles.
+BEAM_PA_TOLERANCE_DEG = 0.1
+
 
 def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_dir=None):
     """

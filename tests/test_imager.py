@@ -355,7 +355,9 @@ def _open_first_vis_node(ms_name):
     raise RuntimeError("no visibility node in test MS")
 
 
-def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None):
+def _run_stokes_vis(
+    ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None, compute_counts=True
+):
     """Drive stokes_vis directly (no Ray) on the test MS's first node.
 
     flag_chans: optional channel slice to flag before conversion, used to shift
@@ -400,9 +402,39 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=
         ny=64,
         radec_new=radec_new,
         nthreads=1,
+        compute_counts=compute_counts,
     )
     ds = xr.open_datatree(scratch, engine="zarr", chunks=None)[f"band{bandid:04d}_time{timeid:04d}/{piece}"].ds
     return ds.load()
+
+
+@pytest.mark.parametrize("given, expected", [(None, None), (-2.0, -2.0), (0.5, 0.5), (2.0, 2.0), (2.5, None)])
+def test_effective_robustness_maps_above_two_to_natural(given, expected):
+    from pfb_imaging.core.imager import effective_robustness
+
+    assert effective_robustness(given) == expected
+
+
+def test_stokes_vis_resolves_a_multiton_beam(ms_name, tmp_path):
+    """Pass 1 gets the beam as a Multiton recipe, built once per worker."""
+    from rarg_python_patterns.multiton import Multiton
+
+    cell = 2e-5
+    direct = _run_stokes_vis(ms_name, str(tmp_path / "d.scratch"), beam_model="katbeam", cell_rad=cell)
+    recipe = _run_stokes_vis(ms_name, str(tmp_path / "m.scratch"), beam_model=Multiton(str, "katbeam"), cell_rad=cell)
+    np.testing.assert_array_equal(recipe.BEAM.values, direct.BEAM.values)
+    assert recipe.attrs["beam_model"] == "katbeam"
+
+
+def test_stokes_vis_skips_counts_when_asked(ms_name, tmp_path):
+    """Natural weighting never reads the counts, so the driver turns them off."""
+    with_counts = _run_stokes_vis(ms_name, str(tmp_path / "c.scratch"))
+    without = _run_stokes_vis(ms_name, str(tmp_path / "n.scratch"), compute_counts=False)
+    assert {"COUNTS_INDEX", "COUNTS_VALUE"} <= set(with_counts.data_vars)
+    assert with_counts.COUNTS_INDEX.size > 0
+    assert not {"COUNTS_INDEX", "COUNTS_VALUE"} & set(without.data_vars)
+    for var in ("VIS", "WEIGHT", "MASK", "UVW", "BEAM"):
+        np.testing.assert_array_equal(without[var].values, with_counts[var].values)
 
 
 def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path, needs_rephasing):

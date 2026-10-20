@@ -419,11 +419,35 @@ def nb_weight_data_impl(
     return _impl
 
 
+def sparse_counts(counts):
+    """A piece's uv counts grid as its occupied cells, for the scratch store.
+
+    A piece covers a sliver of the padded uv plane: on a 4608^2 MeerKAT image
+    the grid is 491 MB of float64 with 0.05% of its cells occupied. Stored
+    densely, every piece cost a 491 MB encode in pass 1 and a 491 MB decode
+    and add in the driver's reduction.
+
+    Args:
+        counts: ``(corr, u, v)`` counts grid.
+
+    Returns:
+        Data variables ``COUNTS_INDEX`` (flat indices of the occupied cells,
+        carrying the grid's ``shape`` as an attribute) and ``COUNTS_VALUE``.
+    """
+    flat = counts.reshape(-1)
+    idx = np.flatnonzero(flat)
+    return {
+        "COUNTS_INDEX": (("counts_cell",), idx, {"shape": list(counts.shape)}),
+        "COUNTS_VALUE": (("counts_cell",), flat[idx]),
+    }
+
+
 def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
     """Reduce pass-1 piece COUNTS into one applied grid per weighting group, on disk.
 
-    Streams: each piece grid is read, added and released, so the caller holds
-    one accumulator and one piece grid whatever the number of pieces. The tree
+    Streams: each piece's occupied cells (``sparse_counts``) are read and added
+    into the group's dense accumulator, so the caller holds one grid whatever
+    the number of pieces. The tree
     is opened with ``cache=False`` because xarray's default memoises every
     ``.values`` read on an open tree, which kept every piece's grid alive in the
     imager driver (#339). The applied grid (``filter_extreme_counts`` then
@@ -446,15 +470,16 @@ def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
         for gi, key in enumerate(sorted(sources)):
             acc = None
             for path in sources[key]:
-                da = dt[path].ds.COUNTS
+                ds = dt[path].ds
+                index = ds.COUNTS_INDEX
                 if acc is None:
-                    dims = da.dims
-                    acc = da.values
-                else:
-                    acc += da.values
+                    acc = np.zeros(index.attrs["shape"], dtype=ds.COUNTS_VALUE.dtype)
+                # cells are unique within a piece, so the fancy-indexed add is
+                # exact and sums each cell in the same order as a dense add
+                acc.reshape(-1)[index.values] += ds.COUNTS_VALUE.values
             acc = box_sum_counts(filter_extreme_counts(acc, level=filter_level), npix_super)
             group = f"counts/group{gi:04d}"
-            xr.Dataset({"COUNTS": (dims, acc)}).to_zarr(store, group=group, mode="w", consolidated=False)
+            xr.Dataset({"COUNTS": (("corr", "u", "v"), acc)}).to_zarr(store, group=group, mode="w", consolidated=False)
             out[key] = group
             del acc
     finally:

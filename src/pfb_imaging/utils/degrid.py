@@ -32,6 +32,7 @@ from pfb_model_spec.utils.degrid import (
     pixel_lm,
 )
 
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
@@ -335,6 +336,7 @@ def chunk_beam_terms(
     times: np.ndarray,
     freq_out: float,
     stokes_out: Sequence[str],
+    nthreads: int = 1,
 ) -> list[BeamTerm]:
     """Build one work item's beam terms from meerkat-beams wizards.
 
@@ -353,6 +355,7 @@ def chunk_beam_terms(
         times: The chunk's unix-second times.
         freq_out: The chunk's unweighted mean frequency, Hz.
         stokes_out: Stokes planes predicted, in output order.
+        nthreads: Threads for the rotation average; meerkat-beams splits the pixels over them.
 
     Returns:
         One `BeamTerm` per group present (one in all without groups).
@@ -390,6 +393,8 @@ def chunk_beam_terms(
             m=np.rad2deg(m_axis),
             stokes_out="".join(stokes_out),
             stokes_in="".join(geom["stokes"]),
+            nthreads=nthreads,
+            pa_tolerance=BEAM_PA_TOLERANCE_DEG,
         )
         rows = conj_rows = None
         if idx is not None:
@@ -492,6 +497,7 @@ def degrid_region(
             times=ds.time.values,
             freq_out=freq_out,
             stokes_out=stokes,
+            nthreads=nthreads,
         )
 
     # Render once and degrid each region's cropped box: pfb-model-spec's

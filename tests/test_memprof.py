@@ -1,7 +1,26 @@
+import json
+import pstats
+import time
+
 import numpy as np
 import pytest
+import ray
 
-from pfb_imaging.utils.memprof import MEMRAY_DIR_ENV, MEMRAY_NATIVE_ENV, format_memory, memray_task, task_memory
+from pfb_imaging.utils.memprof import (
+    CPROFILE_DIR_ENV,
+    MEMRAY_DIR_ENV,
+    MEMRAY_NATIVE_ENV,
+    TIMELINE_ENV,
+    ActorCapture,
+    PhaseClock,
+    cprofile_task,
+    dump_timeline,
+    format_memory,
+    memray_task,
+    profile_env,
+    profile_task,
+    task_memory,
+)
 
 
 def test_task_memory_splits_rss():
@@ -63,3 +82,180 @@ def test_memray_env_fails_fast_without_memray(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "memray", None)
     with pytest.raises(ImportError, match="memray"):
         memray_env()
+
+
+def _spin(seconds):
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < seconds:
+        pass
+
+
+def test_cprofile_task_is_a_noop_without_env(tmp_path, monkeypatch):
+    monkeypatch.delenv(CPROFILE_DIR_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    with cprofile_task("noop"):
+        _spin(0.01)
+    assert not any(tmp_path.iterdir())
+
+
+def test_cprofile_task_writes_one_capture_naming_the_hot_function(tmp_path, monkeypatch):
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    with cprofile_task("unit"):
+        _spin(0.05)
+    (cap,) = tmp_path.glob("unit-*.pstats")
+    st = pstats.Stats(str(cap))
+    assert any(func[2] == "_spin" for func in st.stats)
+
+
+def test_profile_task_clock_measures_wall_and_cpu(monkeypatch):
+    monkeypatch.delenv(CPROFILE_DIR_ENV, raising=False)
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    with profile_task("clock") as clock:
+        _spin(0.1)
+    assert clock["wall_s"] >= 0.1
+    assert clock["cpu_s"] >= 0.05  # a busy loop is CPU-bound
+    line = format_memory({**task_memory(), **clock})
+    assert "wall" in line and "cores" in line
+
+
+def test_profile_task_clock_survives_an_exception(monkeypatch):
+    monkeypatch.delenv(CPROFILE_DIR_ENV, raising=False)
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    with pytest.raises(ValueError):
+        with profile_task("boom") as clock:
+            raise ValueError
+    assert {"wall_s", "cpu_s"} <= set(clock)
+
+
+def test_profile_env_forwards_the_cprofile_dir(monkeypatch, tmp_path):
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    assert profile_env() == {CPROFILE_DIR_ENV: str(tmp_path)}
+
+
+def test_phase_clock_logs_each_lap_and_a_summary():
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    phases = PhaseClock(Log())
+    phases.lap("A")
+    phases.lap("B")
+    phases.summary()
+    assert lines[0].startswith("A took") and lines[1].startswith("B took")
+    assert lines[2].startswith("Time by phase: A") and "B" in lines[2]
+
+
+def test_phase_clock_totals_a_recurring_phase():
+    """deconv laps the same phases once per major cycle; the summary totals them."""
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    phases = PhaseClock(Log())
+    for _ in range(3):
+        phases.lap("forward")
+        phases.lap("backward", mem=True)
+    phases.summary()
+    assert "driver pid" in lines[1] and "anon" in lines[1]
+    summary = lines[-1]
+    assert summary.count("forward") == 1 and summary.count("backward") == 1
+    assert "3 laps" in summary
+
+
+def test_dump_timeline_writes_the_task_events(tmp_path, monkeypatch):
+    @ray.remote
+    def tiny():
+        return 1
+
+    ray.get(tiny.remote())
+    path = tmp_path / "sub" / "timeline.json"
+    monkeypatch.setenv(TIMELINE_ENV, str(path))
+    dump_timeline()
+    events = json.loads(path.read_text())
+    assert any(e.get("cat", "").startswith("task::") for e in events)
+
+
+def test_dump_timeline_warns_instead_of_failing_the_run(tmp_path, monkeypatch):
+    """The run's work is done when the timeline is written; a bad path must not fail it."""
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv(TIMELINE_ENV, str(blocker / "timeline.json"))  # parent is a file
+    with pytest.warns(UserWarning, match="Could not write the Ray task timeline"):
+        dump_timeline()
+
+
+def test_actor_capture_profiles_calls_only_and_writes_on_stop(tmp_path, monkeypatch):
+    """One capture per actor, covering the call blocks and not the idle time between them."""
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    cap = ActorCapture("actor")
+    for _ in range(2):
+        with cap.call():
+            _spin(0.02)
+    _spin(0.02)  # between calls: must not be charged
+    assert not any(tmp_path.iterdir())  # nothing until stop
+    cap.stop()
+    cap.stop()  # idempotent
+    (f,) = tmp_path.glob("actor-*.pstats")
+    st = pstats.Stats(str(f))
+    (stat,) = [v for k, v in st.stats.items() if k[2] == "_spin"]
+    _, ncalls, _, cumtime, _ = stat
+    assert ncalls == 2
+    assert 0.04 <= cumtime < 0.06
+
+
+def test_actor_capture_memray_spans_construction_to_stop(tmp_path, monkeypatch):
+    memray = pytest.importorskip("memray")
+    monkeypatch.delenv(CPROFILE_DIR_ENV, raising=False)
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(MEMRAY_NATIVE_ENV, "0")
+    cap = ActorCapture("actor")
+    a = np.ones(2**20)  # 8 MiB, outside any call block
+    del a
+    cap.stop()
+    (f,) = tmp_path.glob("actor-*.bin")
+    assert memray.FileReader(str(f)).metadata.peak_memory >= 8 * 2**20
+
+
+def test_actor_capture_disabled_ignores_the_environment(tmp_path, monkeypatch):
+    """The in-process worker shares the driver's process and so its profiler."""
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(MEMRAY_DIR_ENV, str(tmp_path))
+    cap = ActorCapture("actor", enabled=False)
+    with cap.call():
+        _spin(0.01)
+    cap.stop()
+    assert not any(tmp_path.iterdir())
+
+
+def test_band_worker_capture_covers_its_role_methods(tmp_path, monkeypatch):
+    """A band worker's role methods land in its capture under their own names."""
+    from pfb_imaging.operators.band_worker import _BandWorkerImpl
+
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
+    worker = _BandWorkerImpl(1, capture=True)
+    worker.init_psi(16, 16, ("self", "db1"), 1)
+    worker.psi_dot(np.ones((16, 16)))
+    worker.stop_capture()
+    (f,) = tmp_path.glob("band_worker-*.pstats")
+    names = {k[2] for k in pstats.Stats(str(f)).stats}
+    assert {"init_psi", "psi_dot"} <= names
+
+
+def test_band_worker_times_its_role_methods_and_not_its_helpers():
+    """Only role methods are clocked: a nested clock re-enables the actor's cProfile.
+
+    Python >= 3.12 rejects the second ``enable()`` ("Another profiling tool is
+    already active"); earlier versions stop profiling at the inner ``disable()``.
+    """
+    from pfb_imaging.operators.band_worker import _BandWorkerImpl
+
+    for name in ("load_band", "init_hess", "init_psi", "hess_dot", "psi_dot", "residual"):
+        assert hasattr(getattr(_BandWorkerImpl, name), "__wrapped__"), name
+    assert not hasattr(_BandWorkerImpl._image_out, "__wrapped__")
