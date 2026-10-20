@@ -280,8 +280,10 @@ def deconv(
     # They never enter the driver or the Ray object store
     # image rasters are (Y, X)-ordered end to end (wiki D19)
     # before any cube exists: the first compile of a jitclass pins its caller
-    # frames for the life of the process (D58)
-    compile_band_dictionary()
+    # frames for the life of the process (D58). Only sara builds a wavelet
+    # dictionary; the compile is ~7 s that other presets would pay for nothing.
+    if minor_cycle == "sara":
+        compile_band_dictionary()
 
     # the data gradients, divided by the total wsum once it is known; the raw
     # (stored) versions are recovered per band on write, never held as cubes
