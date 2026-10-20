@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-20T08:00:00Z
-last_verified_commit: ba8c70a
+timestamp: 2026-10-20T10:00:00Z
+last_verified_commit: 71a2292
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1866,7 +1866,8 @@ update it (and this page's `last_verified_commit`) in the same session.
     stack reaches; it is not the peak, and the hunt stopped there;
   - `utils.fits.dt2fits` fills its cube one band at a time in the output dtype, accumulates
     the MFS image alongside, and opens the tree with `cache=False`; `save_fits` requires C
-    order, so the cube is written without a copy. It held ~3.5 cubes, which made the final
+    order, so with one correlation the cube is written without a copy (with more, the
+    `(corr, band)` transpose is copied once). It held ~3.5 cubes, which made the final
     FITS phase the driver's peak on com08 (~58 GiB anon against ~38 GiB in the solve).
 - **Decision — a band worker holds only what its hot loops touch:** the l21 dual in two
   coefficient buffers (`ṽ` lives in the analysis buffer between `dual_begin` and
@@ -1890,7 +1891,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   dual rounds: on the local repro MODEL moved ~3e-9 relative after two cycles at the same
   speed. It is opt-in because it changes the numerics; the held-vs-driver equivalence test
   runs at 1e-10 for float64 and 1e-6 for float32
-  (`test_worker_held_dual_matches_the_driver_held_dual`).
+  (`test_worker_held_dual_matches_the_driver_held_dual`). The rounding also separates the
+  driver's float64 band sum `_vsum` from `Σ_b v_b` — the dual is warm-started for the whole
+  run, so unchecked the gap grows (~1e-4 relative after 5000 iterations in a simulation of
+  these updates) — so `L21.sync_dual` re-forms `_vsum` from the workers at the start of every
+  solve, one band in flight at a time (1.2 GB of object store per band, once per major
+  cycle). The option only applies to `sara` with `--opt-backend primal-dual`; elsewhere it
+  logs that it is ignored. The driver compiles the wavelet jitclass up front only for `sara`
+  (the compile is ~7 s).
 
 ## Known debt
 
