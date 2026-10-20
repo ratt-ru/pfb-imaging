@@ -5,12 +5,67 @@ from numba import njit, prange
 
 from pfb_imaging.operators import LinearOperator, require_protocol
 from pfb_imaging.utils import inplace
+from pfb_imaging.utils import logging as pfb_logging
+
+log = pfb_logging.get_logger("CG")
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 
 
 _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
+
+
+def _finish(info, verbosity, k, eps, maxit, stall_count, ttot):
+    """Record how a CG solve ended in ``info``, or log it when no ``info`` was asked for.
+
+    A caller passing ``info`` reports the outcome itself: the band workers'
+    solves are summarised once on the driver (``log_cg_summary``) instead of
+    one line per band on the console.
+    """
+    if k >= maxit:
+        status, msg = "maxit", f"Max iters reached. eps = {eps:.3e}"
+    elif stall_count >= 5:
+        status, msg = "stalled", f"Stalled after {k} iterations with eps = {eps:.3e}"
+    else:
+        status, msg = "converged", f"Success, converged after {k} iterations in {ttot:.1f}s"
+    if info is not None:
+        info.update(iters=k, eps=float(eps), status=status, time=ttot)
+    elif verbosity:
+        log.info(msg)
+
+
+def _zero_residual(info):
+    if info is not None:
+        info.update(iters=0, eps=0.0, status="converged", time=0.0)
+    else:
+        log.info("Initial residual is zero")
+
+
+def log_cg_summary(infos, coupled=False):
+    """Log one line for a forward solve from its per-solve ``info`` dicts.
+
+    ``infos`` holds one dict per band for the band-parallel solve, or a single
+    dict for the band-coupled one. Bands that hit ``maxit`` or stalled get a
+    warning, so a CG cut short is visible in the log file.
+    """
+    iters = [i["iters"] for i in infos]
+    eps = max(i["eps"] for i in infos)
+    t = max(i["time"] for i in infos)
+    if coupled:
+        log.info(f"CG (bands coupled): {iters[0]} iterations, eps = {eps:.3e}, {t:.1f}s")
+    else:
+        log.info(
+            f"CG over {len(infos)} bands: {min(iters)}-{max(iters)} iterations, "
+            f"max eps = {eps:.3e}, slowest band {t:.1f}s"
+        )
+    unconverged = [
+        f"{'' if coupled else f'band {b} '}{i['status']} after {i['iters']} iterations (eps = {i['eps']:.3e})"
+        for b, i in enumerate(infos)
+        if i["status"] != "converged"
+    ]
+    if unconverged:
+        log.warning("CG did not converge: " + "; ".join(unconverged))
 
 
 @njit(**_FAST_JIT)
@@ -104,7 +159,7 @@ def _nb_cg_step(r, p, ap, x):
     return rnorm, alpha, pp, xx
 
 
-def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, report_freq=10):
+def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, report_freq=10, info=None):
     """Unpreconditioned CG of ``aop(x) = b`` holding three cubes besides ``aop``'s output.
 
     The iterates of ``pcg_numba`` without a preconditioner, for the driver's
@@ -116,6 +171,10 @@ def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, rep
 
     ``aop`` may return a buffer it reuses across calls. When ``x0`` is given it
     is the iterate and is updated **in place** (the returned array IS ``x0``).
+
+    A dict passed as ``info`` receives ``iters``, ``eps``, ``status``
+    (``converged``, ``maxit`` or ``stalled``) and ``time`` in seconds, and the
+    final status line is then left to the caller.
     """
     if x0 is None:
         x = np.zeros(b.shape, dtype=b.dtype)
@@ -125,7 +184,7 @@ def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, rep
         r = np.empty_like(b)
         inplace.axpby(r, 1.0, aop(x), -1.0, b)
     if not np.any(r):
-        print("Initial residual is zero")
+        _zero_residual(info)
         return x
     p = np.negative(r)
     k = 0
@@ -141,14 +200,8 @@ def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, rep
         if np.abs(epsp - eps) < 1e-3 * tol:
             stall_count += 1
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}")
-    if verbosity:
-        if k >= maxit:
-            print(f"Max iters reached. eps = {eps:.3e}")
-        elif stall_count >= 5:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
-        else:
-            print(f"Success, converged after {k} iterations in {time() - tii:.1f}s")
+            log.info(f"At iteration {k} eps = {eps:.3e}")
+    _finish(info, verbosity, k, eps, maxit, stall_count, time() - tii)
     return x
 
 
@@ -164,6 +217,7 @@ def pcg_numba(
     report_freq=10,
     backtrack=True,
     return_resid=False,
+    info=None,
 ):
     """Legacy CG solver of ``aop(x) = b`` with fused numba update kernels.
 
@@ -177,6 +231,8 @@ def pcg_numba(
         see their ``x0`` mutated pass a copy — Ray callers MUST copy anyway,
         since Ray deserialises task arguments as read-only views and the
         numba kernels crash on them (``_BandWorkerImpl.cg`` is the template).
+
+    ``info`` is as for ``cg_inplace``; it only reports, the iterates are unchanged.
     """
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
@@ -189,7 +245,7 @@ def pcg_numba(
     r = aop(x0) - b
     y = precond(r)
     if not np.any(y):
-        print("Initial residual is zero")
+        _zero_residual(info)
         return x0
     p = -y
     rnorm = np.vdot(r, y)
@@ -238,28 +294,17 @@ def pcg_numba(
             stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
+            log.info(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
     ttot = time() - tii
     if verbosity > 1:
-        print(f"pcg_numba timing breakdown (fraction of {ttot:.3f}s):")
-        print(f"  copyto:       {tcopy / ttot:.3f}")
-        print(f"  aop:          {taop / ttot:.3f}")
-        print(f"  alpha_update: {talpha / ttot:.3f}")
-        print(f"  precond:      {tprecond / ttot:.3f}")
-        print(f"  beta_update:  {tbeta / ttot:.3f}")
-        print(f"  norm_diff:    {tnorm / ttot:.3f}")
         ttally = tcopy + taop + talpha + tprecond + tbeta + tnorm
-        print(f"  accounted:    {ttally / ttot:.3f}")
-
-    if k >= maxit:
-        if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}")
-    elif stall_count >= 5:
-        if verbosity:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
-    else:
-        if verbosity:
-            print(f"Success, converged after {k} iterations")
+        log.info(
+            f"pcg_numba timing breakdown (fraction of {ttot:.3f}s): "
+            f"copyto {tcopy / ttot:.3f}, aop {taop / ttot:.3f}, alpha_update {talpha / ttot:.3f}, "
+            f"precond {tprecond / ttot:.3f}, beta_update {tbeta / ttot:.3f}, "
+            f"norm_diff {tnorm / ttot:.3f}, accounted {ttally / ttot:.3f}"
+        )
+    _finish(info, verbosity, k, eps, maxit, stall_count, ttot)
     if not return_resid:
         return x
     else:

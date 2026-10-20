@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: 4ba2821
+timestamp: 2026-10-20T12:00:00Z
+last_verified_commit: 743c4ad
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -191,6 +191,14 @@ sources sit between the phase line and the opt-in captures:
   object-store reads and writes) and worker cores busy. The copy of a result
   into the driver's cube is after the round trip, so it is in the solver's
   clock and not here.
+- **The forward solve's CG outcome.** `HessTreeRay.cg` logs one line per
+  solve at `--cg-verbose >= 1`: `CG over N bands: a-b iterations, max eps,
+  slowest band` (or `CG (bands coupled): ...` under the frequency prior), plus
+  a warning naming any band that hit `--cg-maxit` or stalled. The band workers
+  return each solve's `info` (`opt.pcg.log_cg_summary`) because a worker's log
+  reaches the console through Ray but never the driver's log file; the solvers
+  used to `print` their outcome, so it was not in the log at all. The CG's
+  wall time is the `forward` phase and the `cg` call stats.
 
 What moves per primal-dual iteration: the image cube each way for
 `dual_begin`/`dual_finish` and for `grad`, plus one broadcast shrink factor

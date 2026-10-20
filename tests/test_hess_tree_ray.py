@@ -204,6 +204,42 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool, monke
     gp.cg(rng.standard_normal((nband, nx, ny)))
 
 
+@pmp("coupled", [False, True])
+@pmp("maxit", [2, 500])
+def test_cg_logs_one_summary_line_per_solve(coupled, maxit, band_pool, monkeypatch):
+    """The band workers' CG outcome reaches the driver's log, and a short solve is a warning."""
+    from pfb_imaging.operators.hessian import freq_precision
+    from pfb_imaging.opt import pcg
+
+    infos, warnings = [], []
+    monkeypatch.setattr(pcg.log, "info", lambda msg, *a, **k: infos.append(msg))
+    monkeypatch.setattr(pcg.log, "warning", lambda msg, *a, **k: warnings.append(msg))
+    rng = np.random.default_rng(11)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0) if coupled else None
+    hess = HessTreeRay(
+        parts,
+        nx,
+        ny,
+        2 * nx,
+        2 * ny,
+        etas=1e-1,
+        freq_prec=kinv,
+        cg_tol=1e-8,
+        cg_maxit=maxit,
+        cg_verbose=1,
+        workers=band_pool(nband),
+    )
+    hess.cg(rng.standard_normal((nband, nx, ny)))
+    assert len(infos) == 1, infos
+    assert infos[0].startswith("CG (bands coupled)" if coupled else f"CG over {nband} bands")
+    if maxit == 2:
+        assert len(warnings) == 1 and "maxit after 2 iterations" in warnings[0], warnings
+    else:
+        assert warnings == []
+
+
 def test_prior_stats_are_none_when_the_prior_is_off(band_pool):
     rng = np.random.default_rng(10)
     nband, nx, ny = 2, 8, 8
