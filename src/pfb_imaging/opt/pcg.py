@@ -71,6 +71,8 @@ def log_cg_summary(infos, coupled=False):
 @njit(**_FAST_JIT)
 def _nb_fused_alpha_update(r, y, p, aopp, x, xp, rp):
     """Compute alpha = (r·y)/(p·aopp), then x = xp + alpha*p, r = rp + alpha*aopp."""
+    inplace.require_c(x)
+    inplace.require_c(r)
     n = r.size
     r_f = r.ravel()
     y_f = y.ravel()
@@ -98,6 +100,7 @@ def _nb_fused_alpha_update(r, y, p, aopp, x, xp, rp):
 @njit(**_FAST_JIT)
 def _nb_fused_beta_update(r, y, p, rnorm):
     """Compute beta = (r·y)/rnorm, then p = beta*p - y."""
+    inplace.require_c(p)
     n = r.size
     r_f = r.ravel()
     y_f = y.ravel()
@@ -139,6 +142,8 @@ def _nb_cg_step(r, p, ap, x):
 
     Returns ``(r.r, alpha, p.p, x.x)``, the last two for the relative step.
     """
+    inplace.require_c(x)
+    inplace.require_c(r)
     r_f = r.ravel()
     p_f = p.ravel()
     a_f = ap.ravel()
@@ -166,7 +171,7 @@ def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, rep
     cube-level solve. ``pcg_numba`` keeps copies of the previous iterate and
     residual only to form ``x = xp + alpha p`` and ``||x - xp||``; updating in
     place and using ``||x - xp|| = |alpha| ||p||`` drops two cubes and two cube
-    copies per iteration (D56). Same stopping rules (``tol`` on the relative
+    copies per iteration (D58). Same stopping rules (``tol`` on the relative
     step, ``minit``, ``maxit``, five stalled steps).
 
     ``aop`` may return a buffer it reuses across calls. When ``x0`` is given it

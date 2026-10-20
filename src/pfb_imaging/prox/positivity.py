@@ -6,12 +6,15 @@ backward solvers take one as their optional ``primal_prox`` callable.
 
 from numba import njit, prange
 
+from pfb_imaging.utils.inplace import require_c
+
 _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
 
 
 @njit(**_FAST_JIT)
 def positivity(x):
     """Clamp negative values to zero (mode 1)."""
+    require_c(x)
     n = x.size
     x_f = x.ravel()
     for i in prange(n):

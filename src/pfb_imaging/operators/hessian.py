@@ -11,6 +11,7 @@ from numba import njit, prange
 from pfb_imaging.operators.gauss import eta_freq_mul
 from pfb_imaging.opt.pcg import cg_inplace, log_cg_summary
 from pfb_imaging.opt.pcg import pcg_numba as pcg
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils.misc import taperf
 
 
@@ -569,6 +570,7 @@ def _accumulate(out, beam, ypad, scale):
 @njit(**_FAST_JIT)
 def _scaled(out, eta, x):
     """``out = eta * x`` for a scalar ``eta``."""
+    inplace.require_c(out)
     o = out.ravel()
     xf = x.ravel()
     for i in prange(o.size):
@@ -652,7 +654,9 @@ class HessianTree(object):
         assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
         assert ny == self.ny and nx == self.nx
         if out is None:
-            out = np.empty_like(xtmp)
+            # not empty_like: that keeps an F-ordered input's layout, and the
+            # kernels below write through ravel(), a copy for non-C arrays
+            out = np.empty(xtmp.shape, dtype=xtmp.dtype)
         if np.ndim(self.eta) == 0:
             _scaled(out, float(self.eta), xtmp)
         else:

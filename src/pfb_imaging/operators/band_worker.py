@@ -544,6 +544,9 @@ class BandWorkerPool:
         # driver-side round trip per _map call, paired with the workers' own
         # clocks in call_stats
         self._roundtrip = {}
+        # driver work run between a non-blocking dispatch and its ray.get
+        # (dual_begin), kept out of the round trip
+        self._overlap = {}
 
     def _map(self, method, per_band_args):
         """Run ``method(*args)`` on every band worker; return per-band results."""
@@ -675,7 +678,8 @@ class BandWorkerPool:
         if self.actors is None:
             return self._map("dual_begin", [(x[0], sigma, True)])[0]
         t0 = time.perf_counter()
-        return t0, [a.dual_begin.remote(x[b], sigma) for b, a in enumerate(self.actors)]
+        refs = [a.dual_begin.remote(x[b], sigma) for b, a in enumerate(self.actors)]
+        return t0, time.perf_counter(), refs
 
     def dual_finish(self, pending, scale, xo):
         """Finish every band's dual update with the shared ``scale``; ``xo[b] = Psi(2 v_new - v)``."""
@@ -683,11 +687,17 @@ class BandWorkerPool:
             # deferred: optional heavy runtime (ray)
             import ray
 
-            t0, refs = pending
+            t0, t_sent, refs = pending
+            t_get = time.perf_counter()
             try:
                 ray.get(refs)
             finally:
-                self._roundtrip.setdefault("dual_begin", []).append(time.perf_counter() - t0)
+                # the driver's own work between dispatch and ray.get (the
+                # band-summed analysis) is not Ray's: record it apart, so the
+                # round trip is the time the driver spent on this call
+                overlap = t_get - t_sent
+                self._roundtrip.setdefault("dual_begin", []).append(time.perf_counter() - t0 - overlap)
+                self._overlap.setdefault("dual_begin", []).append(overlap)
             # one copy in the object store, read zero-copy by every worker
             scale = ray.put(scale)
         for b, res in enumerate(self._map("dual_finish", [(scale,)] * self.nband)):
@@ -751,6 +761,13 @@ class BandWorkerPool:
         reading them back. Copying a result into the caller's cube happens
         after ``_map`` returns and is not in any of these; the backward solver's
         own clock (``PrimalDual.clock``) includes it.
+
+        A method dispatched without waiting (``dual_begin``) also has
+        ``overlap_s``, the driver's own work between dispatch and ``ray.get``.
+        It is excluded from ``roundtrip_s``, which is then the time the driver
+        spent dispatching and waiting. The workers may run during the overlap,
+        so ``roundtrip_s - exec_max_s`` is no longer the Ray overhead: it is
+        negative when the overlap hid the workers' execution.
         """
         if self.actors is None:
             per_band = [self._local.take_call_stats()]
@@ -760,10 +777,13 @@ class BandWorkerPool:
 
             per_band = ray.get([a.take_call_stats.remote() for a in self.actors])
         roundtrip, self._roundtrip = self._roundtrip, {}
+        overlap, self._overlap = self._overlap, {}
         stats = {}
         for method, rt in roundtrip.items():
             rec = [band.get(method, []) for band in per_band]
             entry = {"calls": len(rt), "roundtrip_s": float(sum(rt))}
+            if method in overlap:
+                entry["overlap_s"] = float(sum(overlap[method]))
             if all(len(r) == len(rt) for r in rec):
                 wall = np.array([[w for w, _ in r] for r in rec])  # (nband, ncall)
                 cpu = sum(c for r in rec for _, c in r)
@@ -778,13 +798,15 @@ class BandWorkerPool:
         """Log ``call_stats`` (which resets them) and every worker's ``get_mem``."""
         for method, s in self.call_stats().items():
             line = f"band workers {method}: {s['calls']} calls, round trip {s['roundtrip_s']:.1f} s"
+            if "overlap_s" in s:
+                line += f" (+{s['overlap_s']:.1f} s of driver work overlapped)"
             if "exec_max_s" in s:
-                over = s["roundtrip_s"] - s["exec_max_s"]
-                share = 100 * over / s["roundtrip_s"] if s["roundtrip_s"] > 0 else 0.0
-                line += (
-                    f", slowest band {s['exec_max_s']:.1f} s, mean band {s['exec_mean_s']:.1f} s, "
-                    f"Ray overhead {over:.1f} s ({share:.0f}%), {s['cores']:.1f} cores"
-                )
+                line += f", slowest band {s['exec_max_s']:.1f} s, mean band {s['exec_mean_s']:.1f} s"
+                if "overlap_s" not in s:
+                    over = s["roundtrip_s"] - s["exec_max_s"]
+                    share = 100 * over / s["roundtrip_s"] if s["roundtrip_s"] > 0 else 0.0
+                    line += f", Ray overhead {over:.1f} s ({share:.0f}%)"
+                line += f", {s['cores']:.1f} cores"
             log.info(line)
         for m in self.get_mem():
             log.info(f"band worker {format_memory(m)}")
