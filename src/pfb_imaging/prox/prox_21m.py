@@ -167,23 +167,25 @@ def l21_dual_scale(vsum, c, lam, sigma, weight):
 
 
 @njit(nogil=True, cache=True, parallel=True, fastmath=True)
-def l21_dual_begin(vt, v, c, sigma):
-    """One band's ``vt = v + sigma * c`` (``c = Psi^T x_b``)."""
-    vt_f = vt.ravel()
-    v_f = v.ravel()
+def l21_dual_begin(c, v, sigma):
+    """One band's ``vt = v + sigma * c`` (``c = Psi^T x_b``), into ``c``."""
     c_f = c.ravel()
-    for i in prange(vt_f.size):
-        vt_f[i] = v_f[i] + sigma * c_f[i]
+    v_f = v.ravel()
+    for i in prange(c_f.size):
+        c_f[i] = v_f[i] + sigma * c_f[i]
 
 
 @njit(nogil=True, cache=True, parallel=True, fastmath=True)
-def l21_dual_finish(vt, v, scale, out):
-    """One band's shrink and extrapolation: ``vt *= scale; out = 2*vt - v``."""
-    vt_f = vt.ravel()
+def l21_dual_finish(c, v, scale):
+    """One band's shrink and extrapolation, in place over two buffers.
+
+    ``c`` holds ``vt`` on entry and ``2 * v_new - v`` on exit, and ``v``
+    becomes ``v_new = vt * scale``: no third coefficient buffer per band.
+    """
+    c_f = c.ravel()
     v_f = v.ravel()
     s_f = scale.ravel()
-    o_f = out.ravel()
-    for i in prange(vt_f.size):
-        vn = vt_f[i] * s_f[i]
-        vt_f[i] = vn
-        o_f[i] = 2.0 * vn - v_f[i]
+    for i in prange(c_f.size):
+        vn = c_f[i] * s_f[i]
+        c_f[i] = 2.0 * vn - v_f[i]
+        v_f[i] = vn

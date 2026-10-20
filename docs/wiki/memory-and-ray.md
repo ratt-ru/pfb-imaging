@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-19T14:30:00Z
-last_verified_commit: 4d5ebb6
+timestamp: 2026-10-19T21:00:00Z
+last_verified_commit: 4ba2821
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -293,8 +293,8 @@ with the visibilities -- the next thing to measure.
 and exact-residual inputs. Its memory/scheduling rules:
 
 - **Worker-side loading.** Each worker reads its own band's vis-scale inputs
-  (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`/`DIRTY`) straight from the
-  `.dt` store (`load_bands`), layer-2 style (selective load → extract →
+  (`UVW`/`WEIGHT`/`MASK`/`FREQ`/`BEAM`/`PSFHAT`) straight from the
+  `.dt` store (`load_bands`, `cache=False`), layer-2 style (selective load → extract →
   release → gc). Vis-scale data never enters the driver or the Ray object
   store; the driver holds only `(nband, ny, nx)` cubes and attrs. (Exception:
   for `nband == 1` the pool runs in-process, so the one band's data lives in
@@ -319,8 +319,14 @@ and exact-residual inputs. Its memory/scheduling rules:
 - **Telemetry.** `BandWorkerPool.log_telemetry` logs each worker's post-gc
   `task_memory()` and its call stats after the solver is built, after every
   major cycle and at the end (see *Where the time goes*). A worker's `shm`
-  grows with what the backward step ships per iteration, which is the
-  coefficient cubes, not its pinned inputs.
+  grows with what the backward step ships per iteration (its band of the
+  image cube each way, and the broadcast shrink factor), not its pinned inputs.
+- **What one worker holds** (D58): the l21 dual and its analysis buffer
+  (`2·nbasis` images), `BEAM` and `|PSFHAT|` per partition, the Hessian's padded
+  raster and spectrum, one shared output image and the synthesis' accumulator,
+  plus its band's vis-scale inputs. Everything but the vis-scale share is per
+  band, so it is what grows when a run uses more imaging bands; `DIRTY`/`BDIRTY`
+  are read from the store at each residual rather than held.
 
 ## The degrid replicas
 

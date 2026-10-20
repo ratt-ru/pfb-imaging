@@ -182,11 +182,13 @@ def _rdiff(a, b):
 
 
 @pmp("nband", [1, 2])
-def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
+@pmp("dual_dtype, rtol", [(np.float64, 1e-10), (np.float32, 1e-6)])
+def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dtype, rtol):
     """L21 over band workers (dual per band in the workers) == the driver-held dual cube.
 
     Two solves, so the warm-started dual is covered too, with different l1
-    weights between them as after a reweight.
+    weights between them as after a reweight. A float32 dual
+    (``--single-precision-dual``) only rounds the stored dual.
     """
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
 
@@ -199,7 +201,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
         return diag * diag * x - diag * dirty
 
     hessnorm = float(np.max(diag * diag))
-    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))
+    held_psi = PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband), dual_dtype=dual_dtype)
     psi = PsiNocopyt(nband, ny, nx, bases, nlevel, 1)
     shape = (len(bases), held_psi.nymax, held_psi.nxmax)
     weights = [rng.uniform(0.01, 0.1, size=shape) for _ in range(2)]
@@ -216,8 +218,32 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband):
             reg.l1weight = w
             x = pd.solve(x, 0.05)
         out[name] = x
+    if nband == 1:  # the in-process worker
+        assert held_psi._pool._local._v.dtype == dual_dtype
     assert np.any(out["driver"])
-    assert _rdiff(out["driver"], out["held"]) < 1e-10
+    assert _rdiff(out["driver"], out["held"]) < rtol
+
+
+@pmp("nband", [1, 2])
+def test_float32_dual_band_sum_resyncs_from_the_workers(band_pool, nband):
+    """With a float32 held dual, sync_dual re-forms the driver's band sum from the rounded v_b."""
+    from pfb_imaging.operators.psi import PsiNocopytRay
+
+    nx = 16
+    rng = np.random.default_rng(5)
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, nx))
+    psi = PsiNocopytRay(nband, nx, nx, ("self", "db1"), 1, 1, workers=band_pool(nband), dual_dtype=np.float32)
+    reg = L21(psi, ("self", "db1"), nu=2)
+    reg.l1weight = np.full_like(reg.l1weight, 0.05)
+    pd = PrimalDual(tol=0.0, maxit=30, verbosity=0)
+    pd.setup(reg, 1.0)
+    pd.set_grad(lambda x: x - dirty)
+    pd.solve(np.zeros((nband, nx, nx)), 0.1)
+    expected = np.zeros_like(reg._vsum)
+    psi.dual_sum(expected)
+    assert np.any(expected)
+    reg.sync_dual()
+    np.testing.assert_array_equal(reg._vsum, expected)
 
 
 def test_worker_held_dual_resets(band_pool):
@@ -240,3 +266,60 @@ def test_worker_held_dual_resets(band_pool):
     assert reg._vsum is None
     again = pd.solve(np.zeros((nband, nx, nx)), 0.1)
     assert_allclose(again, first, rtol=1e-12, atol=1e-14)
+
+
+@pmp("nband", [1, 2])
+def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
+    """L21 reweighting from one analysis of the band sum == summing the per-band coefficients."""
+    from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
+
+    nx, ny, bases, nlevel = 32, 32, ("self", "db1", "db2"), 2
+    rng = np.random.default_rng(11)
+    update = rng.standard_normal((nband, ny, nx))
+    model = np.abs(rng.standard_normal((nband, ny, nx)))
+    weights = {}
+    for name, p in (
+        ("sum", PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))),
+        ("cube", PsiNocopyt(nband, ny, nx, bases, nlevel, 1)),
+    ):
+        reg = L21(p, bases, nu=len(bases), rmsfactor=0.5, alpha=4)
+        assert hasattr(p, "dot_sum") == (name == "sum")
+        reg.init_reweighting(update)
+        reg.update_weights(model)
+        weights[name] = reg.l1weight
+    assert not np.allclose(weights["sum"], 1.5)
+    assert_allclose(weights["sum"], weights["cube"], rtol=1e-10)
+
+
+def test_steps_use_nu_as_the_squared_frame_bound():
+    """tau meets Condat-Vu with ||Psi||^2 = nu = nbasis, and the solve still converges.
+
+    Four orthonormal bases give ||Psi Psi^T|| = 4: the step is at the bound,
+    and the solution matches one reached with steps 2.5x smaller (the old nu**2).
+    """
+    from pfb_imaging.operators.psi import PsiNocopyt
+
+    nband, nx, bases = 2, 32, ("self", "db1", "db2", "db3")
+    rng = np.random.default_rng(21)
+    diag = rng.uniform(0.5, 2.0, size=(nband, nx, nx))
+    dirty = rng.uniform(1.0, 5.0, size=(nband, nx, nx))
+
+    def grad(x):
+        return diag * diag * x - diag * dirty
+
+    hessnorm = float(np.max(diag * diag))
+    out = {}
+    for name in ("new", "old"):
+        psi = PsiNocopyt(nband, nx, nx, bases, 2, 1)
+        reg = L21(psi, bases, nu=len(bases))
+        reg.l1weight = np.ones_like(reg.l1weight)
+        pd = PrimalDual(tol=1e-10, maxit=3000, verbosity=0)
+        pd.setup(reg, hessnorm)
+        if name == "new":
+            assert_allclose(pd.tau * (hessnorm / (2 * pd.gamma) + pd.sigma * len(bases)), 0.98)
+        else:
+            pd.tau = 0.98 / (hessnorm / (2 * pd.gamma) + pd.sigma * len(bases) ** 2)
+        pd.set_grad(grad)
+        out[name] = pd.solve(np.zeros((nband, nx, nx)), 0.5)
+    assert np.any(out["new"])
+    assert _rdiff(out["old"], out["new"]) < 1e-5

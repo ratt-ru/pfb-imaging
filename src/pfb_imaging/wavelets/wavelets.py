@@ -320,6 +320,16 @@ def idwt2d_nocopyt(coeffs, image, alpha, cbuff, ix, iy, sx, sy, spx, spy, rec_lo
     nlevel : number of decomposition levels
     """
     alpha[...] = coeffs
+    idwt2d_nocopyt_inplace(alpha, image, cbuff, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
+
+
+@numba.njit(nogil=True, cache=True)
+def idwt2d_nocopyt_inplace(alpha, image, cbuff, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel):
+    """``idwt2d_nocopyt`` consuming its coefficients: ``alpha`` is overwritten.
+
+    For callers whose coefficients are scratch anyway, so no working copy
+    (one coefficient-sized array) is needed.
+    """
     for i in range(nlevel - 1, -1, -1):
         nax = sx[i]
         nay = sy[i]

@@ -36,6 +36,7 @@ from pfb_imaging.wavelets.wavelets import (
     dwt2d_nocopyt,
     idwt2d,
     idwt2d_nocopyt,
+    idwt2d_nocopyt_inplace,
     signal_size,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "dwt2d_nocopyt",
     "idwt2d",
     "idwt2d_nocopyt",
+    "idwt2d_nocopyt_inplace",
     "signal_size",
     "coeff_size",
     "copyt",

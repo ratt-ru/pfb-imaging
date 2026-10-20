@@ -346,6 +346,15 @@ cabs:
         default: 50
         metadata:
           rich_help_panel: PrimalDual
+      single-precision-dual:
+        info:
+          Hold the band workers' l21 dual in float32.
+          Saves one coefficient buffer of nbasis images per band at the cost of float32 rounding of the dual.
+          Only applies to the sara minor cycle with the primal-dual backend.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: PrimalDual
       fb-tol:
         info:
           Tolerance of forward-backward algorithm.

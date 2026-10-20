@@ -103,19 +103,31 @@ class _BandWorkerImpl:
         self._hess = None
         self._psib = None
         self._parts = None
-        self._dirty = None
-        self._bdirty = None
 
     # --- band loading (worker-side reads; the driver never touches these arrays) ---
+
+    def _image_out(self, ncorr, ny, nx):
+        """The one output image every role returns into.
+
+        Ray copies a returned array into the object store as the call returns
+        and the in-process path's callers copy it at once, and an actor runs
+        one call at a time, so the Hessian and Psi roles can share it: one
+        ``(ny, nx)`` raster per band worker instead of two.
+        """
+        size = ncorr * ny * nx
+        if getattr(self, "_img", None) is None or self._img.size < size:
+            self._img = np.empty(size)
+        return self._img[:size].reshape(ncorr, ny, nx)
 
     @_timed
     def load_band(self, store_url, node_name):
         """Read this band's worker-side inputs straight from the ``.dt`` store.
 
         Loads the per-partition gridding inputs (``UVW``/``WEIGHT``/``MASK``/
-        ``FREQ``/``BEAM``), the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
-        and the raw ``DIRTY`` in this process, so vis-scale data never enters
-        the driver or the Ray object store. Selective loads only, then the
+        ``FREQ``/``BEAM``) and the Hessian inputs (``PSFHAT``/``BEAM``/``wsum``)
+        in this process, so vis-scale data never enters the driver or the Ray
+        object store. ``DIRTY``/``BDIRTY`` are not pinned: ``residual`` reads
+        them once per major cycle. Selective loads only, then the
         Dataset handles are released and cycles collected (the ``stokes_vis``
         discipline; docs/wiki/memory-and-ray.md). Everything loaded is held
         for the life of the run — a deliberate RSS-for-work trade, visible in
@@ -130,10 +142,13 @@ class _BandWorkerImpl:
             # kept for lazy re-reads (partition_debug loads VIS on demand)
             self._store_url = store_url
             self._node_name = node_name
-            band = xr.open_datatree(store_url, engine="zarr", chunks=None)[node_name]
-            self._dirty = band.ds.DIRTY.values  # (corr, ny, nx)
-            # beam-attenuated dirty: the model-free term of the exact gradient (D23)
-            self._bdirty = band.ds.BDIRTY.values  # (corr, ny, nx)
+            # cache=False: the tree would otherwise hold its own copy of every
+            # variable read here (the complex PSFHATs among them) until gc
+            band = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)[node_name]
+            # residual() reads these per major cycle; fail at load, not after a solve
+            missing = {"DIRTY", "BDIRTY"} - set(band.ds.data_vars)
+            if missing:
+                raise ValueError(f"{node_name} has no {sorted(missing)}; re-run pfb imager")
             parts = []
             hess_parts = []
             self._part_names = sorted(band.children)
@@ -188,7 +203,7 @@ class _BandWorkerImpl:
         # one output image for every call: Ray copies a returned array into the
         # object store as the call returns, and pool.hess_dot / pcg_numba
         # consume it before the next call (D56)
-        self._hout = np.empty((self._hess.ncorr, ny, nx))
+        self._hout = self._image_out(self._hess.ncorr, ny, nx)
         self._hess.dot(np.zeros((ny, nx)), out=self._hout)  # warm up the FFT plans ((Y, X) rasters)
 
     @_timed
@@ -230,13 +245,15 @@ class _BandWorkerImpl:
         from pfb_imaging.operators.psi import psi_band_maker_nocopyt
 
         # rasters are (Y, X)-ordered end to end (wiki D19): axis 0 = ny
-        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel)
+        # every synthesis here consumes its coefficients (hdot_inplace), so
+        # the jitclass needs no coefficient-sized working copy
+        self._psib = psi_band_maker_nocopyt(ny, nx, bases, nlevel, synthesis_scratch=False)
         # pre-allocate output buffers (reused every call; the jitclass zeros
         # them internally) and trigger JIT compilation
         self._alphao = np.empty((self._psib.nbasis, self._psib.nxmax, self._psib.nymax))
-        self._xo = np.empty((ny, nx))
+        self._xo = self._image_out(1, ny, nx)[0]
         self._psib.dot(np.zeros((ny, nx)), self._alphao)
-        self._psib.hdot(self._alphao, self._xo)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return int(self._psib.nxmax), int(self._psib.nymax)
 
     @_timed
@@ -246,19 +263,27 @@ class _BandWorkerImpl:
 
     @_timed
     def psi_hdot(self, alpha):
-        self._psib.hdot(alpha, self._xo)
+        # Ray hands over a read-only view, and the synthesis consumes its input
+        inplace.copy(self._alphao, alpha)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
 
     # --- worker-held l21 dual (PsiNocopytRay.dual_begin/dual_finish) ---
 
-    def init_dual(self):
-        """Allocate this band's dual at zero; it persists across solves (warm start)."""
-        self._v = np.zeros_like(self._alphao)
-        self._vt = np.zeros_like(self._alphao)
+    def init_dual(self, dtype=np.float64):
+        """Allocate this band's dual at zero; it persists across solves (warm start).
+
+        One buffer: ``vt`` lives in ``_alphao`` between ``dual_begin`` and
+        ``dual_finish``, which saves a coefficient buffer per band
+        (``nbasis`` images, ~2.4 GB at 8748^2 x 4 bases). ``dtype=float32``
+        halves this one (``--single-precision-dual``); ``_alphao`` and the
+        update arithmetic stay float64, so only the stored dual rounds.
+        """
+        self._v = np.zeros_like(self._alphao, dtype=dtype)
 
     @_timed
     def dual_begin(self, x, sigma, return_coeffs=False):
-        """Hold ``vt = v + sigma * Psi^T x`` for ``dual_finish``.
+        """Hold ``vt = v + sigma * Psi^T x`` in ``_alphao`` for ``dual_finish``.
 
         Returns ``Psi^T x`` only when asked: the in-process single-band path
         uses it as the band sum, and a multi-band driver never needs it.
@@ -267,8 +292,9 @@ class _BandWorkerImpl:
         from pfb_imaging.prox.prox_21m import l21_dual_begin
 
         self._psib.dot(x, self._alphao)
-        l21_dual_begin(self._vt, self._v, self._alphao, sigma)
-        return self._alphao.copy() if return_coeffs else None
+        coeffs = self._alphao.copy() if return_coeffs else None
+        l21_dual_begin(self._alphao, self._v, sigma)
+        return coeffs
 
     @_timed
     def dual_finish(self, scale):
@@ -276,21 +302,37 @@ class _BandWorkerImpl:
         # deferred: worker-side only; keeps driver-side import light
         from pfb_imaging.prox.prox_21m import l21_dual_finish
 
-        l21_dual_finish(self._vt, self._v, scale, self._alphao)
-        self._v, self._vt = self._vt, self._v
-        self._psib.hdot(self._alphao, self._xo)
+        l21_dual_finish(self._alphao, self._v, scale)
+        self._psib.hdot_inplace(self._alphao, self._xo)
         return self._xo
+
+    def dual_value(self):
+        """This band's held dual ``v``, for re-syncing the driver's band sum."""
+        return self._v
 
     # --- exact residual role ---
 
     @_timed
     def residual(self, model, cell_rad, epsilon, do_wgridding, double_accum):
         # deferred: worker-side only; keeps driver-side import light
+        import gc
+
+        import xarray as xr
+
         from pfb_imaging.operators.gridder import residual_from_partitions
 
+        # DIRTY/BDIRTY (the model-free terms, D23) are read here rather than
+        # pinned by load_band: once per major cycle, two images per band
+        # only this band's group: opening the whole tree builds every band and
+        # partition node, which costs seconds per call on a many-partition .dt
+        ds = xr.open_zarr(self._store_url, group=self._node_name, chunks=None)
+        dirty = ds.DIRTY.values  # (corr, ny, nx)
+        bdirty = ds.BDIRTY.values
+        del ds
+        gc.collect()  # the tree's reference cycles (memory-and-ray.md, layer 1)
         # (apparent residual, beam-attenuated gradient residual) -- D23
         return residual_from_partitions(
-            self._dirty,
+            dirty,
             self._parts,
             model,
             cell_rad,
@@ -298,7 +340,7 @@ class _BandWorkerImpl:
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            bdirty=self._bdirty,
+            bdirty=bdirty,
         )
 
     def _iter_partition_rvis(self, model, cell_rad, epsilon, do_wgridding):
@@ -595,9 +637,25 @@ class BandWorkerPool:
         for b, res in enumerate(self._map("psi_hdot", [(alpha[b],) for b in range(self.nband)])):
             xo[b] = res
 
-    def init_dual(self):
-        """Allocate every band's worker-held dual at zero."""
-        self._map("init_dual", [()] * self.nband)
+    def init_dual(self, dtype=np.float64):
+        """Allocate every band's worker-held dual at zero, in ``dtype``."""
+        self._map("init_dual", [(dtype,)] * self.nband)
+
+    def dual_sum(self, out):
+        """``out = sum_b v_b`` over the held duals, fetching one band at a time.
+
+        One band's dual is in flight at a time, so the object store holds one
+        coefficient buffer rather than ``nband`` of them.
+        """
+        if self.actors is None:
+            out[...] = self._local.dual_value()
+            return
+        # deferred: optional heavy runtime (ray)
+        import ray
+
+        out[...] = 0.0
+        for a in self.actors:
+            np.add(out, ray.get(a.dual_value.remote()), out=out)
 
     def dual_begin(self, x, sigma):
         """Start every band's dual update without waiting for it.
@@ -629,16 +687,22 @@ class BandWorkerPool:
 
     # --- exact residual role ---
 
-    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
+    def residual(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True, out=None):
         """Exact per-band ``(residual, bresidual)`` for a ``(nband, corr, nx, ny)`` model cube.
 
         ``residual`` is the apparent (once-attenuated) image; ``bresidual`` the
-        beam-attenuated gradient the forward solver consumes (D23).
+        beam-attenuated gradient the forward solver consumes (D23). Pass
+        ``out=(residual, bresidual)`` to fill the caller's cubes rather than
+        allocate two.
         """
         args = [(model[b], cell_rad, epsilon, do_wgridding, double_accum) for b in range(self.nband)]
-        out = self._map("residual", args)
-        res = np.stack([r for r, _ in out], axis=0)
-        bres = np.stack([g for _, g in out], axis=0)
+        results = self._map("residual", args)
+        if out is None:
+            out = tuple(np.empty((self.nband, *results[0][0].shape)) for _ in range(2))
+        res, bres = out
+        for b, (r, g) in enumerate(results):
+            inplace.copy(res[b], r)
+            inplace.copy(bres[b], g)
         return res, bres
 
     def partition_debug(self, model, cell_rad, epsilon=1e-7, do_wgridding=True, double_accum=True):
