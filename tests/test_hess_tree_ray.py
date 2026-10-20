@@ -29,6 +29,18 @@ def test_wsum_override():
     assert_allclose(overridden, default / 2.0, rtol=1e-13)
 
 
+@pmp("layout", ["fortran", "strided"])
+def test_dot_does_not_depend_on_the_input_layout(layout):
+    """A non-C input must not leave the eta * x term in a temporary (ravel copies it)."""
+    rng = np.random.default_rng(12)
+    nx, ny = 16, 12
+    tree = HessianTree([_rand_part(rng, nx, ny, 2 * nx, 2 * ny)], nx, ny, 2 * nx, 2 * ny, eta=0.5)
+    x = rng.standard_normal((1, ny, nx))
+    xl = np.asfortranarray(x) if layout == "fortran" else np.repeat(x, 2, axis=2)[:, :, ::2]
+    assert not xl.flags.c_contiguous
+    assert_allclose(tree.dot(xl), tree.dot(x), rtol=1e-12, atol=1e-12)
+
+
 @pmp("nband", [1, 3])
 def test_dot_matches_local_hessian_tree(nband, band_pool):
     rng = np.random.default_rng(1)
@@ -202,6 +214,42 @@ def test_cg_with_the_prior_bypasses_the_band_parallel_pool_path(band_pool, monke
 
     monkeypatch.setattr(gp._pool, "hess_cg", boom)
     gp.cg(rng.standard_normal((nband, nx, ny)))
+
+
+@pmp("coupled", [False, True])
+@pmp("maxit", [2, 500])
+def test_cg_logs_one_summary_line_per_solve(coupled, maxit, band_pool, monkeypatch):
+    """The band workers' CG outcome reaches the driver's log, and a short solve is a warning."""
+    from pfb_imaging.operators.hessian import freq_precision
+    from pfb_imaging.opt import pcg
+
+    infos, warnings = [], []
+    monkeypatch.setattr(pcg.log, "info", lambda msg, *a, **k: infos.append(msg))
+    monkeypatch.setattr(pcg.log, "warning", lambda msg, *a, **k: warnings.append(msg))
+    rng = np.random.default_rng(11)
+    nband, nx, ny = 2, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0) if coupled else None
+    hess = HessTreeRay(
+        parts,
+        nx,
+        ny,
+        2 * nx,
+        2 * ny,
+        etas=1e-1,
+        freq_prec=kinv,
+        cg_tol=1e-8,
+        cg_maxit=maxit,
+        cg_verbose=1,
+        workers=band_pool(nband),
+    )
+    hess.cg(rng.standard_normal((nband, nx, ny)))
+    assert len(infos) == 1, infos
+    assert infos[0].startswith("CG (bands coupled)" if coupled else f"CG over {nband} bands")
+    if maxit == 2:
+        assert len(warnings) == 1 and "maxit after 2 iterations" in warnings[0], warnings
+    else:
+        assert warnings == []
 
 
 def test_prior_stats_are_none_when_the_prior_is_off(band_pool):
@@ -527,3 +575,59 @@ def test_prior_dot_does_not_mutate_its_argument(band_pool):
     before = x.copy()
     hess.prior_dot(x)
     assert_allclose(x, before, rtol=0, atol=0)
+
+
+def test_dot_into_out_matches_a_fresh_result(band_pool):
+    """dot(x, out=buf) overwrites buf, prior included, and returns it (D56)."""
+    from pfb_imaging.operators.hessian import freq_precision
+
+    rng = np.random.default_rng(11)
+    nband, nx, ny = 3, 8, 8
+    parts = [[_rand_part(rng, nx, ny, 2 * nx, 2 * ny)] for _ in range(nband)]
+    kinv = freq_precision(np.linspace(1.0e9, 1.4e9, nband), 0.5, cap=10.0)
+    hess = HessTreeRay(parts, nx, ny, 2 * nx, 2 * ny, etas=1e-1, freq_prec=kinv, workers=band_pool(nband))
+    x = rng.standard_normal((nband, nx, ny))
+    buf = np.full_like(x, np.nan)  # stale contents must not leak through
+    got = hess.dot(x, out=buf)
+    assert got is buf
+    assert_allclose(got, hess.dot(x), rtol=0, atol=0)
+
+
+def _numpy_tree_dot(parts, x, nx_psf, ny_psf, eta, wsum):
+    """The plain full-raster numpy form HessianTree.dot is pinned against."""
+    ncorr, ny, nx = x.shape
+    out = np.zeros_like(x)
+    for p in parts:
+        for c in range(ncorr):
+            xpad = np.zeros((ny_psf, nx_psf))
+            xpad[:ny, :nx] = x[c] * p["beam"][c]
+            xhat = np.fft.rfft2(xpad) * p["psfhat"][c]
+            out[c] += p["beam"][c] * np.fft.irfft2(xhat, s=(ny_psf, nx_psf))[:ny, :nx]
+    return out / wsum[:, None, None] + eta * x
+
+
+@pmp("complex_psfhat", [False, True])
+@pmp("eta_mode", [None, "radial"])
+def test_tree_dot_matches_the_full_raster_numpy_form(complex_psfhat, eta_mode):
+    """Pruned per-axis FFTs and fused kernels == the textbook zero-padded convolution.
+
+    Non-square image and PSF grids, two correlations, three partitions with
+    their own beams and wsums.
+    """
+    rng = np.random.default_rng(21)
+    ncorr, ny, nx, ny_psf, nx_psf = 2, 12, 10, 26, 22
+    parts = []
+    for _ in range(3):
+        psfhat = rng.uniform(0.1, 1.0, size=(ncorr, ny_psf, nx_psf // 2 + 1))
+        if complex_psfhat:
+            psfhat = psfhat + 1j * rng.uniform(-0.5, 0.5, size=psfhat.shape)
+        parts.append(
+            {"psfhat": psfhat, "beam": rng.uniform(0.5, 1.0, size=(ncorr, ny, nx)), "wsum": rng.uniform(1, 2, ncorr)}
+        )
+    hess = HessianTree(parts, nx, ny, nx_psf, ny_psf, eta=0.03, eta_mode=eta_mode)
+    x = rng.standard_normal((ncorr, ny, nx))
+    want = _numpy_tree_dot(parts, x, nx_psf, ny_psf, hess.eta, hess.wsum)
+    assert_allclose(hess.dot(x), want, rtol=1e-12, atol=1e-14)
+    buf = np.full_like(x, np.nan)
+    assert hess.dot(x, out=buf) is buf
+    assert_allclose(buf, want, rtol=1e-12, atol=1e-14)

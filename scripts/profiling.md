@@ -1,9 +1,12 @@
 # Profiling scripts
 
-For a pipeline run (`pfb imager`, `pfb degrid`) rather than a kernel, start with
+For a pipeline run (`pfb imager`, `pfb degrid`, `pfb deconv`) rather than a kernel, start with
 `scripts/profile_report.py`: driver phases, the Ray task timeline and per-task
 cProfile captures (`PFB_RAY_TIMELINE`, `PFB_CPROFILE_DIR`). Its docstring is the
-how-to. Memory is `scripts/memray_report.py`.
+how-to. Memory is `scripts/memray_report.py`. For `pfb deconv`, read the
+always-on lines first -- the primal-dual section clock and the band workers'
+`Ray overhead` per method; `docs/wiki/memory-and-ray.md` ("Where the time
+goes", deconv) says how.
 
 The profiling scripts are layered bottom-up: low-level kernels first,
 then composite operators built from them. Run the lower-level scripts

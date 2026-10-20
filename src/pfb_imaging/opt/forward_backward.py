@@ -6,14 +6,13 @@ composition ``x + (1/nu) * Psi(prox_g(Psi^T x) - Psi^T x)`` is implemented
 once here, generically for any ``Regulariser``.
 """
 
-from time import time
-
 import numpy as np
 
 from pfb_imaging.deconv import Regulariser
 from pfb_imaging.operators import PsiOperator, require_protocol
 from pfb_imaging.opt.primal_dual import _nb_any_nonzero, _nb_norm_diff
 from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.memprof import SectionClock
 
 log = pfb_logging.get_logger("FB")
 
@@ -78,16 +77,24 @@ class ForwardBackward:
     def reset(self) -> None:
         """No warm-start state beyond x itself."""
 
-    def _apply_prox(self, x, lam):
-        """Generic tight-frame prox of ``lam * g(Psi^T x)``, then primal_prox."""
+    def _apply_prox(self, x, lam, clock=None):
+        """Generic tight-frame prox of ``lam * g(Psi^T x)``, then primal_prox.
+
+        ``clock`` (a ``SectionClock``) is charged per section when given.
+        """
         reg = self._reg
+        tick = clock.tick if clock is not None else lambda name: None
         reg.psi.dot(x, self._alpha)
+        tick("psi_dot")
         reg.prox(self._alpha, self._alpha_buf, self.step * lam, sigma=1.0)
         self._alpha_buf -= self._alpha
+        tick("prox")
         reg.psi.hdot(self._alpha_buf, self._xout)
+        tick("psi_hdot")
         x += self._xout / reg.nu
         if self.primal_prox is not None:
             self.primal_prox(x)
+        tick("primal")
         return x
 
     def solve(self, x, lam: float):
@@ -101,14 +108,25 @@ class ForwardBackward:
         y = x.copy()
         t = 1.0
         eps = 1.0
-        tii = time()
+        # always on, as in PrimalDual: separates Ray round trips from driver work
+        clock = SectionClock(
+            ("grad", "gradient_step", "psi_dot", "prox", "psi_hdot", "primal", "convergence", "reweight", "momentum")
+        )
         for k in range(self.maxit):
-            x = y - self.step * self._grad(y)
-            x = self._apply_prox(x, lam)
+            clock.start()
+            g = self._grad(y)
+            clock.tick("grad")
+            x = y - self.step * g
+            del g
+            clock.tick("gradient_step")
+            x = self._apply_prox(x, lam, clock)
 
             eps = _nb_norm_diff(x, xp) if _nb_any_nonzero(x) else 1.0
+            clock.tick("convergence")
             if eps < self.tol:
-                if self.on_converge is None or self.on_converge(x, k, eps):
+                stop = self.on_converge is None or self.on_converge(x, k, eps)
+                clock.tick("reweight")
+                if stop:
                     break
 
             if self.acceleration:
@@ -118,13 +136,14 @@ class ForwardBackward:
             else:
                 np.copyto(y, x)
             np.copyto(xp, x)
+            clock.tick("momentum")
 
             if not k % self.report_freq and self.verbosity > 1:
                 log.info(f"At iteration {k} eps = {eps:.3e}")
 
-        ttot = time() - tii
-        if self.verbosity > 1:
-            log.info(f"Total time: {ttot:.3f}s  ({ttot / max(k + 1, 1) * 1e3:.1f} ms/iter)")
+        self.clock = clock
+        if self.verbosity:
+            log.info(f"Forward-backward took {clock.summary(k + 1)}")
         if k == self.maxit - 1:
             if self.verbosity:
                 log.info(f"Max iters reached. eps = {eps:.3e}")

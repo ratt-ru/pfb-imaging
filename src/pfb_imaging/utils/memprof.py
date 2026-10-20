@@ -201,7 +201,8 @@ class PhaseClock:
 
     The driver's own work (planning, task submission, which pickles every task's
     arguments, and the reductions between passes) is invisible to the task
-    timeline and to per-task profiles; this is what accounts for it.
+    timeline and to per-task profiles; this is what accounts for it. A phase
+    that recurs (one lap per deconv major cycle) is totalled in the summary.
     """
 
     def __init__(self, log):
@@ -209,16 +210,149 @@ class PhaseClock:
         self.start = self.last = time.perf_counter()
         self.laps = []
 
-    def lap(self, name: str) -> None:
+    def lap(self, name: str, mem: bool = False) -> None:
+        """Close the current phase and log its duration.
+
+        Args:
+            name: the phase that just ended.
+            mem: also log this process's ``task_memory()``.
+        """
         now = time.perf_counter()
         self.laps.append((name, now - self.last))
         self.last = now
-        self.log.info(f"{name} took {self.laps[-1][1]:.1f} s")
+        line = f"{name} took {self.laps[-1][1]:.1f} s"
+        if mem:
+            line += f" | driver {format_memory(task_memory())}"
+        self.log.info(line)
 
     def summary(self) -> None:
         total = self.last - self.start
-        parts = ", ".join(f"{n} {dt:.1f} s ({100 * dt / total if total > 0 else 0:.0f}%)" for n, dt in self.laps)
-        self.log.info(f"Time by phase: {parts}")
+        totals, counts = {}, {}
+        for n, dt in self.laps:
+            totals[n] = totals.get(n, 0.0) + dt
+            counts[n] = counts.get(n, 0) + 1
+        parts = []
+        for n, dt in totals.items():
+            share = f"{100 * dt / total if total > 0 else 0:.0f}%"
+            if counts[n] > 1:
+                share += f", {counts[n]} laps"
+            parts.append(f"{n} {dt:.1f} s ({share})")
+        self.log.info(f"Time by phase: {', '.join(parts)}")
+
+
+class CallClock:
+    """Per-call wall and CPU time of a long-lived actor's methods.
+
+    ``profile_task`` suits a Ray task that runs once. A deconv band worker is an
+    actor that serves thousands of millisecond-to-second calls, so it keeps one
+    of these instead and hands the record to the driver on request. Set against
+    the driver's round trip for the same calls, it separates the work done in
+    the worker from the cost of getting arguments and results through Ray.
+    """
+
+    def __init__(self):
+        self.calls = {}
+
+    @contextlib.contextmanager
+    def call(self, method: str):
+        """Time the block as one call of ``method``; CPU is the whole process's."""
+        wall0, cpu0 = time.perf_counter(), _cpu_seconds()
+        try:
+            yield
+        finally:
+            self.calls.setdefault(method, []).append((time.perf_counter() - wall0, _cpu_seconds() - cpu0))
+
+    def take(self) -> dict:
+        """Return ``{method: [(wall_s, cpu_s), ...]}`` in call order and start afresh."""
+        out, self.calls = self.calls, {}
+        return out
+
+
+class ActorCapture:
+    """Opt-in cProfile and memray captures over a long-lived Ray actor's life.
+
+    The actor counterpart of ``profile_task``: one capture per actor rather
+    than one per call, because an actor serves thousands of calls. memray
+    tracks the whole process from construction until ``stop`` (when
+    ``PFB_MEMRAY_DIR`` is set); cProfile is enabled only inside ``call`` blocks
+    (when ``PFB_CPROFILE_DIR`` is set), so the actor's idle time between calls
+    is not profiled and, on Python 3.11, the thread that runs each call is the
+    one profiled. Files are named as ``profile_task``'s are, so
+    ``scripts/profile_report.py`` and ``scripts/memray_report.py`` read them
+    unchanged.
+
+    ``stop`` must run before the actor's process ends: memray writes its
+    capture on close and cProfile its stats on dump, and a killed process does
+    neither.
+
+    Args:
+        name: capture-file prefix; must not contain ``-``.
+        enabled: False makes every method a no-op whatever the environment --
+            for an in-process worker, which shares the driver's process and
+            so whatever profiler the driver itself runs under.
+    """
+
+    def __init__(self, name: str, enabled: bool = True):
+        self.name = name
+        self._stack = contextlib.ExitStack()
+        self._prof = None
+        if not enabled:
+            return
+        self._stack.enter_context(memray_task(name))
+        self._dir = os.environ.get(CPROFILE_DIR_ENV)
+        if self._dir:
+            self._prof = cProfile.Profile()
+
+    @contextlib.contextmanager
+    def call(self):
+        """cProfile the block, accumulating into this actor's single capture."""
+        if self._prof is None:
+            yield
+            return
+        self._prof.enable()
+        try:
+            yield
+        finally:
+            self._prof.disable()
+
+    def stop(self) -> None:
+        """Write the captures; later calls do nothing."""
+        if self._prof is not None:
+            os.makedirs(self._dir, exist_ok=True)
+            self._prof.dump_stats(os.path.join(self._dir, f"{_capture_stem(self.name)}.pstats"))
+            self._prof = None
+        self._stack.close()
+
+
+class SectionClock:
+    """Accumulated wall time per named section of an iterative loop.
+
+    ``start`` at the top of an iteration, then ``tick(name)`` after each
+    section charges the time since the previous mark to ``name``. Two
+    ``perf_counter`` calls per section, so it is cheap enough to leave on in
+    loops whose sections take milliseconds (the deconv backward solvers).
+
+    Args:
+        names: the sections, in the order they are reported.
+    """
+
+    def __init__(self, names):
+        self.totals = dict.fromkeys(names, 0.0)
+        self._mark = time.perf_counter()
+
+    def start(self) -> None:
+        self._mark = time.perf_counter()
+
+    def tick(self, name: str) -> None:
+        now = time.perf_counter()
+        self.totals[name] += now - self._mark
+        self._mark = now
+
+    def summary(self, niter: int) -> str:
+        """``<total> s over <niter> iterations (<ms>/iter): <section> <share>, ...``."""
+        total = sum(self.totals.values())
+        parts = ", ".join(f"{n} {100 * dt / total if total > 0 else 0:.0f}%" for n, dt in self.totals.items())
+        return f"{total:.1f} s over {niter} iterations ({1e3 * total / max(niter, 1):.1f} ms/iter): {parts}"
 
 
 def dump_timeline(log=None) -> None:

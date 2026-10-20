@@ -1,7 +1,8 @@
 """Summarise where a run spends its time: per-task cProfile captures and the Ray timeline.
 
 Three sources, each switched on by an environment variable on the ``pfb`` command
-line, and all three combine in one run. ``pfb imager`` and ``pfb degrid`` honour them.
+line, and all three combine in one run. ``pfb imager``, ``pfb degrid`` and
+``pfb deconv`` honour them.
 
 1. The driver's phases, always on. The log ends with a ``Time by phase:`` line --
    set-up, pass-1 submission, pass 1, the counts reduction, pass 2, PSF fit, FITS.
@@ -20,7 +21,10 @@ line, and all three combine in one run. ``pfb imager`` and ``pfb degrid`` honour
 
 3. Per-task profiles, ``PFB_CPROFILE_DIR=<dir>``. Every task body (``stokes_vis``,
    ``grid_image``, ``degrid``) runs under cProfile and writes
-   ``<task>-<host>-<pid>-<seq>-<token>.pstats``. Here they are merged per task
+   ``<task>-<host>-<pid>-<seq>-<token>.pstats``. ``pfb deconv``'s band workers
+   are long-lived actors, so each writes one ``band_worker-...`` capture covering
+   all its role-method calls (``psi_dot``, ``hess_dot``, ``cg``, ...) when the run
+   ends; the timeline shows those calls by method name. Here they are merged per task
    name and printed as the functions with the most cumulative time (where the
    time goes below the task) and the most self time (what is actually hot, each
    with the callers that account for it). The cumulative table lists only
