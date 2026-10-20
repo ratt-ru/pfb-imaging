@@ -84,8 +84,9 @@ class PFBSolver:
         forward_alg: ``ForwardSolver`` for ``update ≈ hess^{-1} residual``.
         backward_alg: ``BackwardSolver`` for the proximal step.
         prox: ``Regulariser``; may expose the optional reweighting trio.
-        model: Initial model image ``(nband, nx, ny)``.
-        update: Initial update image ``(nband, nx, ny)``.
+        model: Initial model image ``(nband, nx, ny)``; owned by the solver
+            (updated in place, not copied).
+        update: Initial update image ``(nband, nx, ny)``; owned likewise.
         gamma: PFB step size for ``xtilde = model + gamma * update``.
         hessnorm: Spectral norm of ``hess`` (power method when None).
         l1_reweight_from: Arm reweighting after this many major cycles
@@ -122,8 +123,13 @@ class PFBSolver:
         self.forward_alg = forward_alg
         self.backward_alg = backward_alg
         self.reg = prox
-        self._model = model.copy()
-        self._update = update.copy()
+        # owned, not copied: a copy would hold the caller's two cubes twice for
+        # the run whenever any frame on the construction path outlives it --
+        # and numba's type inference keeps the caller frames of a jitclass
+        # compile (the band-summed dictionary is built in here) alive for the
+        # life of the process (D58)
+        self._model = model
+        self._update = update if update is not model else update.copy()
         self._residual = None  # set by first()
         self._xtilde = None  # model + gamma * update, formed by the backward step
         self.model_change = None  # relative model change of the last backward step
@@ -166,7 +172,7 @@ class PFBSolver:
         self._residual = residual
 
     def forward(self, residual: np.ndarray) -> np.ndarray:
-        """Forward solve; builds the grad closure for the backward step.
+        """Forward solve: ``update ≈ hess^{-1} residual``.
 
         Consumes the residual stored by :meth:`first` (the per-iteration
         preprocessing hook of the DeconvSolver contract, e.g. beam
@@ -175,15 +181,21 @@ class PFBSolver:
         """
         if self._residual is None:
             raise RuntimeError("residual not set; call first() before forward()")
-        # the previous cycle's gradient holds three cubes (xtilde, the gap and
-        # its image under hess); release them before CG allocates its own
-        self.backward_alg.set_grad(None)
-        self._xtilde = None
         x0 = self._update if self._update.any() else None
         self._update = self.forward_alg.solve(self.hess, self._residual, x0=x0)
         # consumed: dropping it lets the caller free the gradient's cube
         # while the backward step runs (the next first() supplies a new one)
         self._residual = None
+        return self._update
+
+    def _install_grad(self):
+        """Give the backward solver ``grad(x) = -hess(xtilde - x) / gamma``.
+
+        Installed by ``backward`` for the length of one solve: its three cubes
+        (``xtilde``, the gap and its image under ``hess``) are released when
+        the solve returns, so neither the CG of the next forward step nor the
+        residual computed in between shares memory with them (D58).
+        """
         diff = None
         hdot = reusing_dot(self.hess, self._update)
         gscale = -1.0 / self._gamma
@@ -200,7 +212,6 @@ class PFBSolver:
             return g
 
         self.backward_alg.set_grad(grad)
-        return self._update
 
     def _form_xtilde(self):
         """``model + gamma * update`` at the start of the backward step.
@@ -222,9 +233,14 @@ class PFBSolver:
         """
         if self._reweight_cb is not None:
             self._reweight_cb.reset()
+        self._install_grad()
         xtilde = self._form_xtilde()
-        self._model = self.backward_alg.solve(self._model, lam)
-        self.model_change = inplace.rel_diff(self._model, xtilde, self._update, -self._gamma)
+        try:
+            self._model = self.backward_alg.solve(self._model, lam)
+            self.model_change = inplace.rel_diff(self._model, xtilde, self._update, -self._gamma)
+        finally:
+            self.backward_alg.set_grad(None)
+            self._xtilde = None
         self._iter += 1
         return self._model
 

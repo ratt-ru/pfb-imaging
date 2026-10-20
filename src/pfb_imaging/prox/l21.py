@@ -20,7 +20,8 @@ class L21:
     Args:
         psi: Operator satisfying ``PsiOperator`` (e.g. ``Psi``/``PsiNocopytRay``).
         bases: Wavelet basis names, one per ``psi.nbasis`` (for logging).
-        nu: Spectral norm of ``psi`` (default 1.0; tight frame).
+        nu: Squared frame bound ``||Psi Psi^T||`` of ``psi`` (default 1.0;
+            ``nbasis`` for a concatenation of orthonormal bases).
         rmsfactor: Threshold factor in the reweighting formula.
         alpha: Exponent in the reweighting formula.
     """
@@ -53,6 +54,19 @@ class L21:
         """Zero the dual held by ``psi``'s workers and its band sum held here."""
         self.psi.init_dual()
         self._vsum = None
+
+    def sync_dual(self):
+        """Re-form the band-summed dual from the workers' held duals.
+
+        A float32 dual (``--single-precision-dual``) rounds each band's ``v_b``
+        on every store while the band sum here stays float64, so the two drift
+        apart over a warm-started run (~1e-4 relative after 5000 iterations,
+        simulated). Re-syncing at each solve bounds the drift to one solve. A
+        float64 dual differs only by summation order, so it is skipped.
+        """
+        if self._vsum is None or getattr(self.psi, "dual_dtype", np.float64) == np.float64:
+            return
+        self.psi.dual_sum(self._vsum)
 
     def dual_step(self, xp, xout, lam, sigma=1.0):
         """The whole dual half of a primal-dual iteration, with the dual held in ``psi``'s workers.
