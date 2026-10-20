@@ -652,7 +652,9 @@ class HessianTree(object):
         assert ncorr == self.ncorr, f"expected {self.ncorr} correlations on axis 0, got {ncorr}"
         assert ny == self.ny and nx == self.nx
         if out is None:
-            out = np.empty_like(xtmp)
+            # not empty_like: that keeps an F-ordered input's layout, and the
+            # kernels below write through ravel(), a copy for non-C arrays
+            out = np.empty(xtmp.shape, dtype=xtmp.dtype)
         if np.ndim(self.eta) == 0:
             _scaled(out, float(self.eta), xtmp)
         else:

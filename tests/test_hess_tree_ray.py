@@ -29,6 +29,18 @@ def test_wsum_override():
     assert_allclose(overridden, default / 2.0, rtol=1e-13)
 
 
+@pmp("layout", ["fortran", "strided"])
+def test_dot_does_not_depend_on_the_input_layout(layout):
+    """A non-C input must not leave the eta * x term in a temporary (ravel copies it)."""
+    rng = np.random.default_rng(12)
+    nx, ny = 16, 12
+    tree = HessianTree([_rand_part(rng, nx, ny, 2 * nx, 2 * ny)], nx, ny, 2 * nx, 2 * ny, eta=0.5)
+    x = rng.standard_normal((1, ny, nx))
+    xl = np.asfortranarray(x) if layout == "fortran" else np.repeat(x, 2, axis=2)[:, :, ::2]
+    assert not xl.flags.c_contiguous
+    assert_allclose(tree.dot(xl), tree.dot(x), rtol=1e-12, atol=1e-12)
+
+
 @pmp("nband", [1, 3])
 def test_dot_matches_local_hessian_tree(nband, band_pool):
     rng = np.random.default_rng(1)
