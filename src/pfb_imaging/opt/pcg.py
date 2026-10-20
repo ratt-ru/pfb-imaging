@@ -171,7 +171,7 @@ def cg_inplace(aop, b, x0=None, tol=1e-5, maxit=500, minit=100, verbosity=1, rep
     cube-level solve. ``pcg_numba`` keeps copies of the previous iterate and
     residual only to form ``x = xp + alpha p`` and ``||x - xp||``; updating in
     place and using ``||x - xp|| = |alpha| ||p||`` drops two cubes and two cube
-    copies per iteration (D56). Same stopping rules (``tol`` on the relative
+    copies per iteration (D58). Same stopping rules (``tol`` on the relative
     step, ``minit``, ``maxit``, five stalled steps).
 
     ``aop`` may return a buffer it reuses across calls. When ``x0`` is given it

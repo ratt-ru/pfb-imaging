@@ -201,7 +201,8 @@ sources sit between the phase line and the opt-in captures:
   return each solve's `info` (`opt.pcg.log_cg_summary`) because a worker's log
   reaches the console through Ray but never the driver's log file; the solvers
   used to `print` their outcome, so it was not in the log at all. The CG's
-  wall time is the `forward` phase and the `cg` call stats.
+  wall time is the `forward` phase and the `cg` call stats (`hess_dot`, one
+  call per CG iteration, under the frequency prior).
 
 What moves per primal-dual iteration: the image cube each way for
 `dual_begin`/`dual_finish` and for `grad`, plus one broadcast shrink factor
