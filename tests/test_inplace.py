@@ -28,3 +28,10 @@ def test_axpby_may_alias_its_output():
     want = 2.0 * x + y
     inplace.axpby(x, 2.0, x, 1.0, y)
     assert_allclose(x, want, rtol=1e-12, atol=1e-14)
+
+
+def test_rel_diff_matches_numpy():
+    rng = np.random.default_rng(3)
+    x, y, z = (rng.standard_normal((2, 5, 7)) for _ in range(3))
+    want = np.linalg.norm(x - (y - 0.7 * z)) / np.linalg.norm(x)
+    assert_allclose(inplace.rel_diff(x, y, z, -0.7), want, rtol=1e-12)
