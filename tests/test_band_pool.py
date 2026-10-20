@@ -136,3 +136,32 @@ def test_log_telemetry_reports_calls_and_worker_memory(band_pool):
     pool.log_telemetry(Log())
     assert any(line.startswith("band workers hess_dot: 1 calls") and "Ray overhead" in line for line in lines)
     assert sum(line.startswith("band worker pid") and "shm" in line for line in lines) == 2
+
+
+def test_driver_work_overlapping_dual_begin_is_not_its_round_trip(band_pool):
+    """The driver's band-summed analysis runs between dispatch and ray.get; keep it apart."""
+    import time
+
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    pool = band_pool(2)
+    nxmax, nymax = pool.init_psi(16, 16, ("self", "db1"), 1)
+    pool.init_dual()
+    pool.call_stats()
+    t0 = time.perf_counter()
+    pending = pool.dual_begin(np.ones((2, 16, 16)), 1.0)
+    time.sleep(0.5)  # stands in for the driver's own analysis
+    pool.dual_finish(pending, np.ones((2, nxmax, nymax)), np.empty((2, 16, 16)))
+    wall = time.perf_counter() - t0
+    db = pool.call_stats()["dual_begin"]
+    assert db["overlap_s"] >= 0.5
+    assert db["roundtrip_s"] + db["overlap_s"] <= wall
+    pending = pool.dual_begin(np.ones((2, 16, 16)), 1.0)
+    pool.dual_finish(pending, np.ones((2, nxmax, nymax)), np.empty((2, 16, 16)))
+    pool.log_telemetry(Log())
+    (line,) = [line for line in lines if line.startswith("band workers dual_begin:")]
+    assert "driver work overlapped" in line and "Ray overhead" not in line

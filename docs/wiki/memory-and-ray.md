@@ -3,7 +3,7 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-20T12:00:00Z
+timestamp: 2026-10-20T15:00:00Z
 last_verified_commit: 743c4ad
 ---
 
@@ -190,7 +190,10 @@ sources sit between the phase line and the opt-in captures:
   `Ray overhead` (round trip minus slowest band: argument pickling,
   object-store reads and writes) and worker cores busy. The copy of a result
   into the driver's cube is after the round trip, so it is in the solver's
-  clock and not here.
+  clock and not here. `dual_begin` is dispatched without waiting and the
+  driver runs its band-summed analysis before the `ray.get`; that work is
+  reported as `driver work overlapped` and kept out of the round trip, and the
+  line gives no Ray overhead, because the workers may have finished during it.
 - **The forward solve's CG outcome.** `HessTreeRay.cg` logs one line per
   solve at `--cg-verbose >= 1`: `CG over N bands: a-b iterations, max eps,
   slowest band` (or `CG (bands coupled): ...` under the frequency prior), plus
