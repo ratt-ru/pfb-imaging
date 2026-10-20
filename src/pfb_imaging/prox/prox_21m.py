@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit, prange
 
+from pfb_imaging.utils.inplace import require_c
+
 
 def prox_21m(v, sigma, weight=1.0, axis=0):
     """
@@ -169,6 +171,7 @@ def l21_dual_scale(vsum, c, lam, sigma, weight):
 @njit(nogil=True, cache=True, parallel=True, fastmath=True)
 def l21_dual_begin(c, v, sigma):
     """One band's ``vt = v + sigma * c`` (``c = Psi^T x_b``), into ``c``."""
+    require_c(c)
     c_f = c.ravel()
     v_f = v.ravel()
     for i in prange(c_f.size):
@@ -182,6 +185,8 @@ def l21_dual_finish(c, v, scale):
     ``c`` holds ``vt`` on entry and ``2 * v_new - v`` on exit, and ``v``
     becomes ``v_new = vt * scale``: no third coefficient buffer per band.
     """
+    require_c(c)
+    require_c(v)
     c_f = c.ravel()
     v_f = v.ravel()
     s_f = scale.ravel()

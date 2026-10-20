@@ -20,6 +20,7 @@ _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
 @njit(**_FAST_JIT)
 def _nb_extrapolate_dual(v, vp):
     """Compute vp = 2*v - vp in-place."""
+    inplace.require_c(vp)
     n = v.size
     v_f = v.ravel()
     vp_f = vp.ravel()
@@ -30,6 +31,7 @@ def _nb_extrapolate_dual(v, vp):
 @njit(**_FAST_JIT)
 def _nb_primal_step(x, xp, xout, tau):
     """Compute x = xp - tau * xout."""
+    inplace.require_c(x)
     n = x.size
     x_f = x.ravel()
     xp_f = xp.ravel()
@@ -41,6 +43,8 @@ def _nb_primal_step(x, xp, xout, tau):
 @njit(**_FAST_JIT)
 def _nb_primal_step_keep(x, xout, tau):
     """``x -= tau * xout`` and ``xout = x_old``: the step and the previous iterate in two cubes."""
+    inplace.require_c(x)
+    inplace.require_c(xout)
     x_f = x.ravel()
     xo_f = xout.ravel()
     for i in prange(x_f.size):

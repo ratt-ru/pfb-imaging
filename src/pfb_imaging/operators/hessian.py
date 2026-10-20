@@ -11,6 +11,7 @@ from numba import njit, prange
 from pfb_imaging.operators.gauss import eta_freq_mul
 from pfb_imaging.opt.pcg import cg_inplace, log_cg_summary
 from pfb_imaging.opt.pcg import pcg_numba as pcg
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils.misc import taperf
 
 
@@ -569,6 +570,7 @@ def _accumulate(out, beam, ypad, scale):
 @njit(**_FAST_JIT)
 def _scaled(out, eta, x):
     """``out = eta * x`` for a scalar ``eta``."""
+    inplace.require_c(out)
     o = out.ravel()
     xf = x.ravel()
     for i in prange(o.size):
