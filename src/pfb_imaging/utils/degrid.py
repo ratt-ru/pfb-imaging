@@ -28,6 +28,7 @@ from pfb_model_spec.utils.degrid import (
     BeamTerm,
     RegionMask,
     crop_bbox,
+    frequency_kinks,
     frequency_pieces,
     model_geometry,
     model_to_apparent_vis_for_regions,
@@ -438,6 +439,11 @@ def chunk_freq_out(model_ds: xr.Dataset, freq: np.ndarray, chunk_freq: str = "me
     choice matters: in flat mode the tent returns the band value exactly only
     at the anchor (D28); in linear mode the model does not depend on it.
 
+    A piece can hold a clamp kink (the last piece runs to +inf but clamps at
+    its band's edge), so the anchor is used only when no kink separates it
+    from the chunk; otherwise the mean, which the kernel requires in linear
+    mode and which carries the clamped value in flat mode.
+
     Args:
         model_ds: An opened `.mds` dataset.
         freq: The chunk's channel frequencies, Hz.
@@ -447,7 +453,12 @@ def chunk_freq_out(model_ds: xr.Dataset, freq: np.ndarray, chunk_freq: str = "me
         The frequency in Hz.
     """
     freq_out = float(np.mean(freq))
-    return piece_anchor(model_ds, freq_out) if chunk_freq == "anchor" else freq_out
+    if chunk_freq != "anchor":
+        return freq_out
+    anchor = piece_anchor(model_ds, freq_out)
+    kinks = np.asarray(frequency_kinks(model_ds), dtype=float)
+    same_side = np.searchsorted(kinks, anchor, side="right") == np.searchsorted(kinks, freq_out, side="right")
+    return anchor if same_side else freq_out
 
 
 def chunk_beam_freqs(

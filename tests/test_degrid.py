@@ -2474,6 +2474,24 @@ def test_degrid_region_linear_does_not_depend_on_chunk_freq(degrid_ms, tmp_path)
     np.testing.assert_allclose(at_anchor, at_mean, rtol=0, atol=1e-6 * np.abs(at_mean).max())
 
 
+@pytest.mark.parametrize("spectral", ["flat", "linear"])
+def test_degrid_region_anchor_stays_on_the_chunks_side_of_a_clamp(degrid_ms, tmp_path, spectral):
+    """The last piece runs to +inf but clamps at its band's upper edge, a kink inside the piece.
+    A chunk beyond the clamp must not be expanded at the anchor on the other side of it: the
+    kernel refuses that in linear mode, and in flat mode the anchor's value is not the clamped
+    value the model holds there. Seen on ESO137 when the top band was dropped (#385)."""
+    bounds = np.array([[0.95e9, 1.35e9], [1.35e9, 1.55e9]])
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent", bounds=bounds)
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        region = {"time": slice(0, 6), "frequency": slice(6, 8)}  # 1.6 and 1.7 GHz, beyond the clamp
+        at_mean = _region_vis(node_ds, node, mds_ds, region=region, spectral=spectral)
+        at_anchor = _region_vis(node_ds, node, mds_ds, region=region, spectral=spectral, chunk_freq="anchor")
+    finally:
+        dt.close()
+    np.testing.assert_allclose(at_anchor, at_mean, rtol=0, atol=1e-6 * np.abs(at_mean).max())
+
+
 def test_degrid_refuses_an_unknown_chunk_freq_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
     degrid_mod = _no_ray(monkeypatch)
     with pytest.raises(ValueError, match="chunk-freq"):
