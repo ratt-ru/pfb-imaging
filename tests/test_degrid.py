@@ -2292,3 +2292,112 @@ def test_degrid_linear_runs_and_splits_at_kinks(degrid_ms, tmp_path, pctable, mo
     assert recorded and all(r == [slice(0, 4), slice(4, 8)] for r in recorded)
     with pctable(degrid_ms, ack=False) as tab:
         assert np.any(np.asarray(tab.getcol("MODEL_DATA")) != 0)
+
+
+@pytest.mark.slow
+def test_linear_degrid_beats_flat_on_a_tent_model(sky_truth, ms_meta, ms_name, tmp_path):
+    """imager -> tent `.mds` of the truth -> degrid flat and linear -> per-channel residuals.
+
+    The construction of `test_imager_degrid_nulls_the_residual`, with the truth
+    fitted by the `tent` histopolation over the imager's own band edges. One
+    4-channel chunk per band holds the model flat across 400 MHz in flat mode;
+    linear mode carries the tent's slope, so its worst single-channel residual
+    must be smaller (D59). Residuals are judged per channel, because a flat
+    chunk's error is antisymmetric about its mean and partly cancels in a band
+    sum.
+    """
+    from pfb_model_spec.utils.io import model_to_ds
+
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.core.imager import imager as imager_core
+    from pfb_imaging.operators.gridder import wgridder_conventions
+
+    work_ms = tmp_path / "e2e.ms"
+    shutil.copytree(ms_name, work_ms)
+    imaging = dict(
+        integrations_per_image=-1,
+        product="I",
+        nx=sky_truth.nx,
+        ny=sky_truth.ny,
+        cell_size=sky_truth.cell_size,
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    outname = str(tmp_path / "e2e")
+    imager_core([Path(work_ms)], outname, channels_per_image=4, psf=True, **imaging)
+
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        assert len(nodes) == 2, f"expected 2 bands, got {nodes}"
+        freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
+        freq_bounds = np.array([dt[n].ds.attrs["freq_bounds"] for n in nodes], dtype=float)
+        time_out = np.array([float(dt[nodes[0]].ds.attrs["time_out"])])
+        radec = (float(dt[nodes[0]].ds.attrs["ra"]), float(dt[nodes[0]].ds.attrs["dec"]))
+    finally:
+        dt.close()
+
+    nx, ny = sky_truth.nx, sky_truth.ny
+    model = np.zeros((freq_out.size, 1, ny, nx))
+    for b, f in enumerate(freq_out):
+        for s in range(sky_truth.lpix.size):
+            ix = nx // 2 - int(sky_truth.lpix[s])
+            iy = ny // 2 + int(sky_truth.mpix[s])
+            model[b, 0, iy, ix] = sky_truth.ref_flux[s] * (f / ms_meta.freq0) ** sky_truth.alpha[s]
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    mds_path = str(tmp_path / "truth.mds")
+    model_to_ds(
+        time=time_out,
+        freq=freq_out,
+        fsel=np.ones(freq_out.size, dtype=bool),
+        model=model,
+        wgt=np.ones((freq_out.size, 1)),
+        mds_name=mds_path,
+        cell_rad=sky_truth.cell_rad,
+        nx=nx,
+        ny=ny,
+        x0=x0,
+        y0=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
+        radec=radec,
+        stokes=["I"],
+        writer_version="test",
+        method="tent",
+        freq_bounds=freq_bounds,
+    )
+
+    # both modes write MODEL_DATA in turn, each overwriting the last: the
+    # imager's column arithmetic reads the canonical name without any schema help
+    peaks = {}
+    for spectral in ("flat", "linear"):
+        degrid(
+            [Path(work_ms)],
+            outname,
+            4,
+            mds=mds_path,
+            product="I",
+            spectral=spectral,
+            integrations_per_chunk=-1,
+            nworkers=1,
+            nthreads=1,
+            progressbar=False,
+            log_directory=str(tmp_path / "logs"),
+        )
+        resname = str(tmp_path / f"res_{spectral}")
+        imager_core([Path(work_ms)], resname, data_column="DATA-MODEL_DATA", channels_per_image=1, **imaging)
+        dt = xr.open_datatree(resname + "_I.dt", engine="zarr", chunks=None)
+        try:
+            bands = sorted(n for n in dt.children if n.startswith("band"))
+            peaks[spectral] = max(
+                float(np.abs(dt[n].ds.DIRTY[0].values).max() / dt[n].ds.WSUM.values[0]) for n in bands
+            )
+        finally:
+            dt.close()
+
+    assert peaks["linear"] < peaks["flat"], f"per-channel residual peaks {peaks}"
