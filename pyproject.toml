@@ -255,4 +255,8 @@ prerelease="allow"
 # spec-0.1 fields (landmanbester/pfb-model-spec#31), the flux-conserving remap (#32), the
 # tent frequency fit (#33) and the multi-region beam terms (#36) are on main but unreleased;
 # this goes away once 0.1.0 is on PyPI and the floor becomes >=0.1
-pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "main" }
+# Temporarily on the linear-in-frequency degrid branches while it is validated on real data
+# (landmanbester/pfb-model-spec#40, landmanbester/meerkat-beams#42). Revert to a release
+# floor once both are released.
+pfb-model-spec = { git = "https://github.com/landmanbester/pfb-model-spec", branch = "issue39" }
+meerkat-beams = { git = "https://github.com/landmanbester/meerkat-beams", branch = "issue41" }
