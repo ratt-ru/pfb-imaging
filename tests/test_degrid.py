@@ -1819,10 +1819,11 @@ class _FakeWizard:
     """Stands in for meerkat_beams' BeamWizard: a diagonal Mueller block
     value * (1 + slope * l_deg), constant in m, so an E-W mirror changes the answer."""
 
-    def __init__(self, value=1.0, slope_deg=0.0, leak_q=0.0):
+    def __init__(self, value=1.0, slope_deg=0.0, leak_q=0.0, freq_coeff=0.0):
         from types import SimpleNamespace
 
         self.value, self.slope, self.leak_q = value, slope_deg, leak_q
+        self.freq_coeff = freq_coeff  # fractional change per Hz from 1 GHz
         self.bds = SimpleNamespace(X=SimpleNamespace(values=np.linspace(-2.0, 2.0, 401)))  # 0.01 deg pixels
         self.calls = []
 
@@ -1849,7 +1850,7 @@ class _FakeWizard:
             }
         )
         ll, _ = np.meshgrid(l, m)  # (Y, X), like the real one
-        field = self.value * (1.0 + self.slope * ll)
+        field = self.value * (1.0 + self.slope * ll) * (1.0 + self.freq_coeff * (freq - 1.0e9))
         out = np.zeros((len(stokes_out), len(stokes_in)) + ll.shape, dtype=np.result_type(self.value, np.float32))
         for o, s in enumerate(stokes_out):
             if s in stokes_in:
@@ -2035,3 +2036,187 @@ def test_degrid_refuses_malformed_antenna_groups_without_a_beam(degrid_ms, simpl
             baseline_groups=True,
             antenna_groups="m*",
         )
+
+
+def _spectral_mds(ms_name, path, method):
+    """`simple_mds`'s component and grid, histopolated over two bands spanning the test MS.
+
+    Bands [0.95, 1.35) and [1.35, 1.75) GHz hold the MS's channels 1.0-1.3 and
+    1.4-1.7 GHz; the anchors sit off the band centres, as the imager's weighted
+    `freq_out` does (D28).
+    """
+    import arcae
+    from pfb_model_spec.utils.io import build_mds_dataset
+    from pfb_model_spec.utils.modelspec import fit_image_cube
+
+    with arcae.table(f"{ms_name}::FIELD") as tab:
+        radec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
+    nx, ny = 64, 32
+    image = np.zeros((1, 2, 1, ny, nx))
+    image[0, 0, 0, 9, 40] = 1.0
+    image[0, 1, 0, 9, 40] = 0.7
+    times = np.array([1.62393461e9])
+    freqs = np.array([1.12e9, 1.53e9])
+    bounds = np.array([[0.95e9, 1.35e9], [1.35e9, 1.75e9]])
+    fit = fit_image_cube(times, freqs, image, wgt=np.ones((1, 2, 1)), method=method, freq_bounds=bounds)
+    ds = build_mds_dataset(
+        *fit,
+        times,
+        freqs,
+        1.0e-5,
+        nx,
+        ny,
+        0.0,
+        0.0,
+        False,
+        True,
+        False,
+        (float(radec[0]), float(radec[1])),
+        ["I"],
+        "test",
+        freq_bounds=bounds,
+    )
+    ds.to_zarr(str(path), mode="w")
+    return str(path), ds
+
+
+def _per_channel(node_ds, node, mds_ds, nchan=4, **kw):
+    """Exact reference: one flat chunk per channel, at that channel's frequency."""
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    planes = [
+        degrid_region(
+            node_ds,
+            region={"time": slice(0, 6), "frequency": slice(c, c + 1)},
+            model_ds=mds_ds,
+            masks=build_region_masks(mds_ds, None),
+            columns=["MODEL_DATA"],
+            corr_types=node.corr_types,
+            epsilon=1e-9,
+            **{"stokes": ["I"], **kw},
+        ).MODEL_DATA.values
+        for c in range(nchan)
+    ]
+    return np.concatenate(planes, axis=2)
+
+
+def test_degrid_region_linear_matches_per_channel_inside_a_piece(degrid_ms, tmp_path):
+    """Inside one tent piece the model is linear in frequency, so linear mode is exact."""
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        got = _region_vis(node_ds, node, mds_ds, spectral="linear")
+        ref = _per_channel(node_ds, node, mds_ds)
+        flat = _region_vis(node_ds, node, mds_ds)
+    finally:
+        dt.close()
+    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
+    assert np.abs(flat - ref).max() > 1e-3 * np.abs(ref).max()  # flat really is wrong here
+
+
+def test_degrid_region_linear_refuses_a_chunk_across_a_kink(degrid_ms, tmp_path):
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        with pytest.raises(ValueError, match="kink"):
+            degrid_region(
+                node_ds,
+                region={"time": slice(0, 6), "frequency": slice(2, 6)},
+                model_ds=mds_ds,
+                masks=build_region_masks(mds_ds, None),
+                columns=["MODEL_DATA"],
+                corr_types=node.corr_types,
+                stokes=["I"],
+                spectral="linear",
+            )
+    finally:
+        dt.close()
+
+
+def test_degrid_region_linear_without_kinks(degrid_ms, simple_mds):
+    """A polynomial basis has no kinks or pieces: linear is exact for its linear spectrum,
+    and a flat beam is held at the chunk mean."""
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        got = _region_vis(node_ds, node, mds_ds, spectral="linear")
+        ref = _per_channel(node_ds, node, mds_ds)
+        wizard = _FakeWizard()
+        _region_vis(node_ds, node, mds_ds, spectral="linear", beam_slope=False, wizards={"all": wizard})
+    finally:
+        dt.close()
+    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
+    assert [c["freq"] for c in wizard.calls] == [pytest.approx(1.15e9)]
+
+
+def _beam_terms(node_ds, mds_ds, wizard, **kw):
+    from pfb_model_spec.utils.degrid import model_geometry
+
+    from pfb_imaging.utils.degrid import chunk_beam_terms
+
+    return chunk_beam_terms(
+        {"all": wizard},
+        None,
+        nbl=int(node_ds.sizes["baseline_id"]),
+        ntime=6,
+        geom=model_geometry(mds_ds),
+        radec=(float(mds_ds.ra), float(mds_ds.dec)),
+        times=node_ds.time.values[:6],
+        stokes_out=["I"],
+        **kw,
+    )
+
+
+def test_chunk_beam_terms_carries_a_chord_slope(degrid_ms, simple_mds):
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wizard = _FakeWizard(slope_deg=30.0, freq_coeff=2.0e-9)
+        (term,) = _beam_terms(node_ds, mds_ds, wizard, freq_out=1.15e9, chord=(1.0e9, 1.3e9))
+        (mid,) = _beam_terms(node_ds, mds_ds, _FakeWizard(slope_deg=30.0, freq_coeff=2.0e-9), freq_out=1.15e9)
+        (lo,) = _beam_terms(node_ds, mds_ds, _FakeWizard(slope_deg=30.0, freq_coeff=2.0e-9), freq_out=1.0e9)
+        (hi,) = _beam_terms(node_ds, mds_ds, _FakeWizard(slope_deg=30.0, freq_coeff=2.0e-9), freq_out=1.3e9)
+    finally:
+        dt.close()
+    assert sorted(c["freq"] for c in wizard.calls) == [1.0e9, 1.15e9, 1.3e9]
+    np.testing.assert_array_equal(term.mueller, mid.mueller)
+    np.testing.assert_allclose(term.dmueller, (hi.mueller - lo.mueller) / 3.0e8)
+    assert mid.dmueller is None
+
+
+def test_chunk_beam_terms_one_channel_chord_sends_no_slope(degrid_ms, simple_mds):
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
+    try:
+        wizard = _FakeWizard(freq_coeff=2.0e-9)
+        (term,) = _beam_terms(node_ds, mds_ds, wizard, freq_out=1.1e9, chord=(1.1e9, 1.1e9))
+    finally:
+        dt.close()
+    assert term.dmueller is None
+    assert [c["freq"] for c in wizard.calls] == [1.1e9]
+
+
+def test_degrid_region_linear_beam_slope_matches_per_channel(degrid_ms, tmp_path):
+    """A box model has no slope, so under a beam linear in frequency the chord is exact."""
+    box = _spectral_mds(degrid_ms, tmp_path / "box.mds", "box")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, box)
+    try:
+        wizards = {"all": _FakeWizard(slope_deg=30.0, freq_coeff=2.0e-9)}
+        got = _region_vis(node_ds, node, mds_ds, spectral="linear", wizards=wizards)
+        ref = _per_channel(node_ds, node, mds_ds, wizards=wizards)
+        flat = _region_vis(node_ds, node, mds_ds, wizards=wizards)
+    finally:
+        dt.close()
+    np.testing.assert_allclose(got, ref, rtol=0, atol=1e-6 * np.abs(ref).max())
+    assert np.abs(flat - ref).max() > 1e-3 * np.abs(ref).max()
+
+
+def test_degrid_region_flat_beam_in_linear_mode_uses_the_piece_anchor(degrid_ms, tmp_path):
+    """--no-beam-slope holds the beam at the band's weighted anchor, the imaging gauge (D28)."""
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        wizard = _FakeWizard()
+        _region_vis(node_ds, node, mds_ds, spectral="linear", beam_slope=False, wizards={"all": wizard})
+    finally:
+        dt.close()
+    assert [c["freq"] for c in wizard.calls] == [pytest.approx(1.12e9)]

@@ -24,9 +24,11 @@ from astropy.time import Time
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from pfb_model_spec.utils.degrid import (
+    SPECTRAL,
     BeamTerm,
     RegionMask,
     crop_bbox,
+    frequency_pieces,
     model_geometry,
     model_to_apparent_vis_for_regions,
     pixel_lm,
@@ -338,13 +340,20 @@ def chunk_beam_terms(
     freq_out: float,
     stokes_out: Sequence[str],
     nthreads: int = 1,
+    chord: tuple[float, float] | None = None,
 ) -> list[BeamTerm]:
     """Build one work item's beam terms from meerkat-beams wizards.
 
-    Evaluated at the chunk's own times and its unweighted mean frequency (D39),
-    pointing at the model's tangent point, which `check_tangent_point` has
-    already required to be the field centre. The beam is the bare B from
-    `partition_mueller`: the caller degrids with `divide_by_n=True` (D55).
+    Evaluated at the chunk's own times and at `freq_out`, pointing at the
+    model's tangent point, which `check_tangent_point` has already required to
+    be the field centre. The beam is the bare B from `partition_mueller`: the
+    caller degrids with `divide_by_n=True` (D55).
+
+    With `chord`, each term also carries the beam's frequency slope as the
+    chord `(M(hi) - M(lo)) / (hi - lo)` over the chunk's extreme channels, the
+    linear fit meerkat-beams D19 measured as the most accurate (D59). Its line
+    passes through `M(freq_out)`, so the model, the beam and the offsets share
+    one expansion point.
 
     Args:
         wizards: `{"all": wizard}` without groups, else `{label: wizard}`.
@@ -354,9 +363,11 @@ def chunk_beam_terms(
         geom: `model_geometry` of the model.
         radec: Model tangent point, radians.
         times: The chunk's unix-second times.
-        freq_out: The chunk's unweighted mean frequency, Hz.
+        freq_out: Frequency to evaluate the beam at, Hz.
         stokes_out: Stokes planes predicted, in output order.
         nthreads: Threads for the rotation average; meerkat-beams splits the pixels over them.
+        chord: `(lo, hi)` channel frequencies for a beam slope, or None for a
+            flat beam. A zero-width chord (one channel) sends no slope.
 
     Returns:
         One `BeamTerm` per group present (one in all without groups).
@@ -386,25 +397,56 @@ def chunk_beam_terms(
             raise ValueError(f"no beam for baseline group {label!r}")
         wizard = wizards[label]
         l_axis, m_axis = _coarse_axes(wizard, l_px, m_px)
-        block = wizard.partition_mueller(
-            field_centre=field_centre,
-            times=t,
-            freq=float(freq_out),
-            l=np.rad2deg(l_axis),
-            m=np.rad2deg(m_axis),
-            stokes_out="".join(stokes_out),
-            stokes_in="".join(geom["stokes"]),
-            nthreads=nthreads,
-            pa_tolerance=BEAM_PA_TOLERANCE_DEG,
-        )
+
+        def mueller_at(freq: float, wizard=wizard, l_axis=l_axis, m_axis=m_axis) -> np.ndarray:
+            return np.asarray(
+                wizard.partition_mueller(
+                    field_centre=field_centre,
+                    times=t,
+                    freq=float(freq),
+                    l=np.rad2deg(l_axis),
+                    m=np.rad2deg(m_axis),
+                    stokes_out="".join(stokes_out),
+                    stokes_in="".join(geom["stokes"]),
+                    nthreads=nthreads,
+                    pa_tolerance=BEAM_PA_TOLERANCE_DEG,
+                )
+            )
+
+        block = mueller_at(freq_out)
+        dmueller = None
+        if chord is not None and chord[1] > chord[0]:
+            lo, hi = chord
+            dmueller = (mueller_at(hi) - mueller_at(lo)) / (hi - lo)
         rows = conj_rows = None
         if idx is not None:
             mine = np.zeros(nbl, dtype=bool)
             mine[idx] = True
             rows = np.tile(mine, ntime)
             conj_rows = np.tile(conj & mine, ntime)
-        terms.append(BeamTerm(np.asarray(block), l_axis, m_axis, rows, conj_rows))
+        terms.append(BeamTerm(block, l_axis, m_axis, rows, conj_rows, dmueller))
     return terms
+
+
+def piece_anchor(model_ds: xr.Dataset, freq: float) -> float:
+    """The weighted anchor of the model piece holding `freq`, the imaging beam's frequency.
+
+    `deconv` solved for the band value against a band beam that is, to first
+    order, `B(anchor)` (D28), so a beam held flat across a chunk reproduces
+    that gauge only at the anchor (D59).
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        freq: A frequency inside the chunk, Hz.
+
+    Returns:
+        The piece's anchor in Hz, or `freq` itself for a model without pieces
+        (the polynomial bases).
+    """
+    for piece in frequency_pieces(model_ds):
+        if piece.lo <= freq < piece.hi:
+            return piece.anchor
+    return float(freq)
 
 
 def degrid_region(
@@ -422,6 +464,8 @@ def degrid_region(
     nthreads: int = 1,
     wizards: Mapping[str, Any] | None = None,
     groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
+    spectral: str = "flat",
+    beam_slope: bool = True,
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -445,16 +489,24 @@ def degrid_region(
         nthreads: ducc threads.
         wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
         groups: `node_baseline_groups` output, or None.
+        spectral: `"flat"` holds the model and beam at the chunk mean;
+            `"linear"` also carries the model's slope, and the region must not
+            cross a frequency kink (`frequency_chunks` cuts there; D59).
+        beam_slope: Under `"linear"`, carry the beam's chord slope. Off, the
+            beam is held at the chunk's piece anchor (`piece_anchor`).
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
         encoding intact -- ready for `to_msv2(compute=True, region=region)`.
 
     Raises:
-        ValueError: If `masks` and `columns` differ in length.
+        ValueError: If `masks` and `columns` differ in length, `spectral` is
+            unknown, or a linear region crosses a frequency kink.
     """
     if len(masks) != len(columns):
         raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
+    if spectral not in SPECTRAL:
+        raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
 
     ds = node_ds.isel(**region)
     ntime = int(ds.sizes["time"])
@@ -482,12 +534,19 @@ def degrid_region(
     # Degrid reads no weights, and an unweighted mean is reproducible across
     # tools regardless of their flagging, so two consumers cannot disagree
     # about where the model was evaluated. Both axes are unix seconds / Hz,
-    # matching the .mds's own coords -- do not convert to MJD (D13).
+    # matching the .mds's own coords -- do not convert to MJD (D13). In linear
+    # mode the mean is also the expansion point (D59).
     time_out = float(ds.time.values.mean())
     freq_out = float(freq.mean())
 
     beam_terms = None
     if wizards is not None:
+        beam_freq, chord = freq_out, None
+        if spectral == "linear":
+            if beam_slope:
+                chord = (float(freq.min()), float(freq.max()))
+            else:
+                beam_freq = piece_anchor(model_ds, freq_out)
         beam_terms = chunk_beam_terms(
             wizards,
             groups,
@@ -496,9 +555,10 @@ def degrid_region(
             geom=model_geometry(model_ds),
             radec=(float(model_ds.ra), float(model_ds.dec)),
             times=ds.time.values,
-            freq_out=freq_out,
+            freq_out=beam_freq,
             stokes_out=stokes,
             nthreads=nthreads,
+            chord=chord,
         )
 
     # Render once and degrid each region's cropped box: pfb-model-spec's
@@ -522,6 +582,7 @@ def degrid_region(
         divide_by_n=True,
         nthreads=nthreads,
         beam_terms=beam_terms,
+        spectral=spectral,
     )
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):
