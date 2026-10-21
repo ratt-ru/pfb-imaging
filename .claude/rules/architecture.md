@@ -77,7 +77,9 @@ rationale ledger: `docs/wiki/design-decisions.md`.
    the Ray Serve `Degridder` deployment and the driver live in `core/degrid.py`; the pure
    MSv4<->kernel seam is `utils/degrid.py`. All numerics go through
    `pfb_model_spec.utils.degrid`. Applies a meerkat-beams Mueller beam per baseline group
-   with `--beam-model` (D55). Load-bearing decisions: D38-D42, D55.
+   with `--beam-model` (D55). `--spectral linear` carries the model's (and the beam's) slope
+   across each chunk, cutting chunks at the model's frequency kinks (D59). Load-bearing
+   decisions: D38-D42, D55, D59.
 
 `pfb hci` is the separate high-cadence-imaging front-end.
 

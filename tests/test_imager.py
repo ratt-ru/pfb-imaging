@@ -1068,7 +1068,8 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
     built = []
 
     class _FakeWizard:
-        def __init__(self, band=None, group=None):
+        def __init__(self, band=None, group=None, freq_extrapolation="raise"):
+            assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
@@ -1212,7 +1213,8 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
     built = []
 
     class _FakeWizard:
-        def __init__(self, band=None, group=None):
+        def __init__(self, band=None, group=None, freq_extrapolation="raise"):
+            assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)

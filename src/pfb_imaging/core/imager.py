@@ -24,6 +24,7 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
@@ -1094,12 +1095,15 @@ def imager(
         if baseline_groups:
             log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
             for g in present_groups:
-                BeamWizard(band=beam_model, group=g)
-            beam_refs = {g: Multiton(BeamWizard, band=beam_model, group=g) for g in present_groups}
+                BeamWizard(band=beam_model, group=g, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
+            beam_refs = {
+                g: Multiton(BeamWizard, band=beam_model, group=g, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
+                for g in present_groups
+            }
         else:
             log.info("Assuming MeerKAT data and initialising BeamWizard")
-            BeamWizard(band=beam_model)
-            beam_model = Multiton(BeamWizard, band=beam_model)
+            BeamWizard(band=beam_model, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
+            beam_model = Multiton(BeamWizard, band=beam_model, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
 
     phases.lap("Setup")
     tasks = []
