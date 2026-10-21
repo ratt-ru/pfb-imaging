@@ -428,6 +428,33 @@ def chunk_beam_terms(
     return terms
 
 
+def chunk_beam_freqs(
+    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool
+) -> tuple[float, tuple[float, float] | None]:
+    """Where a chunk evaluates its beam: one frequency, plus a chord under a slope.
+
+    The single source for both the replica (`degrid_region`) and the driver's
+    up-front `check_freqs`, so the two cannot disagree about what is evaluated.
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        freq: The chunk's channel frequencies, Hz.
+        spectral: `"flat"` or `"linear"`.
+        beam_slope: Whether a linear chunk carries the beam's chord slope.
+
+    Returns:
+        `(beam_freq, chord)`: the chunk mean and no chord when flat; the mean
+        and its extreme channels with a slope; the piece anchor and no chord
+        without one (D59).
+    """
+    freq_out = float(np.mean(freq))
+    if spectral != "linear":
+        return freq_out, None
+    if beam_slope:
+        return freq_out, (float(np.min(freq)), float(np.max(freq)))
+    return piece_anchor(model_ds, freq_out), None
+
+
 def piece_anchor(model_ds: xr.Dataset, freq: float) -> float:
     """The weighted anchor of the model piece holding `freq`, the imaging beam's frequency.
 
@@ -541,12 +568,7 @@ def degrid_region(
 
     beam_terms = None
     if wizards is not None:
-        beam_freq, chord = freq_out, None
-        if spectral == "linear":
-            if beam_slope:
-                chord = (float(freq.min()), float(freq.max()))
-            else:
-                beam_freq = piece_anchor(model_ds, freq_out)
+        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope)
         beam_terms = chunk_beam_terms(
             wizards,
             groups,
@@ -582,7 +604,9 @@ def degrid_region(
         divide_by_n=True,
         nthreads=nthreads,
         beam_terms=beam_terms,
-        spectral=spectral,
+        # one channel has no slope to carry (dnu = 0), and the kernel's forward
+        # difference could otherwise reach across a kink just above it
+        spectral="flat" if nchan == 1 else spectral,
     )
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):

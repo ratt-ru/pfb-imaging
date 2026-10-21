@@ -48,12 +48,12 @@ from pfb_imaging.utils.degrid import (
     build_region_masks,
     check_stokes_subset,
     check_writable_backend,
+    chunk_beam_freqs,
     default_channels_per_chunk,
     degrid_region,
     ensure_model_columns,
     flux_scale_warning,
     frequency_chunks,
-    piece_anchor,
 )
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.msv4 import (
@@ -681,16 +681,13 @@ def degrid(
     log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 
     if beams is not None:
-        # Every frequency a replica will evaluate the beam at: the channel
-        # extremes bound the chunk means and chords; a flat linear-mode beam
-        # sits at its piece anchor instead (D59).
-        beam_freqs = [f for _, node in selected for f in (node.freq.min(), node.freq.max())]
-        if spectral == "linear" and not beam_slope:
-            beam_freqs += [
-                piece_anchor(model_ds, float(node.freq[fs].mean()))
-                for _, node in selected
-                for fs in frequency_chunks(node.freq, node_fstep(node), kinks)
-            ]
+        # Exactly the frequencies the replicas will evaluate the beam at,
+        # through the same helper they use (D59)
+        beam_freqs = []
+        for _, node in selected:
+            for fs in frequency_chunks(node.freq, node_fstep(node), kinks):
+                beam_freq, chord = chunk_beam_freqs(model_ds, node.freq[fs], spectral, beam_slope)
+                beam_freqs += [beam_freq, *(chord or ())]
         for label, wizard in driver_wizards.items():
             try:
                 wizard.check_freqs(np.asarray(beam_freqs, dtype=float))

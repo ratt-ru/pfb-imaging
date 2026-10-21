@@ -1865,13 +1865,12 @@ def _region_vis(node_ds, node, mds_ds, **kw):
 
     out = degrid_region(
         node_ds,
-        region={"time": slice(0, 6), "frequency": slice(0, 4)},
         model_ds=mds_ds,
         masks=build_region_masks(mds_ds, None),
         columns=["MODEL_DATA"],
         corr_types=node.corr_types,
         epsilon=1e-9,
-        **{"stokes": ["I"], **kw},
+        **{"region": {"time": slice(0, 6), "frequency": slice(0, 4)}, "stokes": ["I"], **kw},
     )
     return out.MODEL_DATA.values
 
@@ -2038,7 +2037,7 @@ def test_degrid_refuses_malformed_antenna_groups_without_a_beam(degrid_ms, simpl
         )
 
 
-def _spectral_mds(ms_name, path, method):
+def _spectral_mds(ms_name, path, method, bounds=None):
     """`simple_mds`'s component and grid, histopolated over two bands spanning the test MS.
 
     Bands [0.95, 1.35) and [1.35, 1.75) GHz hold the MS's channels 1.0-1.3 and
@@ -2057,7 +2056,7 @@ def _spectral_mds(ms_name, path, method):
     image[0, 1, 0, 9, 40] = 0.7
     times = np.array([1.62393461e9])
     freqs = np.array([1.12e9, 1.53e9])
-    bounds = np.array([[0.95e9, 1.35e9], [1.35e9, 1.75e9]])
+    bounds = np.array([[0.95e9, 1.35e9], [1.35e9, 1.75e9]]) if bounds is None else bounds
     fit = fit_image_cube(times, freqs, image, wgt=np.ones((1, 2, 1)), method=method, freq_bounds=bounds)
     ds = build_mds_dataset(
         *fit,
@@ -2401,3 +2400,46 @@ def test_linear_degrid_beats_flat_on_a_tent_model(sky_truth, ms_meta, ms_name, t
             dt.close()
 
     assert peaks["linear"] < peaks["flat"], f"per-channel residual peaks {peaks}"
+
+
+def test_degrid_region_linear_one_channel_just_below_a_kink(degrid_ms, tmp_path):
+    """A one-channel chunk has no slope to carry (dnu = 0), so linear mode must predict it
+    as flat does, even when a kink lies within the slope's difference step above it."""
+    bounds = np.array([[0.95e9, 1.3e9 + 500.0], [1.3e9 + 500.0, 1.75e9]])
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent", bounds=bounds)
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        region = {"time": slice(0, 6), "frequency": slice(3, 4)}  # 1.3 GHz, 500 Hz below the break
+        got = _region_vis(node_ds, node, mds_ds, region=region, spectral="linear")
+        flat = _region_vis(node_ds, node, mds_ds, region=region)
+    finally:
+        dt.close()
+    np.testing.assert_array_equal(got, flat)
+
+
+def test_degrid_flat_checks_only_the_frequencies_it_evaluates(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    """Flat mode evaluates the beam at chunk means only, so it must not refuse a run over an
+    edge channel it never evaluates."""
+    degrid_mod = _no_ray(monkeypatch)
+    checked = []
+
+    class _Recorder:
+        def __init__(self, **kw):
+            pass
+
+        def check_freqs(self, freq):
+            checked.append(np.asarray(freq))
+            raise ValueError("stop after the check")
+
+    monkeypatch.setattr(degrid_mod, "BeamWizard", _Recorder)
+    with pytest.raises(ValueError, match="stop after"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            channels_per_chunk=8,
+            mds=simple_mds[0],
+            product="I",
+            beam_model="L",
+            log_directory=str(tmp_path / "logs"),
+        )
+    np.testing.assert_allclose(np.unique(np.concatenate(checked)), [1.35e9])
