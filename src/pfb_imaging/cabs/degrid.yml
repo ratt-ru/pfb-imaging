@@ -160,6 +160,14 @@ cabs:
         default: true
         metadata:
           rich_help_panel: WGridder
+      spectral:
+        info:
+          Spectral model across a degridding chunk.
+          Use flat to hold the model at the chunk's mean frequency.
+          Use linear to also carry its slope, which cuts chunks at the model's band breaks.
+        default: flat
+        metadata:
+          rich_help_panel: WGridder
       beam-model:
         info:
           Primary beam to apply, as a meerkat-beams band name such as L.
@@ -184,6 +192,14 @@ cabs:
           The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas.
           Requires --baseline-groups.
         dtype: Optional[str]
+        metadata:
+          rich_help_panel: Beam
+      beam-slope:
+        info:
+          Carry the primary beam's frequency slope across a chunk.
+          Only used with --spectral linear and --beam-model.
+        dtype: bool
+        default: true
         metadata:
           rich_help_panel: Beam
       ray-address:

@@ -2220,3 +2220,75 @@ def test_degrid_region_flat_beam_in_linear_mode_uses_the_piece_anchor(degrid_ms,
     finally:
         dt.close()
     assert [c["freq"] for c in wizard.calls] == [pytest.approx(1.12e9)]
+
+
+def test_degrid_refuses_an_unknown_spectral_mode_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="spectral"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", spectral="cubic")
+
+
+def test_degrid_checks_beam_frequencies_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    """Every beam frequency is validated on the driver, before Ray and before any column exists."""
+    import arcae
+
+    degrid_mod = _no_ray(monkeypatch)
+    built = []
+
+    class _Recorder:
+        def __init__(self, **kw):
+            self.kw, self.checked = kw, []
+            built.append(self)
+
+        def check_freqs(self, freq):
+            self.checked.append(np.asarray(freq))
+            raise ValueError("requested frequencies [...] MHz fall outside the BDS frequency range")
+
+    monkeypatch.setattr(degrid_mod, "BeamWizard", _Recorder)
+    with pytest.raises(ValueError, match="fall outside"):
+        degrid_mod.degrid(
+            [degrid_ms],
+            str(tmp_path / "out"),
+            mds=simple_mds[0],
+            product="I",
+            beam_model="L",
+            model_column="BEAM_MODEL_DATA",
+            log_directory=str(tmp_path / "logs"),
+        )
+    assert built and built[0].kw["freq_extrapolation"] == "scale"
+    checked = np.concatenate(built[0].checked)
+    assert checked.min() == pytest.approx(1.0e9) and checked.max() == pytest.approx(1.7e9)
+    with arcae.table(degrid_ms) as tab:
+        assert "BEAM_MODEL_DATA" not in tab.columns()
+
+
+def test_degrid_linear_runs_and_splits_at_kinks(degrid_ms, tmp_path, pctable, monkeypatch):
+    import pfb_imaging.core.degrid as degrid_mod
+
+    mds_path, _ = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    with pctable(degrid_ms, readonly=False, ack=False) as tab:
+        tab.putcol("MODEL_DATA", np.zeros((21060, 8, 4), np.complex64))
+    recorded = []
+    chunks = degrid_mod.frequency_chunks
+
+    def spy(*args, **kw):
+        out = chunks(*args, **kw)
+        recorded.append(out)
+        return out
+
+    monkeypatch.setattr(degrid_mod, "frequency_chunks", spy)
+    degrid_mod.degrid(
+        [degrid_ms],
+        str(tmp_path / "out"),
+        channels_per_chunk=8,
+        mds=mds_path,
+        product="I",
+        spectral="linear",
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+    assert recorded and all(r == [slice(0, 4), slice(4, 8)] for r in recorded)
+    with pctable(degrid_ms, ack=False) as tab:
+        assert np.any(np.asarray(tab.getcol("MODEL_DATA")) != 0)
