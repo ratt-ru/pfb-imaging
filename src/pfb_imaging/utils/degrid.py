@@ -30,6 +30,7 @@ from pfb_model_spec.utils.degrid import (
     model_geometry,
     model_to_apparent_vis_for_regions,
     pixel_lm,
+    split_at_kinks,
 )
 
 from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
@@ -550,6 +551,41 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
     """
     band_width = float(np.min(freq_bounds[:, 1] - freq_bounds[:, 0]))
     return max(1, int(round(band_width / abs(chan_width))))
+
+
+def frequency_chunks(freq: np.ndarray, fstep: int, kinks: np.ndarray | None = None) -> list[slice]:
+    """Cut a node's selected frequency axis into degridding chunks.
+
+    Without kinks this is the fixed `fstep`-channel blocking degrid has always
+    used, remainder and all. With them (`--spectral linear`) the axis is first
+    cut at the model's frequency kinks, because a linear chunk must not cross
+    one (pfb-model-spec `frequency_kinks`), and each run is then split into
+    `ceil(n / fstep)` near-equal parts: a run one channel longer than `fstep`
+    would otherwise cost a full gridding pass for a one-channel chunk (D59).
+
+    Args:
+        freq: The selected channel frequencies, Hz, ascending or descending.
+        fstep: Target channels per chunk.
+        kinks: Kink frequencies from `frequency_kinks`, or None for flat blocking.
+
+    Returns:
+        Contiguous slices of `freq`, in index order, covering it once.
+    """
+    n = freq.size
+    if kinks is None:
+        return [slice(i, min(i + fstep, n)) for i in range(0, n, fstep)]
+    if n > 1 and freq[0] > freq[-1]:
+        # split_at_kinks wants an ascending axis; map its runs back to index order
+        runs = [slice(n - r.stop, n - r.start) for r in reversed(split_at_kinks(freq[::-1], kinks))]
+    else:
+        runs = split_at_kinks(freq, kinks)
+    chunks = []
+    for run in runs:
+        size = run.stop - run.start
+        nsplit = -(-size // fstep)
+        bounds = np.cumsum([run.start] + [len(a) for a in np.array_split(np.empty(size), nsplit)])
+        chunks += [slice(int(lo), int(hi)) for lo, hi in zip(bounds[:-1], bounds[1:])]
+    return chunks
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:

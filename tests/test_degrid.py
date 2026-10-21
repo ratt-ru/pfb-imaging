@@ -905,6 +905,7 @@ def test_check_tangent_point_compares_wrapped_magnitudes(simple_mds):
             scan_name="0",
             field_radec=np.array([ra, dec]),
             corr_types=("XX", "XY", "YX", "YY"),
+            freq=1.0e9 + 1.0e6 * np.arange(8),
         )
 
     _, ds = simple_mds
@@ -1101,9 +1102,9 @@ def test_degrid_runs_with_the_derived_channel_chunk(degrid_ms, simple_mds, tmp_p
     fsteps = []
     work_items = degrid_mod._work_items
 
-    def spy(ms_index, node, integrations_per_chunk, channels_per_chunk):
+    def spy(ms_index, node, integrations_per_chunk, channels_per_chunk, **kw):
         fsteps.append(channels_per_chunk)
-        return work_items(ms_index, node, integrations_per_chunk, channels_per_chunk)
+        return work_items(ms_index, node, integrations_per_chunk, channels_per_chunk, **kw)
 
     monkeypatch.setattr(degrid_mod, "_work_items", spy)
 
@@ -1689,6 +1690,64 @@ def test_default_channels_per_chunk(chan_width, expected):
 
     fb = np.array([[1.0e9, 1.1e9], [1.1e9, 1.2e9]])
     assert default_channels_per_chunk(fb, chan_width) == expected
+
+
+@pytest.mark.parametrize(
+    "fstep, kinks, expected",
+    [
+        (4, None, [slice(0, 4), slice(4, 8)]),  # flat: today's blocks
+        (3, None, [slice(0, 3), slice(3, 6), slice(6, 8)]),  # flat keeps its remainder
+        (8, np.array([0.95e9, 1.35e9, 1.75e9]), [slice(0, 4), slice(4, 8)]),
+        (3, np.array([0.95e9, 1.35e9, 1.75e9]), [slice(0, 2), slice(2, 4), slice(4, 6), slice(6, 8)]),
+        (8, np.array([]), [slice(0, 8)]),
+    ],
+)
+def test_frequency_chunks(fstep, kinks, expected):
+    from pfb_imaging.utils.degrid import frequency_chunks
+
+    freq = 1.0e9 + 1.0e8 * np.arange(8)
+    assert frequency_chunks(freq, fstep, kinks) == expected
+
+
+def test_frequency_chunks_splits_a_run_evenly():
+    """A run one channel longer than the step is two halves, not a block plus one channel."""
+    from pfb_imaging.utils.degrid import frequency_chunks
+
+    freq = 1.0e9 + 1.0e5 * np.arange(274)
+    assert frequency_chunks(freq, 273, np.array([0.5e9, 2.0e9])) == [slice(0, 137), slice(137, 274)]
+
+
+def test_frequency_chunks_descending_axis():
+    from pfb_imaging.utils.degrid import frequency_chunks
+
+    freq = (1.0e9 + 1.0e8 * np.arange(8))[::-1]
+    chunks = frequency_chunks(freq, 8, np.array([1.35e9]))
+    assert chunks == [slice(0, 4), slice(4, 8)]
+    for s in chunks:
+        f = freq[s]
+        assert np.all(f < 1.35e9) or np.all(f >= 1.35e9)
+
+
+def test_work_items_linear_shifts_by_chan0():
+    """A --freq-range selection cuts at the kinks of the selected channels, then shifts by chan0."""
+    from pfb_imaging.core.degrid import _work_items
+    from pfb_imaging.utils.msv4 import SelectedNode
+
+    node = SelectedNode(
+        path="/p",
+        chan0=2,
+        nchan=6,
+        chan_width=1.0e8,
+        ntime=10,
+        field_name="f",
+        spw_name="s",
+        scan_name="0",
+        field_radec=np.zeros(2),
+        corr_types=("XX", "YY"),
+        freq=1.2e9 + 1.0e8 * np.arange(6),
+    )
+    regions = [w.region["frequency"] for w in _work_items(0, node, -1, 8, kinks=np.array([1.35e9]))]
+    assert regions == [slice(2, 4), slice(4, 8)]
 
 
 def test_flux_scale_warning():
