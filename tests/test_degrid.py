@@ -497,7 +497,7 @@ def test_degrid_region_matches_a_direct_kernel_call(degrid_ms, simple_mds):
         dt.close()
 
 
-def _direct_reference(node_ds, node, model_ds, region, divide_by_n):
+def _direct_reference(node_ds, node, model_ds, region, divide_by_n, freq_out=None):
     """Call the plural kernel directly with independently built arguments."""
     from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_regions
 
@@ -513,7 +513,7 @@ def _direct_reference(node_ds, node, model_ds, region, divide_by_n):
         freq=freq,
         corr_types=node.corr_types,
         time=float(sub.time.values.mean()),
-        freq_out=float(freq.mean()),
+        freq_out=float(freq.mean()) if freq_out is None else freq_out,
         stokes_out=["I"],
         mask=mask,
         epsilon=1e-9,
@@ -2443,3 +2443,38 @@ def test_degrid_flat_checks_only_the_frequencies_it_evaluates(degrid_ms, simple_
             log_directory=str(tmp_path / "logs"),
         )
     np.testing.assert_allclose(np.unique(np.concatenate(checked)), [1.35e9])
+
+
+def test_degrid_region_flat_at_the_anchor(degrid_ms, tmp_path):
+    """--chunk-freq anchor renders the model, and evaluates the beam, at the band's weighted
+    anchor, where the tent returns the band value exactly (D28)."""
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        region = {"time": slice(0, 6), "frequency": slice(0, 4)}
+        expected = _direct_reference(node_ds, node, mds_ds, region, True, freq_out=1.12e9).astype(np.complex64)
+        got = _region_vis(node_ds, node, mds_ds, chunk_freq="anchor")
+        wizard = _FakeWizard()
+        _region_vis(node_ds, node, mds_ds, chunk_freq="anchor", wizards={"all": wizard})
+    finally:
+        dt.close()
+    np.testing.assert_array_equal(got.reshape(expected.shape), expected)
+    assert [c["freq"] for c in wizard.calls] == [pytest.approx(1.12e9)]
+
+
+def test_degrid_region_linear_does_not_depend_on_chunk_freq(degrid_ms, tmp_path):
+    """Inside a tent piece the linear prediction is the piece's own line, wherever it is expanded."""
+    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
+    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
+    try:
+        at_mean = _region_vis(node_ds, node, mds_ds, spectral="linear")
+        at_anchor = _region_vis(node_ds, node, mds_ds, spectral="linear", chunk_freq="anchor")
+    finally:
+        dt.close()
+    np.testing.assert_allclose(at_anchor, at_mean, rtol=0, atol=1e-6 * np.abs(at_mean).max())
+
+
+def test_degrid_refuses_an_unknown_chunk_freq_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
+    degrid_mod = _no_ray(monkeypatch)
+    with pytest.raises(ValueError, match="chunk-freq"):
+        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", chunk_freq="median")

@@ -264,6 +264,14 @@ def degrid(
             rich_help_panel="Beam",
         ),
     ] = True,
+    chunk_freq: Annotated[
+        str,
+        typer.Option(
+            help="Experimental. "
+            "Evaluate each chunk's model and beam at its mean frequency, or at the band's weighted anchor.",
+            rich_help_panel="WGridder",
+        ),
+    ] = "mean",
     ray_address: Annotated[
         str,
         typer.Option(
@@ -364,6 +372,7 @@ def degrid(
                     baseline_groups=baseline_groups,
                     antenna_groups=antenna_groups,
                     beam_slope=beam_slope,
+                    chunk_freq=chunk_freq,
                     ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
@@ -401,6 +410,7 @@ def degrid(
                 baseline_groups=baseline_groups,
                 antenna_groups=antenna_groups,
                 beam_slope=beam_slope,
+                chunk_freq=chunk_freq,
                 ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
@@ -447,6 +457,7 @@ def degrid(
             baseline_groups=baseline_groups,
             antenna_groups=antenna_groups,
             beam_slope=beam_slope,
+            chunk_freq=chunk_freq,
             ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,

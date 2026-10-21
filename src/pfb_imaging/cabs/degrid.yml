@@ -202,6 +202,13 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Beam
+      chunk-freq:
+        info:
+          Experimental.
+          Evaluate each chunk's model and beam at its mean frequency, or at the band's weighted anchor.
+        default: mean
+        metadata:
+          rich_help_panel: WGridder
       ray-address:
         info:
           Address of the ray cluster to connect to.

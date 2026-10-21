@@ -428,8 +428,30 @@ def chunk_beam_terms(
     return terms
 
 
+CHUNK_FREQS = ("mean", "anchor")
+
+
+def chunk_freq_out(model_ds: xr.Dataset, freq: np.ndarray, chunk_freq: str = "mean") -> float:
+    """A chunk's expansion point: its unweighted mean (D39) or its piece's weighted anchor.
+
+    `"anchor"` is an experimental knob (#385) for measuring how much the
+    choice matters: in flat mode the tent returns the band value exactly only
+    at the anchor (D28); in linear mode the model does not depend on it.
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        freq: The chunk's channel frequencies, Hz.
+        chunk_freq: One of `CHUNK_FREQS`.
+
+    Returns:
+        The frequency in Hz.
+    """
+    freq_out = float(np.mean(freq))
+    return piece_anchor(model_ds, freq_out) if chunk_freq == "anchor" else freq_out
+
+
 def chunk_beam_freqs(
-    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool
+    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool, chunk_freq: str = "mean"
 ) -> tuple[float, tuple[float, float] | None]:
     """Where a chunk evaluates its beam: one frequency, plus a chord under a slope.
 
@@ -441,13 +463,14 @@ def chunk_beam_freqs(
         freq: The chunk's channel frequencies, Hz.
         spectral: `"flat"` or `"linear"`.
         beam_slope: Whether a linear chunk carries the beam's chord slope.
+        chunk_freq: One of `CHUNK_FREQS`; see `chunk_freq_out`.
 
     Returns:
-        `(beam_freq, chord)`: the chunk mean and no chord when flat; the mean
-        and its extreme channels with a slope; the piece anchor and no chord
-        without one (D59).
+        `(beam_freq, chord)`: the expansion point and no chord when flat; the
+        expansion point and the extreme channels with a slope; the piece anchor
+        and no chord without one (D59).
     """
-    freq_out = float(np.mean(freq))
+    freq_out = chunk_freq_out(model_ds, freq, chunk_freq)
     if spectral != "linear":
         return freq_out, None
     if beam_slope:
@@ -493,6 +516,7 @@ def degrid_region(
     groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
     spectral: str = "flat",
     beam_slope: bool = True,
+    chunk_freq: str = "mean",
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -521,6 +545,8 @@ def degrid_region(
             cross a frequency kink (`frequency_chunks` cuts there; D59).
         beam_slope: Under `"linear"`, carry the beam's chord slope. Off, the
             beam is held at the chunk's piece anchor (`piece_anchor`).
+        chunk_freq: Where the model (and a flat or sloped beam) is evaluated:
+            `"mean"` (D39) or the piece's weighted `"anchor"`. Experimental.
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
@@ -534,6 +560,8 @@ def degrid_region(
         raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
     if spectral not in SPECTRAL:
         raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
+    if chunk_freq not in CHUNK_FREQS:
+        raise ValueError(f"chunk_freq must be one of {CHUNK_FREQS}, got {chunk_freq!r}")
 
     ds = node_ds.isel(**region)
     ntime = int(ds.sizes["time"])
@@ -564,11 +592,11 @@ def degrid_region(
     # matching the .mds's own coords -- do not convert to MJD (D13). In linear
     # mode the mean is also the expansion point (D59).
     time_out = float(ds.time.values.mean())
-    freq_out = float(freq.mean())
+    freq_out = chunk_freq_out(model_ds, freq, chunk_freq)
 
     beam_terms = None
     if wizards is not None:
-        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope)
+        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope, chunk_freq)
         beam_terms = chunk_beam_terms(
             wizards,
             groups,
