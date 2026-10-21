@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-21T10:18:11Z
-last_verified_commit: 8cb5822
+timestamp: 2026-10-21T10:28:21Z
+last_verified_commit: 1703820
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1938,8 +1938,12 @@ update it (and this page's `last_verified_commit`) in the same session.
     channel past the cube, the edge plane is evaluated with offsets scaled by ν/ν_e. hci
     follows in ratt-ru/pfb-imaging#358.
   - **The degrid driver checks every beam frequency with the wizards' `check_freqs`**
-    before any column is created and before Ray starts: each node's channel extremes, plus
-    the piece anchors under `--no-beam-slope`.
+    before any column is created and before Ray starts. It checks exactly what the replicas
+    will evaluate, through the same `chunk_beam_freqs` they use: chunk means in flat mode,
+    plus the chord ends under a slope, or the piece anchors under `--no-beam-slope`.
+  - **A one-channel chunk is predicted flat** even under `--spectral linear`: it has no slope
+    to carry (Δν = 0), and the kernel's forward difference (step `1e-6·ν`) could otherwise
+    reach across a kink just above the channel and raise inside a replica.
 - **Rationale:**
   - Fixed-width chunks drift off the imager's `linspace` band edges whenever the band count
     does not divide the channel count (4096 / 15 = 273.07: the first straddle is chunk 8),
@@ -1974,6 +1978,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `_work_items`), `src/pfb_imaging/utils/beam.py`, `src/pfb_imaging/core/imager.py`;
   landmanbester/pfb-model-spec#39/#40, landmanbester/meerkat-beams#41/#42 (D19).
   Tests in `tests/test_degrid.py`: `test_frequency_chunks*`,
+  `test_degrid_region_linear_one_channel_just_below_a_kink`,
+  `test_degrid_flat_checks_only_the_frequencies_it_evaluates`,
   `test_work_items_linear_shifts_by_chan0`,
   `test_degrid_region_linear_matches_per_channel_inside_a_piece`,
   `test_degrid_region_linear_beam_slope_matches_per_channel`,
