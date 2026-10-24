@@ -418,3 +418,17 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
         fits_cubes=False,
         log_directory=str(tmp_path / "logs"),
     )
+
+
+@pytest.mark.parametrize(
+    "data_column, warns",
+    [("DATA-MODEL_DATA", False), ("CORRECTED_DATA - MODEL_DATA", False), ("DATA", True), ("CORRECTED_DATA", True)],
+)
+def test_transfer_residual_warning(data_column, warns):
+    """A plain column with --transfer-residual would add the model to data that still holds it."""
+    from pfb_imaging.core.imager import transfer_residual_warning
+
+    msg = transfer_residual_warning(data_column)
+    assert (msg is not None) == warns
+    if warns:
+        assert data_column in msg and "twice" in msg

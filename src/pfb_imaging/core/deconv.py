@@ -237,6 +237,14 @@ def deconv(
             "pfb imager to regenerate the .dt",
             ValueError,
         )
+    if debug and any(dt[n].ds.attrs.get("transfer_residual") for n in nodes):
+        # the per-partition chi2/FITS/uv-profile diagnostics compute VIS - G(B x), but
+        # these partitions hold residual visibilities, so x would be subtracted twice (D60)
+        log.error_and_raise(
+            f"{dt_name} was imaged with --transfer-residual, so its partition visibilities are "
+            "already residuals; --debug would subtract the model from them a second time",
+            ValueError,
+        )
 
     nband = len(nodes)
     if nworkers is None:

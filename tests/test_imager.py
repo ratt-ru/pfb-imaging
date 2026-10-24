@@ -605,6 +605,41 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     assert new.BEAM.values[0, 22, 32] > 0.99
 
 
+def test_freq_bounds_span_the_bands_own_channels(ms_name, ms_meta, tmp_path):
+    """`freq_bounds` is the extent of the channels a band was assigned, not a nominal edge.
+
+    Eight channels at three per image make three bands of 3, 3 and 2 channels, while
+    equal-width nominal edges would put the cuts a third of a channel off. degrid sizes
+    and places its chunks from these bounds, and flat mode holds each chunk at the band
+    they say it belongs to (D59), so a nominal edge misassigns channels to a neighbour.
+    """
+    outname = str(tmp_path / "uneven")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=3,
+        product="I",
+        field_of_view=1.0,
+        psf=False,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    try:
+        bands = sorted(n for n in dt.children if n.startswith("band"))
+        got = np.array([dt[b].ds.attrs["freq_bounds"] for b in bands])
+    finally:
+        dt.close()
+    freq = np.sort(ms_meta.freq)
+    half = np.abs(np.diff(freq)).min() / 2
+    blocks = [slice(0, 3), slice(3, 6), slice(6, 8)]
+    expected = np.array([[freq[s].min() - half, freq[s].max() + half] for s in blocks])
+    np.testing.assert_allclose(got, expected, rtol=0, atol=1.0)
+
+
 def test_imager_no_psf_quicklook(ms_name, tmp_path):
     """psf=False skips PSF gridding everywhere; deconv refuses the tree cleanly."""
     from pfb_imaging.core.deconv import deconv

@@ -218,17 +218,20 @@ def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
-    """Nominal band edges and integration-edge time extent of one output image (#327).
+    """Channel extent and integration-edge time extent of one output image (#327).
 
     Stored on the band node so `deconv` can hand them to the `.mds`, where
-    `degrid` derives its chunking from them. The band edges are the nominal
-    ones that assigned channels to the band, not the flagged data's extent.
+    `degrid` derives its chunking from them. The band edges are the outer
+    channel edges of the channels assigned to the band (flagged or not), not
+    the equal-width nominal edges used to assign them: those disagree whenever
+    the bands do not divide the channels evenly, and degrid must place its
+    chunks on the band's real channels to reproduce deconv's forward model (D59).
 
     Args:
         infos: The image's per-scratch-node summaries (`time_lo`, `time_hi`: the
             outermost integration edges).
-        band_lo: Lower band edge in Hz.
-        band_hi: Upper band edge in Hz.
+        band_lo: Lower channel edge of the band in Hz.
+        band_hi: Upper channel edge of the band in Hz.
 
     Returns:
         `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
@@ -237,6 +240,26 @@ def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
         "freq_bounds": [float(band_lo), float(band_hi)],
         "time_bounds": [min(i["time_lo"] for i in infos), max(i["time_hi"] for i in infos)],
     }
+
+
+def transfer_residual_warning(data_column: str) -> str | None:
+    """The warning to log when `--transfer-residual` images a column that is not a difference.
+
+    The mode adds the transferred model's prediction back into `DIRTY` (D60), so a column
+    that still holds the model, such as `DATA`, would end up with it twice.
+
+    Args:
+        data_column: The `--data-column` expression.
+
+    Returns:
+        The message, or None when the expression subtracts something.
+    """
+    if "-" in data_column:
+        return None
+    return (
+        f"--transfer-residual expects a residual column such as DATA-MODEL_DATA, but the data column is "
+        f"{data_column!r}; if it still holds the transferred model, DIRTY will hold the model twice"
+    )
 
 
 def check_transfer_geometry(model_ds, *, grid_radec) -> None:
@@ -836,6 +859,8 @@ def imager(
             "of that model, and pass 2 must know which model to add back.",
             ValueError,
         )
+    if transfer_residual and (msg := transfer_residual_warning(data_column)) is not None:
+        log.warning(msg)
     transfer_ds = None
     if transfer_model_from is not None:
         # absolute before any Ray worker (with its own cwd) sees it
@@ -1142,6 +1167,8 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
+    # bandid -> [lo, hi]: outer channel edges of every block assigned to the band
+    band_extent = {}
     for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
@@ -1168,6 +1195,10 @@ def imager(
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
                 bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
+                lo = float(freqs_node[flow:fhigh].min()) - min_chan_width / 2
+                hi = float(freqs_node[flow:fhigh].max()) + min_chan_width / 2
+                extent = band_extent.setdefault(bandid, [lo, hi])
+                extent[:] = [min(extent[0], lo), max(extent[1], hi)]
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -1335,7 +1366,7 @@ def imager(
                         "l0": l0,
                         "m0": m0,
                         "time_out": time_out,
-                        **_sampling_bounds(infos, band_edges[bandid], band_edges[bandid + 1]),
+                        **_sampling_bounds(infos, *band_extent[bandid]),
                     },
                 )
             )
@@ -1344,7 +1375,7 @@ def imager(
             l0, m0 = target_offset(info["time_out"])
             meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
             meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
-            meta.update(_sampling_bounds([info], band_edges[info["bandid"]], band_edges[info["bandid"] + 1]))
+            meta.update(_sampling_bounds([info], *band_extent[info["bandid"]]))
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})

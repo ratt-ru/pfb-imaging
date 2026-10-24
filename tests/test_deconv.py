@@ -908,3 +908,26 @@ def test_the_model_fit_does_not_re_enter_the_solver(tmp_path, monkeypatch):
             assert peak < sentinel / 100.0, (
                 f"{n}/{var} peaks at {peak:.3e}: the fitted cube reached the deconvolution loop"
             )
+
+
+def test_deconv_debug_refuses_a_transfer_residual_tree_before_ray(tmp_path, monkeypatch):
+    """`--debug` computes per-partition chi2 as VIS - G(B x). On a `--transfer-residual` tree the
+    partition VIS is already a residual, so the model would be subtracted twice (D60)."""
+    import zarr
+
+    import pfb_imaging.core.deconv as deconv_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(deconv_mod, "init_ray", _boom)
+    output_filename = str(tmp_path / "synth")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 16, 16, 32, 1, np.random.default_rng(0))
+    root = zarr.open_group(dt_name, mode="a")
+    for name in root.group_keys():
+        if name.startswith("band"):
+            root[name].attrs["transfer_residual"] = True
+    zarr.consolidate_metadata(dt_name)  # the tree is read through its consolidated metadata
+    with pytest.raises(ValueError, match="--debug"):
+        deconv_mod.deconv(output_filename, product="I", debug=True, nworkers=1, nthreads=1, verbosity=0)

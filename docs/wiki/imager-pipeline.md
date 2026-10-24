@@ -48,7 +48,7 @@ child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters,
-              freq_bounds (nominal band edges, Hz), time_bounds (outermost integration
+              freq_bounds (outer channel edges of the band's channels, Hz; D59), time_bounds (outermost integration
               edges, per-row intervals; unix s), transferred_from (--transfer-model-from only)
               # freq_out = effective (wsum-weighted) frequency of the channels
               # actually gridded; freq_nominal = band-edge midpoint, assignment
@@ -102,7 +102,7 @@ streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESI
 `deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
 `--transfer-residual` (#387, D60) says the data column already has that model subtracted,
 for example `DATA-MODEL_DATA` after `pfb degrid`. The sweep then runs from zero, so it yields
-the model's prediction `R(x0)`; `RESIDUAL`/`BRESIDUAL` are the gridded column, and
+minus the model's prediction, `−R(x0)`; `RESIDUAL`/`BRESIDUAL` are the gridded column, and
 `DIRTY`/`BDIRTY` are that plus `R(x0)` (and its beam-attenuated form). The band gets a
 `transfer_residual` attr. The `DIRTY` FITS is then this effective dirty, not an image of `DATA`.
 Every name holding gridding-loop vis buffers is released before

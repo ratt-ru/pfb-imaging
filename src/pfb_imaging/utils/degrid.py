@@ -433,10 +433,22 @@ def flat_freq(model_ds: xr.Dataset, freq: np.ndarray) -> float:
     bounds = model_sampling(model_ds)["freq_bounds"]
     if bounds is None:
         return centre
-    inside = np.flatnonzero((bounds.min(axis=1) <= centre) & (centre <= bounds.max(axis=1)))
-    if inside.size == 0:
-        return centre
-    return float(upgrade(model_ds).freqs.values[inside[0]])
+    (band,) = band_labels(np.array([centre]), bounds)
+    return centre if band < 0 else float(upgrade(model_ds).freqs.values[band])
+
+
+def band_labels(freq: np.ndarray, freq_bounds: np.ndarray) -> np.ndarray:
+    """The model band holding each channel: the first whose `freq_bounds` contain it.
+
+    Args:
+        freq: Channel frequencies, Hz, in any order.
+        freq_bounds: `(nband, 2)` band edges in Hz, from the `.mds`.
+
+    Returns:
+        `(nchan,)` band indices, `-1` for a channel outside every band.
+    """
+    inside = (freq_bounds.min(axis=1)[None, :] <= freq[:, None]) & (freq[:, None] <= freq_bounds.max(axis=1)[None, :])
+    return np.where(inside.any(axis=1), inside.argmax(axis=1), -1)
 
 
 def chunk_eval_freqs(model_ds: xr.Dataset, freq: np.ndarray, spectral: str) -> list[float]:
@@ -591,7 +603,12 @@ def degrid_region(
         # end channels. Exact where B*S is linear across the chunk (D59).
         lo, hi = eval_freqs
         weight = ((freq - lo) / (hi - lo))[None, :, None]
-        per_region = [v_lo + weight * (v_hi - v_lo) for v_lo, v_hi in zip(per_region, predict(hi), strict=True)]
+        # in place on the upper prediction, so no temporaries the size of a region's vis
+        for v_lo, v_hi in zip(per_region, upper := predict(hi), strict=True):
+            v_hi -= v_lo
+            v_hi *= weight
+            v_hi += v_lo
+        per_region = upper
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
@@ -620,6 +637,38 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
     """
     band_width = float(np.min(freq_bounds[:, 1] - freq_bounds[:, 0]))
     return max(1, int(round(band_width / abs(chan_width))))
+
+
+def frequency_chunks(freq: np.ndarray, fstep: int, freq_bounds: np.ndarray | None = None) -> list[slice]:
+    """Cut a node's selected frequency axis into degridding chunks.
+
+    With the model's `freq_bounds` the axis is first cut where the band holding
+    a channel changes (`band_labels`; channels outside every band form runs of
+    their own), and each run is split into `ceil(n / fstep)` near-equal chunks.
+    No chunk then straddles two bands, so flat mode holds every channel at its
+    own band's frequency, which is deconv's forward model even when the bands
+    do not divide the channels evenly (D59). Without bounds this is fixed
+    `fstep`-channel blocking from channel 0.
+
+    Args:
+        freq: The selected channel frequencies, Hz, in node order.
+        fstep: Target channels per chunk.
+        freq_bounds: `(nband, 2)` band edges from the `.mds`, or None.
+
+    Returns:
+        Contiguous slices of `freq`, in index order, covering it once.
+    """
+    n = freq.size
+    if freq_bounds is None:
+        return [slice(i, min(i + fstep, n)) for i in range(0, n, fstep)]
+    labels = band_labels(np.asarray(freq, dtype=float), np.asarray(freq_bounds, dtype=float))
+    cuts = [0, *(np.flatnonzero(np.diff(labels)) + 1).tolist(), n]
+    chunks = []
+    for lo, hi in zip(cuts[:-1], cuts[1:]):
+        sizes = [len(a) for a in np.array_split(np.empty(hi - lo), -(-(hi - lo) // fstep))]
+        edges = lo + np.cumsum([0, *sizes])
+        chunks += [slice(int(a), int(b)) for a, b in zip(edges[:-1], edges[1:])]
+    return chunks
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:

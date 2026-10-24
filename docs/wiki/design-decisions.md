@@ -1656,8 +1656,10 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** band width in Hz is the model's natural resolution and is MS-independent;
   channel counts are not.
 - **Consequences:** `time_bounds` is recorded but drives nothing yet.
-- **Amendment (D59):** with the default, a flat chunk spans one band and is held at that
-  band's weighted frequency, which is deconv's forward model for the band.
+- **Amendment (D59):** chunks are now cut at the model's `freq_bounds` and each band's run is
+  split into near-equal chunks of at most this width, so no chunk straddles two bands. The
+  imager records each band's real channel extent as `freq_bounds`, so with uneven bands the
+  narrowest band sets the width and wider bands are split.
 - **Source:** `src/pfb_imaging/core/degrid.py`; commit `3717aef`; issue #327.
 
 ### D54 — `flux_scale` and the intrinsic-model warning
@@ -1937,7 +1939,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **`--spectral linear`** predicts the apparent model `B·S` at the chunk's lowest and
     highest channels, each through the existing flat kernel, and interpolates each channel
     linearly between them (`degrid_region`). A one-channel chunk is predicted at its channel.
-  - **Chunks are fixed `--channels-per-chunk` blocks in both modes.**
+  - **Chunks follow the model's bands** (`frequency_chunks`, `band_labels`): the axis is cut
+    wherever the band holding a channel changes, and each run is split into
+    `ceil(n / --channels-per-chunk)` near-equal chunks. Channels outside every band form runs
+    of their own, and the driver warns how many there are. A model without `freq_bounds`
+    gets fixed blocks from channel 0.
+  - **The imager records each band's real channel extent as `freq_bounds`**
+    (`core/imager.py`, `band_extent`): the outer channel edges of the blocks assigned to the
+    band, not the equal-width edges used to assign them.
   - **`chunk_eval_freqs` is the single source** of the frequencies a chunk evaluates, used
     by the replicas and by the driver's preflight alike.
   - **Every degrid and imager `BeamWizard` uses `freq_extrapolation="scale"`**
@@ -1946,27 +1955,40 @@ update it (and this page's `last_verified_commit`) in the same session.
     chunks evaluate the beam at band-edge channels, which needs it. hci follows in
     ratt-ru/pfb-imaging#358.
   - **The degrid driver checks every beam frequency with the wizards' `check_freqs`**
-    before any column is created and before Ray starts.
+    before any column is created and before Ray starts, iterating the work items themselves.
 - **Rationale:**
-  - **Flat at the band frequency makes the residual comparable.** With no beam and one band
-    per chunk, imaging `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder
-    precision (`test_imaged_residual_matches_deconv`). That is the precondition for imaging
-    residual visibilities that carry a more accurate beam (#387).
+  - **Flat at the band frequency makes the residual comparable.** With no beam, imaging
+    `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder precision, provided no
+    chunk straddles two bands (`test_imaged_residual_matches_deconv`, on uneven bands). That
+    is the precondition for imaging residual visibilities that carry a more accurate beam
+    (#387).
+  - **Why the imager's bounds had to change.** The imager assigns `channels_per_image`
+    blocks to the nearest of `ceil(range / (cw · cpi))` equal-width bands. When the bands do
+    not divide the channels evenly the equal-width edges fall inside blocks: for 4096
+    channels at 300 per image, fixed degrid chunks held 637 channels (15.6%) at a
+    neighbouring band's frequency.
   - **Interpolating the chunk ends needs no knowledge of the spectrum's form.** It is exact
-    wherever `B·S` is linear across the chunk, which covers a tent piece under a box or
-    linear beam. A kink inside a chunk leaves a chord-versus-curve error, far below the flat
-    error, that shrinks with chunk width. It carries the model's and the beam's slope at
-    once, with no slope image and no `M₀·S₁ + M₁·S₀` cross terms, and runs entirely on the
+    wherever `B·S` is linear across the chunk, and it carries the model's and the beam's
+    slope at once, with no slope image and no `M₀·S₁ + M₁·S₀` cross terms, entirely on the
     released flat kernel. The chord is also meerkat-beams D19's most accurate linear fit to
     the beam (1.5e-3 against 9.4e-3 flat on legacy L over 53.5 MHz).
+  - **But a tent model is not linear across a band-aligned chunk.** Its knots sit at the
+    band frequencies, inside every such chunk, so linear mode's error there is that of the
+    chord over a kink, about `|x₍b−1₎ − 2x_b + x₍b+1₎| / 4` at the knot. That can be
+    comparable to flat's for a band that stands out from its neighbours. Flat, unlike linear,
+    reproduces deconv's band value at the band frequency. Linear wins with chunks narrower
+    than a band, and for smooth spectra.
   - The preflight exists because a range error used to surface inside a Serve replica after
     the whole setup had run.
 - **Consequences:**
   - **Cost.** Linear mode doubles the renders, the beam evaluations and the gridding passes
-    per chunk, and holds two sets of chunk visibilities at once.
+    per chunk, and holds two sets of chunk visibilities at once; the interpolation runs in
+    place on the second.
   - **Flat output changed.** A chunk used to sit at its unweighted mean; it now sits at its
     band's weighted frequency. A chunk narrower than a band therefore no longer samples the
     spectrum more finely in flat mode. That is linear mode's job.
+  - **A `.mds` from an older imager has equal-width `freq_bounds`.** Degrid follows them, so
+    with uneven bands it still misassigns the channels near band edges. Re-image to fix.
   - **Not yet measured on real data.** How coarse the frequency sampling can go in linear
     mode, and whether linear should become the default, are open in #387.
 - **Source:** `src/pfb_imaging/utils/degrid.py` (`flat_freq`, `chunk_eval_freqs`,
@@ -1974,6 +1996,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   `src/pfb_imaging/utils/beam.py`, `src/pfb_imaging/core/imager.py`; #385, #387;
   landmanbester/meerkat-beams#41/#42 (D19). Tests in `tests/test_degrid.py`:
   `test_flat_freq*`, `test_degrid_region_flat_holds_the_band_frequency`,
+  `test_frequency_chunks*`, `test_band_labels`,
+  `test_work_items_follow_the_model_bands_and_shift_by_chan0`,
+  `test_degrid_chunks_follow_the_model_bands`,
   `test_chunk_eval_freqs`, `test_degrid_region_linear_is_exact_for_a_linear_spectrum`,
   `test_degrid_region_linear_across_a_kink_beats_flat`,
   `test_degrid_region_linear_beam_matches_per_channel`,
@@ -1982,7 +2007,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_degrid_flat_checks_only_the_frequencies_it_evaluates`,
   `test_degrid_linear_runs_through_the_driver`, and the slow
   `test_linear_degrid_beats_flat_on_a_tent_model`;
-  `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group`.
+  `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group` and
+  `::test_freq_bounds_span_the_bands_own_channels`.
 
 ### D60 — `imager --transfer-residual`: `DIRTY = R_ext + R(x0)`, so deconv needs no change
 
@@ -1999,20 +2025,32 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** deconv's formula then reads `R_ext + R(x0) − R(x) = R_ext − R(x − x0)`. That
   is an incremental update: the imaged residual is kept, and the approximate operator only
   predicts the model's change since `x0`. Iterating degrid, then image the residual, then a
-  few deconv cycles converges on a residual from the accurate prediction. The adjoint used
-  for the gradient is still deconv's approximate one, so the beam error enters only at
-  second order.
+  few deconv cycles converges on a residual from the accurate prediction. The gradient
+  still uses deconv's approximate beam, so the beam error does not vanish: it enters
+  multiplied by the residual or by the model's change since `x0`, and the fixed point
+  satisfies the approximate operator's adjoint condition rather than the exact one.
 - **Consequences:**
   - `DIRTY` in such a tree is an effective dirty, not an image of `DATA`. It is marked by the
     band attr `transfer_residual`.
   - The model at entry was solved against deconv's approximate beam and partly compensates
     for its errors. Errors that vary over the track improve at once; errors in the averaged
     beam only after the next deconv.
-  - Without a beam, one chunk per band and flat prediction at the band frequency (D59), the
-    resulting tree equals deconv's own, and a resumed cycle from it matches one from deconv's
-    tree.
-- **Source:** `src/pfb_imaging/core/imager.py::_grid_image_body`; #387. Tests:
+  - Without a beam and with flat prediction at the band frequency (D59), the resulting tree
+    equals deconv's own. A resumed cycle from it matches one from deconv's tree in the test
+    because it sets `init_factor=1`: like any `--transfer-model-from` tree, this one starts
+    at iteration 0, with no cached `hess_norm` or `best_rms`, so deconv's default
+    `init_factor=0.5` halves λ on the first resumed cycle.
+  - deconv refuses `--debug` on such a tree: its per-partition diagnostics compute
+    `VIS − G(B·x)`, and the partition `VIS` is already a residual.
+  - The imager warns when `--transfer-residual` is used with a data column that subtracts
+    nothing (`transfer_residual_warning`), since the model would then appear twice.
+  - Partition `DIRTY` FITS (`--fits-per-partition`) are images of the residual column, and
+    `restore`'s dirty product is the effective dirty; neither header says so yet.
+- **Source:** `src/pfb_imaging/core/imager.py::_grid_image_body`,
+  `src/pfb_imaging/core/deconv.py` (the `--debug` refusal); #387. Tests:
   `tests/test_imager_transfer.py::test_transfer_residual_needs_a_transfer_model_before_ray`,
+  `::test_transfer_residual_warning`,
+  `tests/test_deconv.py::test_deconv_debug_refuses_a_transfer_residual_tree_before_ray`,
   `tests/test_degrid.py::test_imaged_residual_matches_deconv` and
   `::test_transfer_residual_resumes_deconv_from_the_imaged_residual` (both slow).
 
