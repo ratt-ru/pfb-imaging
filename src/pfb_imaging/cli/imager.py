@@ -192,6 +192,16 @@ def imager(
             rich_help_panel="Input",
         ),
     ] = None,
+    transfer_residual: Annotated[
+        bool,
+        typer.Option(
+            help="The data column already has the --transfer-model-from model subtracted. "
+            "Use it with a residual column such as DATA-MODEL_DATA written by pfb degrid. "
+            "RESIDUAL is then the image of that column, and DIRTY adds back the model's prediction. "
+            "A resumed deconv then keeps the imaged residual and only predicts the model's change.",
+            rich_help_panel="Input",
+        ),
+    ] = False,
     integrations_per_image: Annotated[
         int,
         typer.Option(
@@ -548,6 +558,7 @@ def imager(
                     flag_column=flag_column,
                     gain_table=gain_table,
                     transfer_model_from=transfer_model_from,
+                    transfer_residual=transfer_residual,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
                     concat_row=concat_row,
@@ -610,6 +621,7 @@ def imager(
                 flag_column=flag_column,
                 gain_table=gain_table,
                 transfer_model_from=transfer_model_from,
+                transfer_residual=transfer_residual,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
                 concat_row=concat_row,
@@ -681,6 +693,7 @@ def imager(
             flag_column=flag_column,
             gain_table=gain_table,
             transfer_model_from=transfer_model_from,
+            transfer_residual=transfer_residual,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
             concat_row=concat_row,

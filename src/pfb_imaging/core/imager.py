@@ -406,6 +406,7 @@ def _grid_image_body(
     part_fits_beam=True,
     transfer_model=None,
     transfer_path=None,
+    transfer_residual=False,
 ):
     """Pass-2 worker for one output image.
 
@@ -418,7 +419,10 @@ def _grid_image_body(
 
     ``transfer_model`` is a ``Multiton`` over ``_load_transfer_model``, or ``None``;
     ``transfer_path`` is its path, recorded on the band node. With a model, the
-    band node also gets ``MODEL``/``RESIDUAL``/``BRESIDUAL`` (#309).
+    band node also gets ``MODEL``/``RESIDUAL``/``BRESIDUAL`` (#309). With
+    ``transfer_residual`` the data column already has the model subtracted, so
+    what was gridded is the residual, and ``DIRTY``/``BDIRTY`` become it plus
+    the model's prediction (#387).
     """
     resize_thread_pool(nthreads)
     # cache=False: otherwise the counts read below is memoised on the tree,
@@ -632,8 +636,12 @@ def _grid_image_body(
         planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
         model = np.ascontiguousarray(rendered[planes], dtype=real_type)
         del rendered
+        # With --transfer-residual the gridded column is already the residual, so
+        # the sweep runs from zero and yields -R(x0), -B R(x0) instead
+        start = np.zeros_like(dirty_sum) if transfer_residual else dirty_sum
+        bstart = np.zeros_like(bdirty_sum) if transfer_residual else bdirty_sum
         residual, bresidual = residual_from_partitions(
-            dirty_sum,
+            start,
             _iter_parts(dt_store, out_name, npart),
             model,
             cell_rad,
@@ -641,12 +649,22 @@ def _grid_image_body(
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
-            bdirty=bdirty_sum,
+            bdirty=bstart,
         )
+        band_attrs_extra = {"transferred_from": transfer_path}
+        if transfer_residual:
+            # DIRTY = R_ext + R(x0): deconv's DIRTY - R(x) is then the incremental
+            # R_ext - R(x - x0), so the imaged residual survives every major cycle
+            # and the approximate operator only acts on the model's change
+            neg_conv, neg_bconv = residual, bresidual
+            residual, bresidual = dirty_sum, bdirty_sum
+            band_vars["DIRTY"] = (("corr", "y", "x"), (dirty_sum - neg_conv).astype(real_type, copy=False))
+            band_vars["BDIRTY"] = (("corr", "y", "x"), (bdirty_sum - neg_bconv).astype(real_type, copy=False))
+            del neg_conv, neg_bconv
+            band_attrs_extra["transfer_residual"] = True
         band_vars["MODEL"] = (("corr", "y", "x"), model)
         band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
         band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))
-        band_attrs_extra = {"transferred_from": transfer_path}
     else:
         band_attrs_extra = {}
     band_ds = xr.Dataset(
@@ -690,6 +708,7 @@ def imager(
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
     transfer_model_from: str | Path | None = None,
+    transfer_residual: bool = False,
     integrations_per_image: int = -1,
     channels_per_image: int = -1,
     concat_row: bool = True,
@@ -811,6 +830,12 @@ def imager(
             NotImplementedError,
         )
 
+    if transfer_residual and transfer_model_from is None:
+        log.error_and_raise(
+            "--transfer-residual needs --transfer-model-from: the data column holds residuals "
+            "of that model, and pass 2 must know which model to add back.",
+            ValueError,
+        )
     transfer_ds = None
     if transfer_model_from is not None:
         # absolute before any Ray worker (with its own cwd) sees it
@@ -1400,6 +1425,7 @@ def imager(
             part_fits_beam=beam,
             transfer_model=transfer,
             transfer_path=transfer_model_from,
+            transfer_residual=transfer_residual,
         )
         tasks.append(fut)
 

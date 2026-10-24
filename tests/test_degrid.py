@@ -8,6 +8,7 @@ acceptance test for the port and outlived the MSv2 command it replaced
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -2404,31 +2405,22 @@ def test_degrid_linear_runs_through_the_driver(degrid_ms, tmp_path, pctable):
         assert np.any(np.asarray(tab.getcol("MODEL_DATA")) != 0)
 
 
-@pytest.mark.slow
-@pytest.mark.timeout(600)
-def test_imaged_residual_matches_deconv(sky_truth, ms_meta, ms_name, tmp_path):
-    """Imaging `DATA-MODEL_DATA` reproduces the residual deconv computes (D59, #387).
+@pytest.fixture(scope="module")
+def deconv_chain(sky_truth, ms_meta, ms_name, tmp_path_factory):
+    """imager (2 bands) -> deconv -> `.mds` -> degrid into `MODEL_DATA`, flat, one chunk per band.
 
-    deconv's `RESIDUAL` is `DIRTY - sum_p G^T W G (B_p * MODEL)`, with each band's model held
-    at the band's weighted `freq_out` over all of the band's channels. degrid predicts the
-    same thing when there is no beam, one chunk spans each band, and flat mode holds the
-    chunk at the band's weighted frequency, which the `.mds` records. Imaging the difference
-    with the same weighting then grids the same residual visibilities, so the two images
-    agree to gridder precision. This is the precondition for imaging residual visibilities
-    that carry a more accurate beam than deconv's.
-
-    Two bands, so the `.mds` has a real spectrum: a single-band fit is constant in frequency,
-    which would make the frequency condition vacuous. The guard below checks that holding
-    a chunk at its unweighted mean instead would break the agreement.
+    No beam anywhere, so degrid predicts exactly deconv's forward model (D59). Two bands, so
+    the `.mds` has a real spectrum: a single-band fit is constant in frequency, which would
+    make holding the band's weighted frequency vacuous. Tests only read the MS and the
+    deconvolved tree; a test that resumes deconv takes a `copy_tree` copy.
     """
-    from pfb_model_spec.utils.degrid import render_model_region
-
     from pfb_imaging.core.deconv import deconv as deconv_core
     from pfb_imaging.core.degrid import degrid
     from pfb_imaging.core.imager import imager as imager_core
     from tests.conftest import GT_DECONV_KW, GT_IMAGER_KW
 
-    work_ms = tmp_path / "resid.ms"
+    tmp = tmp_path_factory.mktemp("deconv_chain")
+    work_ms = tmp / "resid.ms"
     shutil.copytree(ms_name, work_ms)
     nchan_band = ms_meta.nchan // 2
     imaging = {
@@ -2438,25 +2430,14 @@ def test_imaged_residual_matches_deconv(sky_truth, ms_meta, ms_name, tmp_path):
         "ny": sky_truth.ny,
         "cell_size": sky_truth.cell_size,
     }
-    base = str(tmp_path / "img")
+    base = str(tmp / "img")
     imager_core([Path(work_ms)], base, **imaging)
-    deconv_core(base, **{**GT_DECONV_KW, "niter": 2, "nworkers": 1})
-    (mds_path,) = tmp_path.glob("*_main.mds")
-
-    dt = xr.open_datatree(f"{base}_I.dt", engine="zarr", chunks=None)
-    try:
-        nodes = sorted(n for n in dt.children if n.startswith("band"))
-        assert len(nodes) == 2, f"expected 2 bands, got {nodes}"
-        dirty = np.stack([dt[n].ds.DIRTY.values[0] for n in nodes])
-        expected = np.stack([dt[n].ds.RESIDUAL.values[0] for n in nodes])
-        wsum = np.array([float(dt[n].ds.WSUM.values[0]) for n in nodes])
-        freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
-    finally:
-        dt.close()
-
+    deconv_kw = {**GT_DECONV_KW, "nworkers": 1}
+    deconv_core(base, **{**deconv_kw, "niter": 2})
+    (mds_path,) = tmp.glob("*_main.mds")
     degrid(
         [Path(work_ms)],
-        str(tmp_path / "pred"),
+        str(tmp / "pred"),
         nchan_band,  # one chunk per imaging band
         mds=str(mds_path),
         product="I",
@@ -2466,32 +2447,117 @@ def test_imaged_residual_matches_deconv(sky_truth, ms_meta, ms_name, tmp_path):
         nworkers=1,
         nthreads=1,
         progressbar=False,
-        log_directory=str(tmp_path / "logs"),
+        log_directory=str(tmp / "logs"),
     )
-    imager_core([Path(work_ms)], str(tmp_path / "res"), data_column="DATA-MODEL_DATA", **imaging)
-    dt = xr.open_datatree(str(tmp_path / "res_I.dt"), engine="zarr", chunks=None)
+    return SimpleNamespace(
+        tmp=tmp,
+        ms=work_ms,
+        base=base,
+        mds=mds_path,
+        imaging=imaging,
+        deconv_kw=deconv_kw,
+        nchan_band=nchan_band,
+    )
+
+
+def _band_vars(base, names):
+    """`{name: (nband, ny, nx)}` for each band-node variable, and the band attrs."""
+    dt = xr.open_datatree(f"{base}_I.dt", engine="zarr", chunks=None)
     try:
-        got = np.stack([dt[n].ds.DIRTY.values[0] for n in nodes])
-        np.testing.assert_allclose([float(dt[n].ds.WSUM.values[0]) for n in nodes], wsum, rtol=1e-6)
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        out = {name: np.stack([dt[n].ds[name].values[0] for n in nodes]) for name in names}
+        out["WSUM"] = np.array([float(dt[n].ds.WSUM.values[0]) for n in nodes])
+        out["freq_out"] = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
+        out["attrs"] = [dict(dt[n].ds.attrs) for n in nodes]
     finally:
         dt.close()
+    return out
 
-    tol = 1e-5 * np.abs(dirty).max()
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_imaged_residual_matches_deconv(deconv_chain, ms_meta):
+    """Imaging `DATA-MODEL_DATA` reproduces the residual deconv computes (D59, #387).
+
+    deconv's `RESIDUAL` is `DIRTY - sum_p G^T W G (B_p * MODEL)`, with each band's model held
+    at the band's weighted `freq_out` over all of the band's channels. degrid predicts the
+    same thing when there is no beam, one chunk spans each band, and flat mode holds the
+    chunk at the band's weighted frequency, which the `.mds` records. Imaging the difference
+    with the same weighting then grids the same residual visibilities, so the two images
+    agree to gridder precision. This is the precondition for imaging residual visibilities
+    that carry a more accurate beam than deconv's.
+    """
+    from pfb_model_spec.utils.degrid import render_model_region
+
+    from pfb_imaging.core.imager import imager as imager_core
+
+    chain = deconv_chain
+    ref = _band_vars(chain.base, ["DIRTY", "RESIDUAL"])
+    assert ref["DIRTY"].shape[0] == 2
+    res = str(chain.tmp / "res")
+    imager_core([Path(chain.ms)], res, data_column="DATA-MODEL_DATA", **chain.imaging)
+    got = _band_vars(res, ["DIRTY"])
+    np.testing.assert_allclose(got["WSUM"], ref["WSUM"], rtol=1e-6)
+
+    tol = 1e-5 * np.abs(ref["DIRTY"]).max()
     # not vacuous: the model removed most of the dirty image ...
-    assert np.abs(expected).max() < 0.2 * np.abs(dirty).max()
-    np.testing.assert_allclose(got, expected, rtol=0, atol=tol)
+    assert np.abs(ref["RESIDUAL"]).max() < 0.2 * np.abs(ref["DIRTY"]).max()
+    np.testing.assert_allclose(got["DIRTY"], ref["RESIDUAL"], rtol=0, atol=tol)
 
     # ... and holding a band at its channels' plain mean instead would shift its residual by
     # far more than the tolerance (the flagged channel moves the first band's weighted
     # frequency well off its plain mean), so the frequency condition is not vacuous
-    model_ds = xr.open_zarr(mds_path)
+    model_ds = xr.open_zarr(chain.mds)
     time = float(model_ds.times.values[0])
     shift = []
-    for b, f in enumerate(freq_out):
-        mean = float(ms_meta.freq[b * nchan_band : (b + 1) * nchan_band].mean())
+    for b, f in enumerate(ref["freq_out"]):
+        mean = float(ms_meta.freq[b * chain.nchan_band : (b + 1) * chain.nchan_band].mean())
         held = render_model_region(model_ds, time=time, freq_out=f)
         at_mean = render_model_region(model_ds, time=time, freq_out=mean)
         # a point source of flux d puts d * wsum into the unnormalised dirty peak
-        shift.append(np.abs(held - at_mean).max() * wsum[b])
-    print("residual shift at the plain mean, in units of the tolerance:", np.array(shift) / tol)
+        shift.append(np.abs(held - at_mean).max() * ref["WSUM"][b])
     assert max(shift) > 100 * tol
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(900)
+def test_transfer_residual_resumes_deconv_from_the_imaged_residual(deconv_chain):
+    """`imager --transfer-residual` on `DATA-MODEL_DATA` gives deconv's own tree back (#387).
+
+    `RESIDUAL`/`BRESIDUAL` are the image of the residual column, and `DIRTY`/`BDIRTY` that
+    image plus the transferred model's prediction, so deconv's `DIRTY - R(x)` becomes the
+    incremental update `R_ext - R(x - x0)`. Without a beam the residual visibilities are
+    exactly deconv's, so the tree must match deconv's, and one resumed major cycle from it
+    must match one resumed from deconv's own tree.
+    """
+    from pfb_imaging.core.deconv import deconv as deconv_core
+    from pfb_imaging.core.imager import imager as imager_core
+    from tests.conftest import copy_tree
+
+    chain = deconv_chain
+    names = ["DIRTY", "BDIRTY", "RESIDUAL", "BRESIDUAL", "MODEL"]
+    ref = _band_vars(chain.base, names)
+    res = str(chain.tmp / "transfer_residual")
+    imager_core(
+        [Path(chain.ms)],
+        res,
+        data_column="DATA-MODEL_DATA",
+        transfer_model_from=str(chain.mds),
+        transfer_residual=True,
+        **chain.imaging,
+    )
+    got = _band_vars(res, names)
+    tol = 1e-5 * np.abs(ref["DIRTY"]).max()
+    for name in names:
+        np.testing.assert_allclose(got[name], ref[name], rtol=0, atol=tol, err_msg=name)
+    assert all(a["transfer_residual"] for a in got["attrs"])
+
+    own = copy_tree(chain.base, chain.tmp / "resumed_own")
+    deconv_core(own, **{**chain.deconv_kw, "niter": 1})
+    deconv_core(res, **{**chain.deconv_kw, "niter": 1})
+    after_own = _band_vars(own, ["MODEL", "RESIDUAL"])
+    after_res = _band_vars(res, ["MODEL", "RESIDUAL"])
+    np.testing.assert_allclose(
+        after_res["RESIDUAL"], after_own["RESIDUAL"], rtol=0, atol=1e-4 * np.abs(ref["DIRTY"]).max()
+    )
+    np.testing.assert_allclose(after_res["MODEL"], after_own["MODEL"], rtol=0, atol=1e-4 * np.abs(ref["MODEL"]).max())
