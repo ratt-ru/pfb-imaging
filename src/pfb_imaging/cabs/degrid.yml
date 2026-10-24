@@ -164,7 +164,7 @@ cabs:
         info:
           Spectral model across a degridding chunk.
           Use flat to hold the model and beam at the weighted frequency of the chunk's band, as deconv does.
-          Use linear to also carry its slope, which cuts chunks at the model's band breaks.
+          Use linear to interpolate between the model and beam at each chunk's end channels.
         default: flat
         metadata:
           rich_help_panel: WGridder
@@ -192,14 +192,6 @@ cabs:
           The first pattern names the MeerKAT antennas and the second the MeerKAT+ antennas.
           Requires --baseline-groups.
         dtype: Optional[str]
-        metadata:
-          rich_help_panel: Beam
-      beam-slope:
-        info:
-          Carry the primary beam's frequency slope across a chunk.
-          Only used with --spectral linear and --beam-model.
-        dtype: bool
-        default: true
         metadata:
           rich_help_panel: Beam
       ray-address:

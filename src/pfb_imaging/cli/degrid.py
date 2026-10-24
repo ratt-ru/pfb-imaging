@@ -224,7 +224,7 @@ def degrid(
         typer.Option(
             help="Spectral model across a degridding chunk. "
             "Use flat to hold the model and beam at the weighted frequency of the chunk's band, as deconv does. "
-            "Use linear to also carry its slope, which cuts chunks at the model's band breaks.",
+            "Use linear to interpolate between the model and beam at each chunk's end channels.",
             rich_help_panel="WGridder",
         ),
     ] = "flat",
@@ -256,14 +256,6 @@ def degrid(
             rich_help_panel="Beam",
         ),
     ] = None,
-    beam_slope: Annotated[
-        bool,
-        typer.Option(
-            help="Carry the primary beam's frequency slope across a chunk. "
-            "Only used with --spectral linear and --beam-model.",
-            rich_help_panel="Beam",
-        ),
-    ] = True,
     ray_address: Annotated[
         str,
         typer.Option(
@@ -363,7 +355,6 @@ def degrid(
                     beam_model=beam_model,
                     baseline_groups=baseline_groups,
                     antenna_groups=antenna_groups,
-                    beam_slope=beam_slope,
                     ray_address=ray_address,
                     nworkers=nworkers,
                     nthreads=nthreads,
@@ -400,7 +391,6 @@ def degrid(
                 beam_model=beam_model,
                 baseline_groups=baseline_groups,
                 antenna_groups=antenna_groups,
-                beam_slope=beam_slope,
                 ray_address=ray_address,
                 nworkers=nworkers,
                 nthreads=nthreads,
@@ -446,7 +436,6 @@ def degrid(
             beam_model=beam_model,
             baseline_groups=baseline_groups,
             antenna_groups=antenna_groups,
-            beam_slope=beam_slope,
             ray_address=ray_address,
             nworkers=nworkers,
             nthreads=nthreads,

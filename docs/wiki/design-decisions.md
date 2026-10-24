@@ -1656,8 +1656,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:** band width in Hz is the model's natural resolution and is MS-independent;
   channel counts are not.
 - **Consequences:** `time_bounds` is recorded but drives nothing yet.
-- **Amendment (D59):** under `--spectral linear` the frequency axis is first cut at the
-  model's kinks, and this step then splits each run into near-equal chunks.
+- **Amendment (D59):** with the default, a flat chunk spans one band and is held at that
+  band's weighted frequency, which is deconv's forward model for the band.
 - **Source:** `src/pfb_imaging/core/degrid.py`; commit `3717aef`; issue #327.
 
 ### D54 — `flux_scale` and the intrinsic-model warning
@@ -1747,9 +1747,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     `--ray-address` run therefore needs `MBEAMS_CACHE_DIR` on shared storage, with any
     hand-staged MdV-2026 group products in it. The imager's ungrouped wizard has the same
     requirement.
-- **Amendment (D59):** wizards are built with `freq_extrapolation="scale"`, the driver checks
-  every beam frequency with `check_freqs` before any column exists, and under
-  `--spectral linear` each term carries a chord `dmueller`.
+- **Amendment (D59):** wizards are built with `freq_extrapolation="scale"`, and the driver
+  checks every beam frequency with `check_freqs` before any column exists. A flat chunk
+  evaluates the beam at its band's weighted frequency, a linear one at its two end channels.
 - **Source:** issue #353; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
   `_coarse_axes`, `degrid_region`), `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/utils/baselines.py`; pfb-model-spec#27 (`pixel_lm`, `interp_mueller`,
@@ -1912,85 +1912,75 @@ update it (and this page's `last_verified_commit`) in the same session.
   logs that it is ignored. The driver compiles the wavelet jitclass up front only for `sara`
   (the compile is ~7 s).
 
-### D59 — `degrid --spectral linear`: kinks, a chord beam slope, one expansion point
+### D59 — `degrid --spectral`: flat is deconv's forward model, linear interpolates the chunk ends
 
-- **Context:** flat mode renders the model once per chunk at the chunk's mean frequency
-  and degrids that image for every channel, so the spectrum is held flat across the chunk.
-  For α = −0.7 over one 53.5 MHz L-band chunk that is a ~2% error at 900 MHz at the chunk
-  edges, and it shows in calibration as a sawtooth at the band period. The beam is held flat
-  too: meerkat-beams D19 measured ~0.9% RMS on `I→I` within 1° over a 53.5 MHz chunk.
-  Separately, the MdV-2026 beam products stop one 13.375 MHz channel short of each receiver
-  band edge, so a band-edge chunk raised (a 64-channel chunk of a 4k MS has its mean at
-  862.583 MHz, below 869.375).
+- **Context:** a degrid chunk predicts every channel from a model rendered at one frequency,
+  so the spectrum is held flat across the chunk. For α = −0.7 over one 53.5 MHz L-band chunk
+  that is a ~2% error at 900 MHz at the chunk edges. The beam is held flat too: meerkat-beams
+  D19 measured ~0.9% RMS on `I→I` within 1° over a 53.5 MHz chunk. Separately, the MdV-2026
+  beam products stop one 13.375 MHz channel short of each receiver band edge, so a band-edge
+  chunk raised.
+- **History (#385, #387):** the first linear mode expanded about the chunk mean with the
+  model's slope image and a chord beam slope (pfb-model-spec `frequency_kinks`,
+  `render_model_slope`, `BeamTerm.dmueller`, landmanbester/pfb-model-spec#40). Staying exact
+  meant parsing the stored spectrum with sympy to cut chunks at its kinks, which raised on
+  any spectrum shape it did not recognise. The ESO137-006 artefacts it was built for turned
+  out to be calibration errors, and on a two-scan split linear and flat agreed once
+  calibration was matched. It was replaced by the design below.
 - **Decision:**
-  - **`--spectral linear`** (default `flat` until real-data validation) predicts
-    `V = V₀ + (ν − ν₀)·V₁` from the model and its slope image
-    (pfb-model-spec `spectral="linear"`, landmanbester/pfb-model-spec#40).
-  - **Chunks are cut at the model's frequency kinks** (`frequency_kinks`: tent breaks
-    and clamps, including the clamps around a band the fit dropped), then each run is split
-    into `ceil(n / fstep)` near-equal chunks (`utils/degrid.frequency_chunks`). Flat mode
-    keeps its fixed blocks.
-  - **ν₀ is the chunk's unweighted mean (D39) for the model and the beam alike.** Inside a
-    tent piece the model's ν₀ does not matter.
-  - **The beam carries a chord slope**, `(M(ν_hi) − M(ν_lo))/(ν_hi − ν_lo)` over the
-    chunk's extreme channels, with `mueller = M(ν₀)` (`chunk_beam_terms(chord=)`). A
-    one-channel chunk sends none.
-  - **`--no-beam-slope` holds the beam at the chunk's piece anchor** (`piece_anchor`,
-    pfb-model-spec `frequency_pieces`), not at the chunk mean.
+  - **`--spectral flat`** (the default) holds the model *and* the beam at `flat_freq`: the
+    `.mds` `freqs` value of the band whose `freq_bounds` hold the chunk's centre. That is the
+    band's weighted `freq_out`, where deconv rendered the band and evaluated its beam (D28),
+    so over one band's channels flat mode is deconv's own forward model. A chunk centred
+    outside every band, or a model without `freq_bounds`, uses the chunk's unweighted mean
+    (D39).
+  - **`--spectral linear`** predicts the apparent model `B·S` at the chunk's lowest and
+    highest channels, each through the existing flat kernel, and interpolates each channel
+    linearly between them (`degrid_region`). A one-channel chunk is predicted at its channel.
+  - **Chunks are fixed `--channels-per-chunk` blocks in both modes.**
+  - **`chunk_eval_freqs` is the single source** of the frequencies a chunk evaluates, used
+    by the replicas and by the driver's preflight alike.
   - **Every degrid and imager `BeamWizard` uses `freq_extrapolation="scale"`**
     (`utils/beam.BEAM_FREQ_EXTRAPOLATION`; landmanbester/meerkat-beams#42): up to one BDS
-    channel past the cube, the edge plane is evaluated with offsets scaled by ν/ν_e. hci
-    follows in ratt-ru/pfb-imaging#358.
+    channel past the cube, the edge plane is evaluated with offsets scaled by ν/ν_e. Linear
+    chunks evaluate the beam at band-edge channels, which needs it. hci follows in
+    ratt-ru/pfb-imaging#358.
   - **The degrid driver checks every beam frequency with the wizards' `check_freqs`**
-    before any column is created and before Ray starts. It checks exactly what the replicas
-    will evaluate, through the same `chunk_beam_freqs` they use: chunk means in flat mode,
-    plus the chord ends under a slope, or the piece anchors under `--no-beam-slope`.
-  - **A one-channel chunk is predicted flat** even under `--spectral linear`: it has no slope
-    to carry (Δν = 0), and the kernel's forward difference (step `1e-6·ν`) could otherwise
-    reach across a kink just above the channel and raise inside a replica.
+    before any column is created and before Ray starts.
 - **Rationale:**
-  - Fixed-width chunks drift off the imager's `linspace` band edges whenever the band count
-    does not divide the channel count (4096 / 15 = 273.07: the first straddle is chunk 8),
-    and a linear chunk across a tent break keeps a first-order error, so pfb-model-spec
-    refuses one. Cutting at the kinks makes the refusal unreachable. An even split avoids a
-    one-channel remainder costing a whole gridding pass.
-  - **The chord is meerkat-beams D19's measured winner.** On legacy L over 53.5 MHz the
-    errors are 1.5e-3 for the chord, 2.7e-3 for the λ/D slope and 9.4e-3 flat. The chord
-    also helps the leakage terms, which λ/D does not.
-  - **M₀, S₀ and Δν must share one ν₀**: mixing expansion points is a first-order error
-    (`M₁·(ν_a − ν_b)`).
-  - **Why the anchor for a flat beam.** `deconv` solved for intrinsic flux against a band
-    beam that is, to first order, `B(anchor)` (D28). A flat beam reproduces that gauge's
-    band average only at the anchor, because `Σ w·(ν − anchor) = 0` cancels the model slope.
-    A sloped beam reproduces it from any ν₀, up to a ~3e-4 variance term.
+  - **Flat at the band frequency makes the residual comparable.** With no beam and one band
+    per chunk, imaging `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder
+    precision (`test_imaged_residual_matches_deconv`). That is the precondition for imaging
+    residual visibilities that carry a more accurate beam (#387).
+  - **Interpolating the chunk ends needs no knowledge of the spectrum's form.** It is exact
+    wherever `B·S` is linear across the chunk, which covers a tent piece under a box or
+    linear beam. A kink inside a chunk leaves a chord-versus-curve error, far below the flat
+    error, that shrinks with chunk width. It carries the model's and the beam's slope at
+    once, with no slope image and no `M₀·S₁ + M₁·S₀` cross terms, and runs entirely on the
+    released flat kernel. The chord is also meerkat-beams D19's most accurate linear fit to
+    the beam (1.5e-3 against 9.4e-3 flat on legacy L over 53.5 MHz).
   - The preflight exists because a range error used to surface inside a Serve replica after
     the whole setup had run.
 - **Consequences:**
-  - **Cost.** Linear mode doubles every gridding pass: the slope image is degridded through
-    the same regions, beam terms and output planes. A chord triples the beam evaluations.
-    Each replica keeps one extra full model image resident (612 MB per Stokes plane at
-    8748² in float64).
-  - **Flat output is byte-identical to before,** except at band-edge chunks that used to
-    raise and now evaluate.
-  - **Caveat on the beam slope.** D19's per-chunk maxima barely move with a slope (about
-    2.5e-2 flat against 2.2e-2 chord on MdV-2026 MeerKAT), although the median improves
-    about 7×. The real-data comparison is what decides whether `--beam-slope` stays.
-  - **Not yet measured on real data.** The ESO137-006 run (flat / linear without beam
-    slope / linear) is what decides the default.
-- **Source:** `src/pfb_imaging/utils/degrid.py` (`frequency_chunks`, `chunk_beam_terms`,
-  `piece_anchor`, `degrid_region`), `src/pfb_imaging/core/degrid.py` (the driver and
-  `_work_items`), `src/pfb_imaging/utils/beam.py`, `src/pfb_imaging/core/imager.py`;
-  landmanbester/pfb-model-spec#39/#40, landmanbester/meerkat-beams#41/#42 (D19).
-  Tests in `tests/test_degrid.py`: `test_frequency_chunks*`,
-  `test_degrid_region_linear_one_channel_just_below_a_kink`,
-  `test_degrid_flat_checks_only_the_frequencies_it_evaluates`,
-  `test_work_items_linear_shifts_by_chan0`,
-  `test_degrid_region_linear_matches_per_channel_inside_a_piece`,
-  `test_degrid_region_linear_beam_slope_matches_per_channel`,
-  `test_degrid_region_flat_beam_in_linear_mode_uses_the_piece_anchor`,
-  `test_chunk_beam_terms_carries_a_chord_slope`,
+  - **Cost.** Linear mode doubles the renders, the beam evaluations and the gridding passes
+    per chunk, and holds two sets of chunk visibilities at once.
+  - **Flat output changed.** A chunk used to sit at its unweighted mean; it now sits at its
+    band's weighted frequency. A chunk narrower than a band therefore no longer samples the
+    spectrum more finely in flat mode. That is linear mode's job.
+  - **Not yet measured on real data.** How coarse the frequency sampling can go in linear
+    mode, and whether linear should become the default, are open in #387.
+- **Source:** `src/pfb_imaging/utils/degrid.py` (`flat_freq`, `chunk_eval_freqs`,
+  `degrid_region`), `src/pfb_imaging/core/degrid.py` (the driver's preflight),
+  `src/pfb_imaging/utils/beam.py`, `src/pfb_imaging/core/imager.py`; #385, #387;
+  landmanbester/meerkat-beams#41/#42 (D19). Tests in `tests/test_degrid.py`:
+  `test_flat_freq*`, `test_degrid_region_flat_holds_the_band_frequency`,
+  `test_chunk_eval_freqs`, `test_degrid_region_linear_is_exact_for_a_linear_spectrum`,
+  `test_degrid_region_linear_across_a_kink_beats_flat`,
+  `test_degrid_region_linear_beam_matches_per_channel`,
+  `test_degrid_region_linear_evaluates_the_beam_at_the_end_channels`,
   `test_degrid_checks_beam_frequencies_before_ray`,
-  `test_degrid_linear_runs_and_splits_at_kinks`, and the slow
+  `test_degrid_flat_checks_only_the_frequencies_it_evaluates`,
+  `test_degrid_linear_runs_through_the_driver`, and the slow
   `test_linear_degrid_beats_flat_on_a_tent_model`;
   `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group`.
 

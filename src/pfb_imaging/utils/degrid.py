@@ -24,16 +24,13 @@ from astropy.time import Time
 from msv4_utils import MSv4Backend, infer_backend
 from msv4_utils.msv4_types import VISIBILITY_XDS_TYPES
 from pfb_model_spec.utils.degrid import (
-    SPECTRAL,
     BeamTerm,
     RegionMask,
     crop_bbox,
-    frequency_pieces,
     model_geometry,
     model_sampling,
     model_to_apparent_vis_for_regions,
     pixel_lm,
-    split_at_kinks,
 )
 from pfb_model_spec.utils.spec import upgrade
 
@@ -42,6 +39,9 @@ from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
+
+# --spectral: hold each chunk at one frequency, or interpolate between its end channels (D59)
+SPECTRAL = ("flat", "linear")
 
 
 def make_column_placeholder(shape: tuple[int, ...], dtype=np.complex64) -> np.ndarray:
@@ -342,7 +342,6 @@ def chunk_beam_terms(
     freq_out: float,
     stokes_out: Sequence[str],
     nthreads: int = 1,
-    chord: tuple[float, float] | None = None,
 ) -> list[BeamTerm]:
     """Build one work item's beam terms from meerkat-beams wizards.
 
@@ -350,12 +349,6 @@ def chunk_beam_terms(
     model's tangent point, which `check_tangent_point` has already required to
     be the field centre. The beam is the bare B from `partition_mueller`: the
     caller degrids with `divide_by_n=True` (D55).
-
-    With `chord`, each term also carries the beam's frequency slope as the
-    chord `(M(hi) - M(lo)) / (hi - lo)` over the chunk's extreme channels, the
-    linear fit meerkat-beams D19 measured as the most accurate (D59). Its line
-    passes through `M(freq_out)`, so the model, the beam and the offsets share
-    one expansion point.
 
     Args:
         wizards: `{"all": wizard}` without groups, else `{label: wizard}`.
@@ -368,8 +361,6 @@ def chunk_beam_terms(
         freq_out: Frequency to evaluate the beam at, Hz.
         stokes_out: Stokes planes predicted, in output order.
         nthreads: Threads for the rotation average; meerkat-beams splits the pixels over them.
-        chord: `(lo, hi)` channel frequencies for a beam slope, or None for a
-            flat beam. A zero-width chord (one channel) sends no slope.
 
     Returns:
         One `BeamTerm` per group present (one in all without groups).
@@ -399,34 +390,24 @@ def chunk_beam_terms(
             raise ValueError(f"no beam for baseline group {label!r}")
         wizard = wizards[label]
         l_axis, m_axis = _coarse_axes(wizard, l_px, m_px)
-
-        def mueller_at(freq: float, wizard=wizard, l_axis=l_axis, m_axis=m_axis) -> np.ndarray:
-            return np.asarray(
-                wizard.partition_mueller(
-                    field_centre=field_centre,
-                    times=t,
-                    freq=float(freq),
-                    l=np.rad2deg(l_axis),
-                    m=np.rad2deg(m_axis),
-                    stokes_out="".join(stokes_out),
-                    stokes_in="".join(geom["stokes"]),
-                    nthreads=nthreads,
-                    pa_tolerance=BEAM_PA_TOLERANCE_DEG,
-                )
-            )
-
-        block = mueller_at(freq_out)
-        dmueller = None
-        if chord is not None and chord[1] > chord[0]:
-            lo, hi = chord
-            dmueller = (mueller_at(hi) - mueller_at(lo)) / (hi - lo)
+        block = wizard.partition_mueller(
+            field_centre=field_centre,
+            times=t,
+            freq=float(freq_out),
+            l=np.rad2deg(l_axis),
+            m=np.rad2deg(m_axis),
+            stokes_out="".join(stokes_out),
+            stokes_in="".join(geom["stokes"]),
+            nthreads=nthreads,
+            pa_tolerance=BEAM_PA_TOLERANCE_DEG,
+        )
         rows = conj_rows = None
         if idx is not None:
             mine = np.zeros(nbl, dtype=bool)
             mine[idx] = True
             rows = np.tile(mine, ntime)
             conj_rows = np.tile(conj & mine, ntime)
-        terms.append(BeamTerm(block, l_axis, m_axis, rows, conj_rows, dmueller))
+        terms.append(BeamTerm(np.asarray(block), l_axis, m_axis, rows, conj_rows))
     return terms
 
 
@@ -458,52 +439,25 @@ def flat_freq(model_ds: xr.Dataset, freq: np.ndarray) -> float:
     return float(upgrade(model_ds).freqs.values[inside[0]])
 
 
-def chunk_beam_freqs(
-    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool
-) -> tuple[float, tuple[float, float] | None]:
-    """Where a chunk evaluates its beam: one frequency, plus a chord under a slope.
+def chunk_eval_freqs(model_ds: xr.Dataset, freq: np.ndarray, spectral: str) -> list[float]:
+    """The frequencies at which a chunk renders the model and evaluates its beam (D59).
 
     The single source for both the replica (`degrid_region`) and the driver's
     up-front `check_freqs`, so the two cannot disagree about what is evaluated.
 
     Args:
         model_ds: An opened `.mds` dataset.
-        freq: The chunk's channel frequencies, Hz.
-        spectral: `"flat"` or `"linear"`.
-        beam_slope: Whether a linear chunk carries the beam's chord slope.
+        freq: The chunk's channel frequencies, Hz, in either order.
+        spectral: One of `SPECTRAL`.
 
     Returns:
-        `(beam_freq, chord)`: `flat_freq` and no chord when flat; the chunk
-        mean and the extreme channels with a slope; the piece anchor and no
-        chord without one (D59).
+        `[flat_freq]` when flat; the lowest and highest channels when linear,
+        or the one channel of a one-channel chunk.
     """
     if spectral != "linear":
-        return flat_freq(model_ds, freq), None
-    freq_out = float(np.mean(freq))
-    if beam_slope:
-        return freq_out, (float(np.min(freq)), float(np.max(freq)))
-    return piece_anchor(model_ds, freq_out), None
-
-
-def piece_anchor(model_ds: xr.Dataset, freq: float) -> float:
-    """The weighted anchor of the model piece holding `freq`, the imaging beam's frequency.
-
-    `deconv` solved for the band value against a band beam that is, to first
-    order, `B(anchor)` (D28), so a beam held flat across a chunk reproduces
-    that gauge only at the anchor (D59).
-
-    Args:
-        model_ds: An opened `.mds` dataset.
-        freq: A frequency inside the chunk, Hz.
-
-    Returns:
-        The piece's anchor in Hz, or `freq` itself for a model without pieces
-        (the polynomial bases).
-    """
-    for piece in frequency_pieces(model_ds):
-        if piece.lo <= freq < piece.hi:
-            return piece.anchor
-    return float(freq)
+        return [flat_freq(model_ds, freq)]
+    lo, hi = float(np.min(freq)), float(np.max(freq))
+    return [lo] if hi == lo else [lo, hi]
 
 
 def degrid_region(
@@ -522,7 +476,6 @@ def degrid_region(
     wizards: Mapping[str, Any] | None = None,
     groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
     spectral: str = "flat",
-    beam_slope: bool = True,
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -547,19 +500,16 @@ def degrid_region(
         wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
         groups: `node_baseline_groups` output, or None.
         spectral: `"flat"` holds the model and beam at `flat_freq`;
-            `"linear"` also carries the model's slope about the chunk mean, and
-            the region must not cross a frequency kink (`frequency_chunks` cuts
-            there; D59).
-        beam_slope: Under `"linear"`, carry the beam's chord slope. Off, the
-            beam is held at the chunk's piece anchor (`piece_anchor`).
+            `"linear"` predicts the apparent model at the chunk's end channels
+            and interpolates linearly between them (D59).
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
         encoding intact -- ready for `to_msv2(compute=True, region=region)`.
 
     Raises:
-        ValueError: If `masks` and `columns` differ in length, `spectral` is
-            unknown, or a linear region crosses a frequency kink.
+        ValueError: If `masks` and `columns` differ in length, or `spectral`
+            is unknown.
     """
     if len(masks) != len(columns):
         raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
@@ -589,55 +539,59 @@ def degrid_region(
 
     # Representative time: the UNWEIGHTED mean. Degrid reads no weights, and an
     # unweighted mean is reproducible across tools regardless of their flagging.
-    # Flat mode holds the band's weighted frequency recorded in the .mds, which
-    # is just as reproducible; linear mode expands about the chunk mean (D59).
-    # Both axes are unix seconds / Hz, matching the .mds's own coords -- do not
-    # convert to MJD (D13).
+    # The frequencies come from `chunk_eval_freqs`, which reads only the .mds
+    # (D39, D59). Both axes are unix seconds / Hz, matching the .mds's own
+    # coords -- do not convert to MJD (D13).
     time_out = float(ds.time.values.mean())
-    freq_out = float(np.mean(freq)) if spectral == "linear" else flat_freq(model_ds, freq)
+    eval_freqs = chunk_eval_freqs(model_ds, freq, spectral)
+    geom = model_geometry(model_ds) if wizards is not None else None
 
-    beam_terms = None
-    if wizards is not None:
-        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope)
-        beam_terms = chunk_beam_terms(
-            wizards,
-            groups,
-            nbl=nbl,
-            ntime=ntime,
-            geom=model_geometry(model_ds),
-            radec=(float(model_ds.ra), float(model_ds.dec)),
-            times=ds.time.values,
-            freq_out=beam_freq,
-            stokes_out=stokes,
+    def predict(freq_out: float) -> list[np.ndarray]:
+        """The apparent model at one frequency, degridded onto every channel of the chunk."""
+        beam_terms = None
+        if wizards is not None:
+            beam_terms = chunk_beam_terms(
+                wizards,
+                groups,
+                nbl=nbl,
+                ntime=ntime,
+                geom=geom,
+                radec=(float(model_ds.ra), float(model_ds.dec)),
+                times=ds.time.values,
+                freq_out=freq_out,
+                stokes_out=stokes,
+                nthreads=nthreads,
+            )
+        # Render once and degrid each region's cropped box: pfb-model-spec's
+        # multi-region entry point (#27). No FLAG is read: the model is predicted
+        # on every real row so flagging can be rerun against it; `mask` only
+        # hides xarray-ms's NaN-padded cells, which are not MS rows (#287).
+        return model_to_apparent_vis_for_regions(
+            model_ds,
+            uvw=uvw,
+            freq=freq,
+            corr_types=tuple(corr_types),
+            time=time_out,
+            freq_out=freq_out,
+            region_masks=masks,
+            stokes_out=list(stokes),
+            mask=mask,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            # 1/n is never folded into a beam on this path, so ducc always applies
+            # it, beam or not (D55); the pre-#353 False dropped it off-axis
+            divide_by_n=True,
             nthreads=nthreads,
-            chord=chord,
+            beam_terms=beam_terms,
         )
 
-    # Render once and degrid each region's cropped box: pfb-model-spec's
-    # multi-region entry point (#27). No FLAG is read: the model is predicted on
-    # every real row so flagging can be rerun against it; `mask` only hides
-    # xarray-ms's NaN-padded cells, which are not MS rows (#287).
-    per_region = model_to_apparent_vis_for_regions(
-        model_ds,
-        uvw=uvw,
-        freq=freq,
-        corr_types=tuple(corr_types),
-        time=time_out,
-        freq_out=freq_out,
-        region_masks=masks,
-        stokes_out=list(stokes),
-        mask=mask,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        # 1/n is never folded into a beam on this path, so ducc always applies
-        # it, beam or not (D55); the pre-#353 False dropped it off-axis
-        divide_by_n=True,
-        nthreads=nthreads,
-        beam_terms=beam_terms,
-        # one channel has no slope to carry (dnu = 0), and the kernel's forward
-        # difference could otherwise reach across a kink just above it
-        spectral="flat" if nchan == 1 else spectral,
-    )
+    per_region = predict(eval_freqs[0])
+    if len(eval_freqs) == 2:
+        # Linear: interpolate each channel between the apparent model at the two
+        # end channels. Exact where B*S is linear across the chunk (D59).
+        lo, hi = eval_freqs
+        weight = ((freq - lo) / (hi - lo))[None, :, None]
+        per_region = [v_lo + weight * (v_hi - v_lo) for v_lo, v_hi in zip(per_region, predict(hi), strict=True)]
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
@@ -666,41 +620,6 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
     """
     band_width = float(np.min(freq_bounds[:, 1] - freq_bounds[:, 0]))
     return max(1, int(round(band_width / abs(chan_width))))
-
-
-def frequency_chunks(freq: np.ndarray, fstep: int, kinks: np.ndarray | None = None) -> list[slice]:
-    """Cut a node's selected frequency axis into degridding chunks.
-
-    Without kinks this is the fixed `fstep`-channel blocking degrid has always
-    used, remainder and all. With them (`--spectral linear`) the axis is first
-    cut at the model's frequency kinks, because a linear chunk must not cross
-    one (pfb-model-spec `frequency_kinks`), and each run is then split into
-    `ceil(n / fstep)` near-equal parts: a run one channel longer than `fstep`
-    would otherwise cost a full gridding pass for a one-channel chunk (D59).
-
-    Args:
-        freq: The selected channel frequencies, Hz, ascending or descending.
-        fstep: Target channels per chunk.
-        kinks: Kink frequencies from `frequency_kinks`, or None for flat blocking.
-
-    Returns:
-        Contiguous slices of `freq`, in index order, covering it once.
-    """
-    n = freq.size
-    if kinks is None:
-        return [slice(i, min(i + fstep, n)) for i in range(0, n, fstep)]
-    if n > 1 and freq[0] > freq[-1]:
-        # split_at_kinks wants an ascending axis; map its runs back to index order
-        runs = [slice(n - r.stop, n - r.start) for r in reversed(split_at_kinks(freq[::-1], kinks))]
-    else:
-        runs = split_at_kinks(freq, kinks)
-    chunks = []
-    for run in runs:
-        size = run.stop - run.start
-        nsplit = -(-size // fstep)
-        bounds = np.cumsum([run.start] + [len(a) for a in np.array_split(np.empty(size), nsplit)])
-        chunks += [slice(int(lo), int(hi)) for lo, hi in zip(bounds[:-1], bounds[1:])]
-    return chunks
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:
