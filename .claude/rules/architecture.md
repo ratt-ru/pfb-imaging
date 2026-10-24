@@ -66,6 +66,8 @@ rationale ledger: `docs/wiki/design-decisions.md`.
 
 1. `pfb imager` — two passes over MSv4 data (via arcae) into a single `xarray.DataTree`
    (`.dt`) plus a `.scratch` cache. See §8.
+   `--transfer-model-from` seeds a resume; with `--transfer-residual` the data column is a
+   residual (`DATA-MODEL_DATA` from `degrid`) and deconv keeps its image (D60).
    `--baseline-groups` splits each partition into the `MM`/`MPM`/`MPMP` dish-pair
    classes, each with its own beam (#335, D46/D47). Off by default and
    byte-identical to not using it.

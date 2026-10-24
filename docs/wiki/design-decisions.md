@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-21T10:28:21Z
-last_verified_commit: 1703820
+timestamp: 2026-10-24T17:30:00Z
+last_verified_commit: 5350a98
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1983,6 +1983,38 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_degrid_linear_runs_through_the_driver`, and the slow
   `test_linear_degrid_beats_flat_on_a_tent_model`;
   `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group`.
+
+### D60 — `imager --transfer-residual`: `DIRTY = R_ext + R(x0)`, so deconv needs no change
+
+- **Context:** `pfb degrid` applies the beam per time chunk and per baseline group, with the
+  full complex Mueller block. deconv's residual uses a track-averaged beam per partition and
+  only `Re(B)` for the cross group (D46). Imaging `DATA-MODEL_DATA` therefore gives a more
+  accurate residual. But every major cycle deconv recomputes `DIRTY − Σ_p GᵀWG(B_p·x)` with
+  its own beam (`BandWorker.residual`), so an imported residual would not survive the first
+  cycle.
+- **Decision:** with `--transfer-model-from` and `--transfer-residual`, pass 2 grids the
+  residual column as `RESIDUAL`/`BRESIDUAL` and stores `DIRTY = R_ext + R(x0)` and
+  `BDIRTY = BR_ext + BR(x0)`. `R(x0)` comes from the same `residual_from_partitions` sweep the
+  transfer already runs, started from zero. deconv is unchanged.
+- **Rationale:** deconv's formula then reads `R_ext + R(x0) − R(x) = R_ext − R(x − x0)`. That
+  is an incremental update: the imaged residual is kept, and the approximate operator only
+  predicts the model's change since `x0`. Iterating degrid, then image the residual, then a
+  few deconv cycles converges on a residual from the accurate prediction. The adjoint used
+  for the gradient is still deconv's approximate one, so the beam error enters only at
+  second order.
+- **Consequences:**
+  - `DIRTY` in such a tree is an effective dirty, not an image of `DATA`. It is marked by the
+    band attr `transfer_residual`.
+  - The model at entry was solved against deconv's approximate beam and partly compensates
+    for its errors. Errors that vary over the track improve at once; errors in the averaged
+    beam only after the next deconv.
+  - Without a beam, one chunk per band and flat prediction at the band frequency (D59), the
+    resulting tree equals deconv's own, and a resumed cycle from it matches one from deconv's
+    tree.
+- **Source:** `src/pfb_imaging/core/imager.py::_grid_image_body`; #387. Tests:
+  `tests/test_imager_transfer.py::test_transfer_residual_needs_a_transfer_model_before_ray`,
+  `tests/test_degrid.py::test_imaged_residual_matches_deconv` and
+  `::test_transfer_residual_resumes_deconv_from_the_imaged_residual` (both slow).
 
 ## Known debt
 

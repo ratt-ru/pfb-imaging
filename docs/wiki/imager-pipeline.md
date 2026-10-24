@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-18T21:00:00Z
-last_verified_commit: 8fcce6e
+timestamp: 2026-10-24T17:30:00Z
+last_verified_commit: 5350a98
 ---
 
 # MSv4 DataTree imager pipeline
@@ -100,6 +100,11 @@ each task renders the model at the band's effective
 streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
 `transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
 `deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
+`--transfer-residual` (#387, D60) says the data column already has that model subtracted,
+for example `DATA-MODEL_DATA` after `pfb degrid`. The sweep then runs from zero, so it yields
+the model's prediction `R(x0)`; `RESIDUAL`/`BRESIDUAL` are the gridded column, and
+`DIRTY`/`BDIRTY` are that plus `R(x0)` (and its beam-attenuated form). The band gets a
+`transfer_residual` attr. The `DIRTY` FITS is then this effective dirty, not an image of `DATA`.
 Every name holding gridding-loop vis buffers is released before
 that sweep -- `part`, `part_vars` (which shares its VIS/WEIGHT/MASK/UVW), the `first` piece
 read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as the partition
