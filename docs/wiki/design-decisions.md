@@ -1259,9 +1259,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   since `dirty2vis` receives the full `freq` array; the only approximation is the model's
   spectral variation *across* a chunk, which is what `--channels-per-chunk` controls.
 - **Consequences:** D28 is an imager rule, not a repo-wide one. Do not "unify" them.
-- **Amendment (D59):** under `--spectral linear` the chunk mean is also the expansion point
-  for the model and a sloped beam, so the flat-spectrum approximation above is gone for a
-  linear model. A beam held flat in linear mode sits at the piece anchor instead.
+- **Amendment (D59, #387):** the time is still the unweighted mean, but the frequency no
+  longer is. Flat mode holds the model and the beam at the weighted frequency of the band
+  holding the chunk (`flat_freq`), which is the `freq_out` deconv used for that band (D28).
+  That is just as reproducible, because the `.mds` records it in `freqs`, and it makes a
+  flat prediction over one band deconv's own forward model. A chunk centred outside every
+  band, or a model without `freq_bounds`, still uses the unweighted mean. Spectral accuracy
+  across a chunk is `--spectral linear`'s job.
 - **Source:** `src/pfb_imaging/utils/degrid.py::degrid_region`, issue #278.
 
 ### D40 — the model is evaluated at unix-second times, and the legacy `degrid` was wrong here

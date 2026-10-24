@@ -385,6 +385,8 @@ def test_degrid_region_selects_the_requested_planes(degrid_ms, simple_mds):
             (float(ds_i.ra), float(ds_i.dec)),
             ["I", "V"],
             "test",
+            # the same bands, so flat mode holds both models at the same frequency
+            freq_bounds=ds_i.freq_bounds.values,
         )
         corr = tuple(node.corr_types)
         kw = dict(
@@ -501,6 +503,8 @@ def _direct_reference(node_ds, node, model_ds, region, divide_by_n, freq_out=Non
     """Call the plural kernel directly with independently built arguments."""
     from pfb_model_spec.utils.degrid import model_to_apparent_vis_for_regions
 
+    from pfb_imaging.utils.degrid import flat_freq
+
     sub = node_ds.isel(**region)
     uvw = np.nan_to_num(sub.UVW.values.reshape(-1, 3))
     valid = ~np.isnan(sub.UVW.values.reshape(-1, 3)).any(axis=-1)
@@ -513,7 +517,7 @@ def _direct_reference(node_ds, node, model_ds, region, divide_by_n, freq_out=Non
         freq=freq,
         corr_types=node.corr_types,
         time=float(sub.time.values.mean()),
-        freq_out=float(freq.mean()) if freq_out is None else freq_out,
+        freq_out=flat_freq(model_ds, freq) if freq_out is None else freq_out,
         stokes_out=["I"],
         mask=mask,
         epsilon=1e-9,
@@ -550,24 +554,23 @@ def test_degrid_region_divides_by_n_without_a_beam(degrid_ms, simple_mds):
 
 
 def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_mds):
-    """Narrower frequency chunks sample the model's spectrum more finely.
+    """Each chunk re-renders the model, at the frequency flat mode holds it at.
 
-    The model is a continuous function of frequency, re-rendered once per
-    chunk, so this is the feature `--channels-per-chunk` exists for. A single
-    point source degrids to a visibility of constant magnitude equal to its
-    flux (ducc divides by n, which is 1 to ~3e-9 this close to the
-    phase centre), which makes the assertion
-    direct: |vis| per chunk == the model's flux at that chunk's mean frequency.
+    A single point source degrids to a visibility of constant magnitude equal
+    to its flux (ducc divides by n, which is 1 to ~3e-9 this close to the
+    phase centre), which makes the assertion direct: |vis| per chunk == the
+    model's flux at `flat_freq` of that chunk. The model's bands sit at 1.0 and
+    1.1 GHz, so one-channel chunks there see the two band values.
     """
     from pfb_model_spec.utils.degrid import render_model_region
 
-    from pfb_imaging.utils.degrid import build_region_masks, degrid_region
+    from pfb_imaging.utils.degrid import build_region_masks, degrid_region, flat_freq
 
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, simple_mds)
     try:
         masks = build_region_masks(mds_ds, None)
         amplitudes = []
-        for chan in (slice(0, 4), slice(4, 8)):
+        for chan in (slice(0, 1), slice(1, 2)):
             region = {"time": slice(0, 5), "frequency": chan}
             out = degrid_region(
                 node_ds,
@@ -578,7 +581,7 @@ def test_degrid_region_samples_the_model_spectrum_per_chunk(degrid_ms, simple_md
                 corr_types=node.corr_types,
                 stokes=["I"],
             )
-            freq_out = float(node_ds.frequency.values[chan].mean())
+            freq_out = flat_freq(mds_ds, node_ds.frequency.values[chan])
             expected_flux = float(
                 render_model_region(mds_ds, time=float(node_ds.time.values[0:5].mean()), freq_out=freq_out).max()
             )
@@ -2080,7 +2083,10 @@ def _spectral_mds(ms_name, path, method, bounds=None):
 
 
 def _per_channel(node_ds, node, mds_ds, nchan=4, **kw):
-    """Exact reference: one flat chunk per channel, at that channel's frequency."""
+    """Exact reference: one chunk per channel, at that channel's own frequency.
+
+    A one-channel linear chunk is evaluated at its channel; a flat one would be
+    held at its band's weighted frequency."""
     from pfb_imaging.utils.degrid import build_region_masks, degrid_region
 
     planes = [
@@ -2092,7 +2098,7 @@ def _per_channel(node_ds, node, mds_ds, nchan=4, **kw):
             columns=["MODEL_DATA"],
             corr_types=node.corr_types,
             epsilon=1e-9,
-            **{"stokes": ["I"], **kw},
+            **{"stokes": ["I"], "spectral": "linear", **kw},
         ).MODEL_DATA.values
         for c in range(nchan)
     ]
@@ -2411,10 +2417,10 @@ def test_degrid_region_linear_one_channel_just_below_a_kink(degrid_ms, tmp_path)
     try:
         region = {"time": slice(0, 6), "frequency": slice(3, 4)}  # 1.3 GHz, 500 Hz below the break
         got = _region_vis(node_ds, node, mds_ds, region=region, spectral="linear")
-        flat = _region_vis(node_ds, node, mds_ds, region=region)
+        flat = _direct_reference(node_ds, node, mds_ds, region, True, freq_out=1.3e9).astype(np.complex64)
     finally:
         dt.close()
-    np.testing.assert_array_equal(got, flat)
+    np.testing.assert_allclose(got.reshape(flat.shape), flat, rtol=0, atol=1e-6 * np.abs(flat).max())
 
 
 def test_degrid_flat_checks_only_the_frequencies_it_evaluates(degrid_ms, simple_mds, tmp_path, monkeypatch):
@@ -2445,54 +2451,46 @@ def test_degrid_flat_checks_only_the_frequencies_it_evaluates(degrid_ms, simple_
     np.testing.assert_allclose(np.unique(np.concatenate(checked)), [1.35e9])
 
 
-def test_degrid_region_flat_at_the_anchor(degrid_ms, tmp_path):
-    """--chunk-freq anchor renders the model, and evaluates the beam, at the band's weighted
-    anchor, where the tent returns the band value exactly (D28)."""
+def test_degrid_region_flat_holds_the_band_frequency(degrid_ms, tmp_path):
+    """Flat mode renders the model, and evaluates the beam, at the weighted frequency of the band
+    holding the chunk: the `freq_out` deconv used for that band, where the tent returns the band
+    value exactly (D28, D59). Over one band's channels it is deconv's own forward model."""
     tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
     dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
     try:
         region = {"time": slice(0, 6), "frequency": slice(0, 4)}
         expected = _direct_reference(node_ds, node, mds_ds, region, True, freq_out=1.12e9).astype(np.complex64)
-        got = _region_vis(node_ds, node, mds_ds, chunk_freq="anchor")
+        got = _region_vis(node_ds, node, mds_ds)
         wizard = _FakeWizard()
-        _region_vis(node_ds, node, mds_ds, chunk_freq="anchor", wizards={"all": wizard})
+        _region_vis(node_ds, node, mds_ds, wizards={"all": wizard})
     finally:
         dt.close()
     np.testing.assert_array_equal(got.reshape(expected.shape), expected)
     assert [c["freq"] for c in wizard.calls] == [pytest.approx(1.12e9)]
 
 
-def test_degrid_region_linear_does_not_depend_on_chunk_freq(degrid_ms, tmp_path):
-    """Inside a tent piece the linear prediction is the piece's own line, wherever it is expanded."""
-    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent")
-    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
-    try:
-        at_mean = _region_vis(node_ds, node, mds_ds, spectral="linear")
-        at_anchor = _region_vis(node_ds, node, mds_ds, spectral="linear", chunk_freq="anchor")
-    finally:
-        dt.close()
-    np.testing.assert_allclose(at_anchor, at_mean, rtol=0, atol=1e-6 * np.abs(at_mean).max())
+@pytest.mark.parametrize(
+    "chan, expected",
+    [
+        (slice(0, 2), 1.12e9),  # centre 1.05 GHz, first band
+        (slice(2, 4), 1.12e9),  # a narrower chunk of the same band holds the same frequency
+        (slice(4, 6), 1.53e9),  # second band
+        (slice(6, 8), 1.65e9),  # centred beyond every band: the chunk's own mean
+    ],
+)
+def test_flat_freq(degrid_ms, tmp_path, chan, expected):
+    from pfb_imaging.utils.degrid import flat_freq
 
-
-@pytest.mark.parametrize("spectral", ["flat", "linear"])
-def test_degrid_region_anchor_stays_on_the_chunks_side_of_a_clamp(degrid_ms, tmp_path, spectral):
-    """The last piece runs to +inf but clamps at its band's upper edge, a kink inside the piece.
-    A chunk beyond the clamp must not be expanded at the anchor on the other side of it: the
-    kernel refuses that in linear mode, and in flat mode the anchor's value is not the clamped
-    value the model holds there. Seen on ESO137 when the top band was dropped (#385)."""
     bounds = np.array([[0.95e9, 1.35e9], [1.35e9, 1.55e9]])
-    tent = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent", bounds=bounds)
-    dt, node_ds, node, mds_ds = _node_and_mds(degrid_ms, tent)
-    try:
-        region = {"time": slice(0, 6), "frequency": slice(6, 8)}  # 1.6 and 1.7 GHz, beyond the clamp
-        at_mean = _region_vis(node_ds, node, mds_ds, region=region, spectral=spectral)
-        at_anchor = _region_vis(node_ds, node, mds_ds, region=region, spectral=spectral, chunk_freq="anchor")
-    finally:
-        dt.close()
-    np.testing.assert_allclose(at_anchor, at_mean, rtol=0, atol=1e-6 * np.abs(at_mean).max())
+    _, mds_ds = _spectral_mds(degrid_ms, tmp_path / "tent.mds", "tent", bounds=bounds)
+    freq = 1.0e9 + 1.0e8 * np.arange(8)
+    assert flat_freq(mds_ds, freq[chan]) == pytest.approx(expected)
+    assert flat_freq(mds_ds, freq[chan][::-1]) == pytest.approx(expected)
 
 
-def test_degrid_refuses_an_unknown_chunk_freq_before_ray(degrid_ms, simple_mds, tmp_path, monkeypatch):
-    degrid_mod = _no_ray(monkeypatch)
-    with pytest.raises(ValueError, match="chunk-freq"):
-        degrid_mod.degrid([degrid_ms], str(tmp_path / "out"), mds=simple_mds[0], product="I", chunk_freq="median")
+def test_flat_freq_without_band_bounds(simple_mds):
+    """A model that records no band edges falls back to the chunk's unweighted mean (D39)."""
+    from pfb_imaging.utils.degrid import flat_freq
+
+    ds = simple_mds[1].drop_vars("freq_bounds")
+    assert flat_freq(ds, np.array([1.0e9, 1.1e9])) == pytest.approx(1.05e9)

@@ -28,13 +28,14 @@ from pfb_model_spec.utils.degrid import (
     BeamTerm,
     RegionMask,
     crop_bbox,
-    frequency_kinks,
     frequency_pieces,
     model_geometry,
+    model_sampling,
     model_to_apparent_vis_for_regions,
     pixel_lm,
     split_at_kinks,
 )
+from pfb_model_spec.utils.spec import upgrade
 
 from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.misc import to_mjd_time
@@ -429,40 +430,36 @@ def chunk_beam_terms(
     return terms
 
 
-CHUNK_FREQS = ("mean", "anchor")
+def flat_freq(model_ds: xr.Dataset, freq: np.ndarray) -> float:
+    """Where flat mode holds a chunk: the weighted frequency of the model band holding it.
 
-
-def chunk_freq_out(model_ds: xr.Dataset, freq: np.ndarray, chunk_freq: str = "mean") -> float:
-    """A chunk's expansion point: its unweighted mean (D39) or its piece's weighted anchor.
-
-    `"anchor"` is an experimental knob (#385) for measuring how much the
-    choice matters: in flat mode the tent returns the band value exactly only
-    at the anchor (D28); in linear mode the model does not depend on it.
-
-    A piece can hold a clamp kink (the last piece runs to +inf but clamps at
-    its band's edge), so the anchor is used only when no kink separates it
-    from the chunk; otherwise the mean, which the kernel requires in linear
-    mode and which carries the clamped value in flat mode.
+    That is the band's `freq_out`, where deconv rendered the band and evaluated
+    its beam, and where a tent fit returns the band value exactly (D28). Over
+    one band's channels a flat prediction is then deconv's own forward model, so
+    imaging `DATA-MODEL_DATA` reproduces deconv's residual (D59). The band is
+    the one whose `freq_bounds` hold the chunk's centre; a chunk centred outside
+    every band, or a model without `freq_bounds`, falls back to the chunk's
+    unweighted mean (D39).
 
     Args:
         model_ds: An opened `.mds` dataset.
-        freq: The chunk's channel frequencies, Hz.
-        chunk_freq: One of `CHUNK_FREQS`.
+        freq: The chunk's channel frequencies, Hz, in either order.
 
     Returns:
         The frequency in Hz.
     """
-    freq_out = float(np.mean(freq))
-    if chunk_freq != "anchor":
-        return freq_out
-    anchor = piece_anchor(model_ds, freq_out)
-    kinks = np.asarray(frequency_kinks(model_ds), dtype=float)
-    same_side = np.searchsorted(kinks, anchor, side="right") == np.searchsorted(kinks, freq_out, side="right")
-    return anchor if same_side else freq_out
+    centre = float(np.mean(freq))
+    bounds = model_sampling(model_ds)["freq_bounds"]
+    if bounds is None:
+        return centre
+    inside = np.flatnonzero((bounds.min(axis=1) <= centre) & (centre <= bounds.max(axis=1)))
+    if inside.size == 0:
+        return centre
+    return float(upgrade(model_ds).freqs.values[inside[0]])
 
 
 def chunk_beam_freqs(
-    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool, chunk_freq: str = "mean"
+    model_ds: xr.Dataset, freq: np.ndarray, spectral: str, beam_slope: bool
 ) -> tuple[float, tuple[float, float] | None]:
     """Where a chunk evaluates its beam: one frequency, plus a chord under a slope.
 
@@ -474,16 +471,15 @@ def chunk_beam_freqs(
         freq: The chunk's channel frequencies, Hz.
         spectral: `"flat"` or `"linear"`.
         beam_slope: Whether a linear chunk carries the beam's chord slope.
-        chunk_freq: One of `CHUNK_FREQS`; see `chunk_freq_out`.
 
     Returns:
-        `(beam_freq, chord)`: the expansion point and no chord when flat; the
-        expansion point and the extreme channels with a slope; the piece anchor
-        and no chord without one (D59).
+        `(beam_freq, chord)`: `flat_freq` and no chord when flat; the chunk
+        mean and the extreme channels with a slope; the piece anchor and no
+        chord without one (D59).
     """
-    freq_out = chunk_freq_out(model_ds, freq, chunk_freq)
     if spectral != "linear":
-        return freq_out, None
+        return flat_freq(model_ds, freq), None
+    freq_out = float(np.mean(freq))
     if beam_slope:
         return freq_out, (float(np.min(freq)), float(np.max(freq)))
     return piece_anchor(model_ds, freq_out), None
@@ -527,7 +523,6 @@ def degrid_region(
     groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
     spectral: str = "flat",
     beam_slope: bool = True,
-    chunk_freq: str = "mean",
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -551,13 +546,12 @@ def degrid_region(
         nthreads: ducc threads.
         wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
         groups: `node_baseline_groups` output, or None.
-        spectral: `"flat"` holds the model and beam at the chunk mean;
-            `"linear"` also carries the model's slope, and the region must not
-            cross a frequency kink (`frequency_chunks` cuts there; D59).
+        spectral: `"flat"` holds the model and beam at `flat_freq`;
+            `"linear"` also carries the model's slope about the chunk mean, and
+            the region must not cross a frequency kink (`frequency_chunks` cuts
+            there; D59).
         beam_slope: Under `"linear"`, carry the beam's chord slope. Off, the
             beam is held at the chunk's piece anchor (`piece_anchor`).
-        chunk_freq: Where the model (and a flat or sloped beam) is evaluated:
-            `"mean"` (D39) or the piece's weighted `"anchor"`. Experimental.
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
@@ -571,8 +565,6 @@ def degrid_region(
         raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
     if spectral not in SPECTRAL:
         raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
-    if chunk_freq not in CHUNK_FREQS:
-        raise ValueError(f"chunk_freq must be one of {CHUNK_FREQS}, got {chunk_freq!r}")
 
     ds = node_ds.isel(**region)
     ntime = int(ds.sizes["time"])
@@ -595,19 +587,18 @@ def degrid_region(
     # correctness does not rest on ducc's undocumented mask ordering
     uvw = np.nan_to_num(uvw, copy=True)
 
-    # Representative time and frequency for the chunk: UNWEIGHTED means, and
-    # deliberately not the imager's weight-weighted effective frequency (D28).
-    # Degrid reads no weights, and an unweighted mean is reproducible across
-    # tools regardless of their flagging, so two consumers cannot disagree
-    # about where the model was evaluated. Both axes are unix seconds / Hz,
-    # matching the .mds's own coords -- do not convert to MJD (D13). In linear
-    # mode the mean is also the expansion point (D59).
+    # Representative time: the UNWEIGHTED mean. Degrid reads no weights, and an
+    # unweighted mean is reproducible across tools regardless of their flagging.
+    # Flat mode holds the band's weighted frequency recorded in the .mds, which
+    # is just as reproducible; linear mode expands about the chunk mean (D59).
+    # Both axes are unix seconds / Hz, matching the .mds's own coords -- do not
+    # convert to MJD (D13).
     time_out = float(ds.time.values.mean())
-    freq_out = chunk_freq_out(model_ds, freq, chunk_freq)
+    freq_out = float(np.mean(freq)) if spectral == "linear" else flat_freq(model_ds, freq)
 
     beam_terms = None
     if wizards is not None:
-        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope, chunk_freq)
+        beam_freq, chord = chunk_beam_freqs(model_ds, freq, spectral, beam_slope)
         beam_terms = chunk_beam_terms(
             wizards,
             groups,

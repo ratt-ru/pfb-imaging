@@ -163,7 +163,7 @@ cabs:
       spectral:
         info:
           Spectral model across a degridding chunk.
-          Use flat to hold the model at the chunk's mean frequency.
+          Use flat to hold the model and beam at the weighted frequency of the chunk's band, as deconv does.
           Use linear to also carry its slope, which cuts chunks at the model's band breaks.
         default: flat
         metadata:
@@ -202,13 +202,6 @@ cabs:
         default: true
         metadata:
           rich_help_panel: Beam
-      chunk-freq:
-        info:
-          Experimental.
-          Evaluate each chunk's model and beam at its mean frequency, or at the band's weighted anchor.
-        default: mean
-        metadata:
-          rich_help_panel: WGridder
       ray-address:
         info:
           Address of the ray cluster to connect to.

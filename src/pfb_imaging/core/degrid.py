@@ -44,7 +44,6 @@ from pfb_imaging.utils.baselines import (
 )
 from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
 from pfb_imaging.utils.degrid import (
-    CHUNK_FREQS,
     assert_writable,
     build_region_masks,
     check_stokes_subset,
@@ -251,7 +250,6 @@ class Degridder:
         baseline_groups: bool = False,
         spectral: str = "flat",
         beam_slope: bool = True,
-        chunk_freq: str = "mean",
     ):
         # Multitons, not DataTrees: each replica reconstructs its own tree
         # rather than receiving a pickled one. The driver must not touch
@@ -291,7 +289,6 @@ class Degridder:
         self._nthreads = nthreads
         self._spectral = spectral
         self._beam_slope = beam_slope
-        self._chunk_freq = chunk_freq
         # Process-global, so it covers `_degrid`'s worker thread too (measured:
         # a ducc FFT at nthreads=8 runs 0.71 s with the pool at 1 and 0.16 s
         # with it at 8, from the resizing thread and from another thread alike).
@@ -347,7 +344,6 @@ class Degridder:
                     groups=groups,
                     spectral=self._spectral,
                     beam_slope=self._beam_slope,
-                    chunk_freq=self._chunk_freq,
                 )
                 assert_writable(write_ds)
                 # region MUST be explicit: the default "auto" expands each dim to
@@ -432,7 +428,6 @@ def degrid(
     antenna_groups: str | None = None,
     spectral: str = "flat",
     beam_slope: bool = True,
-    chunk_freq: str = "mean",
     ray_address: str = "local",
     nworkers: int = 1,
     nthreads: int | None = None,
@@ -472,14 +467,12 @@ def degrid(
             Requires `beam_model`.
         antenna_groups: Two comma separated glob patterns naming the MeerKAT
             and MeerKAT+ antennas. Requires `baseline_groups`.
-        spectral: `"flat"` holds the model at each chunk's mean frequency;
+        spectral: `"flat"` holds the model at the weighted frequency of the
+            band holding each chunk (`flat_freq`), deconv's own forward model;
             `"linear"` also carries its slope, cutting chunks at the model's
             frequency kinks (D59).
         beam_slope: Under `"linear"` with a beam, carry the beam's chord slope
             across each chunk; off, hold it at the chunk's piece anchor.
-        chunk_freq: Experimental (#385). Evaluate each chunk's model, and its
-            flat or sloped beam, at its unweighted `"mean"` frequency (D39) or
-            at the band's weighted `"anchor"`.
         ray_address: Ray cluster address, or `"local"` for a private one.
         nworkers: Maximum `Degridder` replicas.
         nthreads: ducc threads per replica. Defaults to half the logical CPUs.
@@ -507,8 +500,6 @@ def degrid(
         raise ValueError(f"channels-per-chunk must be positive, got {channels_per_chunk}")
     if spectral not in SPECTRAL:
         raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
-    if chunk_freq not in CHUNK_FREQS:
-        raise ValueError(f"chunk-freq must be one of {CHUNK_FREQS}, got {chunk_freq!r}")
 
     output_filename, _, log_directory, _ = set_output_names(output_filename, product, log_directory=log_directory)
     opts_dict["output_filename"] = output_filename
@@ -696,7 +687,7 @@ def degrid(
         beam_freqs = []
         for _, node in selected:
             for fs in frequency_chunks(node.freq, node_fstep(node), kinks):
-                beam_freq, chord = chunk_beam_freqs(model_ds, node.freq[fs], spectral, beam_slope, chunk_freq)
+                beam_freq, chord = chunk_beam_freqs(model_ds, node.freq[fs], spectral, beam_slope)
                 beam_freqs += [beam_freq, *(chord or ())]
         for label, wizard in driver_wizards.items():
             try:
@@ -798,7 +789,6 @@ def degrid(
         baseline_groups=use_groups,
         spectral=spectral,
         beam_slope=beam_slope,
-        chunk_freq=chunk_freq,
     )
 
     # No HTTP surface at all. route_prefix=None keeps this application off the
