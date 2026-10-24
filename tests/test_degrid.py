@@ -2402,3 +2402,96 @@ def test_degrid_linear_runs_through_the_driver(degrid_ms, tmp_path, pctable):
     )
     with pctable(degrid_ms, ack=False) as tab:
         assert np.any(np.asarray(tab.getcol("MODEL_DATA")) != 0)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_imaged_residual_matches_deconv(sky_truth, ms_meta, ms_name, tmp_path):
+    """Imaging `DATA-MODEL_DATA` reproduces the residual deconv computes (D59, #387).
+
+    deconv's `RESIDUAL` is `DIRTY - sum_p G^T W G (B_p * MODEL)`, with each band's model held
+    at the band's weighted `freq_out` over all of the band's channels. degrid predicts the
+    same thing when there is no beam, one chunk spans each band, and flat mode holds the
+    chunk at the band's weighted frequency, which the `.mds` records. Imaging the difference
+    with the same weighting then grids the same residual visibilities, so the two images
+    agree to gridder precision. This is the precondition for imaging residual visibilities
+    that carry a more accurate beam than deconv's.
+
+    Two bands, so the `.mds` has a real spectrum: a single-band fit is constant in frequency,
+    which would make the frequency condition vacuous. The guard below checks that holding
+    a chunk at its unweighted mean instead would break the agreement.
+    """
+    from pfb_model_spec.utils.degrid import render_model_region
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+    from pfb_imaging.core.degrid import degrid
+    from pfb_imaging.core.imager import imager as imager_core
+    from tests.conftest import GT_DECONV_KW, GT_IMAGER_KW
+
+    work_ms = tmp_path / "resid.ms"
+    shutil.copytree(ms_name, work_ms)
+    nchan_band = ms_meta.nchan // 2
+    imaging = {
+        **GT_IMAGER_KW,
+        "channels_per_image": nchan_band,
+        "nx": sky_truth.nx,
+        "ny": sky_truth.ny,
+        "cell_size": sky_truth.cell_size,
+    }
+    base = str(tmp_path / "img")
+    imager_core([Path(work_ms)], base, **imaging)
+    deconv_core(base, **{**GT_DECONV_KW, "niter": 2, "nworkers": 1})
+    (mds_path,) = tmp_path.glob("*_main.mds")
+
+    dt = xr.open_datatree(f"{base}_I.dt", engine="zarr", chunks=None)
+    try:
+        nodes = sorted(n for n in dt.children if n.startswith("band"))
+        assert len(nodes) == 2, f"expected 2 bands, got {nodes}"
+        dirty = np.stack([dt[n].ds.DIRTY.values[0] for n in nodes])
+        expected = np.stack([dt[n].ds.RESIDUAL.values[0] for n in nodes])
+        wsum = np.array([float(dt[n].ds.WSUM.values[0]) for n in nodes])
+        freq_out = np.array([float(dt[n].ds.attrs["freq_out"]) for n in nodes])
+    finally:
+        dt.close()
+
+    degrid(
+        [Path(work_ms)],
+        str(tmp_path / "pred"),
+        nchan_band,  # one chunk per imaging band
+        mds=str(mds_path),
+        product="I",
+        spectral="flat",
+        integrations_per_chunk=-1,
+        epsilon=1e-7,
+        nworkers=1,
+        nthreads=1,
+        progressbar=False,
+        log_directory=str(tmp_path / "logs"),
+    )
+    imager_core([Path(work_ms)], str(tmp_path / "res"), data_column="DATA-MODEL_DATA", **imaging)
+    dt = xr.open_datatree(str(tmp_path / "res_I.dt"), engine="zarr", chunks=None)
+    try:
+        got = np.stack([dt[n].ds.DIRTY.values[0] for n in nodes])
+        np.testing.assert_allclose([float(dt[n].ds.WSUM.values[0]) for n in nodes], wsum, rtol=1e-6)
+    finally:
+        dt.close()
+
+    tol = 1e-5 * np.abs(dirty).max()
+    # not vacuous: the model removed most of the dirty image ...
+    assert np.abs(expected).max() < 0.2 * np.abs(dirty).max()
+    np.testing.assert_allclose(got, expected, rtol=0, atol=tol)
+
+    # ... and holding a band at its channels' plain mean instead would shift its residual by
+    # far more than the tolerance (the flagged channel moves the first band's weighted
+    # frequency well off its plain mean), so the frequency condition is not vacuous
+    model_ds = xr.open_zarr(mds_path)
+    time = float(model_ds.times.values[0])
+    shift = []
+    for b, f in enumerate(freq_out):
+        mean = float(ms_meta.freq[b * nchan_band : (b + 1) * nchan_band].mean())
+        held = render_model_region(model_ds, time=time, freq_out=f)
+        at_mean = render_model_region(model_ds, time=time, freq_out=mean)
+        # a point source of flux d puts d * wsum into the unnormalised dirty peak
+        shift.append(np.abs(held - at_mean).max() * wsum[b])
+    print("residual shift at the plain mean, in units of the tolerance:", np.array(shift) / tol)
+    assert max(shift) > 100 * tol
