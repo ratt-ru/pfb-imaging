@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-24T18:40:00Z
+timestamp: 2026-10-24T21:40:00Z
 last_verified_commit: 055751b
 ---
 
@@ -1956,6 +1956,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     ratt-ru/pfb-imaging#358.
   - **The degrid driver checks every beam frequency with the wizards' `check_freqs`**
     before any column is created and before Ray starts, iterating the work items themselves.
+    The imager's driver checks every selected channel the same way before Ray starts: a
+    piece evaluates its beam at a weighted mean of its own channels, so the channels bound
+    it. A beam that cannot cover the data used to fail inside a pass-1 worker.
 - **Rationale:**
   - **Flat at the band frequency makes the residual comparable.** With no beam, imaging
     `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder precision, provided no
@@ -2007,8 +2010,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   `test_degrid_flat_checks_only_the_frequencies_it_evaluates`,
   `test_degrid_linear_runs_through_the_driver`, and the slow
   `test_linear_degrid_beats_flat_on_a_tent_model`;
-  `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group` and
-  `::test_freq_bounds_span_the_bands_own_channels`.
+  `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group`,
+  `::test_freq_bounds_span_the_bands_own_channels` and
+  `::test_imager_checks_beam_frequencies_before_ray_init`.
 
 ### D60 — `imager --transfer-residual`: `DIRTY = R_ext + R(x0)`, so deconv needs no change
 

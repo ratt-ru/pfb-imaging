@@ -1118,6 +1118,40 @@ def imager(
                 log.error_and_raise(missing, RuntimeError)
             env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
 
+    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    beam_refs = None
+    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        # Each wizard is built once here, single process and before Ray, so a
+        # staging error or a beam that cannot cover the data stops the run
+        # before a cluster exists, and concurrent first downloads cannot race.
+        # The tasks then get a Multiton recipe rather than the wizard: a worker
+        # builds its own once from the warmed cache and keeps it across tasks,
+        # and with it the spline prefilters, which a wizard shipped by value
+        # arrives without -- ~0.8 s per correlation per task to rebuild (degrid
+        # does the same, D38). No image_name: detached mode, pass 1 supplies
+        # explicit l/m/times/freq.
+        groups = present_groups if baseline_groups else [None]
+        if baseline_groups:
+            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+        else:
+            log.info("Assuming MeerKAT data and initialising BeamWizard")
+        kwargs = {
+            g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
+            for g in groups
+        }
+        for g, kw in kwargs.items():
+            # a piece's beam frequency is a weighted mean of its own channels,
+            # so every selected channel bounds what a worker can ask for (D59)
+            try:
+                BeamWizard(**kw).check_freqs(all_freqs)
+            except ValueError as e:
+                log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
+        if baseline_groups:
+            beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
+        else:
+            beam_model = Multiton(BeamWizard, **kwargs[None])
+
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
     init_ray(
@@ -1129,31 +1163,6 @@ def imager(
         },
         log=log,
     )
-
-    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
-    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
-    beam_refs = None
-    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        # Each wizard is built once here, single process, so a staging error
-        # stops the run before pass 1 and concurrent first downloads cannot
-        # race. The tasks then get a Multiton recipe rather than the wizard: a
-        # worker builds its own once from the warmed cache and keeps it across
-        # tasks, and with it the spline prefilters, which a wizard shipped by
-        # value arrives without -- ~0.8 s per correlation per task to rebuild
-        # (degrid does the same, D38). No image_name: detached mode, pass 1
-        # supplies explicit l/m/times/freq.
-        if baseline_groups:
-            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
-            for g in present_groups:
-                BeamWizard(band=beam_model, group=g, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
-            beam_refs = {
-                g: Multiton(BeamWizard, band=beam_model, group=g, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
-                for g in present_groups
-            }
-        else:
-            log.info("Assuming MeerKAT data and initialising BeamWizard")
-            BeamWizard(band=beam_model, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
-            beam_model = Multiton(BeamWizard, band=beam_model, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
 
     phases.lap("Setup")
     tasks = []
