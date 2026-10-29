@@ -127,16 +127,6 @@ cabs:
         dtype: Optional[Directory]
         metadata:
           rich_help_panel: Input
-      transfer-residual:
-        info:
-          The data column already has the --transfer-model-from model subtracted.
-          Use it with a residual column such as DATA-MODEL_DATA written by pfb degrid.
-          RESIDUAL is then the image of that column, and DIRTY adds back the model's prediction.
-          A resumed deconv then keeps the imaged residual and only predicts the model's change.
-        dtype: bool
-        default: false
-        metadata:
-          rich_help_panel: Input
       integrations-per-image:
         info:
           Number of time integrations per image.

@@ -88,20 +88,6 @@ def test_transfer_refuses_a_missing_path_before_ray(ms_name, tmp_path, monkeypat
         )
 
 
-def test_transfer_residual_needs_a_transfer_model_before_ray(ms_name, tmp_path, monkeypatch):
-    _no_ray(monkeypatch)
-    with pytest.raises(ValueError, match="--transfer-residual needs --transfer-model-from"):
-        imager_core(
-            [Path(ms_name)],
-            str(tmp_path / "out"),
-            data_column="DATA-MODEL_DATA",
-            transfer_residual=True,
-            overwrite=True,
-            keep_ray_alive=True,
-            log_directory=str(tmp_path / "logs"),
-        )
-
-
 def test_transfer_refuses_an_apparent_model_before_ray(ms_name, tmp_path, monkeypatch):
     """Pass 2 applies BEAM to the model, so an apparent one would be attenuated twice."""
     _no_ray(monkeypatch)
@@ -418,17 +404,3 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
         fits_cubes=False,
         log_directory=str(tmp_path / "logs"),
     )
-
-
-@pytest.mark.parametrize(
-    "data_column, warns",
-    [("DATA-MODEL_DATA", False), ("CORRECTED_DATA - MODEL_DATA", False), ("DATA", True), ("CORRECTED_DATA", True)],
-)
-def test_transfer_residual_warning(data_column, warns):
-    """A plain column with --transfer-residual would add the model to data that still holds it."""
-    from pfb_imaging.core.imager import transfer_residual_warning
-
-    msg = transfer_residual_warning(data_column)
-    assert (msg is not None) == warns
-    if warns:
-        assert data_column in msg and "twice" in msg

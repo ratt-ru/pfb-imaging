@@ -100,11 +100,6 @@ each task renders the model at the band's effective
 streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
 `transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
 `deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
-`--transfer-residual` (#387, D60) says the data column already has that model subtracted,
-for example `DATA-MODEL_DATA` after `pfb degrid`. The sweep then runs from zero, so it yields
-minus the model's prediction, `−R(x0)`; `RESIDUAL`/`BRESIDUAL` are the gridded column, and
-`DIRTY`/`BDIRTY` are that plus `R(x0)` (and its beam-attenuated form). The band gets a
-`transfer_residual` attr. The `DIRTY` FITS is then this effective dirty, not an image of `DATA`.
 Every name holding gridding-loop vis buffers is released before
 that sweep -- `part`, `part_vars` (which shares its VIS/WEIGHT/MASK/UVW), the `first` piece
 read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as the partition

@@ -1962,9 +1962,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Rationale:**
   - **Flat at the band frequency makes the residual comparable.** With no beam, imaging
     `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder precision, provided no
-    chunk straddles two bands (`test_imaged_residual_matches_deconv`, on uneven bands). That
-    is the precondition for imaging residual visibilities that carry a more accurate beam
-    (#387).
+    chunk straddles two bands (`test_imaged_residual_matches_deconv`, on uneven bands), so
+    imaging the difference is a direct check of degrid against deconv's forward model.
   - **Why the imager's bounds had to change.** The imager assigns `channels_per_image`
     blocks to the nearest of `ceil(range / (cw · cpi))` equal-width bands. When the bands do
     not divide the channels evenly the equal-width edges fall inside blocks: for 4096
@@ -2013,50 +2012,6 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_imager.py::test_one_beam_wizard_is_built_per_baseline_group`,
   `::test_freq_bounds_span_the_bands_own_channels` and
   `::test_imager_checks_beam_frequencies_before_ray_init`.
-
-### D60 — `imager --transfer-residual`: `DIRTY = R_ext + R(x0)`, so deconv needs no change
-
-- **Context:** `pfb degrid` applies the beam per time chunk and per baseline group, with the
-  full complex Mueller block. deconv's residual uses a track-averaged beam per partition and
-  only `Re(B)` for the cross group (D46). Imaging `DATA-MODEL_DATA` therefore gives a more
-  accurate residual. But every major cycle deconv recomputes `DIRTY − Σ_p GᵀWG(B_p·x)` with
-  its own beam (`BandWorker.residual`), so an imported residual would not survive the first
-  cycle.
-- **Decision:** with `--transfer-model-from` and `--transfer-residual`, pass 2 grids the
-  residual column as `RESIDUAL`/`BRESIDUAL` and stores `DIRTY = R_ext + R(x0)` and
-  `BDIRTY = BR_ext + BR(x0)`. `R(x0)` comes from the same `residual_from_partitions` sweep the
-  transfer already runs, started from zero. deconv is unchanged.
-- **Rationale:** deconv's formula then reads `R_ext + R(x0) − R(x) = R_ext − R(x − x0)`. That
-  is an incremental update: the imaged residual is kept, and the approximate operator only
-  predicts the model's change since `x0`. Iterating degrid, then image the residual, then a
-  few deconv cycles converges on a residual from the accurate prediction. The gradient
-  still uses deconv's approximate beam, so the beam error does not vanish: it enters
-  multiplied by the residual or by the model's change since `x0`, and the fixed point
-  satisfies the approximate operator's adjoint condition rather than the exact one.
-- **Consequences:**
-  - `DIRTY` in such a tree is an effective dirty, not an image of `DATA`. It is marked by the
-    band attr `transfer_residual`.
-  - The model at entry was solved against deconv's approximate beam and partly compensates
-    for its errors. Errors that vary over the track improve at once; errors in the averaged
-    beam only after the next deconv.
-  - Without a beam and with flat prediction at the band frequency (D59), the resulting tree
-    equals deconv's own. A resumed cycle from it matches one from deconv's tree in the test
-    because it sets `init_factor=1`: like any `--transfer-model-from` tree, this one starts
-    at iteration 0, with no cached `hess_norm` or `best_rms`, so deconv's default
-    `init_factor=0.5` halves λ on the first resumed cycle.
-  - deconv refuses `--debug` on such a tree: its per-partition diagnostics compute
-    `VIS − G(B·x)`, and the partition `VIS` is already a residual.
-  - The imager warns when `--transfer-residual` is used with a data column that subtracts
-    nothing (`transfer_residual_warning`), since the model would then appear twice.
-  - Partition `DIRTY` FITS (`--fits-per-partition`) are images of the residual column, and
-    `restore`'s dirty product is the effective dirty; neither header says so yet.
-- **Source:** `src/pfb_imaging/core/imager.py::_grid_image_body`,
-  `src/pfb_imaging/core/deconv.py` (the `--debug` refusal); #387. Tests:
-  `tests/test_imager_transfer.py::test_transfer_residual_needs_a_transfer_model_before_ray`,
-  `::test_transfer_residual_warning`,
-  `tests/test_deconv.py::test_deconv_debug_refuses_a_transfer_residual_tree_before_ray`,
-  `tests/test_degrid.py::test_imaged_residual_matches_deconv` and
-  `::test_transfer_residual_resumes_deconv_from_the_imaged_residual` (both slow).
 
 ## Known debt
 
