@@ -42,15 +42,20 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
 from pfb_imaging.utils.degrid import (
+    SPECTRAL,
     assert_writable,
+    band_labels,
     build_region_masks,
     check_stokes_subset,
     check_writable_backend,
+    chunk_eval_freqs,
     default_channels_per_chunk,
     degrid_region,
     ensure_model_columns,
     flux_scale_warning,
+    frequency_chunks,
 )
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.msv4 import (
@@ -245,6 +250,7 @@ class Degridder:
         beams: Mapping[str, Multiton] | None = None,
         antenna_groups: tuple[str, str] | None = None,
         baseline_groups: bool = False,
+        spectral: str = "flat",
     ):
         # Multitons, not DataTrees: each replica reconstructs its own tree
         # rather than receiving a pickled one. The driver must not touch
@@ -282,6 +288,7 @@ class Degridder:
         self._epsilon = epsilon
         self._do_wgridding = do_wgridding
         self._nthreads = nthreads
+        self._spectral = spectral
         # Process-global, so it covers `_degrid`'s worker thread too (measured:
         # a ducc FFT at nthreads=8 runs 0.71 s with the pool at 1 and 0.16 s
         # with it at 8, from the resizing thread and from another thread alike).
@@ -335,6 +342,7 @@ class Degridder:
                     nthreads=self._nthreads,
                     wizards=self._wizards,
                     groups=groups,
+                    spectral=self._spectral,
                 )
                 assert_writable(write_ds)
                 # region MUST be explicit: the default "auto" expands each dim to
@@ -359,7 +367,9 @@ class Degridder:
         return {**task_memory(), **clock}
 
 
-def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int):
+def _work_items(
+    ms_index: int, node, integrations_per_chunk: int, channels_per_chunk: int, freq_bounds: np.ndarray | None = None
+):
     """Yield the `(time, frequency)` regions of one selected node.
 
     Frequency slices are shifted by `node.chan0` because `--freq-range` trims
@@ -370,21 +380,23 @@ def _work_items(ms_index: int, node, integrations_per_chunk: int, channels_per_c
         node: A `SelectedNode`.
         integrations_per_chunk: Times per chunk; `-1`/`0` means the whole node.
         channels_per_chunk: Channels per chunk.
+        freq_bounds: The model's band edges, which chunks must not cross
+            (`frequency_chunks`); None for fixed blocks.
 
     Yields:
         `WorkItem`s covering the node exactly once.
     """
     ntime = node.ntime
     tstep = ntime if integrations_per_chunk in (-1, 0, None) else int(integrations_per_chunk)
-    fstep = int(channels_per_chunk)
+    fchunks = frequency_chunks(node.freq, int(channels_per_chunk), freq_bounds)
     for t in range(0, ntime, tstep):
-        for f in range(0, node.nchan, fstep):
+        for fs in fchunks:
             yield WorkItem(
                 ms_index=ms_index,
                 node_path=node.path,
                 region={
                     "time": slice(t, min(t + tstep, ntime)),
-                    "frequency": slice(node.chan0 + f, node.chan0 + min(f + fstep, node.nchan)),
+                    "frequency": slice(node.chan0 + fs.start, node.chan0 + fs.stop),
                 },
             )
 
@@ -413,6 +425,7 @@ def degrid(
     beam_model: str | None = None,
     baseline_groups: bool = False,
     antenna_groups: str | None = None,
+    spectral: str = "flat",
     ray_address: str = "local",
     nworkers: int = 1,
     nthreads: int | None = None,
@@ -452,6 +465,10 @@ def degrid(
             Requires `beam_model`.
         antenna_groups: Two comma separated glob patterns naming the MeerKAT
             and MeerKAT+ antennas. Requires `baseline_groups`.
+        spectral: `"flat"` holds the model and beam at the weighted frequency
+            of the band holding each chunk (`flat_freq`), deconv's own forward
+            model; `"linear"` interpolates between the apparent model at each
+            chunk's end channels (D59).
         ray_address: Ray cluster address, or `"local"` for a private one.
         nworkers: Maximum `Degridder` replicas.
         nthreads: ducc threads per replica. Defaults to half the logical CPUs.
@@ -459,9 +476,10 @@ def degrid(
         log_directory: Directory for the run log.
 
     Raises:
-        ValueError: If `channels_per_chunk` is not positive, no MS matches, the
-            selection matches no data, or any guard in `check_model` /
-            `check_tangent_point` fires.
+        ValueError: If `channels_per_chunk` is not positive, `spectral` is
+            unknown, no MS matches, the selection matches no data, a beam
+            frequency lies outside the beam's range, or any guard in
+            `check_model` / `check_tangent_point` fires.
     """
     opts_dict = locals().copy()
     time_start = time.time()
@@ -476,6 +494,8 @@ def degrid(
         )
     if channels_per_chunk is not None and int(channels_per_chunk) <= 0:
         raise ValueError(f"channels-per-chunk must be positive, got {channels_per_chunk}")
+    if spectral not in SPECTRAL:
+        raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
 
     output_filename, _, log_directory, _ = set_output_names(output_filename, product, log_directory=log_directory)
     opts_dict["output_filename"] = output_filename
@@ -629,13 +649,61 @@ def degrid(
         else:
             log.info(f"Beam {beam_model}")
             kwargs = {"all": {"band": beam_model}}
+        # band-edge chunks lie up to one BDS channel outside the beam cube (D55)
+        kwargs = {label: {**kw, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} for label, kw in kwargs.items()}
         # Build each wizard once here, single process: meerkat-beams does not
         # guard concurrent first downloads, and a staging error should stop the
         # run before Serve starts. Replicas rebuild their own from the warmed
         # cache through a Multiton (D38: bind recipes, never loaded objects).
-        for kw in kwargs.values():
-            BeamWizard(**kw)
+        driver_wizards = {label: BeamWizard(**kw) for label, kw in kwargs.items()}
         beams = {label: Multiton(BeamWizard, **kw) for label, kw in kwargs.items()}
+
+    # Build the work list here, before any column exists and before Ray: a bad
+    # chunk spec, or a chunk whose beam the wizard cannot evaluate, must stop
+    # the run with every MS untouched.
+    def node_fstep(node) -> int:
+        if channels_per_chunk is not None:
+            return int(channels_per_chunk)
+        return default_channels_per_chunk(sampling["freq_bounds"], node.chan_width)
+
+    if channels_per_chunk is None:
+        derived = sorted({node_fstep(node) for _, node in selected})
+        log.info(f"Derived channels-per-chunk {derived} from the model's band width")
+    # chunks follow the model's bands, so flat mode holds each channel at its own band (D59)
+    freq_bounds = sampling["freq_bounds"]
+    items = [
+        item
+        for ims, node in selected
+        for item in _work_items(ims, node, integrations_per_chunk, node_fstep(node), freq_bounds=freq_bounds)
+    ]
+    log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
+    if freq_bounds is not None:
+        nout = sum(int(np.sum(band_labels(node.freq, freq_bounds) < 0)) for _, node in selected)
+        if nout:
+            nchan = sum(node.nchan for _, node in selected)
+            log.warning(
+                f"{nout} of {nchan} selected channels lie outside every band of the model; "
+                "their prediction extrapolates its spectrum"
+            )
+
+    if beams is not None:
+        # Exactly the frequencies the replicas will evaluate the beam at,
+        # through the same helper they use (D59)
+        nodes = {(ims, node.path): node for ims, node in selected}
+        # (start, stop), not the slice: slices are unhashable before Python 3.12
+        chunks = {
+            (item.ms_index, item.node_path, item.region["frequency"].start, item.region["frequency"].stop)
+            for item in items
+        }
+        beam_freqs = []
+        for ims, path, start, stop in chunks:
+            node = nodes[(ims, path)]
+            beam_freqs += chunk_eval_freqs(model_ds, node.freq[start - node.chan0 : stop - node.chan0], spectral)
+        for label, wizard in driver_wizards.items():
+            try:
+                wizard.check_freqs(np.asarray(beam_freqs, dtype=float))
+            except ValueError as e:
+                log.error_and_raise(f"beam {label}: {e}", ValueError)
 
     # Columns last, so a failed guard or beam leaves every MS untouched. One
     # MAIN instance: with several, arcae can answer the follow-up reads from one
@@ -729,22 +797,8 @@ def degrid(
         beams=beams,
         antenna_groups=group_override,
         baseline_groups=use_groups,
+        spectral=spectral,
     )
-    # build the work list before standing the app up, so a bad chunk spec
-    # cannot leave a Serve deployment running with nothing to shut it down
-
-    def node_fstep(node) -> int:
-        if channels_per_chunk is not None:
-            return int(channels_per_chunk)
-        return default_channels_per_chunk(sampling["freq_bounds"], node.chan_width)
-
-    if channels_per_chunk is None:
-        derived = sorted({node_fstep(node) for _, node in selected})
-        log.info(f"Derived channels-per-chunk {derived} from the model's band width")
-    items = [
-        item for ims, node in selected for item in _work_items(ims, node, integrations_per_chunk, node_fstep(node))
-    ]
-    log.info(f"Degridding {len(items)} chunks over {len(selected)} partition(s)")
 
     # No HTTP surface at all. route_prefix=None keeps this application off the
     # proxy's routing table, but Serve still starts a ProxyActor per node and

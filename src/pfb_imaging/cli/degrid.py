@@ -219,6 +219,15 @@ def degrid(
             rich_help_panel="WGridder",
         ),
     ] = True,
+    spectral: Annotated[
+        str,
+        typer.Option(
+            help="Spectral model across a degridding chunk. "
+            "Use flat to hold the model and beam at the weighted frequency of the chunk's band, as deconv does. "
+            "Use linear to interpolate between the model and beam at each chunk's end channels.",
+            rich_help_panel="WGridder",
+        ),
+    ] = "flat",
     beam_model: Annotated[
         str | None,
         typer.Option(
@@ -342,6 +351,7 @@ def degrid(
                     region_file=region_file,
                     epsilon=epsilon,
                     do_wgridding=do_wgridding,
+                    spectral=spectral,
                     beam_model=beam_model,
                     baseline_groups=baseline_groups,
                     antenna_groups=antenna_groups,
@@ -377,6 +387,7 @@ def degrid(
                 region_file=region_file,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
+                spectral=spectral,
                 beam_model=beam_model,
                 baseline_groups=baseline_groups,
                 antenna_groups=antenna_groups,
@@ -421,6 +432,7 @@ def degrid(
             region_file=region_file,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
+            spectral=spectral,
             beam_model=beam_model,
             baseline_groups=baseline_groups,
             antenna_groups=antenna_groups,

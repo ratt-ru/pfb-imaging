@@ -85,8 +85,10 @@ full = [
     # (numcodecs only gained aarch64 wheels at 0.16.0, and zarr 2.18 pins
     # numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
     # >=0.2.0: get_rotation_averaged_beam/partition_mueller take nthreads and
-    # pa_tolerance (landmanbester/meerkat-beams#40), which pass 1 and degrid pass
-    "meerkat-beams>=0.2.0 ; python_version >= '3.11'",
+    # pa_tolerance (landmanbester/meerkat-beams#40), which pass 1 and degrid pass.
+    # >=0.3.0: lambda/D frequency extrapolation for band-edge beams
+    # (landmanbester/meerkat-beams#42, D59).
+    "meerkat-beams>=0.3.0 ; python_version >= '3.11'",
     "xarray",
     "xarray-fits",
     "zarr<3",
@@ -167,7 +169,7 @@ x86 = [
 all = [
     "pfb-imaging[full]",
     # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
-    "meerkat-beams[full]>=0.2.0 ; python_version >= '3.11'",
+    "meerkat-beams[full]>=0.3.0 ; python_version >= '3.11'",
     "pfb-imaging[casacore]",
     "pfb-imaging[x86]",
 ]
