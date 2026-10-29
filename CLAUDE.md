@@ -130,3 +130,17 @@ src/pfb_imaging/
 
 `scripts/` holds profiling and automation helpers, plus `scripts/msv4_issues/` reproducers
 and `scripts/check_docs.py`, which gates this file and the wiki against each other.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `ratt-ru/pfb-imaging`, read and edited through `gh api`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Decisions go into the `docs/wiki/design-decisions.md` D-ledger, not `docs/adr/`. See `docs/agents/domain.md`.
