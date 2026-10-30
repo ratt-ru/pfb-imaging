@@ -185,7 +185,8 @@ def degrid(
         typer.Option(
             help="Number of time integrations per degridding chunk. "
             "Default -1 degrids the whole partition in one chunk. "
-            "This is a memory and parallelism knob only.",
+            "With --beam-model each chunk gets one beam, averaged over its parallactic angles. "
+            "Shorter chunks follow the beam's rotation more closely, at the cost of more beam evaluations.",
             rich_help_panel="Chunking",
         ),
     ] = -1,

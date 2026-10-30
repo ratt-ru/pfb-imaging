@@ -1705,7 +1705,11 @@ update it (and this page's `last_verified_commit`) in the same session.
     `-` (the conjugate) on rows whose antenna1 is MeerKAT+. D46's `Re(B)` argument needs a sum
     over conjugate baseline orderings, which an image has and a single visibility row does not.
   - **Evaluation:** `chunk_beam_terms` evaluates the beam at the chunk's own times and its
-    unweighted mean frequency (D39), pointing at the model's tangent point. `_coarse_axes` puts
+    unweighted mean frequency (D39), pointing at the model's tangent point. `partition_mueller`
+    returns **one** Mueller block per chunk, averaged without weights over the parallactic
+    angles of those times, so `--integrations-per-chunk` sets the beam's time resolution. At
+    the default `-1` a partition gets one rotation-averaged beam, the same approximation as the
+    imager's per-partition `BEAM`; only shorter chunks follow the beam's rotation. `_coarse_axes` puts
     it on a coarse `(l, m)` grid at half a beam-cube pixel, and pfb-model-spec interpolates it
     onto the model grid (`pixel_lm`, `interp_mueller`).
   - **Guards, all before Ray:** katbeam is refused (no Stokes Mueller block; `partition_mueller`
@@ -1964,6 +1968,10 @@ update it (and this page's `last_verified_commit`) in the same session.
     `DATA-MODEL_DATA` then reproduces deconv's `RESIDUAL` to gridder precision, provided no
     chunk straddles two bands (`test_imaged_residual_matches_deconv`, on uneven bands), so
     imaging the difference is a direct check of degrid against deconv's forward model.
+    With a beam, time matters as well as frequency. At the default `--integrations-per-chunk`
+    degrid's beam is a per-partition rotation average like deconv's (D55), so the imaged
+    residual should match deconv's closely. Only shorter chunks resolve the beam's rotation
+    and can improve on it.
   - **Why the imager's bounds had to change.** The imager assigns `channels_per_image`
     blocks to the nearest of `ceil(range / (cw · cpi))` equal-width bands. When the bands do
     not divide the channels evenly the equal-width edges fall inside blocks: for 4096
