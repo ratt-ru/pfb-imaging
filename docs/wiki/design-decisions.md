@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-24T21:40:00Z
-last_verified_commit: 055751b
+timestamp: 2026-10-30T12:00:00Z
+last_verified_commit: bc66298
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1741,13 +1741,17 @@ update it (and this page's `last_verified_commit`) in the same session.
     than predicting zeros.
   - Cost on a tiny 64x32 model: `degrid_region` 14 ms without the beam, 24 ms with the L beam.
   - `flux_scale_warning` is logged only without `--beam-model` (D54).
-  - **Measured inconsistency: the imager's single-field beam path is mirrored east-west.**
-    `utils/stokes2vis_msv4.py`, the non-offset branch that calls `eval_beam` with ascending x as
-    l, stores the primary beam mirrored. A fake beam of `1 + 30·l_deg` gives 0.519 at the East
-    pixel j=4 of a 64² grid at 1e-5 rad, where 1.481 is expected. The mosaic/reproject path is
-    correct, and degrid evaluates on `pixel_lm` and is correct. Until the imager is fixed,
-    `imager --transfer-model-from` and `degrid --beam-model` apply opposite east-west
-    orientations on single-field data; circular beams hide this. Tracked in #355.
+  - **The imager's single-field beam was stored mirrored east-west until #355.** The
+    non-offset branch of `utils/stokes2vis_msv4.py` evaluated the beam at
+    `l = +(j - nx/2)·cell`, but under the wgridder conventions (`flip_u=False`) East is at low
+    x. A beam of `1 + 30·l_deg + 10·m_deg` on a 64² grid at 1e-5 rad gave 0.519 at the East
+    pixel j=4, where the reproject branch and `pixel_lm` give 1.481; m was right. That branch
+    (`beam_on_image_grid`) now evaluates on `pixel_lm`, the same pixel->(l, m) map degrid uses,
+    so `imager --transfer-model-from` and `degrid --beam-model` agree. Pinned by
+    `test_single_field_beam_orientation_matches_pixel_lm_and_reproject`, which compares it with
+    `pixel_lm` and the reproject branch on an asymmetric beam. **Single-field `.dt` stores
+    written before the fix carry a mirrored `BEAM`; re-image them.** Circular beams hide the
+    difference, but the rotation-averaged MeerKAT beam and the `MPM` cross group (D46) do not.
   - **Multi-node runs need a shared `MBEAMS_CACHE_DIR`.** The driver warms only its own node's
     beam cache, and replicas rebuild wizards from their node's `MBEAMS_CACHE_DIR`. A multi-node
     `--ray-address` run therefore needs `MBEAMS_CACHE_DIR` on shared storage, with any
@@ -1756,7 +1760,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Amendment (D59):** wizards are built with `freq_extrapolation="scale"`, and the driver
   checks every beam frequency with `check_freqs` before any column exists. A flat chunk
   evaluates the beam at its band's weighted frequency, a linear one at its two end channels.
-- **Source:** issue #353; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
+- **Source:** issues #353, #355; `src/pfb_imaging/utils/degrid.py` (`chunk_beam_terms`,
   `_coarse_axes`, `degrid_region`), `src/pfb_imaging/core/degrid.py`,
   `src/pfb_imaging/utils/baselines.py`; pfb-model-spec#27 (`pixel_lm`, `interp_mueller`,
   `BeamTerm`, `model_to_apparent_vis_for_regions` and the crop helpers moved there in
