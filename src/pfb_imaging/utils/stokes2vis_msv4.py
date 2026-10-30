@@ -11,6 +11,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard
+from pfb_model_spec.utils.degrid import pixel_lm
 from rarg_python_patterns.multiton import Multiton
 from scipy import ndimage
 from scipy.constants import c as lightspeed
@@ -152,9 +153,13 @@ def beam_on_image_grid(
             l0=l0,
             m0=m0,
         ).astype(np.float64)
-    x = (-(nx / 2) + np.arange(nx)) * cell_rad
-    y = (-(ny / 2) + np.arange(ny)) * cell_rad
-    yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
+    # sky (l, m) of each pixel under the wgridder conventions: East is at LOW x
+    # (flip_u=False), North at high y. degrid evaluates its beam on the same
+    # pixel_lm, so the two cannot disagree on orientation (#355).
+    flip_u, flip_v, _, x0, y0 = wgridder_conventions(0.0, 0.0)
+    geom = {"nx": nx, "ny": ny, "cell_rad": cell_rad, "x0": x0, "y0": y0, "flip_u": flip_u, "flip_v": flip_v}
+    l_px, m_px = pixel_lm(geom)
+    yy, xx = np.meshgrid(np.rad2deg(m_px), np.rad2deg(l_px), indexing="ij")
     beam = np.zeros((len(corr), ny, nx), dtype=np.float64)
     for c in range(len(corr)):
         beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
