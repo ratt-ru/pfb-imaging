@@ -100,6 +100,67 @@ def integration_edges(time: np.ndarray, interval: np.ndarray) -> tuple[float, fl
     return float(np.nanmin(lo)), float(np.nanmax(hi))
 
 
+def beam_on_image_grid(
+    beam_small: np.ndarray,
+    l_beam: np.ndarray,
+    m_beam: np.ndarray,
+    radec: np.ndarray,
+    radec_grid: np.ndarray,
+    cell_rad: float,
+    nx: int,
+    ny: int,
+    corr: list[str],
+    l0: float = 0.0,
+    m0: float = 0.0,
+) -> np.ndarray:
+    """Place a field-centred beam onto the (Y, X) output image grid.
+
+    A mosaic or facet partition (pointing off the image tangent point, or a
+    `--target` offset) is reprojected SIN->SIN and is 0 outside the beam's
+    coverage. A single-field partition is interpolated bilinearly and is 1
+    outside the small grid.
+
+    Args:
+        beam_small: `(ncorr, m_beam.size, l_beam.size)` (Y, X)-ordered maps
+            centred on the field's pointing.
+        l_beam: 1D l of the beam columns (deg, East positive).
+        m_beam: 1D m of the beam rows (deg, North positive).
+        radec: The field's pointing centre (rad).
+        radec_grid: The image tangent point (rad).
+        cell_rad: Image cell size (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        corr: Correlation/Stokes labels, one per map.
+        l0: Image-centre offset from the tangent point (rad).
+        m0: Image-centre offset from the tangent point (rad).
+
+    Returns:
+        `(ncorr, ny, nx)` float64 beam on the image grid, without the n-term.
+    """
+    offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
+    if offset_centre:
+        return reproject_and_interp_scat_beam(
+            beam_small,
+            l_beam,
+            m_beam,
+            radec,
+            radec_grid,
+            np.rad2deg(cell_rad),
+            nx,
+            ny,
+            "".join(corr),
+            l0=l0,
+            m0=m0,
+        ).astype(np.float64)
+    x = (-(nx / 2) + np.arange(nx)) * cell_rad
+    y = (-(ny / 2) + np.arange(ny)) * cell_rad
+    yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
+    beam = np.zeros((len(corr), ny, nx), dtype=np.float64)
+    for c in range(len(corr)):
+        beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+    return beam
+
+
 def stokes_vis(
     dc1=None,
     dc2=None,
@@ -502,7 +563,6 @@ def stokes_vis(
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
     if nx is None or ny is None:
         raise ValueError("nx and ny must be provided to place the beam on the image grid")
-    cell_deg = np.rad2deg(cell_rad)
     radec_grid = np.asarray(radec_new) if radec_new is not None else radec  # image tangent point
 
     # --target: in-plane image-centre offset, resolved at this piece's own time
@@ -614,33 +674,9 @@ def stokes_vis(
         else:
             raise ValueError(f"Unknown beam model {beam_model}")
 
-        offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
-        if offset_centre:
-            # mosaic/facet: SIN->SIN reprojection from the field-centred grid
-            # onto the image grid (fills 0 outside the beam's coverage, so an
-            # off-grid partition contributes nothing where its beam is unknown)
-            beam = reproject_and_interp_scat_beam(
-                beam_small,
-                l_beam,
-                m_beam,
-                radec,
-                radec_grid,
-                cell_deg,
-                nx,
-                ny,
-                "".join(corr),
-                l0=l0,
-                m0=m0,
-            ).astype(real_type)
-        else:
-            # single-field path: same bilinear interpolant grid_partition used
-            # to apply (fill 1.0 outside the small grid, as before)
-            x = (-(nx / 2) + np.arange(nx)) * cell_rad
-            y = (-(ny / 2) + np.arange(ny)) * cell_rad
-            yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
-            beam = np.zeros((ncorr, ny, nx), dtype=real_type)
-            for c in range(ncorr):
-                beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+        beam = beam_on_image_grid(
+            beam_small, l_beam, m_beam, radec, radec_grid, cell_rad, nx, ny, corr, l0=l0, m0=m0
+        ).astype(real_type)
         # fold the n-term (see the D22 comment above)
         beam = (beam / nlm[None, :, :]).astype(real_type)
 
