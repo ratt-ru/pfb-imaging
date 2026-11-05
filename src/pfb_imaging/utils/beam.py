@@ -14,6 +14,12 @@ from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 # 0.1 deg costs nothing measurable and cuts a 37-integration piece to ~9 angles.
 BEAM_PA_TOLERANCE_DEG = 0.1
 
+# Every BeamWizard pfb builds may evaluate up to one BDS channel past the beam
+# cube's frequency range, by lambda/D scaling of the edge plane (meerkat-beams
+# D19). The MdV-2026 products stop one channel short of each receiver band
+# edge, so band-edge chunks and pieces would otherwise raise (D55, D59).
+BEAM_FREQ_EXTRAPOLATION = "scale"
+
 
 def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_dir=None):
     """

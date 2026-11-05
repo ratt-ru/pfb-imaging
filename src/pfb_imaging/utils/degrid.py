@@ -28,15 +28,20 @@ from pfb_model_spec.utils.degrid import (
     RegionMask,
     crop_bbox,
     model_geometry,
+    model_sampling,
     model_to_apparent_vis_for_regions,
     pixel_lm,
 )
+from pfb_model_spec.utils.spec import upgrade
 
 from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
 MODEL_DIMS = ("time", "baseline_id", "frequency", "polarization")
+
+# --spectral: hold each chunk at one frequency, or interpolate between its end channels (D59)
+SPECTRAL = ("flat", "linear")
 
 
 def make_column_placeholder(shape: tuple[int, ...], dtype=np.complex64) -> np.ndarray:
@@ -340,10 +345,10 @@ def chunk_beam_terms(
 ) -> list[BeamTerm]:
     """Build one work item's beam terms from meerkat-beams wizards.
 
-    Evaluated at the chunk's own times and its unweighted mean frequency (D39),
-    pointing at the model's tangent point, which `check_tangent_point` has
-    already required to be the field centre. The beam is the bare B from
-    `partition_mueller`: the caller degrids with `divide_by_n=True` (D55).
+    Evaluated at the chunk's own times and at `freq_out`, pointing at the
+    model's tangent point, which `check_tangent_point` has already required to
+    be the field centre. The beam is the bare B from `partition_mueller`: the
+    caller degrids with `divide_by_n=True` (D55).
 
     Args:
         wizards: `{"all": wizard}` without groups, else `{label: wizard}`.
@@ -353,7 +358,7 @@ def chunk_beam_terms(
         geom: `model_geometry` of the model.
         radec: Model tangent point, radians.
         times: The chunk's unix-second times.
-        freq_out: The chunk's unweighted mean frequency, Hz.
+        freq_out: Frequency to evaluate the beam at, Hz.
         stokes_out: Stokes planes predicted, in output order.
         nthreads: Threads for the rotation average; meerkat-beams splits the pixels over them.
 
@@ -406,6 +411,67 @@ def chunk_beam_terms(
     return terms
 
 
+def flat_freq(model_ds: xr.Dataset, freq: np.ndarray) -> float:
+    """Where flat mode holds a chunk: the weighted frequency of the model band holding it.
+
+    That is the band's `freq_out`, where deconv rendered the band and evaluated
+    its beam, and where a tent fit returns the band value exactly (D28). Over
+    one band's channels a flat prediction is then deconv's own forward model, so
+    imaging `DATA-MODEL_DATA` reproduces deconv's residual (D59). The band is
+    the one whose `freq_bounds` hold the chunk's centre; a chunk centred outside
+    every band, or a model without `freq_bounds`, falls back to the chunk's
+    unweighted mean (D39).
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        freq: The chunk's channel frequencies, Hz, in either order.
+
+    Returns:
+        The frequency in Hz.
+    """
+    centre = float(np.mean(freq))
+    bounds = model_sampling(model_ds)["freq_bounds"]
+    if bounds is None:
+        return centre
+    (band,) = band_labels(np.array([centre]), bounds)
+    return centre if band < 0 else float(upgrade(model_ds).freqs.values[band])
+
+
+def band_labels(freq: np.ndarray, freq_bounds: np.ndarray) -> np.ndarray:
+    """The model band holding each channel: the first whose `freq_bounds` contain it.
+
+    Args:
+        freq: Channel frequencies, Hz, in any order.
+        freq_bounds: `(nband, 2)` band edges in Hz, from the `.mds`.
+
+    Returns:
+        `(nchan,)` band indices, `-1` for a channel outside every band.
+    """
+    inside = (freq_bounds.min(axis=1)[None, :] <= freq[:, None]) & (freq[:, None] <= freq_bounds.max(axis=1)[None, :])
+    return np.where(inside.any(axis=1), inside.argmax(axis=1), -1)
+
+
+def chunk_eval_freqs(model_ds: xr.Dataset, freq: np.ndarray, spectral: str) -> list[float]:
+    """The frequencies at which a chunk renders the model and evaluates its beam (D59).
+
+    The single source for both the replica (`degrid_region`) and the driver's
+    up-front `check_freqs`, so the two cannot disagree about what is evaluated.
+
+    Args:
+        model_ds: An opened `.mds` dataset.
+        freq: The chunk's channel frequencies, Hz, in either order.
+        spectral: One of `SPECTRAL`.
+
+    Returns:
+        `[flat_freq]` when flat; the lowest and highest channels when linear,
+        or the one channel of a one-channel chunk.
+    """
+    if spectral != "linear":
+        return [flat_freq(model_ds, freq)]
+    lo, hi = float(np.min(freq)), float(np.max(freq))
+    return [lo] if hi == lo else [lo, hi]
+
+
 def degrid_region(
     node_ds: xr.Dataset,
     *,
@@ -421,6 +487,7 @@ def degrid_region(
     nthreads: int = 1,
     wizards: Mapping[str, Any] | None = None,
     groups: tuple[dict[str, np.ndarray], np.ndarray] | None = None,
+    spectral: str = "flat",
 ) -> xr.Dataset:
     """Degrid the model into one `(time, frequency)` region of a node.
 
@@ -444,16 +511,22 @@ def degrid_region(
         nthreads: ducc threads.
         wizards: meerkat-beams wizards keyed as `chunk_beam_terms` expects; None applies no beam.
         groups: `node_baseline_groups` output, or None.
+        spectral: `"flat"` holds the model and beam at `flat_freq`;
+            `"linear"` predicts the apparent model at the chunk's end channels
+            and interpolates linearly between them (D59).
 
     Returns:
         A dataset carrying only `columns`, sized to `region`, with `node_ds`'s
         encoding intact -- ready for `to_msv2(compute=True, region=region)`.
 
     Raises:
-        ValueError: If `masks` and `columns` differ in length.
+        ValueError: If `masks` and `columns` differ in length, or `spectral`
+            is unknown.
     """
     if len(masks) != len(columns):
         raise ValueError(f"{len(masks)} masks for {len(columns)} columns")
+    if spectral not in SPECTRAL:
+        raise ValueError(f"spectral must be one of {SPECTRAL}, got {spectral!r}")
 
     ds = node_ds.isel(**region)
     ntime = int(ds.sizes["time"])
@@ -476,52 +549,66 @@ def degrid_region(
     # correctness does not rest on ducc's undocumented mask ordering
     uvw = np.nan_to_num(uvw, copy=True)
 
-    # Representative time and frequency for the chunk: UNWEIGHTED means, and
-    # deliberately not the imager's weight-weighted effective frequency (D28).
-    # Degrid reads no weights, and an unweighted mean is reproducible across
-    # tools regardless of their flagging, so two consumers cannot disagree
-    # about where the model was evaluated. Both axes are unix seconds / Hz,
-    # matching the .mds's own coords -- do not convert to MJD (D13).
+    # Representative time: the UNWEIGHTED mean. Degrid reads no weights, and an
+    # unweighted mean is reproducible across tools regardless of their flagging.
+    # The frequencies come from `chunk_eval_freqs`, which reads only the .mds
+    # (D39, D59). Both axes are unix seconds / Hz, matching the .mds's own
+    # coords -- do not convert to MJD (D13).
     time_out = float(ds.time.values.mean())
-    freq_out = float(freq.mean())
+    eval_freqs = chunk_eval_freqs(model_ds, freq, spectral)
+    geom = model_geometry(model_ds) if wizards is not None else None
 
-    beam_terms = None
-    if wizards is not None:
-        beam_terms = chunk_beam_terms(
-            wizards,
-            groups,
-            nbl=nbl,
-            ntime=ntime,
-            geom=model_geometry(model_ds),
-            radec=(float(model_ds.ra), float(model_ds.dec)),
-            times=ds.time.values,
+    def predict(freq_out: float) -> list[np.ndarray]:
+        """The apparent model at one frequency, degridded onto every channel of the chunk."""
+        beam_terms = None
+        if wizards is not None:
+            beam_terms = chunk_beam_terms(
+                wizards,
+                groups,
+                nbl=nbl,
+                ntime=ntime,
+                geom=geom,
+                radec=(float(model_ds.ra), float(model_ds.dec)),
+                times=ds.time.values,
+                freq_out=freq_out,
+                stokes_out=stokes,
+                nthreads=nthreads,
+            )
+        # Render once and degrid each region's cropped box: pfb-model-spec's
+        # multi-region entry point (#27). No FLAG is read: the model is predicted
+        # on every real row so flagging can be rerun against it; `mask` only
+        # hides xarray-ms's NaN-padded cells, which are not MS rows (#287).
+        return model_to_apparent_vis_for_regions(
+            model_ds,
+            uvw=uvw,
+            freq=freq,
+            corr_types=tuple(corr_types),
+            time=time_out,
             freq_out=freq_out,
-            stokes_out=stokes,
+            region_masks=masks,
+            stokes_out=list(stokes),
+            mask=mask,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            # 1/n is never folded into a beam on this path, so ducc always applies
+            # it, beam or not (D55); the pre-#353 False dropped it off-axis
+            divide_by_n=True,
             nthreads=nthreads,
+            beam_terms=beam_terms,
         )
 
-    # Render once and degrid each region's cropped box: pfb-model-spec's
-    # multi-region entry point (#27). No FLAG is read: the model is predicted on
-    # every real row so flagging can be rerun against it; `mask` only hides
-    # xarray-ms's NaN-padded cells, which are not MS rows (#287).
-    per_region = model_to_apparent_vis_for_regions(
-        model_ds,
-        uvw=uvw,
-        freq=freq,
-        corr_types=tuple(corr_types),
-        time=time_out,
-        freq_out=freq_out,
-        region_masks=masks,
-        stokes_out=list(stokes),
-        mask=mask,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        # 1/n is never folded into a beam on this path, so ducc always applies
-        # it, beam or not (D55); the pre-#353 False dropped it off-axis
-        divide_by_n=True,
-        nthreads=nthreads,
-        beam_terms=beam_terms,
-    )
+    per_region = predict(eval_freqs[0])
+    if len(eval_freqs) == 2:
+        # Linear: interpolate each channel between the apparent model at the two
+        # end channels. Exact where B*S is linear across the chunk (D59).
+        lo, hi = eval_freqs
+        weight = ((freq - lo) / (hi - lo))[None, :, None]
+        # in place on the upper prediction, so no temporaries the size of a region's vis
+        for v_lo, v_hi in zip(per_region, upper := predict(hi), strict=True):
+            v_hi -= v_lo
+            v_hi *= weight
+            v_hi += v_lo
+        per_region = upper
     assigned = {}
     for column, vis in zip(columns, per_region, strict=True):
         vis = vis.astype(np.complex64).reshape(ntime, nbl, nchan, ncorr)
@@ -550,6 +637,38 @@ def default_channels_per_chunk(freq_bounds: np.ndarray, chan_width: float) -> in
     """
     band_width = float(np.min(freq_bounds[:, 1] - freq_bounds[:, 0]))
     return max(1, int(round(band_width / abs(chan_width))))
+
+
+def frequency_chunks(freq: np.ndarray, fstep: int, freq_bounds: np.ndarray | None = None) -> list[slice]:
+    """Cut a node's selected frequency axis into degridding chunks.
+
+    With the model's `freq_bounds` the axis is first cut where the band holding
+    a channel changes (`band_labels`; channels outside every band form runs of
+    their own), and each run is split into `ceil(n / fstep)` near-equal chunks.
+    No chunk then straddles two bands, so flat mode holds every channel at its
+    own band's frequency, which is deconv's forward model even when the bands
+    do not divide the channels evenly (D59). Without bounds this is fixed
+    `fstep`-channel blocking from channel 0.
+
+    Args:
+        freq: The selected channel frequencies, Hz, in node order.
+        fstep: Target channels per chunk.
+        freq_bounds: `(nband, 2)` band edges from the `.mds`, or None.
+
+    Returns:
+        Contiguous slices of `freq`, in index order, covering it once.
+    """
+    n = freq.size
+    if freq_bounds is None:
+        return [slice(i, min(i + fstep, n)) for i in range(0, n, fstep)]
+    labels = band_labels(np.asarray(freq, dtype=float), np.asarray(freq_bounds, dtype=float))
+    cuts = [0, *(np.flatnonzero(np.diff(labels)) + 1).tolist(), n]
+    chunks = []
+    for lo, hi in zip(cuts[:-1], cuts[1:]):
+        sizes = [len(a) for a in np.array_split(np.empty(hi - lo), -(-(hi - lo) // fstep))]
+        edges = lo + np.cumsum([0, *sizes])
+        chunks += [slice(int(a), int(b)) for a, b in zip(edges[:-1], edges[1:])]
+    return chunks
 
 
 def flux_scale_warning(flux_scale: str | None) -> str | None:

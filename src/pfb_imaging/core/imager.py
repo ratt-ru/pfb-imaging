@@ -24,6 +24,7 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
@@ -217,17 +218,20 @@ def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
-    """Nominal band edges and integration-edge time extent of one output image (#327).
+    """Channel extent and integration-edge time extent of one output image (#327).
 
     Stored on the band node so `deconv` can hand them to the `.mds`, where
-    `degrid` derives its chunking from them. The band edges are the nominal
-    ones that assigned channels to the band, not the flagged data's extent.
+    `degrid` derives its chunking from them. The band edges are the outer
+    channel edges of the channels assigned to the band (flagged or not), not
+    the equal-width nominal edges used to assign them: those disagree whenever
+    the bands do not divide the channels evenly, and degrid must place its
+    chunks on the band's real channels to reproduce deconv's forward model (D59).
 
     Args:
         infos: The image's per-scratch-node summaries (`time_lo`, `time_hi`: the
             outermost integration edges).
-        band_lo: Lower band edge in Hz.
-        band_hi: Upper band edge in Hz.
+        band_lo: Lower channel edge of the band in Hz.
+        band_hi: Upper channel edge of the band in Hz.
 
     Returns:
         `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
@@ -1067,6 +1071,40 @@ def imager(
                 log.error_and_raise(missing, RuntimeError)
             env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
 
+    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    beam_refs = None
+    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        # Each wizard is built once here, single process and before Ray, so a
+        # staging error or a beam that cannot cover the data stops the run
+        # before a cluster exists, and concurrent first downloads cannot race.
+        # The tasks then get a Multiton recipe rather than the wizard: a worker
+        # builds its own once from the warmed cache and keeps it across tasks,
+        # and with it the spline prefilters, which a wizard shipped by value
+        # arrives without -- ~0.8 s per correlation per task to rebuild (degrid
+        # does the same, D38). No image_name: detached mode, pass 1 supplies
+        # explicit l/m/times/freq.
+        groups = present_groups if baseline_groups else [None]
+        if baseline_groups:
+            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+        else:
+            log.info("Assuming MeerKAT data and initialising BeamWizard")
+        kwargs = {
+            g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
+            for g in groups
+        }
+        for g, kw in kwargs.items():
+            # a piece's beam frequency is a weighted mean of its own channels,
+            # so every selected channel bounds what a worker can ask for (D59)
+            try:
+                BeamWizard(**kw).check_freqs(all_freqs)
+            except ValueError as e:
+                log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
+        if baseline_groups:
+            beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
+        else:
+            beam_model = Multiton(BeamWizard, **kwargs[None])
+
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
     init_ray(
@@ -1078,28 +1116,6 @@ def imager(
         },
         log=log,
     )
-
-    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
-    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
-    beam_refs = None
-    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        # Each wizard is built once here, single process, so a staging error
-        # stops the run before pass 1 and concurrent first downloads cannot
-        # race. The tasks then get a Multiton recipe rather than the wizard: a
-        # worker builds its own once from the warmed cache and keeps it across
-        # tasks, and with it the spline prefilters, which a wizard shipped by
-        # value arrives without -- ~0.8 s per correlation per task to rebuild
-        # (degrid does the same, D38). No image_name: detached mode, pass 1
-        # supplies explicit l/m/times/freq.
-        if baseline_groups:
-            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
-            for g in present_groups:
-                BeamWizard(band=beam_model, group=g)
-            beam_refs = {g: Multiton(BeamWizard, band=beam_model, group=g) for g in present_groups}
-        else:
-            log.info("Assuming MeerKAT data and initialising BeamWizard")
-            BeamWizard(band=beam_model)
-            beam_model = Multiton(BeamWizard, band=beam_model)
 
     phases.lap("Setup")
     tasks = []
@@ -1113,6 +1129,8 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
+    # bandid -> [lo, hi]: outer channel edges of every block assigned to the band
+    band_extent = {}
     for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
@@ -1139,6 +1157,10 @@ def imager(
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
                 bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
+                lo = float(freqs_node[flow:fhigh].min()) - min_chan_width / 2
+                hi = float(freqs_node[flow:fhigh].max()) + min_chan_width / 2
+                extent = band_extent.setdefault(bandid, [lo, hi])
+                extent[:] = [min(extent[0], lo), max(extent[1], hi)]
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -1306,7 +1328,7 @@ def imager(
                         "l0": l0,
                         "m0": m0,
                         "time_out": time_out,
-                        **_sampling_bounds(infos, band_edges[bandid], band_edges[bandid + 1]),
+                        **_sampling_bounds(infos, *band_extent[bandid]),
                     },
                 )
             )
@@ -1315,7 +1337,7 @@ def imager(
             l0, m0 = target_offset(info["time_out"])
             meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
             meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
-            meta.update(_sampling_bounds([info], band_edges[info["bandid"]], band_edges[info["bandid"] + 1]))
+            meta.update(_sampling_bounds([info], *band_extent[info["bandid"]]))
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})

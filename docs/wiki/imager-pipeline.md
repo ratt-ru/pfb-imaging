@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-18T21:00:00Z
-last_verified_commit: 8fcce6e
+timestamp: 2026-10-24T18:40:00Z
+last_verified_commit: 055751b
 ---
 
 # MSv4 DataTree imager pipeline
@@ -48,7 +48,7 @@ child with its own `BEAM`.
   band{b:04d}_time{t:04d}/            # ONE OUTPUT IMAGE / Hessian summation domain
       attrs:  bandid, timeid, freq_out, freq_nominal, time_out, ra, dec, cell_rad,
               robustness (omitted when natural), niters,
-              freq_bounds (nominal band edges, Hz), time_bounds (outermost integration
+              freq_bounds (outer channel edges of the band's channels, Hz; D59), time_bounds (outermost integration
               edges, per-row intervals; unix s), transferred_from (--transfer-model-from only)
               # freq_out = effective (wsum-weighted) frequency of the channels
               # actually gridded; freq_nominal = band-edge midpoint, assignment
