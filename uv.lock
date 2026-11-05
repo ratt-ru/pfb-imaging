@@ -3993,7 +3993,7 @@ requires-dist = [
     { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["full"], marker = "extra == 'all'" },
     { name = "pfb-imaging", extras = ["x86"], marker = "extra == 'all'" },
-    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", git = "https://github.com/landmanbester/pfb-model-spec?branch=main" },
+    { name = "pfb-model-spec", extras = ["full"], marker = "extra == 'full'", specifier = ">=0.1.0,<0.2" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=12.2.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2" },
@@ -4035,10 +4035,14 @@ dev = [
 
 [[package]]
 name = "pfb-model-spec"
-version = "0.0.3"
-source = { git = "https://github.com/landmanbester/pfb-model-spec?branch=main#8ac68840fb93478adf3a2d888dfdc893eb3e3db0" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hip-cargo" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/24/a8c83b93fb3fc5ed7c5caa7b9ec49f9e2e91df1786d53960c11293407b75/pfb_model_spec-0.1.0.tar.gz", hash = "sha256:f19a8231ff021d62ab1657730d01439cb26f0df1ee19c6b3ca0b688eb11794af", size = 36020, upload-time = "2026-11-05T06:52:32.23Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/5e/f4f67686be6bd41654166eb6e2f4d71e8b012378cf2f2d2bc78b9c7c74e2/pfb_model_spec-0.1.0-py3-none-any.whl", hash = "sha256:659c289f75542563db43f7098e0f72a1d211d5350a8175f2977c911d987d179c", size = 43495, upload-time = "2026-11-05T06:52:31.018Z" },
 ]
 
 [package.optional-dependencies]
