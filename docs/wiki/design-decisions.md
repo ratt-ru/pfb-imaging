@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-10-30T12:00:00Z
-last_verified_commit: bc66298
+timestamp: 2026-11-05T12:00:00Z
+last_verified_commit: 070222e
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -1704,8 +1704,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **The MPM cross group is predicted exactly**, as `V = degrid(Re A) ± i·degrid(Im A)`, with
     `-` (the conjugate) on rows whose antenna1 is MeerKAT+. D46's `Re(B)` argument needs a sum
     over conjugate baseline orderings, which an image has and a single visibility row does not.
-  - **Evaluation:** `chunk_beam_terms` evaluates the beam at the chunk's own times and its
-    unweighted mean frequency (D39), pointing at the model's tangent point. `partition_mueller`
+  - **Evaluation:** `chunk_beam_terms` evaluates the beam at the chunk's own times and at
+    `chunk_eval_freqs` (flat: the band's weighted `freq_out`; linear: the end channels; D59), pointing at the model's tangent point. `partition_mueller`
     returns **one** Mueller block per chunk, averaged without weights over the parallactic
     angles of those times, so `--integrations-per-chunk` sets the beam's time resolution. At
     the default `-1` a partition gets one rotation-averaged beam, the same approximation as the
@@ -2003,8 +2003,16 @@ update it (and this page's `last_verified_commit`) in the same session.
     spectrum more finely in flat mode. That is linear mode's job.
   - **A `.mds` from an older imager has equal-width `freq_bounds`.** Degrid follows them, so
     with uneven bands it still misassigns the channels near band edges. Re-image to fix.
-  - **Not yet measured on real data.** How coarse the frequency sampling can go in linear
-    mode, and whether linear should become the default, are open in #387.
+  - **Measured on real data (ESO137-006, full MeerKAT+ L-band MS, 14 model bands).** Self-cal
+    (QuartiCal K+G+A, flags frozen) against the linear prediction (64-channel chunks) instead of
+    the flat one cut the median gain step across model-band edges from 0.0164 to 0.0063 (within
+    a band: 0.0045 vs 0.0039). The steps that remain sit at RFI-adjacent edges, where the tent
+    fit's slopes are poorly constrained (landmanbester/pfb-model-spec#42). Per-band residuals in
+    the source region fell by about 7% (1.42e-4 to 1.32e-4; 16% at a band's low edge). **The MFS
+    residual is unchanged** (source region 8.27e-5 vs 8.31e-5): the staircase error flips sign
+    across each model band and cancels in the band sum, so do not expect linear mode to improve
+    an MFS image. Whether linear should become the default, and how coarse its frequency
+    sampling can go, are open in #387.
 - **Source:** `src/pfb_imaging/utils/degrid.py` (`flat_freq`, `chunk_eval_freqs`,
   `degrid_region`), `src/pfb_imaging/core/degrid.py` (the driver's preflight),
   `src/pfb_imaging/utils/beam.py`, `src/pfb_imaging/core/imager.py`; #385, #387;
