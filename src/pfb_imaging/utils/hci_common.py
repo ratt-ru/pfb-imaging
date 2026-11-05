@@ -15,7 +15,7 @@ from meerkat_beams.utils import BeamWizard
 
 from pfb_imaging import pfb_version
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION, reproject_and_interp_scat_beam
 from pfb_imaging.utils.misc import radec_barycentre
 from pfb_imaging.utils.transients import generate_transient_spectra
 
@@ -26,6 +26,41 @@ FITS_AXIS_KEYWORDS = ("CTYPE", "CRVAL", "CRPIX", "CDELT", "CUNIT", "NAXIS")
 
 # FITS Stokes parameter indices (FITS standard)
 STOKES_FITS_INDEX = {"I": 1, "Q": 2, "U": 3, "V": 4}
+
+# meerkat-beams band names --beam-model accepts (D25)
+MEERKAT_BEAM_BANDS = ("U", "L", "S0", "S4")
+
+
+def hci_beam_band(beam_model: str | None) -> str | None:
+    """Validate ``--beam-model`` as a meerkat-beams band name, as imager and degrid take it.
+
+    Args:
+        beam_model: a band name (case-insensitive), or None for no beam correction.
+
+    Returns:
+        The upper-cased band, or None.
+
+    Raises:
+        ValueError: if beam_model is not one of ``MEERKAT_BEAM_BANDS``. katbeam is refused
+            because the hci beam paths need a BeamWizard.
+    """
+    if beam_model is None:
+        return None
+    band = str(beam_model).upper()
+    if band not in MEERKAT_BEAM_BANDS:
+        raise ValueError(
+            f"--beam-model must be a meerkat-beams band, one of {', '.join(MEERKAT_BEAM_BANDS)}; got {beam_model!r}"
+        )
+    return band
+
+
+def hci_beam_wizard(output_dataset: str, band: str) -> BeamWizard:
+    """The BeamWizard hci and hci-msv4 attach to the cube scaffold.
+
+    Built with the same lambda/D frequency extrapolation as imager and degrid
+    (``BEAM_FREQ_EXTRAPOLATION``), so band-edge channels do not raise.
+    """
+    return BeamWizard(image_name=output_dataset, band=band, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
 
 
 def make_fits_header(base_hdr, data_shape, stokes_params, drop_axes):

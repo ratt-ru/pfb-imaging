@@ -546,7 +546,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa (differential), plus the
   w-term sign fix and snapshot guard; `utils/stokes2im.stokes_image`; breifast#263, #280.
 
-### D25 — `hci` beams are meerkat-beams only, with the band named separately
+### D25 — `hci` beams are meerkat-beams only (band named separately until #358)
 
 - **Context:** `hci --beam-model` accepted either a MeerKAT band name
   (`U`/`L`/`S0`/`S4`, which built a `BeamWizard`) or a path to an MdV zarr beam cube.
@@ -574,9 +574,23 @@ update it (and this page's `last_verified_commit`) in the same session.
   **Gotcha:** the deprecation branch was first written as
   `if beam_model is not None and beam_model.lower() != "meerkat-beams": raise … else: assert band …`,
   whose `else` also catches `beam_model is None` — it needs three branches, not two.
-- **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
-  `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`, `beam_gain_for_source`);
-  `tests/test_hci.py`; image-and-beam-orientation.md §5, §7.
+- **Amendment (#358): `--beam-model` takes the band name again; `--primary-beam-band` is
+  gone.** `hci` and `hci-msv4` now take `--beam-model` the way `imager` and `degrid` do: a
+  meerkat-beams band (`U`/`L`/`S0`/`S4`, case-insensitive) or unset for no beam. The stop-gap's
+  reason no longer holds: the zarr branch is deleted, so a band name can only mean a
+  meerkat-beams wizard, and "no beam" is unset rather than a band. Anything else, `katbeam`
+  and the old `meerkat-beams` value included, raises `ValueError` before Ray starts. The
+  wizard is built with `freq_extrapolation="scale"` like imager's and degrid's, so band-edge
+  channels no longer raise. Validation and construction live in `hci_common.hci_beam_band`
+  and `hci_beam_wizard`, shared by both drivers. A recipe passing
+  `beam-model: meerkat-beams` with `primary-beam-band: L` must become `beam-model: L`.
+- **Source:** `src/pfb_imaging/core/hci.py`, `src/pfb_imaging/core/hci_msv4.py`;
+  `src/pfb_imaging/cli/hci.py`, `src/pfb_imaging/cli/hci_msv4.py`;
+  `src/pfb_imaging/utils/hci_common.py` (`hci_beam_band`, `hci_beam_wizard`, `beam_for_band`,
+  `beam_gain_for_source`); `tests/test_hci.py`,
+  `tests/test_hci_common.py::test_hci_beam_band_*`,
+  `tests/test_hci_msv4.py::test_hci_msv4_refusals_before_ray`;
+  image-and-beam-orientation.md §5, §7.
 
 ### D26 — `--eta-mode` shapes eta over the image, in the preconditioner only
 

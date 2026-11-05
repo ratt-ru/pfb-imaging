@@ -23,7 +23,6 @@ with optional_dependency("The hci command"):
     from daskms import xds_from_storage_ms as xds_from_ms
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
-from meerkat_beams.utils import BeamWizard
 from zarr import ProcessSynchronizer
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
@@ -36,6 +35,8 @@ from pfb_imaging.utils.hci_common import (
 )
 from pfb_imaging.utils.hci_common import (
     build_scaffold,
+    hci_beam_band,
+    hci_beam_wizard,
     image_centre_deg,
     write_fits_vars,
     write_transient_spectra,
@@ -78,7 +79,6 @@ def hci(
     channels_per_bin: int = -1,
     precision: str = "double",
     beam_model: str | None = None,
-    primary_beam_band: str | None = None,
     field_of_view: float | None = 1.0,
     super_resolution_factor: float = 1.0,
     cell_size: float | None = None,
@@ -170,6 +170,11 @@ def hci(
         ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
     opts_dict["nthreads"] = nthreads
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
+
+    try:
+        beam_band = hci_beam_band(beam_model)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -427,13 +432,9 @@ def hci(
     # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
     if beam_model is None:
         log.info("No beam model specified, not applying primary beam correction")
-    elif beam_model.lower() != "meerkat-beams":
-        raise NotImplementedError("Only meerkat-beams is currently supported for beam_model")
     else:
-        if primary_beam_band not in ("U", "L", "S0", "S4"):
-            raise ValueError("primary_beam_band must be one of U, L, S0 or S4")
-        log.info("Using meerkat-beams to initialise BeamWizard")
-        beam_model = BeamWizard(image_name=output_dataset, band=primary_beam_band)
+        log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
+        beam_model = hci_beam_wizard(output_dataset, beam_band)
 
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))

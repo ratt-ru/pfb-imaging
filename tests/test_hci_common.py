@@ -9,7 +9,7 @@ from astropy import units
 from astropy.coordinates import SkyCoord
 from numpy.testing import assert_allclose
 
-from pfb_imaging.utils.hci_common import build_scaffold, default_phase_dir
+from pfb_imaging.utils.hci_common import build_scaffold, default_phase_dir, hci_beam_band
 from pfb_imaging.utils.misc import radec_barycentre
 
 
@@ -77,3 +77,15 @@ def test_default_phase_dir_single_pointing_is_none():
     ra = np.deg2rad([10.0, 10.0, 10.0])
     dec = np.deg2rad([-30.0, -30.0, -30.0])
     assert default_phase_dir(ra, dec) is None
+
+
+@pytest.mark.parametrize("given, band", [(None, None), ("L", "L"), ("l", "L"), ("s0", "S0"), ("U", "U")])
+def test_hci_beam_band_takes_a_meerkat_band_name(given, band):
+    """--beam-model names the band, as imager and degrid take it (D25)."""
+    assert hci_beam_band(given) == band
+
+
+@pytest.mark.parametrize("given", ["meerkat-beams", "katbeam", "UHF", ""])
+def test_hci_beam_band_refuses_anything_else(given):
+    with pytest.raises(ValueError, match="meerkat-beams band"):
+        hci_beam_band(given)

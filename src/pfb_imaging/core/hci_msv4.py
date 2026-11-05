@@ -15,7 +15,6 @@ import psutil
 import ray
 import xarray as xr
 from ducc0.misc import resize_thread_pool
-from meerkat_beams.utils import BeamWizard
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
@@ -24,6 +23,8 @@ from pfb_imaging.utils.hci_actors import CubeWriterImpl, HciWorkerImpl
 from pfb_imaging.utils.hci_common import (
     build_scaffold,
     default_phase_dir,
+    hci_beam_band,
+    hci_beam_wizard,
     image_centre_deg,
     write_fits_vars,
     write_transient_spectra,
@@ -246,7 +247,6 @@ def hci_msv4(
     channels_per_bin: int = -1,
     precision: str = "double",
     beam_model: str | None = None,
-    primary_beam_band: str | None = None,
     field_of_view: float | None = 1.0,
     super_resolution_factor: float = 1.0,
     cell_size: float | None = None,
@@ -391,10 +391,10 @@ def hci_msv4(
             log.error_and_raise(f"Need one gain table per MS: got {len(gain_table)} for {len(ms)} MSs", ValueError)
         for g in gain_table:
             open_term(g)  # fail now, not in a worker
-    if beam_model is not None and beam_model.lower() != "meerkat-beams":
-        log.error_and_raise("Only meerkat-beams is currently supported for beam_model", NotImplementedError)
-    if beam_model is not None and primary_beam_band not in ("U", "L", "S0", "S4"):
-        log.error_and_raise("primary_beam_band must be one of U, L, S0 or S4", ValueError)
+    try:
+        beam_band = hci_beam_band(beam_model)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     fds_fs, fds_url = uri_and_fs(output_dataset)
     if fds_fs.exists(fds_url) and not overwrite:
@@ -612,8 +612,8 @@ def hci_msv4(
     try:
         beam_ref = None
         if beam_model is not None:
-            log.info("Using meerkat-beams to initialise BeamWizard")
-            beam_ref = ray.put(BeamWizard(image_name=output_dataset, band=primary_beam_band))
+            log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
+            beam_ref = ray.put(hci_beam_wizard(output_dataset, beam_band))
         # nominal CPU claims: a real claim can deadlock scheduling (D8)
         writer = ray.remote(num_cpus=1e-2)(CubeWriterImpl).remote(
             output_dataset, plan.expected, images_per_chunk, plan.channel_width, flag_excess_rms

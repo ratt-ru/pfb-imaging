@@ -3,7 +3,7 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-10-30T12:00:00Z
+timestamp: 2026-11-05T14:00:00Z
 last_verified_commit: bc66298
 ---
 
@@ -56,8 +56,8 @@ barycentre target, **not** the per-scan pointing).
 
 ## 3. BeamWizard semantics that matter here
 
-* `BeamWizard(image_name=output_dataset, band=primary_beam_band)` attaches the hci
-  scaffold, so
+* `hci_beam_wizard` builds `BeamWizard(image_name=output_dataset, band=<--beam-model>,
+  freq_extrapolation="scale")`, which attaches the hci scaffold, so
   `wizard.centre` = the **image** centre (`radec_new`), and the default l/m grid
   is `l_grid = (arange(nx) - (crpix1-1)) * cdelt1` — descending, because
   `cdelt1 < 0`. Parallactic angles are therefore computed at the image centre,

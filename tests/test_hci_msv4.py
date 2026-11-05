@@ -249,6 +249,7 @@ def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
         ({"nworkers": 0}, ValueError, "nworkers must be >= 1"),
         ({"sigma_column": "SIGMA"}, NotImplementedError, "does not expose SIGMA"),
         ({"natural_grad": True, "psf_relative_size": 1.0}, ValueError, "natural-grad needs a PSF twice"),
+        ({"beam_model": "meerkat-beams"}, ValueError, "meerkat-beams band"),
     ],
 )
 def test_hci_msv4_refusals_before_ray(ms_name, tmp_path, monkeypatch, over, err, match):
