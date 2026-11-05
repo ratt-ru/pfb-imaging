@@ -1,7 +1,7 @@
+import gc
 import json
 import os
 import time
-from copy import deepcopy
 
 import numpy as np
 import psutil
@@ -15,8 +15,11 @@ from pfb_imaging.deconv.presets import PRESETS
 from pfb_imaging.operators.band_worker import BandWorkerPool
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import ETA_MODES
+from pfb_imaging.operators.psi import compile_band_dictionary
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dt2fits, save_fits, set_wcs
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, profile_env
 from pfb_imaging.utils.naming import set_output_names
 
 log = pfb_logging.get_logger("DECONV")
@@ -143,6 +146,7 @@ def deconv(
     pd_maxit: int = 1000,
     pd_verbose: int = 1,
     pd_report_freq: int = 100,
+    single_precision_dual: bool = False,
     fb_tol: float = 0.0003,
     fb_maxit: int = 1000,
     fb_verbose: int = 1,
@@ -170,6 +174,7 @@ def deconv(
     if fit_mode not in FIT_MODES:
         log.error_and_raise(f"fit_mode must be one of {FIT_MODES}, got '{fit_mode}'", ValueError)
     time_start = time.time()
+    phases = PhaseClock(log)
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -193,7 +198,10 @@ def deconv(
     fits_oname = f"{fits_output_folder}/{oname}"
     dt_name = f"{basename}.dt"
 
-    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+    # cache=False: xarray would otherwise keep every variable read below
+    # (RESIDUAL/BRESIDUAL/MODEL/UPDATE) alive in the tree, a second copy of
+    # four cubes for the whole run
+    dt = xr.open_datatree(dt_name, engine="zarr", chunks=None, cache=False)
     image_names = sorted(n for n in dt.children if n.startswith("band"))
     if not image_names:
         log.error_and_raise(f"No band nodes found in {dt_name}", ValueError)
@@ -251,7 +259,8 @@ def deconv(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": env_vars,
+            # profile_env: PFB_CPROFILE_DIR / PFB_MEMRAY_DIR for the band workers
+            "env_vars": {**env_vars, **profile_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
@@ -270,8 +279,16 @@ def deconv(
     # partition data (UVW/WEIGHT/MASK/FREQ/BEAM/PSFHAT/DIRTY) is read worker-side by BandWorkerPool.load_bands
     # They never enter the driver or the Ray object store
     # image rasters are (Y, X)-ordered end to end (wiki D19)
-    residual_raw = np.zeros((nband, ny, nx))
-    bresidual_raw = np.zeros((nband, ny, nx))  # beam-attenuated gradient (D23)
+    # before any cube exists: the first compile of a jitclass pins its caller
+    # frames for the life of the process (D58). Only sara builds a wavelet
+    # dictionary; the compile is ~7 s that other presets would pay for nothing.
+    if minor_cycle == "sara":
+        compile_band_dictionary()
+
+    # the data gradients, divided by the total wsum once it is known; the raw
+    # (stored) versions are recovered per band on write, never held as cubes
+    residual = np.zeros((nband, ny, nx))
+    bresidual = np.zeros((nband, ny, nx))  # beam-attenuated gradient (D23)
     model = np.zeros((nband, ny, nx))
     update = np.zeros((nband, ny, nx))
     wsums = np.zeros(nband)
@@ -280,16 +297,16 @@ def deconv(
     for b, n in enumerate(nodes):
         bds = dt[n].ds
         band_attrs.append(dict(bds.attrs))
-        residual_raw[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
+        residual[b] = bds.RESIDUAL.values[0] if "RESIDUAL" in bds else bds.DIRTY.values[0]
         if "MODEL" in bds:
             model[b] = bds.MODEL.values[0]
         if "UPDATE" in bds:
             update[b] = bds.UPDATE.values[0]
         if "BRESIDUAL" in bds:
-            bresidual_raw[b] = bds.BRESIDUAL.values[0]
+            bresidual[b] = bds.BRESIDUAL.values[0]
         elif not model[b].any():
             # fresh tree: with a zero model the gradient is its model-free term
-            bresidual_raw[b] = bds.BDIRTY.values[0]
+            bresidual[b] = bds.BDIRTY.values[0]
         else:
             log.error_and_raise(
                 f"{n} has a MODEL but no BRESIDUAL; resuming needs a .dt written by "
@@ -308,9 +325,8 @@ def deconv(
         time_bounds = np.array([[tb[:, 0].min(), tb[:, 1].max()]])
     else:
         freq_bounds = time_bounds = None
-    residual = residual_raw / wsum
-    bresidual = bresidual_raw / wsum
-    residual_mfs = np.sum(residual, axis=0)
+    inplace.scale(residual, 1.0 / wsum)
+    inplace.scale(bresidual, 1.0 / wsum)
     fsel = wsums > 0
     model_mfs = np.mean(model[fsel], axis=0)
     if nbasisf is None:
@@ -337,381 +353,439 @@ def deconv(
     # Each worker reads its own band's vis-scale inputs straight from the store and pins them for the life of the run.
     # TODO - this only works for a local cluster, nworkers not configurable on remote cluster.
     # Need to round robin bands across workers.
+    phases.lap("set-up", mem=True)
     workers = BandWorkerPool(nband, nthreads)
-    workers.load_bands(dt_name, nodes)
+    try:
+        workers.load_bands(dt_name, nodes)
+        phases.lap("load bands")
 
-    solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
-    if not isinstance(solver, DeconvSolver):
-        raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+        # includes the power method for hess_norm when it is not cached
+        solver = PRESETS[minor_cycle](None, geometry, model, update, opts_dict, workers=workers, wsums=wsums)
+        if not isinstance(solver, DeconvSolver):
+            raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")
+        # the solver keeps its own model and update; drop the driver's copies so
+        # neither is held twice
+        model = getattr(solver, "model", model)
+        update = getattr(solver, "update", update)
+        phases.lap("build solver", mem=True)
+        # band-worker time against Ray round trips, and per-worker post-gc memory
+        # (docs/wiki/memory-and-ray.md); each call reports since the previous one
+        if verbosity:
+            workers.log_telemetry(log)
 
-    # dump the Tikhonov profile once per run: it is the preconditioner's only
-    # tunable spatial structure, so seeing it is the way to sanity-check an
-    # --eta-mode choice (issue #287, D26). A cube, not an MFS collapse, so that
-    # band-to-band variation is visible -- 'radial' is pure geometry and must be
-    # identical across bands, the beam-driven modes are not.
-    if eta_mode is not None and hasattr(getattr(solver, "hess", None), "get_eta"):
-        etas = solver.hess.get_eta()
-        hdr_eta = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out, unit="", casambm=False, l0=l0, m0=m0)
-        hdr_eta["ETAMODE"] = (eta_mode, "eta-mode profile shape")
-        hdr_eta["ETA"] = (eta, "baseline eta (profile floor)")
-        hdr_eta["ETACAP"] = (eta_cap, "profile dynamic range")
-        name = fits_oname + f"_{suffix}_eta.fits"
-        # (band, corr, ny, nx): band belongs on the FREQ axis, so keep it 4D --
-        # a 3D array would put it on STOKES instead (to4d prepends)
-        save_fits(etas[:, None], name, hdr_eta, yx_order=True)
-        spread = float(np.abs(etas - etas[0]).max()) / max(float(etas.max()), 1e-30)
-        log.info(
-            f"eta_mode '{eta_mode}': {etas.min():.3e} to {etas.max():.3e} "
-            f"({etas.max() / etas.min():.1f}x), band-to-band spread {100 * spread:.2f}% -> {name}"
-        )
-        # nothing reads it again, but a local outlives the whole run: ~1 GB of
-        # f8 at 4096^2 x 8 bands, and HessTreeRay._prior_s keeps its own copy
-        # of sqrt(D) when --eta-in-grad is on
-        del etas
-
-    # the prior is the only band-coupling channel in M besides the prox, so its
-    # spectrum is what to read when a GP run converges differently (issue #307)
-    stats = getattr(getattr(solver, "hess", None), "get_freq_prior_stats", lambda: None)()
-    if stats is not None:
-        log.info(
-            f"GP prior spectrum: precision {stats['prec_min']:.3e} to {stats['prec_max']:.3e} "
-            f"({stats['prec_max'] / stats['prec_min']:.1f}x relaxation); contribution to M "
-            f"{stats['lam_min']:.3e} to {stats['lam_max']:.3e}"
-        )
-
-    # the initial gradient came from the tree (or is BDIRTY on a fresh one),
-    # so it is the data term; correct it before the first forward solve
-    if eta_in_grad:
-        log.info("Including the eta term in the gradient (--eta-in-grad)")
-        residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
-        residual_mfs = np.sum(residual, axis=0)
-
-    if rms_outside_model and model.any():
-        rms = np.std(residual_mfs[model_mfs == 0])
-    else:
-        rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-    if "best_rms" in first.attrs:
-        best_rms = first.attrs["best_rms"]
-        best_rmax = first.attrs["best_rmax"]
-        best_model = np.zeros((nband, ny, nx))
-        for b, n in enumerate(nodes):
-            bds = dt[n].ds
-            if "MODEL_BEST" in bds:
-                best_model[b] = bds.MODEL_BEST.values[0]
-    else:
-        best_rms, best_rmax = rms, rmax
-        best_model = model.copy()
-    diverge_count_curr = 0
-    log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
-
-    # --debug: per-iteration per-partition chi2 trajectories, collected into a
-    # machine-readable record next to the FITS outputs (D23 debugging aid)
-    debug_record = {"iterations": [], "uv_profiles": None} if debug else None
-
-    def _chi2_snapshot(iter_id):
-        stats = workers.partition_chi2(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
-        entry = {"iter": int(iter_id), "bands": []}
-        for n, plist in zip(nodes, stats):
-            entry["bands"].append({"band": n, "partitions": plist})
-            for pid, p in enumerate(plist):
-                rchi2 = p["chi2"][0] / max(p["ndata"], 1.0)
-                log.info(f"debug chi2 iter {iter_id} {n}/part{pid:04d} field={p['field']} rchi2={rchi2:.6e}")
-        debug_record["iterations"].append(entry)
-
-    if debug:
-        _chi2_snapshot(iter0)  # baseline against the starting model
-
-    # what was last written to each band node's attrs; the mop block writes
-    # again afterwards and to_zarr replaces attrs wholesale
-    final_attrs = [dict(a) for a in band_attrs]
-    mrange = range(iter0, iter0 + niter)
-    for k in mrange:
-        log.info("Solving for update")
-        # the forward solve consumes the beam-attenuated gradient (D23):
-        # H = B GtWG B, so its rhs is B*r, exactly legacy sara's
-        # `residual *= beam`. Stats/FITS/lambda stay on the apparent residual.
-        solver.first(bresidual)
-        update = solver.forward(bresidual)
-        update_mfs = np.mean(update, axis=0)
-        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
-
-        modelp = deepcopy(model)
-        lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
-        log.info(f"Solving for model with lambda = {lam:.3e}")
-        model = solver.backward(lam)
-
-        # write component model (carried over from the legacy driver; .dt-native attrs)
-        log.info(f"Writing model to {basename}_{suffix}.mds")
-        try:
-            # radec is the TANGENT point; x0/y0 are what carry the in-plane
-            # offset of the image centre from it (D21, D37). Hardcoding (0, 0)
-            # here -- while every FITS header above used the real (l0, m0) --
-            # made a --target run's .mds claim a grid centred on the tangent
-            # point when its pixels are centred on the target, which a consumer
-            # faithfully turns into sources displaced by (l0, m0) (#326).
-            flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
-            # The return value -- model_to_ds re-renders the fit at every band
-            # -- is DELIBERATELY DISCARDED. The fit is pfb-model-spec's
-            # parametrisation of the band cube, not the cube itself, so feeding
-            # it back would make the iteration's fixed point depend on the
-            # component-model parametrisation, which is an algorithmic choice
-            # and not something to acquire as a side effect of writing a file.
-            # Assigning it to `model` here cannot work in any case:
-            # `solver.backward()` returns `solver._model` itself, so rebinding
-            # this name leaves the solver's own model at the pre-fit array --
-            # the residual below would be computed from the fitted cube while
-            # the next cycle's `forward()` builds xtilde from the raw one.
-            # Pinned by test_the_model_fit_does_not_re_enter_the_solver.
-            model_to_ds(
-                time=time_out,
-                freq=freq_out,
-                fsel=fsel,
-                model=model[:, None],  # (nband, 1, ny, nx): one Stokes plane
-                wgt=(wsums / wsum)[:, None],
-                mds_name=f"{basename}_{suffix}.mds",
-                cell_rad=cell_rad,
-                nx=nx,
-                ny=ny,
-                x0=x0,
-                y0=y0,
-                flip_u=flip_u,
-                flip_v=flip_v,
-                flip_w=flip_w,
-                radec=radec,
-                stokes=[product],
-                writer_version=pfb_version,
-                nbasisf=nbasisf,
-                method=fit_mode,
-                freq_bounds=freq_bounds,
-                time_bounds=time_bounds,
-                flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)
+        # dump the Tikhonov profile once per run: it is the preconditioner's only
+        # tunable spatial structure, so seeing it is the way to sanity-check an
+        # --eta-mode choice (issue #287, D26). A cube, not an MFS collapse, so that
+        # band-to-band variation is visible -- 'radial' is pure geometry and must be
+        # identical across bands, the beam-driven modes are not.
+        if eta_mode is not None and hasattr(getattr(solver, "hess", None), "get_eta"):
+            etas = solver.hess.get_eta()
+            hdr_eta = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out, unit="", casambm=False, l0=l0, m0=m0)
+            hdr_eta["ETAMODE"] = (eta_mode, "eta-mode profile shape")
+            hdr_eta["ETA"] = (eta, "baseline eta (profile floor)")
+            hdr_eta["ETACAP"] = (eta_cap, "profile dynamic range")
+            name = fits_oname + f"_{suffix}_eta.fits"
+            # (band, corr, ny, nx): band belongs on the FREQ axis, so keep it 4D --
+            # a 3D array would put it on STOKES instead (to4d prepends)
+            save_fits(etas[:, None], name, hdr_eta, yx_order=True)
+            spread = float(np.abs(etas - etas[0]).max()) / max(float(etas.max()), 1e-30)
+            log.info(
+                f"eta_mode '{eta_mode}': {etas.min():.3e} to {etas.max():.3e} "
+                f"({etas.max() / etas.min():.1f}x), band-to-band spread {100 * spread:.2f}% -> {name}"
             )
-        except Exception as e:
-            # Not fatal: the deconvolution itself is unaffected and the band
-            # products are already written. It IS worth shouting about, because
-            # the only symptom is a missing .mds -- which is how a 4-d transpose
-            # on a 3-d cube survived here unnoticed (#326).
-            log.warning(f"Model fit failed ({type(e).__name__}: {e}); no .mds written this cycle.")
+            # nothing reads it again, but a local outlives the whole run: ~1 GB of
+            # f8 at 4096^2 x 8 bands, and HessTreeRay._prior_s keeps its own copy
+            # of sqrt(D) when --eta-in-grad is on
+            del etas
 
-        model_mfs = np.mean(model[fsel], axis=0)
-        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
+        # the prior is the only band-coupling channel in M besides the prox, so its
+        # spectrum is what to read when a GP run converges differently (issue #307)
+        stats = getattr(getattr(solver, "hess", None), "get_freq_prior_stats", lambda: None)()
+        if stats is not None:
+            log.info(
+                f"GP prior spectrum: precision {stats['prec_min']:.3e} to {stats['prec_max']:.3e} "
+                f"({stats['prec_max'] / stats['prec_min']:.1f}x relaxation); contribution to M "
+                f"{stats['lam_min']:.3e} to {stats['lam_max']:.3e}"
+            )
 
-        log.info("Computing residual")
-        residual_raw, bresidual_raw = workers.residual(
-            model[:, None],
-            cell_rad,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-        )
-        residual_raw = residual_raw[:, 0]
-        bresidual_raw = bresidual_raw[:, 0]
-        residual = residual_raw / wsum
-        bresidual = bresidual_raw / wsum
+        def gradient():
+            """The MFS residual for the statistics and the forward solve's rhs.
+
+            ``residual``/``bresidual`` stay the pure data gradients (what is
+            stored and what the mop solves against); --eta-in-grad corrects copies.
+            """
+            if not eta_in_grad:
+                return np.sum(residual, axis=0), bresidual
+            res_g, rhs = _grad_with_prior(residual, bresidual, model, solver.hess)
+            return np.sum(res_g, axis=0), rhs
+
+        # the initial gradient came from the tree (or is BDIRTY on a fresh one),
+        # so it is the data term; correct it before the first forward solve
         if eta_in_grad:
-            residual, bresidual = _grad_with_prior(residual, bresidual, model, solver.hess)
-        residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
+            log.info("Including the eta term in the gradient (--eta-in-grad)")
+        residual_mfs, rhs = gradient()
+        # the apparent residual is only ever summed and written: hold it from its
+        # computation to the write, never through a solve
+        residual = None
 
-        if debug:
-            _chi2_snapshot(k + 1)
-
-        # post-iteration hook (e.g. arming l1 reweighting)
-        solver.last()
-
-        # per-actor post-gc memory telemetry (docs/wiki/memory-and-ray.md)
-        if verbosity > 1 and hasattr(getattr(solver, "hess", None), "get_mem"):
-            for m in solver.hess.get_mem():
-                log.info(f"hess actor pid {m['pid']} rss {m['rss_gb']:.2f} GB peak {m['peak_gb']:.2f} GB")
-
-        rmsp, rmaxp = rms, rmax
-        if rms_outside_model:
+        if rms_outside_model and model.any():
             rms = np.std(residual_mfs[model_mfs == 0])
         else:
             rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
-        eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
-
-        if rms < best_rms:
+        # MODEL_BEST is written when a cycle improves on best_rms, so the best
+        # model never needs to be held in memory
+        if "best_rms" in first.attrs:
+            best_rms = first.attrs["best_rms"]
+            best_rmax = first.attrs["best_rmax"]
+        else:
             best_rms, best_rmax = rms, rmax
-            best_model = model.copy()
+        diverge_count_curr = 0
+        log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
-        hess_norm = getattr(solver, "hess_norm", hess_norm)
+        # --debug: per-iteration per-partition chi2 trajectories, collected into a
+        # machine-readable record next to the FITS outputs (D23 debugging aid)
+        debug_record = {"iterations": [], "uv_profiles": None} if debug else None
 
-        # write back into the band nodes (native DataTree API)
-        is_best = (model == best_model).all()
-        for b, n in enumerate(nodes):
-            data_vars = {
-                "MODEL": (("corr", "y", "x"), model[b][None]),
-                "UPDATE": (("corr", "y", "x"), update[b][None]),
-                "RESIDUAL": (("corr", "y", "x"), residual_raw[b][None]),
-                "BRESIDUAL": (("corr", "y", "x"), bresidual_raw[b][None]),
-            }
-            if is_best:
-                data_vars["MODEL_BEST"] = (("corr", "y", "x"), best_model[b][None])
-            # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
-            # variables, which merge), so start from the band's original
-            # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the
-            # legacy sara() convention of ds.assign_attrs(**attrs) onto a
-            # dataset read from the existing dds, which merges rather than
-            # replaces.
-            # to_zarr REPLACES attrs, so anything written later must start
-            # from these, not from band_attrs (the mop block below does)
-            final_attrs[b] = {
-                **band_attrs[b],
-                "rms": best_rms,
-                "rmax": best_rmax,
-                "niters": k + 1,
-                "hess_norm": hess_norm,
-                "hess_norm_opts": _m_signature(opts_dict),
-            }
-            ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
-            ds_out.to_zarr(dt_name, group=n, mode="a")
+        def _chi2_snapshot(iter_id):
+            stats = workers.partition_chi2(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
+            entry = {"iter": int(iter_id), "bands": []}
+            for n, plist in zip(nodes, stats):
+                entry["bands"].append({"band": n, "partitions": plist})
+                for pid, p in enumerate(plist):
+                    rchi2 = p["chi2"][0] / max(p["ndata"], 1.0)
+                    log.info(f"debug chi2 iter {iter_id} {n}/part{pid:04d} field={p['field']} rchi2={rchi2:.6e}")
+            debug_record["iterations"].append(entry)
 
-        log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
+        if debug:
+            _chi2_snapshot(iter0)  # baseline against the starting model
 
-        if eps < tol:
-            if not getattr(solver, "reweight_active", True):
-                solver.trigger_reweight()  # reweight instead of stopping
-            else:
-                log.info(f"Converged after {k + 1} iterations.")
-                break
+        # what was last written to each band node's attrs; the mop block writes
+        # again afterwards and to_zarr replaces attrs wholesale
+        final_attrs = [dict(a) for a in band_attrs]
+        mrange = range(iter0, iter0 + niter)
+        for k in mrange:
+            log.info("Solving for update")
+            # the forward solve consumes the beam-attenuated gradient (D23):
+            # H = B GtWG B, so its rhs is B*r, exactly legacy sara's
+            # `residual *= beam`. Stats/FITS/lambda stay on the apparent residual.
+            solver.first(rhs)
+            update = solver.forward(rhs)
+            update_mfs = np.mean(update, axis=0)
+            save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs, yx_order=True)
+            phases.lap("forward")
+            # the gradients are dead until the residual is recomputed after the
+            # backward step, and the solver has dropped its reference: free their
+            # cubes so the backward step's buffers take their place
+            residual = bresidual = rhs = None
 
-        if (rms > rmsp) and (rmax > rmaxp):
-            diverge_count_curr += 1
-            if diverge_count_curr > diverge_count:
-                log.info("Algorithm is diverging. Terminating.")
-                break
+            # a PFBSolver reports the relative model change itself; any other
+            # DeconvSolver costs a model copy
+            modelp = None if hasattr(solver, "model_change") else model.copy()
+            lam = (init_factor if iter0 == 0 and k == 0 else 1.0) * rmsfactor * rms
+            log.info(f"Solving for model with lambda = {lam:.3e}")
+            model = solver.backward(lam)
+            phases.lap("backward", mem=True)
 
-    if mop:
-        # Mopped products (#311). A prior necessarily makes the residual look
-        # worse, but m + M^-1 r very nearly cancels it: A(m + M^-1 r) = A m +
-        # A M^-1 r ~= A m + r = data whenever M ~= A. So this is the model whose
-        # residual is near perfect, and the pair is stored so `restore` can
-        # build restored images from it (--model-name/--residual-name).
-        #
-        # The update is solved FRESH here rather than reusing the loop's last
-        # one. That update was computed at the pre-backward model, so
-        # model + update is only the near-perfect point if the prox barely
-        # moved -- true at convergence, false on a maxiter or divergence exit.
-        # bresidual is already the gradient against the final model, so the
-        # extra cost is one CG solve and no extra gridding for the gradient.
-        # The right-hand side is the pure DATA gradient, never the
-        # eta-corrected one. "Near perfect residual" means the *data* residual
-        # is near zero, so the direction wanted is M^-1 r_data. Solving against
-        # r_data - K^-1 m instead would make the mop collapse to nothing
-        # exactly where it is wanted: at a regularised fixed point that
-        # gradient is ~0, so MODEL_MOPPED -> MODEL and nothing is mopped.
-        # It also keeps MODEL_MOPPED meaning the same thing with and without
-        # --eta-in-grad, which is what makes the two comparable.
-        log.info("Mopping: solving for the final update against the converged model")
-        bresidual_data = bresidual_raw / wsum
-        solver.first(bresidual_data)
-        update_mop = solver.forward(bresidual_data)
-        model_mopped = model + update_mop
-        model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
-        save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
-
-        log.info("Mopping: computing the residual against the mopped model")
-        residual_mopped_raw, _ = workers.residual(
-            model_mopped[:, None],
-            cell_rad,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-        )
-        residual_mopped_raw = residual_mopped_raw[:, 0]
-        residual_mopped_mfs = np.sum(residual_mopped_raw / wsum, axis=0)
-        save_fits(residual_mopped_mfs, fits_oname + f"_{suffix}_residual_mopped.fits", hdr_mfs, yx_order=True)
-        log.info(
-            f"Mopped peak residual = {np.abs(residual_mopped_mfs).max():.3e} "
-            f"(deconvolved {np.abs(residual_mfs).max():.3e})"
-        )
-
-        for b, n in enumerate(nodes):
-            xr.Dataset(
-                data_vars={
-                    "MODEL_MOPPED": (("corr", "y", "x"), model_mopped[b][None]),
-                    "RESIDUAL_MOPPED": (("corr", "y", "x"), residual_mopped_raw[b][None]),
-                },
-                attrs=final_attrs[b],
-            ).to_zarr(dt_name, group=n, mode="a")
-
-    if fits_per_partition:
-        # per-partition misfit localisation (D23 debugging aid): re-gridded
-        # dirty, residual against the final model, apparent model B_p*m and
-        # vis-space chi2 for every data partition, computed worker-side
-        pdir = f"{fits_oname}_{suffix}_partitions"
-        os.makedirs(pdir, exist_ok=True)
-        log.info(f"Writing per-partition debug FITS to {pdir}")
-        parts_per_band = workers.partition_debug(
-            model[:, None],
-            cell_rad,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-        )
-        for b, (n, plist) in enumerate(zip(nodes, parts_per_band)):
-            for pid, part in enumerate(plist):
-                field = str(part["field"]).replace(" ", "_").replace("/", "-")
-                rchi2 = part["chi2"][0] / max(part["ndata"], 1.0)
-                hdr = set_wcs(
-                    cell_deg,
-                    cell_deg,
-                    nx,
-                    ny,
-                    radec,
-                    freq_out[b],
-                    ms_time=time_out[0],
-                    time_is_unix=True,
-                    l0=float(band_attrs[b].get("l0", 0.0)),
-                    m0=float(band_attrs[b].get("m0", 0.0)),
+            # write component model (carried over from the legacy driver; .dt-native attrs)
+            log.info(f"Writing model to {basename}_{suffix}.mds")
+            try:
+                # radec is the TANGENT point; x0/y0 are what carry the in-plane
+                # offset of the image centre from it (D21, D37). Hardcoding (0, 0)
+                # here -- while every FITS header above used the real (l0, m0) --
+                # made a --target run's .mds claim a grid centred on the tangent
+                # point when its pixels are centred on the target, which a consumer
+                # faithfully turns into sources displaced by (l0, m0) (#326).
+                flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+                # The return value -- model_to_ds re-renders the fit at every band
+                # -- is DELIBERATELY DISCARDED. The fit is pfb-model-spec's
+                # parametrisation of the band cube, not the cube itself, so feeding
+                # it back would make the iteration's fixed point depend on the
+                # component-model parametrisation, which is an algorithmic choice
+                # and not something to acquire as a side effect of writing a file.
+                # Assigning it to `model` here cannot work in any case:
+                # `solver.backward()` returns `solver._model` itself, so rebinding
+                # this name leaves the solver's own model at the pre-fit array --
+                # the residual below would be computed from the fitted cube while
+                # the next cycle's `forward()` builds xtilde from the raw one.
+                # Pinned by test_the_model_fit_does_not_re_enter_the_solver.
+                model_to_ds(
+                    time=time_out,
+                    freq=freq_out,
+                    fsel=fsel,
+                    model=model[:, None],  # (nband, 1, ny, nx): one Stokes plane
+                    wgt=(wsums / wsum)[:, None],
+                    mds_name=f"{basename}_{suffix}.mds",
+                    cell_rad=cell_rad,
+                    nx=nx,
+                    ny=ny,
+                    x0=x0,
+                    y0=y0,
+                    flip_u=flip_u,
+                    flip_v=flip_v,
+                    flip_w=flip_w,
+                    radec=radec,
+                    stokes=[product],
+                    writer_version=pfb_version,
+                    nbasisf=nbasisf,
+                    method=fit_mode,
+                    freq_bounds=freq_bounds,
+                    time_bounds=time_bounds,
+                    flux_scale="intrinsic",  # MODEL is intrinsic flux (D22/D23)
                 )
-                hdr["FIELDNAM"] = part["field"]
-                hdr["WSUMP"] = (float(part["wsum"][0]), "partition weight sum")
-                hdr["CHI2"] = (float(part["chi2"][0]), "sum w|V - G(B m)|^2 over unflagged")
-                hdr["NDATA"] = (float(part["ndata"]), "unflagged vis samples")
-                hdr["RCHI2"] = (float(rchi2), "CHI2 / NDATA")
-                wsum_p = part["wsum"][:, None, None]
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    dirty_n = np.where(wsum_p > 0, part["dirty"] / wsum_p, 0.0)
-                    resid_n = np.where(wsum_p > 0, part["residual"] / wsum_p, 0.0)
-                stem = f"{pdir}/{{var}}_{n}_part{pid:04d}_{field}.fits"
-                save_fits(dirty_n, stem.format(var="dirty"), hdr, yx_order=True)
-                save_fits(resid_n, stem.format(var="residual"), hdr, yx_order=True)
-                save_fits(part["amodel"], stem.format(var="model_apparent"), hdr, yx_order=True)
-                log.info(
-                    f"{n}/part{pid:04d} field={part['field']}: "
-                    f"wsum_frac={float(part['wsum'][0]) / wsum:.3f} "
-                    f"resid_rms={float(np.std(resid_n[0])):.3e} Jy/beam "
-                    f"resid_peak={float(np.abs(resid_n[0]).max()):.3e} rchi2={rchi2:.6e}"
-                )
+            except Exception as e:
+                # Not fatal: the deconvolution itself is unaffected and the band
+                # products are already written. It IS worth shouting about, because
+                # the only symptom is a missing .mds -- which is how a 4-d transpose
+                # on a 3-d cube survived here unnoticed (#326).
+                log.warning(f"Model fit failed ({type(e).__name__}: {e}); no .mds written this cycle.")
 
-    if debug:
-        # baseline-length-binned residual power per partition: flat for
-        # noise-like residuals, structured when the misfit lives at specific
-        # baseline lengths (calibration/beam/astrometry signatures differ)
-        log.info("Computing baseline-binned residual profiles")
-        profs = workers.partition_uvprofile(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
-        debug_record["uv_profiles"] = dict(zip(nodes, profs))
-        debug_name = f"{fits_oname}_{suffix}_debug.json"
-        with open(debug_name, "w") as f:
-            json.dump(debug_record, f, indent=2)
-        log.info(f"Debug record written to {debug_name}")
+            model_mfs = np.mean(model[fsel], axis=0)
+            save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs, yx_order=True)
+            phases.lap("model fit")
 
-    if fits_mfs or fits_cubes:
-        log.info(f"Writing fits files to {fits_oname}_{suffix}")
-        for column, norm in (("RESIDUAL", True), ("MODEL", False), ("UPDATE", False)):
-            dt2fits(
-                dt_name,
-                column,
-                f"{fits_oname}_{suffix}",
-                norm_wsum=norm,
-                nthreads=nthreads,
-                do_mfs=fits_mfs,
-                do_cube=fits_cubes,
+            log.info("Computing residual")
+            residual, bresidual = workers.residual(
+                model[:, None],
+                cell_rad,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
             )
-            log.info(f"Done writing {column}")
+            residual, bresidual = residual[:, 0], bresidual[:, 0]
+            inplace.scale(residual, 1.0 / wsum)
+            inplace.scale(bresidual, 1.0 / wsum)
+            residual_mfs, rhs = gradient()
+            save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs, yx_order=True)
 
+            if debug:
+                _chi2_snapshot(k + 1)
+            phases.lap("residual")
+
+            # post-iteration hook (e.g. arming l1 reweighting)
+            solver.last()
+            phases.lap("reweight")
+
+            rmsp, rmaxp = rms, rmax
+            if rms_outside_model:
+                rms = np.std(residual_mfs[model_mfs == 0])
+            else:
+                rms = np.std(residual_mfs)
+            rmax = np.abs(residual_mfs).max()
+            if modelp is None:
+                eps = solver.model_change
+            else:
+                eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
+                del modelp
+
+            is_best = rms < best_rms
+            if is_best:
+                best_rms, best_rmax = rms, rmax
+
+            hess_norm = getattr(solver, "hess_norm", hess_norm)
+
+            # write back into the band nodes (native DataTree API)
+            for b, n in enumerate(nodes):
+                data_vars = {
+                    "MODEL": (("corr", "y", "x"), model[b][None]),
+                    "UPDATE": (("corr", "y", "x"), update[b][None]),
+                    # stored raw (the imager's convention); one band at a time
+                    "RESIDUAL": (("corr", "y", "x"), (residual[b] * wsum)[None]),
+                    "BRESIDUAL": (("corr", "y", "x"), (bresidual[b] * wsum)[None]),
+                }
+                if is_best:
+                    data_vars["MODEL_BEST"] = (("corr", "y", "x"), model[b][None])
+                # to_zarr(mode="a") replaces a group's attrs wholesale (unlike
+                # variables, which merge), so start from the band's original
+                # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the
+                # legacy sara() convention of ds.assign_attrs(**attrs) onto a
+                # dataset read from the existing dds, which merges rather than
+                # replaces.
+                # to_zarr REPLACES attrs, so anything written later must start
+                # from these, not from band_attrs (the mop block below does)
+                final_attrs[b] = {
+                    **band_attrs[b],
+                    "rms": best_rms,
+                    "rmax": best_rmax,
+                    "niters": k + 1,
+                    "hess_norm": hess_norm,
+                    "hess_norm_opts": _m_signature(opts_dict),
+                }
+                ds_out = xr.Dataset(data_vars, attrs=final_attrs[b])
+                ds_out.to_zarr(dt_name, group=n, mode="a")
+            residual = ds_out = None
+            # the written Datasets sit in reference cycles holding the per-band
+            # temporaries (and views of the cubes) until a collection
+            gc.collect()
+            phases.lap("write", mem=True)
+            if verbosity:
+                workers.log_telemetry(log)
+
+            log.info(f"Iter {k + 1}: peak residual = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
+
+            if eps < tol:
+                if not getattr(solver, "reweight_active", True):
+                    solver.trigger_reweight()  # reweight instead of stopping
+                else:
+                    log.info(f"Converged after {k + 1} iterations.")
+                    break
+
+            if (rms > rmsp) and (rmax > rmaxp):
+                diverge_count_curr += 1
+                if diverge_count_curr > diverge_count:
+                    log.info("Algorithm is diverging. Terminating.")
+                    break
+
+        if mop:
+            # Mopped products (#311). A prior necessarily makes the residual look
+            # worse, but m + M^-1 r very nearly cancels it: A(m + M^-1 r) = A m +
+            # A M^-1 r ~= A m + r = data whenever M ~= A. So this is the model whose
+            # residual is near perfect, and the pair is stored so `restore` can
+            # build restored images from it (--model-name/--residual-name).
+            #
+            # The update is solved FRESH here rather than reusing the loop's last
+            # one. That update was computed at the pre-backward model, so
+            # model + update is only the near-perfect point if the prox barely
+            # moved -- true at convergence, false on a maxiter or divergence exit.
+            # bresidual is already the gradient against the final model, so the
+            # extra cost is one CG solve and no extra gridding for the gradient.
+            # The right-hand side is the pure DATA gradient, never the
+            # eta-corrected one. "Near perfect residual" means the *data* residual
+            # is near zero, so the direction wanted is M^-1 r_data. Solving against
+            # r_data - K^-1 m instead would make the mop collapse to nothing
+            # exactly where it is wanted: at a regularised fixed point that
+            # gradient is ~0, so MODEL_MOPPED -> MODEL and nothing is mopped.
+            # It also keeps MODEL_MOPPED meaning the same thing with and without
+            # --eta-in-grad, which is what makes the two comparable.
+            log.info("Mopping: solving for the final update against the converged model")
+            # bresidual is the pure data gradient (the eta correction only ever
+            # went into rhs); the mopped model is formed in the update's own cube
+            solver.first(bresidual)
+            model_mopped = solver.forward(bresidual)
+            bresidual = None
+            inplace.add(model_mopped, model)
+            model_mopped_mfs = np.mean(model_mopped[fsel], axis=0)
+            save_fits(model_mopped_mfs, fits_oname + f"_{suffix}_model_mopped.fits", hdr_mfs, yx_order=True)
+
+            log.info("Mopping: computing the residual against the mopped model")
+            residual_mopped_raw, bresidual = workers.residual(
+                model_mopped[:, None],
+                cell_rad,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+            )
+            residual_mopped_raw = residual_mopped_raw[:, 0]
+            bresidual = None  # the mop has no use for the beam-attenuated one
+            residual_mopped_mfs = np.sum(residual_mopped_raw, axis=0) / wsum
+            save_fits(residual_mopped_mfs, fits_oname + f"_{suffix}_residual_mopped.fits", hdr_mfs, yx_order=True)
+            log.info(
+                f"Mopped peak residual = {np.abs(residual_mopped_mfs).max():.3e} "
+                f"(deconvolved {np.abs(residual_mfs).max():.3e})"
+            )
+
+            for b, n in enumerate(nodes):
+                xr.Dataset(
+                    data_vars={
+                        "MODEL_MOPPED": (("corr", "y", "x"), model_mopped[b][None]),
+                        "RESIDUAL_MOPPED": (("corr", "y", "x"), residual_mopped_raw[b][None]),
+                    },
+                    attrs=final_attrs[b],
+                ).to_zarr(dt_name, group=n, mode="a")
+            phases.lap("mop")
+
+        if fits_per_partition:
+            # per-partition misfit localisation (D23 debugging aid): re-gridded
+            # dirty, residual against the final model, apparent model B_p*m and
+            # vis-space chi2 for every data partition, computed worker-side
+            pdir = f"{fits_oname}_{suffix}_partitions"
+            os.makedirs(pdir, exist_ok=True)
+            log.info(f"Writing per-partition debug FITS to {pdir}")
+            parts_per_band = workers.partition_debug(
+                model[:, None],
+                cell_rad,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+            )
+            for b, (n, plist) in enumerate(zip(nodes, parts_per_band)):
+                for pid, part in enumerate(plist):
+                    field = str(part["field"]).replace(" ", "_").replace("/", "-")
+                    rchi2 = part["chi2"][0] / max(part["ndata"], 1.0)
+                    hdr = set_wcs(
+                        cell_deg,
+                        cell_deg,
+                        nx,
+                        ny,
+                        radec,
+                        freq_out[b],
+                        ms_time=time_out[0],
+                        time_is_unix=True,
+                        l0=float(band_attrs[b].get("l0", 0.0)),
+                        m0=float(band_attrs[b].get("m0", 0.0)),
+                    )
+                    hdr["FIELDNAM"] = part["field"]
+                    hdr["WSUMP"] = (float(part["wsum"][0]), "partition weight sum")
+                    hdr["CHI2"] = (float(part["chi2"][0]), "sum w|V - G(B m)|^2 over unflagged")
+                    hdr["NDATA"] = (float(part["ndata"]), "unflagged vis samples")
+                    hdr["RCHI2"] = (float(rchi2), "CHI2 / NDATA")
+                    wsum_p = part["wsum"][:, None, None]
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        dirty_n = np.where(wsum_p > 0, part["dirty"] / wsum_p, 0.0)
+                        resid_n = np.where(wsum_p > 0, part["residual"] / wsum_p, 0.0)
+                    stem = f"{pdir}/{{var}}_{n}_part{pid:04d}_{field}.fits"
+                    save_fits(dirty_n, stem.format(var="dirty"), hdr, yx_order=True)
+                    save_fits(resid_n, stem.format(var="residual"), hdr, yx_order=True)
+                    save_fits(part["amodel"], stem.format(var="model_apparent"), hdr, yx_order=True)
+                    log.info(
+                        f"{n}/part{pid:04d} field={part['field']}: "
+                        f"wsum_frac={float(part['wsum'][0]) / wsum:.3f} "
+                        f"resid_rms={float(np.std(resid_n[0])):.3e} Jy/beam "
+                        f"resid_peak={float(np.abs(resid_n[0]).max()):.3e} rchi2={rchi2:.6e}"
+                    )
+
+            phases.lap("partition FITS")
+
+        if debug:
+            # baseline-length-binned residual power per partition: flat for
+            # noise-like residuals, structured when the misfit lives at specific
+            # baseline lengths (calibration/beam/astrometry signatures differ)
+            log.info("Computing baseline-binned residual profiles")
+            profs = workers.partition_uvprofile(model[:, None], cell_rad, epsilon=epsilon, do_wgridding=do_wgridding)
+            debug_record["uv_profiles"] = dict(zip(nodes, profs))
+            debug_name = f"{fits_oname}_{suffix}_debug.json"
+            with open(debug_name, "w") as f:
+                json.dump(debug_record, f, indent=2)
+            log.info(f"Debug record written to {debug_name}")
+            phases.lap("debug profiles")
+
+        # nothing below reads the solver or the cubes; release them before the
+        # FITS rendering builds a cube of its own per column
+        solver = model = update = residual = bresidual = rhs = None
+        model_mopped = residual_mopped_raw = None
+        gc.collect()  # the written Datasets' reference cycles (see the write phase)
+        if fits_mfs or fits_cubes:
+            log.info(f"Writing fits files to {fits_oname}_{suffix}")
+            for column, norm in (("RESIDUAL", True), ("MODEL", False), ("UPDATE", False)):
+                dt2fits(
+                    dt_name,
+                    column,
+                    f"{fits_oname}_{suffix}",
+                    norm_wsum=norm,
+                    nthreads=nthreads,
+                    do_mfs=fits_mfs,
+                    do_cube=fits_cubes,
+                )
+                log.info(f"Done writing {column}")
+            phases.lap("FITS")
+
+        if verbosity:
+            workers.log_telemetry(log)
+    finally:
+        # opt-in diagnostics (utils/memprof): the band workers' captures are only
+        # written when closed, and the timeline needs Ray still up -- so a run
+        # that raises still leaves its profile
+        workers.stop_capture()
+        dump_timeline(log)
+    phases.summary()
     log.info(f"All done after {time.time() - time_start:.1f}s")

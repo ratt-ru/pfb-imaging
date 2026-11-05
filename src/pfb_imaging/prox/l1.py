@@ -10,7 +10,7 @@ class L1:
 
     Args:
         psi: Operator satisfying ``PsiOperator`` (typically ``IdentityPsi``).
-        nu: Spectral norm of ``psi`` (default 1.0).
+        nu: Squared frame bound ``||Psi Psi^T||`` of ``psi`` (default 1.0).
     """
 
     def __init__(self, psi, nu: float = 1.0):

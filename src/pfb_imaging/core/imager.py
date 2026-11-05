@@ -24,9 +24,10 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
-from pfb_imaging.utils.memprof import format_memory, memray_env, memray_task, task_memory
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.misc import (
     check_gridder_epsilon,
     fitcleanbeam,
@@ -130,11 +131,22 @@ def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
         slab.to_zarr(store, group=group, mode="a", append_dim="row", consolidated=False)
 
 
+def effective_robustness(robustness: float | None) -> float | None:
+    """Map the CLI's robustness onto the imager's: ``> 2`` is natural (``None``).
+
+    The documented contract, and not a no-op: Briggs at R > 2 is close to
+    natural but not equal to it, and only ``None`` skips the uv counts.
+    """
+    if robustness is not None and robustness > 2:
+        return None
+    return robustness
+
+
 def _load_piece(node):
-    """Load one scratch piece into memory, minus its COUNTS.
+    """Load one scratch piece into memory, minus its sparse COUNTS.
 
     COUNTS is only consumed by the driver's weight reduction, which has
-    already happened, and it is by far the largest piece variable. Loaded
+    already happened. Loaded
     detached from the open scratch tree (see ``load_detached``), or every piece
     would stay reachable from it -- through its concat, past ``del plist`` and
     into the worker's next task.
@@ -145,7 +157,7 @@ def _load_piece(node):
     Returns:
         The piece as an in-memory Dataset.
     """
-    return load_detached(node.ds.drop_vars("COUNTS", errors="ignore"))
+    return load_detached(node.ds.drop_vars(["COUNTS_INDEX", "COUNTS_VALUE"], errors="ignore"))
 
 
 def _load_transfer_model(path: str) -> xr.Dataset:
@@ -206,17 +218,20 @@ def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
-    """Nominal band edges and integration-edge time extent of one output image (#327).
+    """Channel extent and integration-edge time extent of one output image (#327).
 
     Stored on the band node so `deconv` can hand them to the `.mds`, where
-    `degrid` derives its chunking from them. The band edges are the nominal
-    ones that assigned channels to the band, not the flagged data's extent.
+    `degrid` derives its chunking from them. The band edges are the outer
+    channel edges of the channels assigned to the band (flagged or not), not
+    the equal-width nominal edges used to assign them: those disagree whenever
+    the bands do not divide the channels evenly, and degrid must place its
+    chunks on the band's real channels to reproduce deconv's forward model (D59).
 
     Args:
         infos: The image's per-scratch-node summaries (`time_lo`, `time_hi`: the
             outermost integration edges).
-        band_lo: Lower band edge in Hz.
-        band_hi: Upper band edge in Hz.
+        band_lo: Lower channel edge of the band in Hz.
+        band_hi: Upper channel edge of the band in Hz.
 
     Returns:
         `{"freq_bounds": [lo, hi], "time_bounds": [lo, hi]}`.
@@ -362,9 +377,11 @@ def _concat_pieces(plist):
 
 @ray.remote
 def _grid_image(*args, **kwargs):
-    """Ray entry point for :func:`_grid_image_body` (opt-in memray tracking)."""
-    with memray_task("grid_image"):
-        return _grid_image_body(*args, **kwargs)
+    """Ray entry point for :func:`_grid_image_body` (opt-in profiling, see memprof)."""
+    with profile_task("grid_image") as clock:
+        res = _grid_image_body(*args, **kwargs)
+    res["mem"].update(clock)
+    return res
 
 
 def _grid_image_body(
@@ -723,6 +740,7 @@ def imager(
     # for logging options
     opts_dict = locals().copy()
     time_start = time.time()
+    phases = PhaseClock(log)
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
@@ -755,6 +773,10 @@ def imager(
         check_gridder_epsilon(precision, epsilon, do_wgridding=do_wgridding)
     except ValueError as e:
         log.error_and_raise(str(e), ValueError)
+
+    if (eff := effective_robustness(robustness)) != robustness:
+        log.info(f"robustness {robustness} > 2: using natural weighting")
+        robustness = eff
 
     msnames = []
     for ms_path in ms:
@@ -1049,35 +1071,53 @@ def imager(
                 log.error_and_raise(missing, RuntimeError)
             env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
 
+    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+    beam_refs = None
+    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+        # Each wizard is built once here, single process and before Ray, so a
+        # staging error or a beam that cannot cover the data stops the run
+        # before a cluster exists, and concurrent first downloads cannot race.
+        # The tasks then get a Multiton recipe rather than the wizard: a worker
+        # builds its own once from the warmed cache and keeps it across tasks,
+        # and with it the spline prefilters, which a wizard shipped by value
+        # arrives without -- ~0.8 s per correlation per task to rebuild (degrid
+        # does the same, D38). No image_name: detached mode, pass 1 supplies
+        # explicit l/m/times/freq.
+        groups = present_groups if baseline_groups else [None]
+        if baseline_groups:
+            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+        else:
+            log.info("Assuming MeerKAT data and initialising BeamWizard")
+        kwargs = {
+            g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
+            for g in groups
+        }
+        for g, kw in kwargs.items():
+            # a piece's beam frequency is a weighted mean of its own channels,
+            # so every selected channel bounds what a worker can ask for (D59)
+            try:
+                BeamWizard(**kw).check_freqs(all_freqs)
+            except ValueError as e:
+                log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
+        if baseline_groups:
+            beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
+        else:
+            beam_model = Multiton(BeamWizard, **kwargs[None])
+
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
     init_ray(
         nworkers,
         ray_address=ray_address,
         runtime_env={
-            "env_vars": {**env_vars, **memray_env()},
+            "env_vars": {**env_vars, **profile_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
     )
 
-    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
-    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
-    beam_refs = None
-    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        if baseline_groups:
-            # One wizard per baseline group. ray.put is load-bearing, not
-            # tidiness: a group wizard holds an IN-MEMORY cross-multiplied
-            # dataset (~25 MB at the MdV-2026 grid; nothing group-shaped is
-            # file-backed) and pass 1 emits hundreds of tasks, so passing it by
-            # value per task would serialise it hundreds of times.
-            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
-            beam_refs = {g: ray.put(BeamWizard(band=beam_model, group=g)) for g in present_groups}
-        else:
-            log.info("Assuming MeerKAT data and initialising BeamWizard")
-            # no image_name: detached mode -- pass 1 supplies explicit l/m/times/freq
-            beam_model = BeamWizard(band=beam_model)
-
+    phases.lap("Setup")
     tasks = []
     scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
     next_tid = 0
@@ -1089,6 +1129,8 @@ def imager(
     # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
+    # bandid -> [lo, hi]: outer channel edges of every block assigned to the band
+    band_extent = {}
     for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
         scan_name = np.unique(node.ds.scan_name.load().values).item()
         nchan_node = freqs_node.size
@@ -1115,6 +1157,10 @@ def imager(
                 # on the unsliced node, so shift by the selection offset chan0
                 nu_index = slice(chan0 + flow, chan0 + fhigh)
                 bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
+                lo = float(freqs_node[flow:fhigh].min()) - min_chan_width / 2
+                hi = float(freqs_node[flow:fhigh].max()) + min_chan_width / 2
+                extent = band_extent.setdefault(bandid, [lo, hi])
+                extent[:] = [min(extent[0], lo), max(extent[1], hi)]
 
                 # slice out subset of node
                 subdt = node.isel(time=t_index, frequency=nu_index)
@@ -1159,9 +1205,13 @@ def imager(
                         nx=nx,
                         ny=ny,
                         nthreads=nthreads,
+                        # only robust weighting reads the counts (see counts_sources)
+                        compute_counts=robustness is not None,
                     )
                     tasks.append(fut)
 
+    # submission pickles every task's datatree node, so it is timed on its own
+    phases.lap("Pass 1 submission")
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1188,7 +1238,7 @@ def imager(
     nband_out = len(set(bandids_out))
 
     log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_url}")
-    log.info(f"Pass 1 done after {time.time() - time_start}s")
+    phases.lap("Pass 1")
 
     # consolidate the scratch metadata once, single-threaded, now that all
     # workers have finished (workers wrote with consolidated=False to avoid
@@ -1278,7 +1328,7 @@ def imager(
                         "l0": l0,
                         "m0": m0,
                         "time_out": time_out,
-                        **_sampling_bounds(infos, band_edges[bandid], band_edges[bandid + 1]),
+                        **_sampling_bounds(infos, *band_extent[bandid]),
                     },
                 )
             )
@@ -1287,7 +1337,7 @@ def imager(
             l0, m0 = target_offset(info["time_out"])
             meta = {k: info[k] for k in ("bandid", "timeid", "time_out")}
             meta.update(ra=float(grid_radec[0]), dec=float(grid_radec[1]), l0=l0, m0=m0)
-            meta.update(_sampling_bounds([info], band_edges[info["bandid"]], band_edges[info["bandid"] + 1]))
+            meta.update(_sampling_bounds([info], *band_extent[info["bandid"]]))
             work.append((name, [name], meta))
 
     ntime = len({meta["timeid"] for _, _, meta in work})
@@ -1338,6 +1388,7 @@ def imager(
     # ---- pass 2: grid each output image into the .dt tree (parallel over images) ----
     # per-worker cached model: one load per process, not per task (degrid's pattern)
     transfer = Multiton(_load_transfer_model, transfer_model_from) if transfer_model_from else None
+    phases.lap("Counts and .dt set-up")
     tasks = []
     for out_name, src_names, meta in work:
         fut = _grid_image.remote(
@@ -1370,6 +1421,7 @@ def imager(
         )
         tasks.append(fut)
 
+    phases.lap("Pass 2 submission")
     nds = len(tasks)
     ncomplete = 0
     remaining_tasks = tasks.copy()
@@ -1403,6 +1455,7 @@ def imager(
     # consolidate the .dt metadata once, single-threaded, now that all pass-2
     # workers have finished (they wrote with consolidated=False; see _grid_image)
     zarr.consolidate_metadata(dt_url)
+    phases.lap("Pass 2")
 
     # MFS beam parameters per time chunk, from the wsum-normalised sum of the band
     # PSFs. Read back from the .dt one band at a time rather than returned by the
@@ -1430,6 +1483,8 @@ def imager(
     for tid in psf_mfs:
         psfparsn[tid] = np.array(fitcleanbeam(psf_mfs[tid] / wsum_mfs[tid][:, None, None], yx_order=True))
     del psf_mfs
+    if psf:
+        phases.lap("MFS PSF fit")
 
     # ---- FITS ----
     if fits_mfs or fits_cubes:
@@ -1462,13 +1517,17 @@ def imager(
         ]
         for task in fits_tasks:
             ray.get(task)
+        phases.lap("FITS")
 
     if not keep_scratch:
         log.info(f"Removing scratch store {scratch_url}")
         scratch_fs.rm(scratch_url, recursive=True)
+        phases.lap("Scratch removal")
 
+    phases.summary()
     log.info(f"All done after {time.time() - time_start}s")
 
+    dump_timeline(log)
     if not keep_ray_alive:
         ray.shutdown()
 

@@ -48,7 +48,9 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None,
     else:
         # legacy x-major (..., nx, ny) input
         data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
-    hdu.data = np.require(data, dtype=dtype, requirements="F")
+    # C order: (corr, band, ny, nx) is already C-contiguous for one correlation,
+    # so a cube built in the output dtype is written without a copy
+    hdu.data = np.require(data, dtype=dtype, requirements="C")
     if beams_hdu is not None:
         hdul = fits.HDUList([hdu, beams_hdu])
         hdul.writeto(name, overwrite=overwrite)
@@ -469,7 +471,8 @@ def dt2fits(
     unit = force_unit if force_unit is not None else ("Jy/beam" if norm_wsum else "Jy/pixel")
     bpar = ["BMAJ", "BMIN", "BPA"]
 
-    dt = xr.open_datatree(store_url, engine="zarr", chunks=None)
+    # cache=False: the tree would otherwise keep a float64 copy of the column
+    dt = xr.open_datatree(store_url, engine="zarr", chunks=None, cache=False)
     nodes = [dt[name].ds for name in dt.children if name.startswith("band")]
     nodes = [ds for ds in nodes if column in ds]
     if not nodes:
@@ -491,10 +494,22 @@ def dt2fits(
         ref = dst[0]
         nband = len(dst)
         freqs = np.array([ds.attrs["freq_out"] for ds in dst])
-        cube = np.stack([ds[column].values for ds in dst], axis=0)  # (band, corr, ny, nx)
         wsums = np.stack([ds.WSUM.values for ds in dst], axis=0)  # (band, corr)
         wsum = wsums.sum(axis=0)  # (corr,)
-        _, ncorr, ny, nx = cube.shape
+        # one band at a time: the cube is built in the output dtype, already
+        # normalised, and the MFS image accumulates in float64 alongside --
+        # stacking the float64 column and then normalising and casting it held
+        # three copies of the cube (D58)
+        ncorr, ny, nx = dst[0][column].shape
+        cube = np.empty((nband, ncorr, ny, nx), dtype=otype) if do_cube else None
+        cube_mfs = np.zeros((ncorr, ny, nx)) if do_mfs else None
+        for b, ds in enumerate(dst):
+            band = ds[column].values
+            if do_mfs:
+                cube_mfs += band if norm_wsum else band * wsums[b][:, None, None]
+            if do_cube:
+                cube[b] = band / wsums[b][:, None, None] if norm_wsum else band
+            del band
         radec = (ref.attrs["ra"], ref.attrs["dec"])
         l0 = float(ref.attrs.get("l0", 0.0))
         m0 = float(ref.attrs.get("m0", 0.0))
@@ -534,10 +549,7 @@ def dt2fits(
             for k, v in drop_card.items():
                 hdr[k] = v
             hdr["WSUM"] = float(wsum[0])
-            if norm_wsum:
-                cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
-            else:
-                cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
+            cube_mfs /= wsum[:, None, None]
             save_fits(
                 cube_mfs,
                 basename + f"_time{timeid}_mfs.fits",
@@ -582,9 +594,8 @@ def dt2fits(
                 hdr[k] = v
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = float(wsums[i, 0])
-            cube_out = cube / wsums[:, :, None, None] if norm_wsum else cube
             save_fits(
-                cube_out,
+                cube,
                 basename + f"_time{timeid}.fits",
                 hdr,
                 overwrite=True,

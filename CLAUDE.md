@@ -87,8 +87,10 @@ rediscovery:
 * **Profiling loop:** the maintainer drops stimela logs into `tmp/` for comparison (e.g.
   `tmp/logs_dirty_and_init` as the legacy baseline vs `tmp/logs_imager*`). Start with
   `stimela.stats.summary.txt` (wall / CPU% / peak-mem / total-I/O per step), then the per-step
-  logs. The imager progress lines carry per-task post-gc RSS telemetry — read it before
-  theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`).
+  logs. The imager progress lines carry per-task post-gc RSS, wall and CPU telemetry — read it
+  before theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`). For
+  where the time goes inside the remote calls, set `PFB_RAY_TIMELINE` and `PFB_CPROFILE_DIR`
+  and read them with `scripts/profile_report.py`.
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
   (serialisation, lazy loading, retention) reproduces on the test MS (extract
   `tests/data/test_ascii_1h60.0s.MS.tar.gz` to scratch) with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
@@ -128,3 +130,17 @@ src/pfb_imaging/
 
 `scripts/` holds profiling and automation helpers, plus `scripts/msv4_issues/` reproducers
 and `scripts/check_docs.py`, which gates this file and the wiki against each other.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `ratt-ru/pfb-imaging`, read and edited through `gh api`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Decisions go into the `docs/wiki/design-decisions.md` D-ledger, not `docs/adr/`. See `docs/agents/domain.md`.

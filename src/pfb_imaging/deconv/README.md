@@ -27,7 +27,7 @@ methods/attributes. To contribute an algorithm:
 
 1. Write a regulariser: a plain class with `psi`, `nu` and
    `prox(v, vout, lam, sigma=1.0)` = `prox_{(lam/sigma) g}(v/sigma)` in-place.
-   Optional fast paths (`dual_update`) and reweighting hooks
+   Optional fast paths (`dual_update`, the worker-held `dual_step`) and reweighting hooks
    (`init_reweighting`/`update_weights`/`reweight_active`) are sniffed, not required.
 2. Register a factory in `deconv/presets.py` mapping CLI options to a `PFBSolver`.
 3. Algorithms that do not decompose as forward/prox implement the

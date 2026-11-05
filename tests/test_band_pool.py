@@ -94,3 +94,74 @@ def test_shut_down_pool_refuses_to_dispatch():
     parts = [[_part(rng, 8, 8, 16, 16)] for _ in range(2)]
     with pytest.raises(ValueError, match="band results"):
         HessTreeRay(parts, 8, 8, 16, 16, etas=0.01, workers=pool).dot(rng.standard_normal((2, 8, 8)))
+
+
+@pytest.mark.parametrize("nband", [1, 2])
+def test_call_stats_pair_worker_time_with_the_round_trip(band_pool, nband):
+    """call_stats reports each role method's calls since the last report, then resets.
+
+    nband == 1 is the in-process path; nband == 2 goes through Ray actors.
+    """
+    rng = np.random.default_rng(7)
+    pool = band_pool(nband)
+    pool.call_stats()  # flush whatever earlier users of the shared pool left
+    parts = [[_part(rng, 8, 8, 16, 16)] for _ in range(nband)]
+    hess = HessTreeRay(parts, 8, 8, 16, 16, etas=0.1, workers=pool)
+    x = rng.standard_normal((nband, 8, 8))
+    hess.dot(x)
+    hess.dot(x)
+
+    stats = pool.call_stats()
+    assert stats["init_hess"]["calls"] == 1
+    hd = stats["hess_dot"]
+    assert hd["calls"] == 2
+    assert hd["roundtrip_s"] >= hd["exec_max_s"] >= hd["exec_mean_s"] > 0
+    assert hd["cores"] >= 0
+    assert pool.call_stats() == {}  # reset
+
+
+def test_log_telemetry_reports_calls_and_worker_memory(band_pool):
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    rng = np.random.default_rng(8)
+    pool = band_pool(2)
+    pool.call_stats()
+    HessTreeRay([[_part(rng, 8, 8, 16, 16)] for _ in range(2)], 8, 8, 16, 16, workers=pool).dot(
+        rng.standard_normal((2, 8, 8))
+    )
+    pool.log_telemetry(Log())
+    assert any(line.startswith("band workers hess_dot: 1 calls") and "Ray overhead" in line for line in lines)
+    assert sum(line.startswith("band worker pid") and "shm" in line for line in lines) == 2
+
+
+def test_driver_work_overlapping_dual_begin_is_not_its_round_trip(band_pool):
+    """The driver's band-summed analysis runs between dispatch and ray.get; keep it apart."""
+    import time
+
+    lines = []
+
+    class Log:
+        def info(self, msg):
+            lines.append(msg)
+
+    pool = band_pool(2)
+    nxmax, nymax = pool.init_psi(16, 16, ("self", "db1"), 1)
+    pool.init_dual()
+    pool.call_stats()
+    t0 = time.perf_counter()
+    pending = pool.dual_begin(np.ones((2, 16, 16)), 1.0)
+    time.sleep(0.5)  # stands in for the driver's own analysis
+    pool.dual_finish(pending, np.ones((2, nxmax, nymax)), np.empty((2, 16, 16)))
+    wall = time.perf_counter() - t0
+    db = pool.call_stats()["dual_begin"]
+    assert db["overlap_s"] >= 0.5
+    assert db["roundtrip_s"] + db["overlap_s"] <= wall
+    pending = pool.dual_begin(np.ones((2, 16, 16)), 1.0)
+    pool.dual_finish(pending, np.ones((2, nxmax, nymax)), np.empty((2, 16, 16)))
+    pool.log_telemetry(Log())
+    (line,) = [line for line in lines if line.startswith("band workers dual_begin:")]
+    assert "driver work overlapped" in line and "Ray overhead" not in line

@@ -19,6 +19,11 @@ capture file, so there are two ways to capture -- use either or both.
 
    The directory must be writable from every node running workers.
 
+   ``pfb deconv`` honours the same variable, but its band workers are
+   long-lived actors: each writes one ``band_worker-...`` capture spanning its
+   whole life, closed by the driver at the end of the run (a run killed before
+   then leaves no worker captures).
+
 2. The driver -- the process you launch. It is not a Ray task, so (1) does
    not cover it, yet it does the uv-counts reduction between the passes, holds
    the task results and runs the MFS PSF fit. To profile it, start the driver

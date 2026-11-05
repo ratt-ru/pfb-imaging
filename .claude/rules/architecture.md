@@ -77,14 +77,16 @@ rationale ledger: `docs/wiki/design-decisions.md`.
    the Ray Serve `Degridder` deployment and the driver live in `core/degrid.py`; the pure
    MSv4<->kernel seam is `utils/degrid.py`. All numerics go through
    `pfb_model_spec.utils.degrid`. Applies a meerkat-beams Mueller beam per baseline group
-   with `--beam-model` (D55). Load-bearing decisions: D38-D42, D55.
+   with `--beam-model` (D55). Flat chunks are held at their band's weighted frequency, which
+   is deconv's forward model; `--spectral linear` interpolates between the apparent model at
+   each chunk's end channels (D59). Load-bearing decisions: D38-D42, D55, D59.
 
 `pfb hci` is the separate high-cadence-imaging front-end.
 `pfb hci-msv4` is hci on MSv4 (xarray-ms/arcae), run side by side with `hci` until the two are
 shown to agree up to chunking, after which it replaces it. One `HciWorker` actor per worker reads
 and images one image per call, prefetching the next on a thread, so visibilities never enter the
 object store; a single `CubeWriter` actor assembles `(band, time-block)` slabs and writes each
-once to integer zarr regions -- no synchronizer, no `region="auto"` (D56). `--images-per-chunk`
+once to integer zarr regions -- no synchronizer, no `region="auto"` (D60). `--images-per-chunk`
 (default 128) is the TIME chunk only; `--max-simul-chunks` (default 2) bounds writer memory.
 Selection is by name (`--field-names`/`--spw-names`/`--scan-names`), as `degrid`. Behaviour
 changes from `hci`: gain flags are honoured, `FLAG_ROW` is not (xarray-ms ignores it when `FLAG`
@@ -142,7 +144,8 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
   Classify antennas on `ANTENNA_DISH_DIAMETER`, never on `telescope_name` (it is
   broadcast from `OBSERVATION::TELESCOPE_NAME` and is identical for every
   antenna). The cross group's beam is stored as `Re(B)` (D46).
-* **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8) and `MASK` (u1).
+* **The tree is uniformly at `--precision`** except `UVW`/`FREQ` (always f8), `MASK` (u1) and
+  the scratch's `COUNTS_INDEX` (i8 cell indices).
   ducc enforces this; it is not a memory optimisation (D27).
 * **Memory discipline — do not regress** (`docs/wiki/memory-and-ray.md` has the measured
   story; D44 is the test-harness equivalent):
@@ -158,7 +161,7 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
     store and pass the path (D10; #339). They land in the object store and show as `shm`.
     The one deliberate exception is `hci-msv4`: each finished image goes worker -> writer as a
     Ray ref, because the single writer is what assembles the slabs; visibilities still never
-    leave the worker (D56).
+    leave the worker (D60).
   * Read the per-task post-gc telemetry in the progress lines before theorising:
     ratcheting post-gc `anon` per pid = below-Python retention; ratcheting `shm` = arrays
     shipped through the object store; flat with a high peak = per-task transients.

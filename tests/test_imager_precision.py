@@ -23,7 +23,8 @@ from pfb_imaging.core.imager import imager as imager_core
 from pfb_imaging.utils.misc import GRIDDER_EPSILON_FLOOR, check_gridder_epsilon
 
 # ducc takes these as f8 whatever the vis precision; MASK is a uint8 flag array
-DTYPE_EXCEPTIONS = {"UVW": np.float64, "FREQ": np.float64, "MASK": np.uint8}
+# COUNTS_INDEX is the scratch counts' flat cell index, not data (weighting.sparse_counts)
+DTYPE_EXCEPTIONS = {"UVW": np.float64, "FREQ": np.float64, "MASK": np.uint8, "COUNTS_INDEX": np.int64}
 
 PRECISIONS = {"single": (np.float32, np.complex64), "double": (np.float64, np.complex128)}
 

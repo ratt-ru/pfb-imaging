@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-10-16T06:44:11Z
-last_verified_commit: 9e05b33
+timestamp: 2026-10-30T12:00:00Z
+last_verified_commit: bc66298
 ---
 
 # Image and beam orientation conventions (hci)
@@ -164,6 +164,12 @@ The `.dt` imager+deconv path now follows the same discipline (D20): `.dt` dims
 are `("corr", "y", "x")`, the scratch beam is `(m_beam, l_beam)`-ordered, and
 its x-major seams are the same two (ducc `.T` views, `fitcleanbeam
 yx_order=True`) plus `save_fits(yx_order=True)`.
+On the `.dt` path the stored `BEAM` is placed by
+`utils/stokes2vis_msv4.beam_on_image_grid`: offset partitions through
+`reproject_and_interp_scat_beam`, single-field ones by bilinear interpolation at
+pfb-model-spec's `pixel_lm` — East at low x, the map degrid also uses. Before #355
+the single-field branch used ascending x as l and stored the beam mirrored
+east-west (design-decisions.md D55).
 Pinned by `tests/test_beam_orientation.py` (point-source wgridder orientation,
 elliptical-beam reproject vs analytic with rephasing and non-square output,
 `fitcleanbeam` order-invariance), and the refactor was verified bitwise-
@@ -184,6 +190,7 @@ no maps, no reprojection, no transposes.
 Sources: `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`,
 `beam_gain_for_source`, `build_scaffold` -- the scaffold header),
 `src/pfb_imaging/utils/stokes2im.py` (coordinate assignment), `src/pfb_imaging/utils/beam.py`,
+`src/pfb_imaging/utils/stokes2vis_msv4.py` (`beam_on_image_grid`),
 `utils/fits.py` (`save_fits`/`set_wcs`), commits `547458f`, `330bc5d`,
 `a516530`; meerkat-beams `616906b` + PR landmanbester/meerkat-beams#8;
 ratt-ru/pfb-imaging#263, ratt-ru/breifast#208.

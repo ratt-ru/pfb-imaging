@@ -810,9 +810,10 @@ def scratch_time_chunks(prefix, product):
 def read_pfb_counts(prefix, product, bandid, grouping, filter_counts_level, npix_super):
     """Rebuild the density grid pfb actually used, from the ``.scratch`` store.
 
-    The reduced counts grid never reaches the ``.dt`` -- the driver holds it in
-    memory between passes -- so it is re-summed here from the per-piece
-    ``COUNTS`` over the same group the driver would use, then put through pfb's
+    The reduced counts grid never reaches the ``.dt``, so it is re-summed here
+    from the per-piece sparse counts (``COUNTS_INDEX``/``COUNTS_VALUE``, see
+    ``weighting.sparse_counts``) over the same group the driver would use, then
+    put through pfb's
     own ``filter_extreme_counts`` and ``box_sum_counts`` so the script cannot
     drift from the code it is checking.
 
@@ -829,6 +830,8 @@ def read_pfb_counts(prefix, product, bandid, grouping, filter_counts_level, npix
     Raises:
         FileNotFoundError: if the ``.scratch`` store is absent (pfb was run
             without ``--keep-scratch``).
+        ValueError: if the pieces carry no counts: pfb skips them under natural
+            weighting (``--robustness`` unset).
     """
     # deferred: heavy imports on a rarely-taken path (only when comparing grids)
     import xarray as xr
@@ -857,8 +860,12 @@ def read_pfb_counts(prefix, product, bandid, grouping, filter_counts_level, npix
     counts = None
     for name in sorted(members):
         for _, child in dt[name].children.items():
-            c = child.ds.COUNTS.values
-            counts = c.copy() if counts is None else counts + c
+            ds = child.ds
+            if "COUNTS_INDEX" not in ds:
+                raise ValueError(f"{store} holds no uv counts; pfb only stores them under robust weighting")
+            if counts is None:
+                counts = np.zeros(ds.COUNTS_INDEX.attrs["shape"], dtype=ds.COUNTS_VALUE.dtype)
+            counts.reshape(-1)[ds.COUNTS_INDEX.values] += ds.COUNTS_VALUE.values
     counts = filter_extreme_counts(counts, level=filter_counts_level)
     counts = box_sum_counts(counts, npix_super)
     return np.asarray(counts[0], dtype=np.float64), sorted(members)
@@ -969,6 +976,9 @@ def weight_grid_pair(a, pfb_prefix, wsc_wpath, bandid, verbose=True):
         )
     except FileNotFoundError as e:
         print(f"  NOTE: skipping the weight-grid comparison ({e} absent; pfb needs --keep-scratch)")
+        return None
+    except ValueError as e:
+        print(f"  NOTE: skipping the weight-grid comparison ({e})")
         return None
 
     wf = load2d(wsc_wpath)[0]

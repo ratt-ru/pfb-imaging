@@ -150,6 +150,8 @@ class SelectedNode:
         scan_name: The node's single scan name.
         field_radec: `(ra, dec)` of `FIELD_PHASE_CENTER_DIRECTION`, radians.
         corr_types: The `polarization` coord values, e.g. `("XX", "XY", "YX", "YY")`.
+        freq: The selected channel frequencies in Hz, in node order (so
+            descending for a descending spectral window).
     """
 
     path: str
@@ -162,6 +164,7 @@ class SelectedNode:
     scan_name: str
     field_radec: np.ndarray
     corr_types: tuple[str, ...]
+    freq: np.ndarray
 
 
 def select_vis_nodes(
@@ -239,6 +242,7 @@ def select_vis_nodes(
                 scan_name=str(scan_name),
                 field_radec=field_radec,
                 corr_types=tuple(str(p) for p in node.ds.polarization.values),
+                freq=full_freqs[chan0 : int(keep[-1]) + 1],
             )
         )
     return out

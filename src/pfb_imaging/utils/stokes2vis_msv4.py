@@ -11,16 +11,18 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard
+from pfb_model_spec.utils.degrid import pixel_lm
+from rarg_python_patterns.multiton import Multiton
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import eval_beam, reproject_and_interp_scat_beam
-from pfb_imaging.utils.memprof import memray_task, task_memory
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG, eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
-from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, weight_data
+from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, sparse_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -31,7 +33,7 @@ def safe_stokes_vis(*args, **kwargs):
     # each completed task would otherwise leave its fully loaded node behind
     # until a rare gen-2 GC. Ray workers run many tasks sequentially, ramping
     # RSS by ~a node per task (observed >100 GB/worker OOM); collect on exit.
-    with memray_task("stokes_vis"):
+    with profile_task("stokes_vis") as clock:
         try:
             ret = stokes_vis(*args, **kwargs)
         finally:
@@ -40,7 +42,7 @@ def safe_stokes_vis(*args, **kwargs):
     # RSS that ratchets up across a worker's sequential tasks indicates
     # retention below Python (arcae/casacore caches, allocator arenas), which
     # gc cannot touch; shm growth is Ray object-store pages (see memprof).
-    return ret, task_memory()
+    return ret, {**task_memory(), **clock}
 
 
 def real_beam_maps(maps):
@@ -99,6 +101,71 @@ def integration_edges(time: np.ndarray, interval: np.ndarray) -> tuple[float, fl
     return float(np.nanmin(lo)), float(np.nanmax(hi))
 
 
+def beam_on_image_grid(
+    beam_small: np.ndarray,
+    l_beam: np.ndarray,
+    m_beam: np.ndarray,
+    radec: np.ndarray,
+    radec_grid: np.ndarray,
+    cell_rad: float,
+    nx: int,
+    ny: int,
+    corr: list[str],
+    l0: float = 0.0,
+    m0: float = 0.0,
+) -> np.ndarray:
+    """Place a field-centred beam onto the (Y, X) output image grid.
+
+    A mosaic or facet partition (pointing off the image tangent point, or a
+    `--target` offset) is reprojected SIN->SIN and is 0 outside the beam's
+    coverage. A single-field partition is interpolated bilinearly and is 1
+    outside the small grid.
+
+    Args:
+        beam_small: `(ncorr, m_beam.size, l_beam.size)` (Y, X)-ordered maps
+            centred on the field's pointing.
+        l_beam: 1D l of the beam columns (deg, East positive).
+        m_beam: 1D m of the beam rows (deg, North positive).
+        radec: The field's pointing centre (rad).
+        radec_grid: The image tangent point (rad).
+        cell_rad: Image cell size (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        corr: Correlation/Stokes labels, one per map.
+        l0: Image-centre offset from the tangent point (rad).
+        m0: Image-centre offset from the tangent point (rad).
+
+    Returns:
+        `(ncorr, ny, nx)` float64 beam on the image grid, without the n-term.
+    """
+    offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
+    if offset_centre:
+        return reproject_and_interp_scat_beam(
+            beam_small,
+            l_beam,
+            m_beam,
+            radec,
+            radec_grid,
+            np.rad2deg(cell_rad),
+            nx,
+            ny,
+            "".join(corr),
+            l0=l0,
+            m0=m0,
+        ).astype(np.float64)
+    # sky (l, m) of each pixel under the wgridder conventions: East is at LOW x
+    # (flip_u=False), North at high y. degrid evaluates its beam on the same
+    # pixel_lm, so the two cannot disagree on orientation (#355).
+    flip_u, flip_v, _, x0, y0 = wgridder_conventions(0.0, 0.0)
+    geom = {"nx": nx, "ny": ny, "cell_rad": cell_rad, "x0": x0, "y0": y0, "flip_u": flip_u, "flip_v": flip_v}
+    l_px, m_px = pixel_lm(geom)
+    yy, xx = np.meshgrid(np.rad2deg(m_px), np.rad2deg(l_px), indexing="ij")
+    beam = np.zeros((len(corr), ny, nx), dtype=np.float64)
+    for c in range(len(corr)):
+        beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+    return beam
+
+
 def stokes_vis(
     dc1=None,
     dc2=None,
@@ -130,6 +197,7 @@ def stokes_vis(
     nx=None,
     ny=None,
     nthreads=1,
+    compute_counts=True,
 ):
     """
     MSv4 version of stokes2vis.
@@ -141,7 +209,8 @@ def stokes_vis(
             ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
         nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
-            COUNTS grid used to build imaging weights in pass 2.
+            COUNTS grid used to build imaging weights in pass 2 (stored sparse,
+            see ``weighting.sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -154,7 +223,8 @@ def stokes_vis(
         chan_average: number of channels to average together.
         bda_decorr: decorrelation threshold for baseline dependent averaging.
         max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
-        beam_model: model to use for beam correction. Can be "katbeam" or None.
+        beam_model: model to use for beam correction: "katbeam", None, a
+            BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
         radec_new: optional (ra, dec) in radians to rephase to (the common mosaic
             phase centre / tangent point). None means image about the field centre.
@@ -162,7 +232,11 @@ def stokes_vis(
             body); resolved to an in-plane (l0, m0) at this piece's own time.
         nx, ny: output image size; the piece's BEAM is placed on this grid here
             in pass 1 (#281) so pass 2 consumes it as is.
-        nthreads: threads available to the task (parallelises the COUNTS gridding).
+        nthreads: threads available to the task (parallelises the COUNTS gridding
+            and meerkat-beams' rotation average).
+        compute_counts: grid and store the piece's uv counts. Only robust
+            weighting reads them, so natural weighting skips a full padded-grid
+            allocation and gridding per piece.
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
     # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
@@ -494,7 +568,6 @@ def stokes_vis(
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
     if nx is None or ny is None:
         raise ValueError("nx and ny must be provided to place the beam on the image grid")
-    cell_deg = np.rad2deg(cell_rad)
     radec_grid = np.asarray(radec_new) if radec_new is not None else radec  # image tangent point
 
     # --target: in-plane image-centre offset, resolved at this piece's own time
@@ -531,6 +604,10 @@ def stokes_vis(
     nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
 
     beam_imre_ratio = 0.0
+    if isinstance(beam_model, Multiton):
+        # the driver ships a recipe; this worker's wizard, prefilters and all,
+        # persists across its tasks
+        beam_model = beam_model.instance
     if beam_model is None:
         # no aperture beam: the stored response is 1/n (compresses well in zarr)
         beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
@@ -566,6 +643,8 @@ def stokes_vis(
                     i=p,
                     j=p,
                     verbose=0,
+                    nthreads=nthreads,
+                    pa_tolerance=BEAM_PA_TOLERANCE_DEG,
                 )
                 raw_maps.append(bmap)
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
@@ -600,33 +679,9 @@ def stokes_vis(
         else:
             raise ValueError(f"Unknown beam model {beam_model}")
 
-        offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
-        if offset_centre:
-            # mosaic/facet: SIN->SIN reprojection from the field-centred grid
-            # onto the image grid (fills 0 outside the beam's coverage, so an
-            # off-grid partition contributes nothing where its beam is unknown)
-            beam = reproject_and_interp_scat_beam(
-                beam_small,
-                l_beam,
-                m_beam,
-                radec,
-                radec_grid,
-                cell_deg,
-                nx,
-                ny,
-                "".join(corr),
-                l0=l0,
-                m0=m0,
-            ).astype(real_type)
-        else:
-            # single-field path: same bilinear interpolant grid_partition used
-            # to apply (fill 1.0 outside the small grid, as before)
-            x = (-(nx / 2) + np.arange(nx)) * cell_rad
-            y = (-(ny / 2) + np.arange(ny)) * cell_rad
-            yy, xx = np.meshgrid(np.rad2deg(y), np.rad2deg(x), indexing="ij")
-            beam = np.zeros((ncorr, ny, nx), dtype=real_type)
-            for c in range(ncorr):
-                beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
+        beam = beam_on_image_grid(
+            beam_small, l_beam, m_beam, radec, radec_grid, cell_rad, nx, ny, corr, l0=l0, m0=m0
+        ).astype(real_type)
         # fold the n-term (see the D22 comment above)
         beam = (beam / nlm[None, :, :]).astype(real_type)
 
@@ -637,19 +692,20 @@ def stokes_vis(
 
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
-    counts = _compute_counts(
-        uvw,
-        freq,
-        mask,
-        wgt_cf,
-        nx_pad,
-        ny_pad,
-        cell_rad,
-        cell_rad,
-        wgt_cf.dtype,
-        usign=1.0 if flip_u else -1.0,
-        vsign=1.0 if flip_v else -1.0,
-    )
+    if compute_counts:
+        counts = _compute_counts(
+            uvw,
+            freq,
+            mask,
+            wgt_cf,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            wgt_cf.dtype,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
 
     data_vars = {}
     data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
@@ -658,7 +714,9 @@ def stokes_vis(
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
     data_vars["BEAM"] = (("corr", "y", "x"), beam)
-    data_vars["COUNTS"] = (("corr", "u", "v"), counts)
+    if compute_counts:
+        data_vars.update(sparse_counts(counts))
+        del counts  # the dense grid is not needed through the zarr write
 
     coords = {
         "chan": (("chan",), freq),

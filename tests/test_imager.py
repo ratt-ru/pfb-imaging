@@ -357,7 +357,9 @@ def _open_first_vis_node(ms_name):
     raise RuntimeError("no visibility node in test MS")
 
 
-def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None):
+def _run_stokes_vis(
+    ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None, compute_counts=True
+):
     """Drive stokes_vis directly (no Ray) on the test MS's first node.
 
     flag_chans: optional channel slice to flag before conversion, used to shift
@@ -402,9 +404,39 @@ def _run_stokes_vis(ms_name, scratch, radec_new=None, beam_model=None, cell_rad=
         ny=64,
         radec_new=radec_new,
         nthreads=1,
+        compute_counts=compute_counts,
     )
     ds = xr.open_datatree(scratch, engine="zarr", chunks=None)[f"band{bandid:04d}_time{timeid:04d}/{piece}"].ds
     return ds.load()
+
+
+@pytest.mark.parametrize("given, expected", [(None, None), (-2.0, -2.0), (0.5, 0.5), (2.0, 2.0), (2.5, None)])
+def test_effective_robustness_maps_above_two_to_natural(given, expected):
+    from pfb_imaging.core.imager import effective_robustness
+
+    assert effective_robustness(given) == expected
+
+
+def test_stokes_vis_resolves_a_multiton_beam(ms_name, tmp_path):
+    """Pass 1 gets the beam as a Multiton recipe, built once per worker."""
+    from rarg_python_patterns.multiton import Multiton
+
+    cell = 2e-5
+    direct = _run_stokes_vis(ms_name, str(tmp_path / "d.scratch"), beam_model="katbeam", cell_rad=cell)
+    recipe = _run_stokes_vis(ms_name, str(tmp_path / "m.scratch"), beam_model=Multiton(str, "katbeam"), cell_rad=cell)
+    np.testing.assert_array_equal(recipe.BEAM.values, direct.BEAM.values)
+    assert recipe.attrs["beam_model"] == "katbeam"
+
+
+def test_stokes_vis_skips_counts_when_asked(ms_name, tmp_path):
+    """Natural weighting never reads the counts, so the driver turns them off."""
+    with_counts = _run_stokes_vis(ms_name, str(tmp_path / "c.scratch"))
+    without = _run_stokes_vis(ms_name, str(tmp_path / "n.scratch"), compute_counts=False)
+    assert {"COUNTS_INDEX", "COUNTS_VALUE"} <= set(with_counts.data_vars)
+    assert with_counts.COUNTS_INDEX.size > 0
+    assert not {"COUNTS_INDEX", "COUNTS_VALUE"} & set(without.data_vars)
+    for var in ("VIS", "WEIGHT", "MASK", "UVW", "BEAM"):
+        np.testing.assert_array_equal(without[var].values, with_counts[var].values)
 
 
 def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path, needs_rephasing):
@@ -573,6 +605,41 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     assert (iy, ix) == (22, 32), f"rephased beam peak at ({iy},{ix}), expected (22,32)"
     # reprojection fills 0 outside the small-grid coverage; interior peak ~1
     assert new.BEAM.values[0, 22, 32] > 0.99
+
+
+def test_freq_bounds_span_the_bands_own_channels(ms_name, ms_meta, tmp_path):
+    """`freq_bounds` is the extent of the channels a band was assigned, not a nominal edge.
+
+    Eight channels at three per image make three bands of 3, 3 and 2 channels, while
+    equal-width nominal edges would put the cuts a third of a channel off. degrid sizes
+    and places its chunks from these bounds, and flat mode holds each chunk at the band
+    they say it belongs to (D59), so a nominal edge misassigns channels to a neighbour.
+    """
+    outname = str(tmp_path / "uneven")
+    imager_core(
+        [Path(ms_name)],
+        outname,
+        channels_per_image=3,
+        product="I",
+        field_of_view=1.0,
+        psf=False,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+        log_directory=str(tmp_path / "logs"),
+    )
+    dt = xr.open_datatree(outname + "_I.dt", engine="zarr", chunks=None)
+    try:
+        bands = sorted(n for n in dt.children if n.startswith("band"))
+        got = np.array([dt[b].ds.attrs["freq_bounds"] for b in bands])
+    finally:
+        dt.close()
+    freq = np.sort(ms_meta.freq)
+    half = np.abs(np.diff(freq)).min() / 2
+    blocks = [slice(0, 3), slice(3, 6), slice(6, 8)]
+    expected = np.array([[freq[s].min() - half, freq[s].max() + half] for s in blocks])
+    np.testing.assert_allclose(got, expected, rtol=0, atol=1.0)
 
 
 def test_imager_no_psf_quicklook(ms_name, tmp_path):
@@ -797,6 +864,45 @@ def test_baseline_groups_refuses_non_meerkat_before_ray_init(ms_name, tmp_path, 
             overwrite=True,
             keep_ray_alive=True,
         )
+
+
+def test_imager_checks_beam_frequencies_before_ray_init(ms_name, tmp_path, monkeypatch):
+    """A beam that cannot cover the data stops the run on the driver, not in pass 1.
+
+    Each piece evaluates its beam at a weighted mean of its own channels, so
+    checking every selected channel bounds every frequency a worker can ask for.
+    """
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    built = []
+
+    class _Recorder:
+        def __init__(self, **kw):
+            self.kw, self.checked = kw, []
+            built.append(self)
+
+        def check_freqs(self, freq):
+            self.checked.append(np.asarray(freq))
+            raise ValueError("requested frequencies [...] MHz fall outside the BDS frequency range")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+    monkeypatch.setattr(imager_mod, "BeamWizard", _Recorder)
+
+    with pytest.raises(ValueError, match="fall outside"):
+        imager_core(
+            [Path(ms_name)],
+            str(tmp_path / "nope"),
+            beam_model="L",
+            field_of_view=1.0,
+            overwrite=True,
+            keep_ray_alive=True,
+        )
+    assert built and built[0].kw["freq_extrapolation"] == "scale"
+    checked = np.concatenate(built[0].checked)
+    assert checked.min() == pytest.approx(1.0e9) and checked.max() == pytest.approx(1.7e9)
 
 
 def test_baseline_groups_without_beam_model_skips_the_telescope_guard(ms_name, tmp_path, monkeypatch):
@@ -1039,8 +1145,12 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
     built = []
 
     class _FakeWizard:
-        def __init__(self, band=None, group=None):
+        def __init__(self, band=None, group=None, freq_extrapolation="raise"):
+            assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
+
+        def check_freqs(self, freq):
+            return freq
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
     monkeypatch.setattr(baselines_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
@@ -1050,9 +1160,9 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
 
-    # zarr.open_group is the first call after the beam block; set_image_size
-    # runs BEFORE it and would stop too early to observe the wizards.
-    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+    # init_ray is the first call after the beam block; set_image_size runs
+    # BEFORE it and would stop too early to observe the wizards.
+    monkeypatch.setattr(imager_mod, "init_ray", _stop)
 
     with pytest.raises(RuntimeError, match="stop after beam construction"):
         imager_core(
@@ -1183,8 +1293,12 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
     built = []
 
     class _FakeWizard:
-        def __init__(self, band=None, group=None):
+        def __init__(self, band=None, group=None, freq_extrapolation="raise"):
+            assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
+
+        def check_freqs(self, freq):
+            return freq
 
     monkeypatch.setattr(imager_mod, "BeamWizard", _FakeWizard)
     monkeypatch.setattr(baselines_mod, "check_telescope_is_meerkat", lambda *a, **kw: None)
@@ -1194,7 +1308,7 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
     def _stop(*a, **kw):
         raise RuntimeError("stop after beam construction")
 
-    monkeypatch.setattr(imager_mod.zarr, "open_group", _stop)
+    monkeypatch.setattr(imager_mod, "init_ray", _stop)
 
     with pytest.raises(RuntimeError, match="stop after beam construction"):
         imager_core(

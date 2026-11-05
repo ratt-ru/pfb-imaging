@@ -4,6 +4,7 @@ import numpy as np
 from numba import njit, prange
 from scipy.linalg import norm
 
+from pfb_imaging.utils import inplace
 from pfb_imaging.utils import logging as pfb_logging
 
 log = pfb_logging.get_logger("PM")
@@ -12,29 +13,19 @@ _FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
 
 
 @njit(**_FAST_JIT)
-def _nb_vdot_pair(bp, b):
-    """Compute np.vdot(bp, b) and np.vdot(bp, bp) in a single pass."""
+def _nb_vdot_triple(bp, b):
+    """Compute vdot(bp, b), vdot(bp, bp) and vdot(b, b) in a single pass."""
     n = bp.size
     bp_f = bp.ravel()
     b_f = b.ravel()
-
     num = 0.0
     den = 0.0
+    bsq = 0.0
     for i in prange(n):
         num += bp_f[i] * b_f[i]
         den += bp_f[i] * bp_f[i]
-
-    return num, den
-
-
-@njit(**_FAST_JIT)
-def _nb_normalize(b, bnorm):
-    """b /= bnorm in-place."""
-    n = b.size
-    b_f = b.ravel()
-    inv = 1.0 / bnorm
-    for i in prange(n):
-        b_f[i] *= inv
+        bsq += b_f[i] * b_f[i]
+    return num, den, bsq
 
 
 def power_method_numba(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
@@ -49,7 +40,6 @@ def power_method_numba(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, r
     bp = b.copy()
     taop = 0.0
     tnorm = 0.0
-    tvdot = 0.0
     tcopy = 0.0
     tii = time()
     while eps > tol and k < maxit:
@@ -57,31 +47,27 @@ def power_method_numba(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, r
         b = aop(bp)
         taop += time() - ti
         ti = time()
-        bnorm = np.linalg.norm(b)
+        beta_num, beta_den, bsq = _nb_vdot_triple(bp, b)
+        bnorm = np.sqrt(bsq)
         tnorm += time() - ti
         betap = beta
-        ti = time()
-        beta_num, beta_den = _nb_vdot_pair(bp, b)
         beta = beta_num / beta_den
-        _nb_normalize(b, bnorm)
-        tvdot += time() - ti
         eps = np.abs(beta - betap) / betap
         k += 1
         ti = time()
-        np.copyto(bp, b)
+        # normalise straight into bp: b may be aop's reused output buffer
+        inplace.axpby(bp, 1.0 / bnorm, b, 0.0, b)
         tcopy += time() - ti
 
         if not k % report_freq and verbosity > 1:
             log.info(f"At iteration {k} eps = {eps:.3e}")
     ttot = time() - tii
     if verbosity > 1:
-        print(f"power_method_numba timing breakdown (fraction of {ttot:.3f}s):")
-        print(f"  aop:      {taop / ttot:.3f}")
-        print(f"  norm:     {tnorm / ttot:.3f}")
-        print(f"  vdot+div: {tvdot / ttot:.3f}")
-        print(f"  copyto:   {tcopy / ttot:.3f}")
-        ttally = taop + tnorm + tvdot + tcopy
-        print(f"  accounted:{ttally / ttot:.3f}")
+        ttally = taop + tnorm + tcopy
+        log.info(
+            f"power_method_numba timing breakdown (fraction of {ttot:.3f}s): aop {taop / ttot:.3f}, "
+            f"norms {tnorm / ttot:.3f}, normalise {tcopy / ttot:.3f}, accounted {ttally / ttot:.3f}"
+        )
 
     if k == maxit:
         if verbosity:
@@ -89,7 +75,7 @@ def power_method_numba(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, r
     else:
         if verbosity:
             log.info(f"Success, converged after {k} iterations. beta = {beta:.3e}")
-    return beta, b
+    return beta, bp
 
 
 def power_method(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
@@ -130,13 +116,12 @@ def power_method(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_
             log.info(f"At iteration {k} eps = {eps:.3e}")
     ttot = time() - tii
     if verbosity > 1:
-        print(f"power_method timing breakdown (fraction of {ttot:.3f}s):")
-        print(f"  aop:      {taop / ttot:.3f}")
-        print(f"  norm:     {tnorm / ttot:.3f}")
-        print(f"  vdot+div: {tvdot / ttot:.3f}")
-        print(f"  copyto:   {tcopy / ttot:.3f}")
         ttally = taop + tnorm + tvdot + tcopy
-        print(f"  accounted:{ttally / ttot:.3f}")
+        log.info(
+            f"power_method timing breakdown (fraction of {ttot:.3f}s): aop {taop / ttot:.3f}, "
+            f"norm {tnorm / ttot:.3f}, vdot+div {tvdot / ttot:.3f}, copyto {tcopy / ttot:.3f}, "
+            f"accounted {ttally / ttot:.3f}"
+        )
 
     if k == maxit:
         if verbosity:

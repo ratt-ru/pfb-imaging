@@ -125,7 +125,8 @@ cabs:
         info:
           Number of time integrations per degridding chunk.
           Default -1 degrids the whole partition in one chunk.
-          This is a memory and parallelism knob only.
+          With --beam-model each chunk gets one beam, averaged over its parallactic angles.
+          Shorter chunks follow the beam's rotation more closely, at the cost of more beam evaluations.
         dtype: int
         default: -1
         metadata:
@@ -158,6 +159,14 @@ cabs:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
+        metadata:
+          rich_help_panel: WGridder
+      spectral:
+        info:
+          Spectral model across a degridding chunk.
+          Use flat to hold the model and beam at the weighted frequency of the chunk's band, as deconv does.
+          Use linear to interpolate between the model and beam at each chunk's end channels.
+        default: flat
         metadata:
           rich_help_panel: WGridder
       beam-model:

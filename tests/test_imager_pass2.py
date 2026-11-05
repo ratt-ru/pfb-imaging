@@ -6,7 +6,7 @@ import xarray as xr
 
 from pfb_imaging.core.imager import _concat_pieces
 from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions
-from pfb_imaging.utils.weighting import _compute_counts
+from pfb_imaging.utils.weighting import _compute_counts, sparse_counts
 
 
 def _synth_partition(nrow=200, seed=0, nx=16, ny=16):
@@ -264,14 +264,14 @@ def test_loaded_piece_does_not_pin_data_on_the_scratch_tree(tmp_path):
     xr.Dataset(
         {
             "VIS": (("corr", "row", "chan"), np.ones((1, nrow, 2), dtype=np.complex128)),
-            "COUNTS": (("corr", "u", "v"), np.ones((1, 8, 8))),
+            **sparse_counts(np.ones((1, 8, 8))),
         }
     ).to_zarr(store, group="band0000_time0000/p0", consolidated=False)
     dt = xr.open_datatree(store, engine="zarr", chunks=None, cache=False, consolidated=False)
 
     tracemalloc.start()
     ds = _load_piece(dt["band0000_time0000/p0"])
-    assert "COUNTS" not in ds
+    assert "COUNTS_INDEX" not in ds and "COUNTS_VALUE" not in ds
     loaded = ds.VIS.nbytes
     del ds
     gc.collect()
