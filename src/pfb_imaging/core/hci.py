@@ -47,6 +47,7 @@ from pfb_imaging.utils.hci_common import (
 from pfb_imaging.utils.hci_common import (
     make_fits_header as _make_fits_header,  # noqa: F401
 )
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env
 from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, set_image_size
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import batch_stokes_image
@@ -160,6 +161,7 @@ def hci(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
     pfb_logging.log_to_file(logname)
+    phases = PhaseClock(log)
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -210,7 +212,7 @@ def hci(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
     runtime_env = {
-        "env_vars": env_vars,
+        "env_vars": {**env_vars, **profile_env()},
         "worker_process_setup_hook": setup_ray_worker,
     }
 
@@ -226,6 +228,7 @@ def hci(
         object_store_memory=mem_limit,
         log=log,
     )
+    phases.lap("Ray start")
 
     fds_fs, fds_url = uri_and_fs(output_dataset)
     if fds_fs.exists(fds_url):
@@ -428,6 +431,7 @@ def hci(
     )
 
     log.info("Scaffolding complete")
+    phases.lap("Mappings and scaffold")
 
     # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
     if beam_model is None:
@@ -435,6 +439,7 @@ def hci(
     else:
         log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
         beam_model = hci_beam_wizard(output_dataset, beam_band)
+        phases.lap("Beam wizard")
 
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))
@@ -459,6 +464,18 @@ def hci(
     tasks = []
     channel_width = {}
     ncompleted = 0
+    task_times = dict.fromkeys(("wall_s", "cpu_s", "read_s", "image_s", "write_s"), 0.0)
+
+    def completed(ready) -> None:
+        _, _, mem = ray.get(ready)[0]
+        for k in task_times:
+            task_times[k] += mem[k]
+        log.info(
+            f"Processed {ncompleted}/{ntasks} [{format_memory(mem)} | read {mem['read_s']:.1f} s "
+            f"image {mem['image_s']:.1f} s write {mem['write_s']:.1f} s]",
+            extra=pfb_logging.NO_MARKUP,
+        )
+
     # if opts.temp-dir is None dir will be /tmp
     with TemporaryDirectory(prefix="hci-", dir=temp_dir) as tempdir:
         synchronizer = ProcessSynchronizer(tempdir)
@@ -566,8 +583,7 @@ def hci(
                         if len(tasks) > max_simul_chunks:
                             ncompleted += 1
                             ready, tasks = ray.wait(tasks, num_returns=1)
-                            timeid, bandid = ray.get(ready)[0]
-                            log.info(f"Processed {ncompleted}/{ntasks}")
+                            completed(ready)
 
             # release the main MS TableProxy before opening the next MS — see
             # https://github.com/ratt-ru/pfb-imaging/issues/241
@@ -578,9 +594,15 @@ def hci(
         while remaining_tasks:
             ncompleted += 1
             ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-            timeid, bandid = ray.get(ready)[0]
-            log.info(f"Processed {ncompleted}/{ntasks}")
+            completed(ready)
 
+    phases.lap("Imaging", mem=True)
+    if ncompleted:
+        t = task_times
+        log.info(
+            f"Tasks (s, summed over {ncompleted}): wall {t['wall_s']:.0f} cpu {t['cpu_s']:.0f} "
+            f"read {t['read_s']:.0f} image {t['image_s']:.0f} write {t['write_s']:.0f}"
+        )
     log.info("Computing means")
     cwidths = []
     for _, val in channel_width.items():
@@ -630,10 +652,14 @@ def hci(
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(fds_url, mode="r+")
     log.info("Reduction complete")
+    phases.lap("Means")
 
     if fits_vars is not None:
         write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
+        phases.lap("FITS")
 
+    phases.summary()
+    dump_timeline(log)
     log.info(f"All done after {time.time() - time_start}s")
 
     if not keep_ray_alive:

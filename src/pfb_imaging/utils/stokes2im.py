@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from functools import partial
 
@@ -17,6 +18,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import resolve_target_radec, synthesize_uvw
 from pfb_imaging.utils.hci_common import beam_for_band, beam_gain_for_source
+from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import fitcleanbeam, radec_to_lm, to_unix_time
 from pfb_imaging.utils.weighting import (
     _compute_counts,
@@ -84,90 +86,103 @@ def batch_stokes_image(
     synchronizer=None,
     wgt_mode="l2",
 ):
-    # load chunk
-    ds.load(scheduler="sync")
-    if jones is not None:
-        # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler="sync").values
+    """Image one chunk of rows as nested ``stokes_image`` tasks and write them to the cube.
 
-    # slice out rows corresponding to single images and submit compute task
-    ntime = utime.size
-    tasks = []
-    # we need to start counting from zero
-    rbin_idx = rbin_idx - rbin_idx.min()
-    for t0 in range(0, ntime, integrations_per_image):
-        nmax = np.minimum(ntime, t0 + integrations_per_image)
-        time_slice = slice(t0, nmax)
-        ridx = rbin_idx[time_slice]
-        rcnts = rbin_counts[time_slice]
-        row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
-        dsi = ds[{"row": row_slice}]
-
+    Returns:
+        ``(timeid, bandid, mem)``: ``mem`` is ``task_memory()`` plus the task's ``wall_s``/
+        ``cpu_s`` and its ``read_s`` (loading the chunk), ``image_s`` (waiting on the nested
+        tasks) and ``write_s`` (the region write).
+    """
+    with profile_task("batch_stokes_image") as clock:
+        # load chunk
+        tic = time.perf_counter()
+        ds.load(scheduler="sync")
         if jones is not None:
-            jones_slice = jones[time_slice]
-        else:
-            jones_slice = None
+            # we do it this way to force using synchronous scheduler
+            jones = jones.load(scheduler="sync").values
+        clock["read_s"] = time.perf_counter() - tic
 
-        task = stokes_image.remote(
-            dc1=dc1,
-            dc2=dc2,
-            operator=operator,
-            ds=dsi,
-            jones=jones_slice,
-            nx=nx,
-            ny=ny,
-            freq=freq,
-            cell_rad=cell_rad,
-            utime=utime[time_slice],
-            tbin_idx=ridx,
-            tbin_counts=rcnts,
-            radec=radec,
-            antpos=antpos,
-            poltype=poltype,
-            bandid=bandid,
-            timeid=timeid,
-            msid=msid,
-            attrs=attrs,
-            nthreads=nthreads,
-            precision=precision,
-            sigma_column=sigma_column,
-            weight_column=weight_column,
-            model_column=model_column,
-            product=product,
-            check_ants=check_ants,
-            phase_dir=phase_dir,
-            beam_model=beam_model,
-            target=target,
-            robustness=robustness,
-            min_padding=min_padding,
-            filter_counts_level=filter_counts_level,
-            npix_super=npix_super,
-            psf_relative_size=psf_relative_size,
-            inject_transients=inject_transients,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-            natural_grad=natural_grad,
-            eta=eta,
-            cg_tol=cg_tol,
-            cg_maxit=cg_maxit,
-            psf_out=psf_out,
-            weight_grid_out=weight_grid_out,
-            l2_reweight_dof=l2_reweight_dof,
-            wgt_mode=wgt_mode,
-            channels_per_bin=channels_per_bin,
-        )
+        # slice out rows corresponding to single images and submit compute task
+        ntime = utime.size
+        tasks = []
+        # we need to start counting from zero
+        rbin_idx = rbin_idx - rbin_idx.min()
+        for t0 in range(0, ntime, integrations_per_image):
+            nmax = np.minimum(ntime, t0 + integrations_per_image)
+            time_slice = slice(t0, nmax)
+            ridx = rbin_idx[time_slice]
+            rcnts = rbin_counts[time_slice]
+            row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
+            dsi = ds[{"row": row_slice}]
 
-        tasks.append(task)
+            if jones is not None:
+                jones_slice = jones[time_slice]
+            else:
+                jones_slice = None
 
-    # wait for all tasks to finish and get result
-    dso = ray.get(tasks)
+            task = stokes_image.remote(
+                dc1=dc1,
+                dc2=dc2,
+                operator=operator,
+                ds=dsi,
+                jones=jones_slice,
+                nx=nx,
+                ny=ny,
+                freq=freq,
+                cell_rad=cell_rad,
+                utime=utime[time_slice],
+                tbin_idx=ridx,
+                tbin_counts=rcnts,
+                radec=radec,
+                antpos=antpos,
+                poltype=poltype,
+                bandid=bandid,
+                timeid=timeid,
+                msid=msid,
+                attrs=attrs,
+                nthreads=nthreads,
+                precision=precision,
+                sigma_column=sigma_column,
+                weight_column=weight_column,
+                model_column=model_column,
+                product=product,
+                check_ants=check_ants,
+                phase_dir=phase_dir,
+                beam_model=beam_model,
+                target=target,
+                robustness=robustness,
+                min_padding=min_padding,
+                filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
+                psf_relative_size=psf_relative_size,
+                inject_transients=inject_transients,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                natural_grad=natural_grad,
+                eta=eta,
+                cg_tol=cg_tol,
+                cg_maxit=cg_maxit,
+                psf_out=psf_out,
+                weight_grid_out=weight_grid_out,
+                l2_reweight_dof=l2_reweight_dof,
+                wgt_mode=wgt_mode,
+                channels_per_bin=channels_per_bin,
+            )
 
-    # write output chunks
-    dso = xr.concat(dso, dim="TIME")
-    dso.to_zarr(fds_store, region="auto", synchronizer=synchronizer, safe_chunks=False)
+            tasks.append(task)
 
-    return timeid, bandid
+        # wait for all tasks to finish and get result
+        tic = time.perf_counter()
+        dso = ray.get(tasks)
+        clock["image_s"] = time.perf_counter() - tic
+
+        # write output chunks
+        tic = time.perf_counter()
+        dso = xr.concat(dso, dim="TIME")
+        dso.to_zarr(fds_store, region="auto", synchronizer=synchronizer, safe_chunks=False)
+        clock["write_s"] = time.perf_counter() - tic
+    return timeid, bandid, {**task_memory(), **clock}
 
 
 @ray.remote
