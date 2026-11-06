@@ -33,7 +33,7 @@ from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, 
 from pfb_imaging.utils.misc import check_gridder_epsilon, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
-from pfb_imaging.utils.stokes2im_msv4 import HciConfig
+from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, HciConfig
 
 log = pfb_logging.get_logger("HCI-MSV4")
 
@@ -632,8 +632,9 @@ def hci_msv4(
         # waiting here keeps actor start-up (imports, MS opens) out of the imaging phase
         ray.get([a.__ray_ready__.remote() for a in actors])
         phases.lap("Actor start")
-        _dispatch(plan, workers, writer, max_simul_chunks)
+        stats = _dispatch(plan, workers, writer, max_simul_chunks)
         phases.lap("Imaging", mem=True)
+        _log_utilisation(stats)
         ray.get([w.close.remote() for w in workers])
         out = ray.get(writer.finalise.remote())
         log.info(f"Flagged {out['nflagged']} images with excess rms")
@@ -666,7 +667,48 @@ def _each_tree(ms: list[str]) -> Iterator[xr.DataTree]:
             dt.close()
 
 
-def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
+_WORKER_TIMES = ("wall_s", "cpu_s", "read_s", "wait_s") + tuple(f"{k}_s" for k in IMAGE_SECTIONS)
+
+
+def _image_times(mem: dict) -> str:
+    """The per-image part of a progress line: the read and where the imaging time went."""
+    parts = " ".join(f"{k} {mem[f'{k}_s']:.1f}" for k in IMAGE_SECTIONS)
+    return f" | read {mem['read_s']:.1f} s (blocked {mem['wait_s']:.1f}) {parts}"
+
+
+def _log_utilisation(stats: dict) -> None:
+    """Summarise where the workers' time went over the imaging phase.
+
+    ``busy`` is the summed call wall time over ``nworkers x`` the phase's wall time; the
+    rest is idle, charged by the dispatcher to why each idle worker had no work: ``writer``
+    (backpressure: too many unacknowledged writer calls), ``window`` (the next item is in a
+    time block beyond ``--max-simul-chunks``) or ``drain`` (nothing left to hand out).
+    """
+    n, nw, span = stats["nimages"], stats["nworkers"], stats["wall_s"]
+    if not n or span <= 0:
+        return
+    t = stats["times"]
+    capacity = nw * span
+    per = " ".join(f"{k} {t[f'{k}_s'] / n:.2f}" for k in IMAGE_SECTIONS)
+    idle = " ".join(f"{k} {100 * v / capacity:.0f}%" for k, v in stats["idle_s"].items())
+    log.info(
+        f"Workers: {n} images in {span:.0f} s on {nw} workers ({n / span:.2f} images/s); "
+        f"busy {100 * t['wall_s'] / capacity:.0f}% "
+        f"(blocked on reads {100 * t['wait_s'] / capacity:.0f}%), idle: {idle or 'none'}; "
+        f"per image (s): call {t['wall_s'] / n:.2f} read {t['read_s'] / n:.2f} "
+        f"blocked {t['wait_s'] / n:.2f} {per}; cores per busy worker {t['cpu_s'] / max(t['wall_s'], 1e-9):.1f}"
+    )
+    w = stats["writer"]
+    if w["adds"]:
+        log.info(
+            f"Writer: busy {100 * w['busy_s'] / span:.0f}% of the imaging phase; {w['adds']} adds "
+            f"({1e3 * (w['busy_s'] - w['write_s']) / w['adds']:.0f} ms each); {w['slabs']} slabs, "
+            f"{w['write_s']:.0f} s writing {w['write_gb']:.1f} GB "
+            f"({w['write_gb'] / max(w['write_s'], 1e-9):.2f} GB/s, {w['write_s'] / max(w['slabs'], 1):.1f} s per slab)"
+        )
+
+
+def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> dict:
     """Deal items to workers with a one-item lookahead; at most ``max_open`` time blocks in the writer.
 
     Each worker's next item is promised at call time so its prefetch is always for an item it
@@ -684,6 +726,11 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
         writer: The CubeWriterImpl actor handle.
         max_open: Maximum number of time blocks open in the writer at once.
 
+    Returns:
+        Telemetry for ``_log_utilisation``: ``nimages``, ``nworkers``, ``wall_s`` (dispatch
+        span), ``times`` (worker times summed over images), ``idle_s`` (idle worker-seconds
+        by reason) and ``writer`` (``CubeWriterImpl.stats``).
+
     Raises:
         Exception: The first worker or writer error, re-raised as Ray delivers it; a worker's
             error is preferred over the writer error it causes.
@@ -698,6 +745,9 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
     max_writing = 2 * len(workers)
     nitems = len(plan.items)
     ndone = 0
+    times = dict.fromkeys(_WORKER_TIMES, 0.0)
+    idle_s = {"writer": 0.0, "window": 0.0, "drain": 0.0}
+    t_start = time.perf_counter()
 
     def allowed(item: WorkItem) -> bool:
         lowest_open = min(slabs_left) if slabs_left else np.iinfo(np.int64).max
@@ -736,7 +786,17 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
             idle.remove(w)
         if not imaging and not writing:
             raise RuntimeError("hci-msv4 dispatch stalled with work remaining; this is a bug")
+        if idle:
+            if len(writing) >= max_writing:
+                why = "writer"
+            elif queue:
+                why = "window"
+            else:
+                why = "drain"
+        t_wait = time.perf_counter()
         (ref,), _ = ray.wait(list(imaging) + list(writing), num_returns=1)
+        if idle:
+            idle_s[why] += len(idle) * (time.perf_counter() - t_wait)
         if ref in imaging:
             w, item = imaging.pop(ref)
             try:
@@ -746,7 +806,11 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
                 raise
             idle.append(w)
             ndone += 1
-            log.info(f"Imaged: {ndone} / {nitems} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
+            for k in _WORKER_TIMES:
+                times[k] += mem[k]
+            log.info(
+                f"Imaged: {ndone} / {nitems} [{format_memory(mem)}{_image_times(mem)}]", extra=pfb_logging.NO_MARKUP
+            )
             continue
         item, mem_ref = writing.pop(ref)
         try:
@@ -761,3 +825,11 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> None:
             slabs_left[block] -= 1
             if slabs_left[block] == 0:
                 del slabs_left[block]
+    return {
+        "nimages": ndone,
+        "nworkers": len(workers),
+        "wall_s": time.perf_counter() - t_start,
+        "times": times,
+        "idle_s": idle_s,
+        "writer": ray.get(writer.stats.remote()),
+    }

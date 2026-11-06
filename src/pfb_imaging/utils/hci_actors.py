@@ -6,6 +6,7 @@ it lives, which is what makes the slab writes safe without a lock.
 """
 
 import gc
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -13,9 +14,9 @@ import xarray as xr
 import zarr
 from rarg_python_patterns.multiton import Multiton
 
-from pfb_imaging.utils.memprof import task_memory
+from pfb_imaging.utils.memprof import SectionClock, cpu_seconds, task_memory
 from pfb_imaging.utils.msv4 import get_engine
-from pfb_imaging.utils.stokes2im_msv4 import image_item, read_item
+from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, image_item, read_item
 
 _IMAGE_VARS = ("cube", "beam_weight", "psf")
 _SCALAR_VARS = ("weight", "rms", "nonzero", "psf_maj", "psf_min", "psf_pa")
@@ -76,6 +77,7 @@ class CubeWriterImpl:
             self._w2sum = np.zeros(nstokes)
         self._slabs: dict[tuple[int, int], dict[str, np.ndarray]] = {}
         self._counts: dict[tuple[int, int], int] = {}
+        self._stats = {"adds": 0, "busy_s": 0.0, "write_s": 0.0, "write_gb": 0.0, "slabs": 0}
         # the imported stack is ~300k tracked objects and a full collect costs ~0.4 s; freezing
         # them makes the per-call collect below scan only what each call allocated
         gc.collect()  # frozen garbage would never be collected
@@ -85,6 +87,16 @@ class CubeWriterImpl:
         """Number of slabs currently held in memory."""
         return len(self._slabs)
 
+    def stats(self) -> dict:
+        """Time spent in ``add`` so far.
+
+        Returns:
+            ``adds``; ``busy_s``, the wall time inside ``add`` calls; ``write_s`` and
+            ``write_gb``, the part of it spent writing slabs to zarr and the uncompressed
+            bytes written; ``slabs``, the number written.
+        """
+        return dict(self._stats)
+
     def add(self, result: dict) -> tuple[tuple[int, int], dict] | None:
         """Store one image; write its slab once every expected image has arrived.
 
@@ -93,15 +105,18 @@ class CubeWriterImpl:
 
         Returns:
             ``((band, block), mem)`` when that slab was written, with ``mem`` this process's
-            post-gc ``task_memory()``; otherwise None.
+            post-gc ``task_memory()`` plus the slab write's ``wall_s``/``cpu_s``; otherwise None.
 
         Raises:
             KeyError: If the image's slab is not in the plan.
         """
+        t0 = time.perf_counter()
         try:
             return self._add(result)
         finally:
             gc.collect()  # actor-method boundary: deserialised results sit in cycles
+            self._stats["adds"] += 1
+            self._stats["busy_s"] += time.perf_counter() - t0
 
     def _add(self, result: dict) -> tuple[tuple[int, int], dict] | None:
         t = int(result["time_index"])
@@ -141,11 +156,16 @@ class CubeWriterImpl:
         if self._counts[key] < self._expected[key]:
             return None
         tlen = slab[self._img_vars[0]].shape[1]
+        wall0, cpu0 = time.perf_counter(), cpu_seconds()
         for v in self._img_vars:
             self._root[v][:, b, t0 : t0 + tlen] = slab[v]
+        clock = {"wall_s": time.perf_counter() - wall0, "cpu_s": cpu_seconds() - cpu0}
+        self._stats["write_s"] += clock["wall_s"]
+        self._stats["write_gb"] += sum(a.nbytes for a in slab.values()) / 2**30
+        self._stats["slabs"] += 1
         del self._slabs[key], self._counts[key], slab
         gc.collect()  # so the telemetry shows the slab released
-        return key, task_memory()
+        return key, {**task_memory(), **clock}
 
     def finalise(self) -> dict:
         """Write per-image scalars, flag, cube_mean, psf2 and channel_width.
@@ -253,8 +273,11 @@ class HciWorkerImpl:
         gc.freeze()  # as CubeWriterImpl: the per-call collects then cost milliseconds, not ~0.4 s
 
     def _read(self, item):
+        """Read one item; returns ``(ItemData, wall seconds)``, timed on whichever thread ran it."""
+        t0 = time.perf_counter()
         node = self._dts[item.ms_index].instance[item.node_path]
-        return read_item(node, item.region, self._cfg, self._data_group, self._gain_specs[item.ms_index])
+        inp = read_item(node, item.region, self._cfg, self._data_group, self._gain_specs[item.ms_index])
+        return inp, time.perf_counter() - t0
 
     def image(self, item, next_item=None) -> tuple[dict, dict]:
         """Image ``item`` (prefetched if it was the previous call's ``next_item``) and start reading ``next_item``.
@@ -265,12 +288,16 @@ class HciWorkerImpl:
 
         Returns:
             (result, mem): the image result dict plus ``time_index``/``band_index``, and the
-            post-gc ``task_memory()`` telemetry. Call with ``num_returns=2`` so the image ref
+            post-gc ``task_memory()`` telemetry with the call's times: ``wall_s``/``cpu_s`` (the
+            whole call; CPU counts the prefetch thread), ``read_s`` (this item's read, wherever
+            it ran), ``wait_s`` (time this call blocked on it: the unhidden part of the read) and
+            ``<section>_s`` per ``IMAGE_SECTIONS``. Call with ``num_returns=2`` so the image ref
             goes to the writer and only the small telemetry returns to the driver.
 
         Raises:
             RuntimeError: A prefetch is pending for an item other than ``item`` (driver bug).
         """
+        wall0, cpu0 = time.perf_counter(), cpu_seconds()
         try:
             # refuse before reading: a synchronous read now would race the pending prefetch
             if self._pending is not None and self._pending[0] != _key(item):
@@ -278,18 +305,28 @@ class HciWorkerImpl:
             if self._pending is not None:
                 _, fut = self._pending
                 self._pending = None  # cleared first so a failed read surfaces here, once
-                inp = fut.result()
+                inp, read_s = fut.result()
                 del fut  # the Future holds the ItemData too; the telemetry below must not count it
             else:
-                inp = self._read(item)
+                inp, read_s = self._read(item)
+            wait_s = time.perf_counter() - wall0
             if next_item is not None:
                 self._pending = (_key(next_item), self._executor.submit(self._read, next_item))
-            result = image_item(inp, self._cfg, self._beam_model, self._nx_psf, self._ny_psf)
+            sections = SectionClock(IMAGE_SECTIONS)
+            result = image_item(inp, self._cfg, self._beam_model, self._nx_psf, self._ny_psf, clock=sections)
             result["time_index"] = item.time_index
             result["band_index"] = item.band_index
             del inp
             gc.collect()
-            return result, task_memory()
+            mem = task_memory()
+            mem.update({f"{k}_s": v for k, v in sections.totals.items()})
+            mem.update(
+                read_s=read_s,
+                wait_s=wait_s,
+                wall_s=time.perf_counter() - wall0,
+                cpu_s=cpu_seconds() - cpu0,
+            )
+            return result, mem
         except Exception as e:
             e.add_note(f"while imaging {item}")
             raise

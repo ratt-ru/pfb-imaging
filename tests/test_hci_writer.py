@@ -75,6 +75,19 @@ def test_slab_written_once_complete_out_of_order(tmp_path):
     assert np.isnan(cube[0, 0, 2]).all()  # block 1 not yet written: fill
 
 
+def test_writer_times_its_adds_and_slab_writes(tmp_path):
+    store = _store(tmp_path)
+    w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)
+    w.add(_result(1, 0, 2.0))
+    _, mem = w.add(_result(0, 0, 1.0))
+    assert mem["wall_s"] > 0 and "cpu_s" in mem  # the slab write's own clock
+    st = w.stats()
+    assert st["adds"] == 2 and st["slabs"] == 1
+    assert st["busy_s"] >= st["write_s"] == pytest.approx(mem["wall_s"])
+    # one slab of two (cube, psf) images, 16x16 float32 each
+    assert st["write_gb"] == pytest.approx(2 * 2 * NY * NX * 4 / 2**30)
+
+
 def test_short_last_block(tmp_path):
     store = _store(tmp_path)
     w = CubeWriterImpl(store, _expected(5, 2), 2, np.array([1e6]), 1.5)

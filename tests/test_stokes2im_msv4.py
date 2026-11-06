@@ -92,6 +92,29 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
         assert out[key].shape == (1,) and np.isnan(out[key]).all()
 
 
+def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node):
+    """The worker's per-image clock: a prefetched read is timed apart from the wait on it."""
+    from pfb_imaging.core.hci_msv4 import WorkItem
+    from pfb_imaging.utils.hci_actors import HciWorkerImpl
+    from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS
+
+    _, sel = node
+    items = [WorkItem(0, sel.path, slice(t, t + 1), slice(0, sel.nchan), t, 0, 0) for t in range(2)]
+    worker = HciWorkerImpl([ms_name], _cfg(robustness=None), 128, 128)
+    try:
+        _, first = worker.image(items[0], items[1])
+        _, second = worker.image(items[1])
+    finally:
+        worker.close()
+    for mem in (first, second):
+        assert {"wall_s", "cpu_s", "read_s", "wait_s"} | {f"{k}_s" for k in IMAGE_SECTIONS} <= set(mem)
+        assert mem["dirty_s"] > 0 and mem["psf_s"] > 0
+        sections = sum(mem[f"{k}_s"] for k in IMAGE_SECTIONS)
+        assert mem["wait_s"] + sections <= mem["wall_s"]
+    assert first["wait_s"] >= first["read_s"]  # nothing prefetched: the call read it itself
+    assert second["read_s"] > 0  # read on the prefetch thread, still reported
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
 def test_matches_stokes_image(ms_name, sky_truth, node, phase_dir):

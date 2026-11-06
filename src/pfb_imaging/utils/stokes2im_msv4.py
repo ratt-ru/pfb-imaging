@@ -25,6 +25,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.gains import load_node_gains
 from pfb_imaging.utils.hci_common import beam_for_band, beam_gain_for_source
+from pfb_imaging.utils.memprof import SectionClock
 from pfb_imaging.utils.misc import fitcleanbeam, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
 from pfb_imaging.utils.weighting import (
@@ -222,7 +223,12 @@ def read_item(
     )
 
 
-def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: int) -> dict:
+IMAGE_SECTIONS = ("prep", "beam", "dirty", "psf", "post")
+
+
+def image_item(
+    inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: int, clock: SectionClock | None = None
+) -> dict:
     """Image one :class:`ItemData` exactly as the legacy ``stokes_image`` does.
 
     Args:
@@ -231,6 +237,10 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
         beam_model: Beam model object for primary-beam weighting, or None.
         nx_psf: PSF width in pixels (computed once by the driver).
         ny_psf: PSF height in pixels.
+        clock: If given, wall time is charged to its ``IMAGE_SECTIONS``: ``prep``
+            (weighting, rephasing, imaging weights), ``beam`` (``beam_for_band``),
+            ``dirty`` and ``psf`` (the two ``vis2dirty`` calls) and ``post``
+            (beam division, accumulation, rms and the PSF fit).
 
     Returns:
         Dict of numpy arrays in output dtypes: ``cube`` ``(nstokes, ny, nx)``,
@@ -241,6 +251,14 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
     # deferred: ducc objects break Ray serialisation of the enclosing module's functions (stokes2im precedent)
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
+
+    if clock is not None:
+        clock.start()
+        tick = clock.tick
+    else:
+
+        def tick(name: str) -> None:
+            pass
 
     set_num_threads(cfg.nthreads)
     resize_thread_pool(cfg.nthreads)
@@ -502,6 +520,7 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
     residual = np.zeros((nstokes, ny, nx), dtype=real_type)
     psf = np.zeros((nstokes, ny_psf, nx_psf), dtype=real_type)
     pbeam = np.zeros((nstokes, ny, nx), dtype=real_type)
+    tick("prep")
     for b, fi in enumerate(range(0, nchan, channels_per_bin)):
         ff = min(fi + channels_per_bin, nchan)
         datab = data[:, :, fi:ff]
@@ -524,6 +543,7 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
             nx,
             ny,
         )
+        tick("beam")
 
         for c in range(nstokes):
             if weightb[c, ~flagb].sum() == 0:
@@ -554,6 +574,7 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
                 verbosity=0,
                 dirty=residualb.T,
             )
+            tick("dirty")
 
             psfb = np.zeros((ny_psf, nx_psf), dtype=real_type)
             vis2dirty(
@@ -580,6 +601,7 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
                 verbosity=0,
                 dirty=psfb.T,
             )
+            tick("psf")
             # normalize by sum of weights to get Jy/beam units
             # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
             psf_max = psfb.max()
@@ -604,6 +626,7 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
             residual[c] += residualb * wsums[c, b]
             psf[c] += psfb * wsums[c, b]
             pbeam[c] += pbeamb[c] * wsums[c, b]
+            tick("post")
 
     # normalise by wsum
     wsum = wsums.sum(axis=1)
@@ -635,4 +658,5 @@ def image_item(inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: i
     out["orig_phase_dir_dec"] = np.float64(radec[1])
     out["time_mjd"] = np.float64(time_out)
     out["freq_out"] = np.float64(freq_out)
+    tick("post")
     return out
