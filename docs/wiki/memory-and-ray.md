@@ -3,7 +3,7 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-20T15:00:00Z
+timestamp: 2026-11-06T12:00:00Z
 last_verified_commit: 743c4ad
 ---
 
@@ -427,6 +427,20 @@ Four Serve-specific notes:
   `2 x nworkers` unacked `add` calls, each pinning one image in the object store, before the
   driver stops dispatching. A worker's `shm` can therefore sit at a few images while the writer
   catches up; the cap bounds it, and a ratchet beyond that is still the signal above.
+
+**Where the hci time goes.** Both `hci` and `hci-msv4` end with `Time by phase:` and honour
+`PFB_RAY_TIMELINE`/`PFB_CPROFILE_DIR`/`PFB_MEMRAY_DIR`. In `hci-msv4` each `Imaged:` line adds
+the call's `read` (the item's read, usually on the prefetch thread), `blocked` (the part of it
+the call waited for, i.e. not hidden behind the previous image) and the `image_item` sections
+`prep`/`beam`/`dirty`/`psf`/`post`; each `Wrote band` line carries the slab write's wall/cpu.
+After imaging, a `Workers:` line gives the workers' busy fraction and their idle worker-time by
+cause -- `writer` (the `2 x nworkers` ack cap was hit), `window` (the next item lies beyond
+`--max-simul-chunks`) and `drain` (nothing left to hand out) -- and a `Writer:` line gives the
+writer's busy fraction and slab write throughput. The writer serialises every slab write, so
+a larger `--images-per-chunk` costs imaging throughput exactly when `writer` idle time grows.
+The worker and writer actors take one `ActorCapture` each (stopped in `close`/`finalise`).
+Legacy `hci`'s `Processed:` lines carry each `batch_stokes_image` task's read, image (waiting
+on its nested `stokes_image` tasks) and write times.
 
 ## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
 
