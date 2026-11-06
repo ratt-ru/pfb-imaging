@@ -14,7 +14,7 @@ import xarray as xr
 import zarr
 from rarg_python_patterns.multiton import Multiton
 
-from pfb_imaging.utils.memprof import SectionClock, cpu_seconds, task_memory
+from pfb_imaging.utils.memprof import ActorCapture, SectionClock, cpu_seconds, task_memory
 from pfb_imaging.utils.msv4 import get_engine
 from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, image_item, read_item
 
@@ -78,6 +78,8 @@ class CubeWriterImpl:
         self._slabs: dict[tuple[int, int], dict[str, np.ndarray]] = {}
         self._counts: dict[tuple[int, int], int] = {}
         self._stats = {"adds": 0, "busy_s": 0.0, "write_s": 0.0, "write_gb": 0.0, "slabs": 0}
+        # opt-in cProfile/memray (PFB_CPROFILE_DIR, PFB_MEMRAY_DIR); written by finalise
+        self._capture = ActorCapture("cube_writer")
         # the imported stack is ~300k tracked objects and a full collect costs ~0.4 s; freezing
         # them makes the per-call collect below scan only what each call allocated
         gc.collect()  # frozen garbage would never be collected
@@ -112,7 +114,8 @@ class CubeWriterImpl:
         """
         t0 = time.perf_counter()
         try:
-            return self._add(result)
+            with self._capture.call():
+                return self._add(result)
         finally:
             gc.collect()  # actor-method boundary: deserialised results sit in cycles
             self._stats["adds"] += 1
@@ -177,8 +180,10 @@ class CubeWriterImpl:
             RuntimeError: If any slab is still incomplete.
         """
         try:
-            return self._finalise()
+            with self._capture.call():
+                return self._finalise()
         finally:
+            self._capture.stop()  # finalise is the writer's last call
             gc.collect()
 
     def _finalise(self) -> dict:
@@ -269,6 +274,8 @@ class HciWorkerImpl:
         self._beam_model = beam_model
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hci-read")
         self._pending = None  # (key, Future[ItemData])
+        # opt-in cProfile/memray (PFB_CPROFILE_DIR, PFB_MEMRAY_DIR); written by close
+        self._capture = ActorCapture("hci_worker")
         gc.collect()
         gc.freeze()  # as CubeWriterImpl: the per-call collects then cost milliseconds, not ~0.4 s
 
@@ -297,6 +304,10 @@ class HciWorkerImpl:
         Raises:
             RuntimeError: A prefetch is pending for an item other than ``item`` (driver bug).
         """
+        with self._capture.call():
+            return self._image(item, next_item)
+
+    def _image(self, item, next_item) -> tuple[dict, dict]:
         wall0, cpu0 = time.perf_counter(), cpu_seconds()
         try:
             # refuse before reading: a synchronous read now would race the pending prefetch
@@ -334,9 +345,10 @@ class HciWorkerImpl:
             gc.collect()
 
     def close(self) -> None:
-        """Drop any pending prefetch and stop the read thread."""
+        """Drop any pending prefetch, stop the read thread and write any profiles."""
         try:
             self._pending = None
             self._executor.shutdown(wait=True, cancel_futures=True)
         finally:
+            self._capture.stop()
             gc.collect()

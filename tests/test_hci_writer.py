@@ -1,5 +1,6 @@
 """CubeWriterImpl: one write per slab, fill kept for missing images, hci's reductions."""
 
+import pstats
 import random
 from collections import Counter
 
@@ -86,6 +87,21 @@ def test_writer_times_its_adds_and_slab_writes(tmp_path):
     assert st["busy_s"] >= st["write_s"] == pytest.approx(mem["wall_s"])
     # one slab of two (cube, psf) images, 16x16 float32 each
     assert st["write_gb"] == pytest.approx(2 * 2 * NY * NX * 4 / 2**30)
+
+
+def test_writer_profile_capture_is_written_at_finalise(tmp_path, monkeypatch):
+    from pfb_imaging.utils.memprof import CPROFILE_DIR_ENV, MEMRAY_DIR_ENV
+
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    prof_dir = tmp_path / "prof"
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(prof_dir))
+    w = CubeWriterImpl(_store(tmp_path, ntime=2), _expected(2, 2), 2, np.array([1e6]), 1.5)
+    for t in range(2):
+        w.add(_result(t, 0, 1.0))
+    assert not prof_dir.exists()  # nothing until the last call
+    w.finalise()
+    (f,) = prof_dir.glob("cube_writer-*.pstats")
+    assert {"_add", "_finalise"} <= {k[2] for k in pstats.Stats(str(f)).stats}
 
 
 def test_short_last_block(tmp_path):

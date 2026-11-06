@@ -92,12 +92,20 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
         assert out[key].shape == (1,) and np.isnan(out[key]).all()
 
 
-def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node):
-    """The worker's per-image clock: a prefetched read is timed apart from the wait on it."""
+def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node, tmp_path, monkeypatch):
+    """The worker's per-image clock: a prefetched read is timed apart from the wait on it.
+
+    With PFB_CPROFILE_DIR set, close writes the worker's one capture of its calls.
+    """
+    import pstats
+
     from pfb_imaging.core.hci_msv4 import WorkItem
     from pfb_imaging.utils.hci_actors import HciWorkerImpl
+    from pfb_imaging.utils.memprof import CPROFILE_DIR_ENV, MEMRAY_DIR_ENV
     from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS
 
+    monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
+    monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
     _, sel = node
     items = [WorkItem(0, sel.path, slice(t, t + 1), slice(0, sel.nchan), t, 0, 0) for t in range(2)]
     worker = HciWorkerImpl([ms_name], _cfg(robustness=None), 128, 128)
@@ -113,6 +121,8 @@ def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node)
         assert mem["wait_s"] + sections <= mem["wall_s"]
     assert first["wait_s"] >= first["read_s"]  # nothing prefetched: the call read it itself
     assert second["read_s"] > 0  # read on the prefetch thread, still reported
+    (f,) = tmp_path.glob("hci_worker-*.pstats")
+    assert "image_item" in {k[2] for k in pstats.Stats(str(f)).stats}
 
 
 @pytest.mark.slow
