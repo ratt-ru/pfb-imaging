@@ -52,7 +52,9 @@ def _stubs():
             if item.time_index == self.fail_at:
                 raise ZeroDivisionError(f"stub failure on {item.time_index}")
             time.sleep(self.delay)
-            mem = {"pid": 0, "rss_gb": 0.0, "peak_gb": 0.0}
+            # HciWorkerImpl's telemetry keys: memory, the call's clock and the image sections
+            times = ("wall_s", "cpu_s", "read_s", "wait_s", "prep_s", "beam_s", "dirty_s", "psf_s", "post_s")
+            mem = {"pid": 0, "rss_gb": 0.0, "peak_gb": 0.0, **dict.fromkeys(times, self.delay)}
             return {"time_index": item.time_index, "band_index": item.band_index}, mem
 
         def received(self):
@@ -82,6 +84,9 @@ def _stubs():
 
         def max_open(self):
             return self.max_open_blocks
+
+        def stats(self):
+            return {"adds": 0, "busy_s": 0.0, "write_s": 0.0, "write_gb": 0.0, "slabs": 0}
 
     return Item, StubWorker, StubWriter
 
@@ -191,7 +196,8 @@ def test_dispatch_invariants_in_process(monkeypatch, seed):
     writer = stub_writer()
     writer.reset(plan.expected, 2)
     writer_handle = fake.actor(writer)
-    _dispatch(plan, [fake.actor(w) for w in workers], writer_handle, 2)
+    stats = _dispatch(plan, [fake.actor(w) for w in workers], writer_handle, 2)
+    assert (stats["nimages"], stats["nworkers"]) == (len(plan.items), 3)
     got = [it for w in workers for it in w.got]
     # every item exactly once; a broken promise raises inside the stub worker
     assert sorted(got, key=lambda it: (it.time_index, it.band_index)) == sorted(
