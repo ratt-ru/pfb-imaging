@@ -29,7 +29,7 @@ from pfb_imaging.utils.hci_common import (
     write_fits_vars,
     write_transient_spectra,
 )
-from pfb_imaging.utils.memprof import format_memory
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env
 from pfb_imaging.utils.misc import check_gridder_epsilon, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
@@ -329,6 +329,7 @@ def hci_msv4(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_msv4_{timestamp}.log"
     pfb_logging.log_to_file(logname)
+    phases = PhaseClock(log)
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -426,6 +427,7 @@ def hci_msv4(
         )
     finally:
         trees.close()
+    phases.lap("Plan")
 
     # crude column arithmetic, as hci
     dc = data_column.replace(" ", "")
@@ -598,22 +600,25 @@ def hci_msv4(
         nthreads=nthreads,
     )
     gc.collect()  # every planning tree is closed; drop what they left in cycles
+    phases.lap("Checks and scaffold")
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
     init_ray(
         nworkers + 2,
         ray_address=ray_address,
-        runtime_env={"env_vars": env_vars, "worker_process_setup_hook": setup_ray_worker},
+        runtime_env={"env_vars": {**env_vars, **profile_env()}, "worker_process_setup_hook": setup_ray_worker},
         object_store_memory=None if object_store_memory is None else object_store_memory * 1e9,
         log=log,
     )
+    phases.lap("Ray start")
     actors = []
     try:
         beam_ref = None
         if beam_model is not None:
             log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
             beam_ref = ray.put(hci_beam_wizard(output_dataset, beam_band))
+            phases.lap("Beam wizard")
         # nominal CPU claims: a real claim can deadlock scheduling (D8)
         writer = ray.remote(num_cpus=1e-2)(CubeWriterImpl).remote(
             output_dataset, plan.expected, images_per_chunk, plan.channel_width, flag_excess_rms
@@ -624,10 +629,16 @@ def hci_msv4(
             for _ in range(nworkers)
         ]
         actors += workers
+        # waiting here keeps actor start-up (imports, MS opens) out of the imaging phase
+        ray.get([a.__ray_ready__.remote() for a in actors])
+        phases.lap("Actor start")
         _dispatch(plan, workers, writer, max_simul_chunks)
+        phases.lap("Imaging", mem=True)
         ray.get([w.close.remote() for w in workers])
         out = ray.get(writer.finalise.remote())
         log.info(f"Flagged {out['nflagged']} images with excess rms")
+        phases.lap("Finalise")
+        dump_timeline(log)
     finally:
         # actors would outlive this call under keep_ray_alive; killing one also
         # fails its pending tasks, which is the error path's cancellation
@@ -639,7 +650,9 @@ def hci_msv4(
 
     if fits_vars is not None:
         write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
+        phases.lap("FITS")
 
+    phases.summary()
     log.info(f"All done after {time.time() - time_start}s")
 
 
