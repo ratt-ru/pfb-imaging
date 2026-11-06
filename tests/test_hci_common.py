@@ -57,6 +57,31 @@ def test_build_scaffold_layout():
     assert default_phase_dir(np.zeros(2), np.zeros(2)) is None
 
 
+def test_build_scaffold_does_not_let_a_small_psf_cap_the_cube_chunks():
+    """A 128-pixel PSF once clipped a 3840-pixel cube's spatial chunk to 128 (#358)."""
+    ds, _ = build_scaffold(
+        np.array([5.0e9, 5.0e9 + 8.0]),
+        np.array([1.2e9]),
+        np.array([10.0]),
+        np.array([-30.0]),
+        product="I",
+        beam=True,
+        psf_out=True,
+        nx=640,
+        ny=640,
+        nx_psf=128,
+        ny_psf=128,
+        cell_deg=1e-3,
+        spatial_chunk=320,
+        images_per_chunk=2,
+        obs_label=None,
+    )
+    assert ds.cube.data.chunksize == ds.beam_weight.data.chunksize == (1, 1, 2, 320, 320)
+    assert ds.cube_mean.data.chunksize == (1, 1, 320, 320)
+    assert ds.psf.data.chunksize == (1, 1, 2, 128, 128)
+    assert ds.psf2.data.chunksize == (1, 128, 128)
+
+
 def test_default_phase_dir_with_fields_sharing_a_coordinate():
     """#320: fields sharing an RA or a Dec must not desynchronise the dedup."""
     # three distinct pointings on one Dec strip, the first one seen twice (one

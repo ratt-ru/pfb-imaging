@@ -264,7 +264,8 @@ def build_scaffold(
         psf_out: Whether PSFs are written (adds ``psf``/``psf2`` and PSF coords).
         nx, ny, nx_psf, ny_psf: Image and PSF sizes.
         cell_deg: Cell size in degrees.
-        spatial_chunk: Requested spatial chunk, clipped to the smallest image dimension.
+        spatial_chunk: Requested spatial chunk. Image variables clip it to the image, PSF
+            variables to the PSF; a 128-pixel PSF must not cap a 3840-pixel cube's chunks.
         images_per_chunk: TIME chunk.
         obs_label: Optional OBSLABEL header card.
 
@@ -276,11 +277,13 @@ def build_scaffold(
     n_times = out_times.size
     n_freqs = out_freqs.size
 
-    # guard against chunk sizes larger than the image size
-    spatial_chunk = np.minimum(spatial_chunk, min(nx, ny, nx_psf, ny_psf))
+    # guard against chunk sizes larger than the image (or PSF) size
+    psf_chunk = int(min(spatial_chunk, nx_psf, ny_psf))
+    spatial_chunk = int(min(spatial_chunk, nx, ny))
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
     cube_chunks = (1, 1, images_per_chunk, spatial_chunk, spatial_chunk)
+    psf_chunks = (1, 1, images_per_chunk, psf_chunk, psf_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
     mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
@@ -426,11 +429,11 @@ def build_scaffold(
         )
         dummy_ds["psf"] = (
             ("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
-            da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32),
+            da.empty(psf_dims, chunks=psf_chunks, dtype=np.float32),
         )
         dummy_ds["psf2"] = (
             ("STOKES", "Y_PSF", "X_PSF"),
-            da.empty((n_stokes, ny_psf, nx_psf), chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32),
+            da.empty((n_stokes, ny_psf, nx_psf), chunks=(1, psf_chunk, psf_chunk), dtype=np.float32),
         )
 
     return dummy_ds, attrs
