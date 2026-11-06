@@ -72,7 +72,8 @@ def format_memory(mem: dict) -> str:
     return line
 
 
-def _cpu_seconds() -> float:
+def cpu_seconds() -> float:
+    """This process's user plus system CPU time, in seconds, counting every thread."""
     ru = resource.getrusage(resource.RUSAGE_SELF)
     return ru.ru_utime + ru.ru_stime
 
@@ -187,13 +188,13 @@ def profile_task(name: str):
         name: capture-file prefix, normally the task name.
     """
     clock = {}
-    wall0, cpu0 = time.perf_counter(), _cpu_seconds()
+    wall0, cpu0 = time.perf_counter(), cpu_seconds()
     try:
         with memray_task(name), cprofile_task(name):
             yield clock
     finally:
         clock["wall_s"] = time.perf_counter() - wall0
-        clock["cpu_s"] = _cpu_seconds() - cpu0
+        clock["cpu_s"] = cpu_seconds() - cpu0
 
 
 class PhaseClock:
@@ -256,11 +257,11 @@ class CallClock:
     @contextlib.contextmanager
     def call(self, method: str):
         """Time the block as one call of ``method``; CPU is the whole process's."""
-        wall0, cpu0 = time.perf_counter(), _cpu_seconds()
+        wall0, cpu0 = time.perf_counter(), cpu_seconds()
         try:
             yield
         finally:
-            self.calls.setdefault(method, []).append((time.perf_counter() - wall0, _cpu_seconds() - cpu0))
+            self.calls.setdefault(method, []).append((time.perf_counter() - wall0, cpu_seconds() - cpu0))
 
     def take(self) -> dict:
         """Return ``{method: [(wall_s, cpu_s), ...]}`` in call order and start afresh."""
