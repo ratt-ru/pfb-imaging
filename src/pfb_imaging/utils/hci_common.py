@@ -1,5 +1,6 @@
 """Pieces shared by pfb hci and pfb hci-msv4. Must not import dask-ms or pyrap."""
 
+import functools
 from pathlib import Path
 
 import dask.array as da
@@ -15,7 +16,7 @@ from meerkat_beams.utils import BeamWizard
 
 from pfb_imaging import pfb_version
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION, reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION, BeamReprojection
 from pfb_imaging.utils.misc import radec_barycentre
 from pfb_imaging.utils.transients import generate_transient_spectra
 
@@ -561,6 +562,33 @@ def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq
     return gain.T[np.searchsorted(utime, time)]
 
 
+@functools.lru_cache(maxsize=2)
+def _beam_reprojection(
+    l_beam: tuple[str, bytes],
+    m_beam: tuple[str, bytes],
+    radec0: tuple[float, float],
+    radecf: tuple[float, float],
+    cell_deg: float,
+    nx: int,
+    ny: int,
+) -> BeamReprojection:
+    """One ``BeamReprojection`` per (beam grid, pointing, phase centre, image grid) in this process.
+
+    Every image of a field shares these, so an hci-msv4 worker (and a legacy hci Ray worker,
+    which is reused across tasks) builds the map once. Two entries, each a float64
+    ``(2, ny*nx)`` map: 236 MB at 3840^2. The beam grids are keyed by ``(dtype, bytes)``.
+    """
+    return BeamReprojection(
+        np.frombuffer(l_beam[1], dtype=l_beam[0]),
+        np.frombuffer(m_beam[1], dtype=m_beam[0]),
+        radec0,
+        radecf,
+        cell_deg,
+        nx,
+        ny,
+    )
+
+
 def beam_for_band(
     beam_model,
     utime,
@@ -604,17 +632,16 @@ def beam_for_band(
                 j=p,
                 verbose=0,
             )
-        pbeam = reproject_and_interp_scat_beam(
-            beam,
-            l_beam,
-            m_beam,
-            radec,
-            radec_new,
-            cell_deg,
-            nx,
-            ny,
-            product,
-        ).astype(real_type)
+        reprojection = _beam_reprojection(
+            (l_beam.dtype.str, np.ascontiguousarray(l_beam).tobytes()),
+            (m_beam.dtype.str, np.ascontiguousarray(m_beam).tobytes()),
+            (float(radec[0]), float(radec[1])),
+            (float(radec_new[0]), float(radec_new[1])),
+            float(cell_deg),
+            int(nx),
+            int(ny),
+        )
+        pbeam = reprojection(beam).astype(real_type)
 
     else:
         pbeam = np.ones((len(product), ny, nx), dtype=real_type)
