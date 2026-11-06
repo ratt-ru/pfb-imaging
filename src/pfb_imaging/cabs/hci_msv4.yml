@@ -136,6 +136,15 @@ cabs:
         default: 128
         metadata:
           rich_help_panel: Performance
+      spatial-chunk:
+        info:
+          Y and X chunk of the output cube, in pixels.
+          A chunk holds images-per-chunk x spatial-chunk^2 float32 values.
+          Clipped to the smallest image dimension.
+        dtype: int
+        default: 128
+        metadata:
+          rich_help_panel: Performance
       integrations-per-image:
         info:
           Number of time integrations per image.

@@ -242,6 +242,7 @@ def hci_msv4(
     gain_table: list[Path] | None = None,
     max_simul_chunks: int = 2,
     images_per_chunk: int = 128,
+    spatial_chunk: int = 128,
     integrations_per_image: int = 1,
     channels_per_image: int = -1,
     channels_per_bin: int = -1,
@@ -378,6 +379,8 @@ def hci_msv4(
         )
     if transfer_model_from is not None:
         log.error_and_raise("Use the degrid app to populate a model column instead", NotImplementedError)
+    if spatial_chunk < 1:
+        log.error_and_raise(f"spatial_chunk must be >= 1 (got {spatial_chunk})", ValueError)
     if max_simul_chunks < 1:
         log.error_and_raise(f"max_simul_chunks must be >= 1 (got {max_simul_chunks})", ValueError)
     if nworkers < 1:
@@ -539,7 +542,7 @@ def hci_msv4(
         nx_psf,
         ny_psf,
         cell_deg,
-        spatial_chunk=128,  # hardcode for now, as hci
+        spatial_chunk=spatial_chunk,
         images_per_chunk=images_per_chunk,
         obs_label=obs_label,
     )
@@ -550,6 +553,8 @@ def hci_msv4(
         f"Cube size = (n_stokes={nstokes}, n_freq={nband}, n_time={plan.out_times.size}, n_y={ny}, n_x={nx}); "
         f"{len(plan.items)} images"
     )
+    chunk = scaffold.cube.encoding.get("chunks") or tuple(c[0] for c in scaffold.cube.chunks)
+    log.info(f"Cube chunks = {dict(zip(scaffold.cube.dims, chunk))}: {np.prod(chunk) * 4 / 2**20:.1f} MiB uncompressed")
 
     per_image = nx * ny * (1 + (beam_model is not None)) + (nx_psf * ny_psf if psf_out else 0)
     est = max_simul_chunks * nband * images_per_chunk * per_image * nstokes * 4  # float32 slabs

@@ -223,6 +223,15 @@ def hci_msv4(
             rich_help_panel="Performance",
         ),
     ] = 128,
+    spatial_chunk: Annotated[
+        int,
+        typer.Option(
+            help="Y and X chunk of the output cube, in pixels. "
+            "A chunk holds images-per-chunk x spatial-chunk^2 float32 values. "
+            "Clipped to the smallest image dimension.",
+            rich_help_panel="Performance",
+        ),
+    ] = 128,
     integrations_per_image: Annotated[
         int,
         typer.Option(
@@ -586,6 +595,7 @@ def hci_msv4(
                     gain_table=gain_table,
                     max_simul_chunks=max_simul_chunks,
                     images_per_chunk=images_per_chunk,
+                    spatial_chunk=spatial_chunk,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
                     channels_per_bin=channels_per_bin,
@@ -651,6 +661,7 @@ def hci_msv4(
                 gain_table=gain_table,
                 max_simul_chunks=max_simul_chunks,
                 images_per_chunk=images_per_chunk,
+                spatial_chunk=spatial_chunk,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
                 channels_per_bin=channels_per_bin,
@@ -723,6 +734,7 @@ def hci_msv4(
             gain_table=gain_table,
             max_simul_chunks=max_simul_chunks,
             images_per_chunk=images_per_chunk,
+            spatial_chunk=spatial_chunk,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
             channels_per_bin=channels_per_bin,
