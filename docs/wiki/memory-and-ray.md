@@ -436,8 +436,14 @@ the call waited for, i.e. not hidden behind the previous image) and the `image_i
 After imaging, a `Workers:` line gives the workers' busy fraction and their idle worker-time by
 cause -- `writer` (the `2 x nworkers` ack cap was hit), `window` (the next item lies beyond
 `--max-simul-chunks`) and `drain` (nothing left to hand out) -- and a `Writer:` line gives the
-writer's busy fraction and slab write throughput. The writer serialises every slab write, so
-a larger `--images-per-chunk` costs imaging throughput exactly when `writer` idle time grows.
+writer's busy fraction and slab write throughput. The writer is one actor, so while it writes a slab
+it accepts no images, and a larger `--images-per-chunk` costs imaging throughput exactly when
+`writer` idle time grows. It writes each slab as one-chunk-tall Y strips on a thread pool
+(`write_threads`, default 8; disjoint zarr chunks are safe to write concurrently), keeps its
+running sums with a numba kernel instead of a float64 copy of every image, and fills only the
+times a slab has no image for. On the SGRA run (#358, 3840^2, 128-image slabs) the single-
+threaded write was 35 s per slab at 0.39 GB/s and each add 231 ms; the beam reprojection,
+not the writer, was then the bottleneck (18 of 28 s per image, now computed once per field).
 The worker and writer actors take one `ActorCapture` each (stopped in `close`/`finalise`).
 Legacy `hci`'s `Processed:` lines carry each `batch_stokes_image` task's read, image (waiting
 on its nested `stokes_image` tasks) and write times.

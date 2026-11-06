@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import xarray as xr
 import zarr
+from numba import njit
 from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging.utils.memprof import ActorCapture, SectionClock, cpu_seconds, task_memory
@@ -27,6 +28,24 @@ def _fill(arr) -> object:
     return arr.fill_value if arr.fill_value is not None else 0
 
 
+@njit(nogil=True, cache=True)
+def _accumulate(acc, w, img, square):  # pragma: no cover - numba
+    """``acc += (w * img)`` (``** 2`` if ``square``) per Stokes, in float64, without a temporary.
+
+    The numpy expression it replaces allocated a float64 copy of every image (118 MB at
+    3840^2) and walked it twice; this gives the same bits (float32 promotes exactly).
+    """
+    for c in range(img.shape[0]):
+        wc = w[c]
+        for i in range(img.shape[1]):
+            for j in range(img.shape[2]):
+                v = wc * np.float64(img[c, i, j])
+                if square:
+                    acc[c, i, j] += v * v
+                else:
+                    acc[c, i, j] += v
+
+
 class CubeWriterImpl:
     """Assemble (band, time-block) slabs in RAM and write each one once.
 
@@ -36,6 +55,7 @@ class CubeWriterImpl:
         images_per_chunk: TIME chunk of the store.
         channel_width: (nband,) channel width per band, written at finalise.
         flag_excess_rms: Images whose rms exceeds this multiple of the band median are flagged.
+        write_threads: Threads that encode and write a slab's chunks concurrently.
     """
 
     def __init__(
@@ -45,6 +65,7 @@ class CubeWriterImpl:
         images_per_chunk: int,
         channel_width: np.ndarray,
         flag_excess_rms: float,
+        write_threads: int = 8,
     ) -> None:
         """Open the scaffolded store for update.
 
@@ -54,6 +75,7 @@ class CubeWriterImpl:
             images_per_chunk: TIME chunk of the store.
             channel_width: (nband,) channel width per band.
             flag_excess_rms: Rms flagging threshold as a multiple of the band median.
+            write_threads: Threads that encode and write a slab's chunks concurrently.
         """
         self._root = zarr.open_group(store, mode="r+")
         self._expected = dict(expected)
@@ -77,6 +99,10 @@ class CubeWriterImpl:
             self._w2sum = np.zeros(nstokes)
         self._slabs: dict[tuple[int, int], dict[str, np.ndarray]] = {}
         self._counts: dict[tuple[int, int], int] = {}
+        self._got: dict[tuple[int, int], np.ndarray] = {}  # slab -> which of its times arrived
+        # zarr encodes and writes one chunk at a time; disjoint chunks are safe to write
+        # concurrently, and blosc, numpy and file writes release the GIL
+        self._pool = ThreadPoolExecutor(max_workers=max(1, write_threads), thread_name_prefix="hci-write")
         self._stats = {"adds": 0, "busy_s": 0.0, "write_s": 0.0, "write_gb": 0.0, "slabs": 0}
         # opt-in cProfile/memray (PFB_CPROFILE_DIR, PFB_MEMRAY_DIR); written by finalise
         self._capture = ActorCapture("cube_writer")
@@ -130,15 +156,13 @@ class CubeWriterImpl:
         t0 = key[1] * self._ipc
         if key not in self._slabs:
             tlen = min(self._ipc, self._ntime - t0)
+            # empty, not filled: only the times the plan has no image for are filled, at write
             self._slabs[key] = {
-                v: np.full(
-                    (self._root[v].shape[0], tlen) + self._root[v].shape[-2:],
-                    _fill(self._root[v]),
-                    dtype=self._root[v].dtype,
-                )
+                v: np.empty((self._root[v].shape[0], tlen) + self._root[v].shape[-2:], dtype=self._root[v].dtype)
                 for v in self._img_vars
             }
             self._counts[key] = 0
+            self._got[key] = np.zeros(tlen, dtype=bool)
         slab = self._slabs[key]
         for v in self._img_vars:
             slab[v][:, t - t0] = result[v]
@@ -147,28 +171,44 @@ class CubeWriterImpl:
         for v in _TIME_VARS:
             self._times[v][t] = result[v]
         self._received[b, t] = True
+        self._got[key][t - t0] = True
 
         w = result["weight"].astype(np.float64)
-        self._cube_sum[:, b] += w[:, None, None] * result["cube"]
+        _accumulate(self._cube_sum[:, b], w, result["cube"], False)
         self._wsum[:, b] += w
         if self._psf:
-            self._psf_sum += (w[:, None, None] * result["psf"]) ** 2
+            _accumulate(self._psf_sum, w, result["psf"], True)
             self._w2sum += w**2
 
         self._counts[key] += 1
         if self._counts[key] < self._expected[key]:
             return None
-        tlen = slab[self._img_vars[0]].shape[1]
+        missing = ~self._got[key]
+        if missing.any():
+            for v in self._img_vars:
+                slab[v][:, missing] = _fill(self._root[v])
         wall0, cpu0 = time.perf_counter(), cpu_seconds()
-        for v in self._img_vars:
-            self._root[v][:, b, t0 : t0 + tlen] = slab[v]
+        self._write_slab(b, t0, slab)
         clock = {"wall_s": time.perf_counter() - wall0, "cpu_s": cpu_seconds() - cpu0}
         self._stats["write_s"] += clock["wall_s"]
         self._stats["write_gb"] += sum(a.nbytes for a in slab.values()) / 2**30
         self._stats["slabs"] += 1
-        del self._slabs[key], self._counts[key], slab
+        del self._slabs[key], self._counts[key], self._got[key], slab
         gc.collect()  # so the telemetry shows the slab released
         return key, {**task_memory(), **clock}
+
+    def _write_slab(self, b: int, t0: int, slab: dict[str, np.ndarray]) -> None:
+        """Write one slab as Y strips one chunk tall, concurrently: each strip owns its chunks."""
+        futures = []
+        for v, data in slab.items():
+            arr = self._root[v]
+            tsl = slice(t0, t0 + data.shape[1])
+            ychunk = arr.chunks[-2]
+            for y0 in range(0, data.shape[-2], ychunk):
+                ysl = slice(y0, y0 + ychunk)
+                futures.append(self._pool.submit(arr.__setitem__, (slice(None), b, tsl, ysl), data[:, :, ysl]))
+        for f in futures:
+            f.result()  # re-raises the first failed strip's error
 
     def finalise(self) -> dict:
         """Write per-image scalars, flag, cube_mean, psf2 and channel_width.
@@ -184,6 +224,7 @@ class CubeWriterImpl:
                 return self._finalise()
         finally:
             self._capture.stop()  # finalise is the writer's last call
+            self._pool.shutdown(wait=True)
             gc.collect()
 
     def _finalise(self) -> dict:

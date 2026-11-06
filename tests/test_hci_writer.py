@@ -15,7 +15,7 @@ from pfb_imaging.utils.hci_common import build_scaffold
 NY = NX = 16
 
 
-def _store(tmp_path, ntime=5, nband=1, ipc=2, psf_out=True):
+def _store(tmp_path, ntime=5, nband=1, ipc=2, psf_out=True, spatial_chunk=128):
     ds, _ = build_scaffold(
         5.0e9 + 8.0 * np.arange(ntime),
         1e9 + 1e7 * np.arange(nband),
@@ -29,7 +29,7 @@ def _store(tmp_path, ntime=5, nband=1, ipc=2, psf_out=True):
         nx_psf=NX,
         ny_psf=NY,
         cell_deg=1e-3,
-        spatial_chunk=128,
+        spatial_chunk=spatial_chunk,
         images_per_chunk=ipc,
         obs_label=None,
     )
@@ -102,6 +102,41 @@ def test_writer_profile_capture_is_written_at_finalise(tmp_path, monkeypatch):
     w.finalise()
     (f,) = prof_dir.glob("cube_writer-*.pstats")
     assert {"_add", "_finalise"} <= {k[2] for k in pstats.Stats(str(f)).stats}
+
+
+def test_accumulate_matches_the_numpy_expression_bit_for_bit():
+    from pfb_imaging.utils.hci_actors import _accumulate
+
+    rng = np.random.default_rng(3)
+    img = rng.standard_normal((2, 33, 17)).astype(np.float32)
+    w = np.array([0.37, 1.9e3])
+    for square in (False, True):
+        acc = rng.standard_normal((2, 33, 17))
+        want = acc + ((w[:, None, None] * img) ** 2 if square else w[:, None, None] * img)
+        _accumulate(acc, w, img, square)
+        np.testing.assert_array_equal(acc, want)
+    # a band slice of the (stokes, band, y, x) running sum is not contiguous
+    acc4 = np.zeros((2, 3, 33, 17))
+    _accumulate(acc4[:, 1], w, img, False)
+    np.testing.assert_array_equal(acc4[:, 1], w[:, None, None] * img)
+    assert not acc4[:, [0, 2]].any()
+
+
+def test_slab_is_written_in_concurrent_strips_with_gaps_filled(tmp_path):
+    """Several Y strips per slab (spatial chunk 8 < NY 16), written by the thread pool."""
+    store = _store(tmp_path, ntime=4, ipc=4, spatial_chunk=8)
+    w = CubeWriterImpl(store, {(0, 0): 3}, 4, np.array([1e6]), 10.0, write_threads=3)
+    ramp = np.arange(NY * NX, dtype=np.float32).reshape(1, NY, NX)
+    for t in (0, 1, 3):  # the plan has no image at time 2
+        r = _result(t, 0, 0.0)
+        r["cube"] = ramp + t
+        out = w.add(r)
+    assert out[0] == (0, 0)
+    cube = xr.open_zarr(store).cube.values[0, 0]
+    for t in (0, 1, 3):
+        np.testing.assert_array_equal(cube[t], ramp[0] + t)
+    assert np.isnan(cube[2]).all()
+    w.finalise()
 
 
 def test_short_last_block(tmp_path):
