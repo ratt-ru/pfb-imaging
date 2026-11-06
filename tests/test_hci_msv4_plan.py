@@ -1,10 +1,12 @@
 """plan_images: one WorkItem per output image, hci's time/band semantics."""
 
+import shutil
+
 import numpy as np
 import pytest
 import xarray as xr
 
-from pfb_imaging.core.hci_msv4 import plan_images
+from pfb_imaging.core.hci_msv4 import _assemble_plan, _scan_ms, plan_images, plan_ms
 from pfb_imaging.utils.misc import to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
 
@@ -119,3 +121,30 @@ def test_several_bands_regions_frequencies_and_expected(dts):
     (pn,) = plan.nodes.values()
     np.testing.assert_array_equal(pn.freqs, freqs)  # the union of the node's band regions
     np.testing.assert_array_equal(pn.times_unix, node.ds.time.values)
+
+
+def _same_plan(a, b):
+    assert a.items == b.items
+    assert a.expected == b.expected and a.nodes.keys() == b.nodes.keys()
+    for k in ("out_times", "out_freqs", "channel_width", "field_radecs", "all_times", "all_freqs"):
+        np.testing.assert_array_equal(getattr(a, k), getattr(b, k))
+    assert (a.max_blength, a.max_freq) == (b.max_blength, b.max_freq)
+
+
+_KW = dict(integrations_per_image=7, channels_per_image=3)
+
+
+def test_per_ms_scans_assemble_to_the_tree_plan(ms_name, dts):
+    """plan_ms's unit of work (_scan_ms per MS, then _assemble_plan) is plan_images exactly."""
+    _same_plan(_assemble_plan([_scan_ms(0, ms_name, dict(_KW))], 2), plan_images(dts, images_per_chunk=2, **_KW))
+
+
+@pytest.mark.slow  # spawning planning processes costs seconds of imports
+def test_plan_ms_in_processes_matches_one_process(ms_name, tmp_path, pctable):
+    second = str(tmp_path / "second.ms")
+    shutil.copytree(ms_name, second)
+    with pctable(second, readonly=False, ack=False) as t:
+        t.putcol("TIME", t.getcol("TIME") + 1.0e5)
+        t.putcol("TIME_CENTROID", t.getcol("TIME_CENTROID") + 1.0e5)
+    ms = [ms_name, second]
+    _same_plan(plan_ms(ms, nprocs=2, images_per_chunk=2, **_KW), plan_ms(ms, nprocs=1, images_per_chunk=2, **_KW))

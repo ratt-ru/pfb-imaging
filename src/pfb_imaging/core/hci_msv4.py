@@ -3,9 +3,12 @@
 import contextlib
 import gc
 import importlib.util
+import multiprocessing
+import os
 import time
 from collections import Counter, deque
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,6 +90,157 @@ class HciPlan:
     nodes: dict[tuple[int, str], PlannedNode] = field(default_factory=dict)  # (ms_index, path) -> node
 
 
+@dataclass
+class _MsScan:
+    """What one measurement set contributes to the plan (picklable, so it can come from a process)."""
+
+    raw: list = field(default_factory=list)  # (ms_index, path, tslice, fslice, tmean_mjd, fmean, fwidth)
+    radecs: list = field(default_factory=list)
+    all_times: list = field(default_factory=list)
+    all_freqs: list = field(default_factory=list)
+    nodes: dict = field(default_factory=dict)
+    max_blength: float = 0.0
+    max_freq: float = 0.0
+
+
+def _check_plan_args(integrations_per_image: int, channels_per_image: int, images_per_chunk: int) -> None:
+    if integrations_per_image not in _WHOLE and integrations_per_image < 1:
+        raise ValueError(
+            f"integrations_per_image must be >= 1, or -1 for one image per scan (got {integrations_per_image})"
+        )
+    if channels_per_image not in _WHOLE and channels_per_image < 1:
+        raise ValueError(
+            f"channels_per_image must be >= 1, or -1 for one image per spectral window (got {channels_per_image})"
+        )
+    if images_per_chunk < 1:
+        raise ValueError(f"images_per_chunk must be >= 1 (got {images_per_chunk})")
+
+
+def _scan_tree(
+    ims: int,
+    dt: xr.DataTree,
+    *,
+    integrations_per_image: int,
+    channels_per_image: int,
+    data_group: str = "base",
+    field_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    scan_names: list[str] | None = None,
+    freq_min: float = -np.inf,
+    freq_max: float = np.inf,
+) -> _MsScan:
+    """Plan one opened MS: its selected nodes and their image regions."""
+    scan = _MsScan()
+    raw, radecs, all_times, all_freqs, nodes = scan.raw, scan.radecs, scan.all_times, scan.all_freqs, scan.nodes
+    max_blength, max_freq = 0.0, 0.0
+    for sel in select_vis_nodes(
+        dt,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
+        freq_min=freq_min,
+        freq_max=freq_max,
+    ):
+        node = dt[sel.path]
+        tmjd = to_mjd_time(node.ds.time.values)
+        freqs = node.ds.frequency.values[sel.chan0 : sel.chan0 + sel.nchan]
+        uvw = node.ds.UVW.values  # coordinates only; never a blanket node load
+        uvw = uvw[~np.isnan(uvw).any(axis=-1)]
+        if uvw.size:
+            max_blength = max(max_blength, float(np.hypot(uvw[:, 0], uvw[:, 1]).max()))
+        max_freq = max(max_freq, float(freqs.max()))
+        radec = np.array(sel.field_radec, dtype=np.float64)
+        radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings and read_item
+        radecs.append(radec)
+        all_times.append(tmjd)
+        all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
+        nodes[(ims, sel.path)] = PlannedNode(
+            str(sel.scan_name),
+            str(sel.field_name),
+            tuple(map(str, node["antenna_xds"].antenna_name.values)),
+            node.ds.time.values,
+            freqs,
+            frozenset(node.ds.data_vars),
+            dict(node.ds.attrs["data_groups"][data_group]),
+        )
+        ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
+        cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
+        for t0 in range(0, tmjd.size, ipi):
+            t1 = min(t0 + ipi, tmjd.size)
+            for f0 in range(0, freqs.size, cpi):
+                f1 = min(f0 + cpi, freqs.size)
+                raw.append(
+                    (
+                        ims,
+                        sel.path,
+                        slice(t0, t1),
+                        slice(sel.chan0 + f0, sel.chan0 + f1),
+                        float(np.mean(tmjd[t0:t1])),
+                        float(np.mean(freqs[f0:f1])),
+                        float(freqs[f0:f1].max() - freqs[f0:f1].min()),
+                    )
+                )
+    scan.max_blength, scan.max_freq = max_blength, max_freq
+    return scan
+
+
+def _scan_ms(ims: int, ms_name: str, kw: dict) -> _MsScan:
+    """Open, plan and close one MS: the unit of work of a planning process."""
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    try:
+        return _scan_tree(ims, dt, **kw)
+    finally:
+        dt.close()
+
+
+def _assemble_plan(scans: Iterable[_MsScan], images_per_chunk: int) -> HciPlan:
+    """Merge per-MS scans, in MS order, into the plan."""
+    raw, radecs, all_times, all_freqs, nodes = [], [], [], [], {}
+    max_blength, max_freq = 0.0, 0.0
+    for sc in scans:
+        raw += sc.raw
+        radecs += sc.radecs
+        all_times += sc.all_times
+        all_freqs += sc.all_freqs
+        nodes.update(sc.nodes)
+        max_blength = max(max_blength, sc.max_blength)
+        max_freq = max(max_freq, sc.max_freq)
+    if not raw:
+        raise ValueError("Selection matched no data")
+
+    out_times = np.unique([r[4] for r in raw])
+    out_freqs = np.unique([r[5] for r in raw])
+    channel_width = np.zeros(out_freqs.size)
+    items, seen = [], set()
+    for ims, path, ts, fs, tm, fm, fw in raw:
+        ti = int(np.searchsorted(out_times, tm))
+        bi = int(np.searchsorted(out_freqs, fm))
+        if (ti, bi) in seen:
+            raise ValueError(
+                f"Two partitions map to the same output image (TIME {tm}, FREQ {fm}); "
+                "select fields/spws/scans so each output image has one source"
+            )
+        seen.add((ti, bi))
+        channel_width[bi] = fw
+        items.append(WorkItem(ims, path, ts, fs, ti, bi, ti // images_per_chunk))
+    items.sort(key=lambda it: (it.block, it.band_index, it.time_index))
+    expected = Counter((it.band_index, it.block) for it in items)
+    return HciPlan(
+        items=items,
+        out_times=out_times,
+        out_freqs=out_freqs,
+        expected=dict(expected),
+        channel_width=channel_width,
+        field_radecs=np.asarray(radecs),
+        max_blength=max_blength,
+        max_freq=max_freq,
+        all_times=np.unique(np.concatenate(all_times)),
+        all_freqs=np.unique(np.concatenate(all_freqs)),
+        nodes=nodes,
+    )
+
+
 def plan_images(
     dts: Iterable[xr.DataTree],
     *,
@@ -123,102 +277,60 @@ def plan_images(
             channels_per_image other than the whole-scan/spw sentinels, a non-positive
             images_per_chunk, or two partitions mapping to the same output image.
     """
-    if integrations_per_image not in _WHOLE and integrations_per_image < 1:
-        raise ValueError(
-            f"integrations_per_image must be >= 1, or -1 for one image per scan (got {integrations_per_image})"
-        )
-    if channels_per_image not in _WHOLE and channels_per_image < 1:
-        raise ValueError(
-            f"channels_per_image must be >= 1, or -1 for one image per spectral window (got {channels_per_image})"
-        )
-    if images_per_chunk < 1:
-        raise ValueError(f"images_per_chunk must be >= 1 (got {images_per_chunk})")
-    raw = []  # (ms_index, path, tslice, fslice, tmean_mjd, fmean, fwidth)
-    radecs, all_times, all_freqs = [], [], []
-    nodes = {}
-    max_blength, max_freq = 0.0, 0.0
-    for ims, dt in enumerate(dts):
-        for sel in select_vis_nodes(
-            dt,
-            data_group=data_group,
-            field_names=field_names,
-            spw_names=spw_names,
-            scan_names=scan_names,
-            freq_min=freq_min,
-            freq_max=freq_max,
-        ):
-            node = dt[sel.path]
-            tmjd = to_mjd_time(node.ds.time.values)
-            freqs = node.ds.frequency.values[sel.chan0 : sel.chan0 + sel.nchan]
-            uvw = node.ds.UVW.values  # coordinates only; never a blanket node load
-            uvw = uvw[~np.isnan(uvw).any(axis=-1)]
-            if uvw.size:
-                max_blength = max(max_blength, float(np.hypot(uvw[:, 0], uvw[:, 1]).max()))
-            max_freq = max(max_freq, float(freqs.max()))
-            radec = np.array(sel.field_radec, dtype=np.float64)
-            radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings and read_item
-            radecs.append(radec)
-            all_times.append(tmjd)
-            all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
-            nodes[(ims, sel.path)] = PlannedNode(
-                str(sel.scan_name),
-                str(sel.field_name),
-                tuple(map(str, node["antenna_xds"].antenna_name.values)),
-                node.ds.time.values,
-                freqs,
-                frozenset(node.ds.data_vars),
-                dict(node.ds.attrs["data_groups"][data_group]),
-            )
-            ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
-            cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
-            for t0 in range(0, tmjd.size, ipi):
-                t1 = min(t0 + ipi, tmjd.size)
-                for f0 in range(0, freqs.size, cpi):
-                    f1 = min(f0 + cpi, freqs.size)
-                    raw.append(
-                        (
-                            ims,
-                            sel.path,
-                            slice(t0, t1),
-                            slice(sel.chan0 + f0, sel.chan0 + f1),
-                            float(np.mean(tmjd[t0:t1])),
-                            float(np.mean(freqs[f0:f1])),
-                            float(freqs[f0:f1].max() - freqs[f0:f1].min()),
-                        )
-                    )
-    if not raw:
-        raise ValueError("Selection matched no data")
-
-    out_times = np.unique([r[4] for r in raw])
-    out_freqs = np.unique([r[5] for r in raw])
-    channel_width = np.zeros(out_freqs.size)
-    items, seen = [], set()
-    for ims, path, ts, fs, tm, fm, fw in raw:
-        ti = int(np.searchsorted(out_times, tm))
-        bi = int(np.searchsorted(out_freqs, fm))
-        if (ti, bi) in seen:
-            raise ValueError(
-                f"Two partitions map to the same output image (TIME {tm}, FREQ {fm}); "
-                "select fields/spws/scans so each output image has one source"
-            )
-        seen.add((ti, bi))
-        channel_width[bi] = fw
-        items.append(WorkItem(ims, path, ts, fs, ti, bi, ti // images_per_chunk))
-    items.sort(key=lambda it: (it.block, it.band_index, it.time_index))
-    expected = Counter((it.band_index, it.block) for it in items)
-    return HciPlan(
-        items=items,
-        out_times=out_times,
-        out_freqs=out_freqs,
-        expected=dict(expected),
-        channel_width=channel_width,
-        field_radecs=np.asarray(radecs),
-        max_blength=max_blength,
-        max_freq=max_freq,
-        all_times=np.unique(np.concatenate(all_times)),
-        all_freqs=np.unique(np.concatenate(all_freqs)),
-        nodes=nodes,
+    _check_plan_args(integrations_per_image, channels_per_image, images_per_chunk)
+    kw = dict(
+        integrations_per_image=integrations_per_image,
+        channels_per_image=channels_per_image,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
+        freq_min=freq_min,
+        freq_max=freq_max,
     )
+    return _assemble_plan((_scan_tree(ims, dt, **kw) for ims, dt in enumerate(dts)), images_per_chunk)
+
+
+def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
+    """``plan_images`` over measurement-set paths, scanning them in ``nprocs`` processes.
+
+    Opening an MSv4 tree costs ~2 s of mostly-Python work in xarray-ms (most of it
+    probing secondary-column shapes; docs/msv4_issues.md), so a MeerKLASS tile of
+    thousands of single-integration MSs takes hours to plan in one process.
+    Processes, not threads: the open is GIL-bound (8 threads gave 4x, 32 threads
+    less). With ``nprocs == 1`` or one MS each tree is opened and closed in turn
+    in this process (#241). The plan is the same either way.
+
+    Args:
+        ms: Measurement-set paths.
+        nprocs: Planning processes.
+        log: Optional logger for progress.
+        **kw: ``plan_images`` keyword arguments.
+
+    Returns:
+        The HciPlan.
+    """
+    images_per_chunk = kw.pop("images_per_chunk")
+    _check_plan_args(kw["integrations_per_image"], kw["channels_per_image"], images_per_chunk)
+    nprocs = max(1, min(nprocs, len(ms)))
+    if nprocs == 1:
+        trees = _each_tree(ms)
+        try:
+            return plan_images(trees, images_per_chunk=images_per_chunk, **kw)
+        finally:
+            trees.close()
+
+    def scans():
+        # spawn: the driver may already hold threads (numba, arcae) that fork would copy mid-state
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=nprocs, mp_context=ctx) as ex:
+            chunk = max(1, min(64, len(ms) // (4 * nprocs)))
+            for n, sc in enumerate(ex.map(_scan_ms, range(len(ms)), ms, [kw] * len(ms), chunksize=chunk), 1):
+                if log is not None and (n % 500 == 0 or n == len(ms)):
+                    log.info(f"Planned {n} / {len(ms)} measurement sets")
+                yield sc
+
+    return _assemble_plan(scans(), images_per_chunk)
 
 
 @pfb_logging.log_exceptions
@@ -414,22 +526,20 @@ def hci_msv4(
 
     log.info("Planning images")
     # one MS open at a time, as hci (#241); the plan keeps what the checks below need
-    trees = _each_tree(ms)
-    try:
-        plan = plan_images(
-            trees,
-            integrations_per_image=integrations_per_image,
-            channels_per_image=channels_per_image,
-            images_per_chunk=images_per_chunk,
-            data_group=data_group,
-            field_names=field_names,
-            spw_names=spw_names,
-            scan_names=scan_names,
-            freq_min=freq_min,
-            freq_max=freq_max,
-        )
-    finally:
-        trees.close()
+    plan = plan_ms(
+        ms,
+        nprocs=min(nworkers, os.cpu_count() or 1),
+        log=log,
+        integrations_per_image=integrations_per_image,
+        channels_per_image=channels_per_image,
+        images_per_chunk=images_per_chunk,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
+        freq_min=freq_min,
+        freq_max=freq_max,
+    )
     phases.lap("Plan")
 
     # crude column arithmetic, as hci

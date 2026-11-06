@@ -234,7 +234,8 @@ def test_hci_msv4_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
     monkeypatch.setattr(xr.DataTree, "close", closing)
     # the same MS twice maps two partitions to each output image: planning fails after both are read
     with pytest.raises(ValueError, match="same output image"):
-        hci_msv4_core([ms_name, ms_name], str(tmp_path / "x.zarr"), **COMMON)
+        # one worker plans in this process; more scan in a process pool (plan_ms)
+        hci_msv4_core([ms_name, ms_name], str(tmp_path / "x.zarr"), **{**COMMON, "nworkers": 1})
     assert events == ["open", "close", "open", "close"]
 
 
