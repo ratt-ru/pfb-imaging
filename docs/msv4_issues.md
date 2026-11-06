@@ -263,6 +263,24 @@ the column check (D60). The ask upstream: expose `SIGMA` (and `SIGMA_SPECTRUM`, 
 `WEIGHT`) as data variables, or add them to the pass-through set. Once it lands, drop the
 refusal in `core/hci_msv4.py` and map `SIGMA` through the data group as `WEIGHT` is.
 
+### 9. Opening a tree probes every secondary column's row shapes (~1 s per MS) — NOT YET FILED
+
+`CorrelatedFactory.secondary_variables` (`xarray_ms/backend/msv2/factories/correlated.py`)
+calls arcae's `row_shapes` for every non-standard MAIN column on each open, to decide the
+column's dims. On a MeerKLASS tile (#358: 7594 single-integration MSs on NFS, 1891 rows and
+1024 channels each, with `CORRECTED_DATA_DI`, `DDF_PREDICT` and `IMAGING_WEIGHT` beside the
+standard columns) one open took ~1.9 s, ~1 s of it there, and the time is GIL-bound Python:
+8 threads gave 4x, 32 threads less.
+[`secondary_column_open_cost.py`](../scripts/msv4_issues/secondary_column_open_cost.py)
+prints the per-open time and the share. An open tree also holds ~138 file descriptors (one
+per table file of every subtable), so ~7 open trees exhaust a 1024 soft limit.
+
+**Why it matters to us.** `pfb hci-msv4` plans by opening every MS once: ~4 h serially for
+that tile. `plan_ms` now scans MSs in a spawn process pool, and `raise_open_file_limit`
+lifts the soft fd limit in the driver and every Ray worker. The ask upstream: probe only the
+first row's shape of a column whose shape is fixed (`ColumnDesc` ndim/shape), or defer the
+probe until the variable is used.
+
 ## Retested, not reproduced
 
 - **`to_msv2()` leaking threads/fds and then deadlocking.**
