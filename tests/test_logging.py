@@ -124,3 +124,19 @@ def test_ray_worker_hook_reports_a_missing_tbb(monkeypatch):
     finally:
         mb_utils.set_console_logging_level(before)
     assert "Could not initialise the TBB threading layer" in " ".join(out.get().split())
+
+
+def test_raise_open_file_limit_reaches_the_hard_limit():
+    import resource
+
+    from pfb_imaging import raise_open_file_limit
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(256, hard), hard))
+        new = raise_open_file_limit()
+        assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] == new >= min(256, hard)
+        if hard != resource.RLIM_INFINITY and hard <= 2**20:
+            assert new == hard or new == min(256, hard)  # macOS may refuse
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))

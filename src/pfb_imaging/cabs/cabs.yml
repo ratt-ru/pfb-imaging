@@ -8,9 +8,11 @@ cabs:
   pfb.hci:
     _include: hci.yml::cabs.hci
 
+  pfb.hci_msv4:
+    _include: hci_msv4.yml::cabs.hci_msv4
+
   pfb.image:
     _include: imager.yml::cabs.imager
 
   pfb.restore:
     _include: restore.yml::cabs.restore
-

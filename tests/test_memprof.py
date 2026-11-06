@@ -197,7 +197,7 @@ def test_actor_capture_profiles_calls_only_and_writes_on_stop(tmp_path, monkeypa
     for _ in range(2):
         with cap.call():
             _spin(0.02)
-    _spin(0.02)  # between calls: must not be charged
+    _spin(0.1)  # between calls: must not be charged
     assert not any(tmp_path.iterdir())  # nothing until stop
     cap.stop()
     cap.stop()  # idempotent
@@ -206,7 +206,9 @@ def test_actor_capture_profiles_calls_only_and_writes_on_stop(tmp_path, monkeypa
     (stat,) = [v for k, v in st.stats.items() if k[2] == "_spin"]
     _, ncalls, _, cumtime, _ = stat
     assert ncalls == 2
-    assert 0.04 <= cumtime < 0.06
+    # the 0.1 s idle spin is not charged. No tight band around 0.04 s: a loaded CI runner
+    # measured 0.029 s for the two 0.02 s spins
+    assert cumtime < 0.1
 
 
 def test_actor_capture_memray_spans_construction_to_stop(tmp_path, monkeypatch):

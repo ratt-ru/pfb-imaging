@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from functools import partial
 
@@ -8,17 +9,16 @@ import ray
 import xarray as xr
 from astropy import units
 from astropy.coordinates import SkyCoord
-from astropy.time import Time
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
-from meerkat_beams.utils import BeamWizard
 from numba import set_num_threads
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_slice_jax
 from pfb_imaging.utils.astrometry import resolve_target_radec, synthesize_uvw
-from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
+from pfb_imaging.utils.hci_common import beam_for_band, beam_gain_for_source
+from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import fitcleanbeam, radec_to_lm, to_unix_time
 from pfb_imaging.utils.weighting import (
     _compute_counts,
@@ -86,90 +86,103 @@ def batch_stokes_image(
     synchronizer=None,
     wgt_mode="l2",
 ):
-    # load chunk
-    ds.load(scheduler="sync")
-    if jones is not None:
-        # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler="sync").values
+    """Image one chunk of rows as nested ``stokes_image`` tasks and write them to the cube.
 
-    # slice out rows corresponding to single images and submit compute task
-    ntime = utime.size
-    tasks = []
-    # we need to start counting from zero
-    rbin_idx = rbin_idx - rbin_idx.min()
-    for t0 in range(0, ntime, integrations_per_image):
-        nmax = np.minimum(ntime, t0 + integrations_per_image)
-        time_slice = slice(t0, nmax)
-        ridx = rbin_idx[time_slice]
-        rcnts = rbin_counts[time_slice]
-        row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
-        dsi = ds[{"row": row_slice}]
-
+    Returns:
+        ``(timeid, bandid, mem)``: ``mem`` is ``task_memory()`` plus the task's ``wall_s``/
+        ``cpu_s`` and its ``read_s`` (loading the chunk), ``image_s`` (waiting on the nested
+        tasks) and ``write_s`` (the region write).
+    """
+    with profile_task("batch_stokes_image") as clock:
+        # load chunk
+        tic = time.perf_counter()
+        ds.load(scheduler="sync")
         if jones is not None:
-            jones_slice = jones[time_slice]
-        else:
-            jones_slice = None
+            # we do it this way to force using synchronous scheduler
+            jones = jones.load(scheduler="sync").values
+        clock["read_s"] = time.perf_counter() - tic
 
-        task = stokes_image.remote(
-            dc1=dc1,
-            dc2=dc2,
-            operator=operator,
-            ds=dsi,
-            jones=jones_slice,
-            nx=nx,
-            ny=ny,
-            freq=freq,
-            cell_rad=cell_rad,
-            utime=utime[time_slice],
-            tbin_idx=ridx,
-            tbin_counts=rcnts,
-            radec=radec,
-            antpos=antpos,
-            poltype=poltype,
-            bandid=bandid,
-            timeid=timeid,
-            msid=msid,
-            attrs=attrs,
-            nthreads=nthreads,
-            precision=precision,
-            sigma_column=sigma_column,
-            weight_column=weight_column,
-            model_column=model_column,
-            product=product,
-            check_ants=check_ants,
-            phase_dir=phase_dir,
-            beam_model=beam_model,
-            target=target,
-            robustness=robustness,
-            min_padding=min_padding,
-            filter_counts_level=filter_counts_level,
-            npix_super=npix_super,
-            psf_relative_size=psf_relative_size,
-            inject_transients=inject_transients,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-            natural_grad=natural_grad,
-            eta=eta,
-            cg_tol=cg_tol,
-            cg_maxit=cg_maxit,
-            psf_out=psf_out,
-            weight_grid_out=weight_grid_out,
-            l2_reweight_dof=l2_reweight_dof,
-            wgt_mode=wgt_mode,
-            channels_per_bin=channels_per_bin,
-        )
+        # slice out rows corresponding to single images and submit compute task
+        ntime = utime.size
+        tasks = []
+        # we need to start counting from zero
+        rbin_idx = rbin_idx - rbin_idx.min()
+        for t0 in range(0, ntime, integrations_per_image):
+            nmax = np.minimum(ntime, t0 + integrations_per_image)
+            time_slice = slice(t0, nmax)
+            ridx = rbin_idx[time_slice]
+            rcnts = rbin_counts[time_slice]
+            row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
+            dsi = ds[{"row": row_slice}]
 
-        tasks.append(task)
+            if jones is not None:
+                jones_slice = jones[time_slice]
+            else:
+                jones_slice = None
 
-    # wait for all tasks to finish and get result
-    dso = ray.get(tasks)
+            task = stokes_image.remote(
+                dc1=dc1,
+                dc2=dc2,
+                operator=operator,
+                ds=dsi,
+                jones=jones_slice,
+                nx=nx,
+                ny=ny,
+                freq=freq,
+                cell_rad=cell_rad,
+                utime=utime[time_slice],
+                tbin_idx=ridx,
+                tbin_counts=rcnts,
+                radec=radec,
+                antpos=antpos,
+                poltype=poltype,
+                bandid=bandid,
+                timeid=timeid,
+                msid=msid,
+                attrs=attrs,
+                nthreads=nthreads,
+                precision=precision,
+                sigma_column=sigma_column,
+                weight_column=weight_column,
+                model_column=model_column,
+                product=product,
+                check_ants=check_ants,
+                phase_dir=phase_dir,
+                beam_model=beam_model,
+                target=target,
+                robustness=robustness,
+                min_padding=min_padding,
+                filter_counts_level=filter_counts_level,
+                npix_super=npix_super,
+                psf_relative_size=psf_relative_size,
+                inject_transients=inject_transients,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                natural_grad=natural_grad,
+                eta=eta,
+                cg_tol=cg_tol,
+                cg_maxit=cg_maxit,
+                psf_out=psf_out,
+                weight_grid_out=weight_grid_out,
+                l2_reweight_dof=l2_reweight_dof,
+                wgt_mode=wgt_mode,
+                channels_per_bin=channels_per_bin,
+            )
 
-    # write output chunks
-    dso = xr.concat(dso, dim="TIME")
-    dso.to_zarr(fds_store, region="auto", synchronizer=synchronizer, safe_chunks=False)
+            tasks.append(task)
 
-    return timeid, bandid
+        # wait for all tasks to finish and get result
+        tic = time.perf_counter()
+        dso = ray.get(tasks)
+        clock["image_s"] = time.perf_counter() - tic
+
+        # write output chunks
+        tic = time.perf_counter()
+        dso = xr.concat(dso, dim="TIME")
+        dso.to_zarr(fds_store, region="auto", synchronizer=synchronizer, safe_chunks=False)
+        clock["write_s"] = time.perf_counter() - tic
+    return timeid, bandid, {**task_memory(), **clock}
 
 
 @ray.remote
@@ -791,97 +804,3 @@ def stokes_image(
 
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     return out_ds
-
-
-def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq):
-    """Return the Stokes power beam at a fixed sky position on the (row, chan) grid.
-
-    Used to attenuate injected transients by the primary beam in the original
-    (un-rephased) frame, so the gain must be evaluated on the same grid as the
-    dynamic spectrum it multiplies.
-
-    Args:
-        beam_model: BeamWizard instance.
-        ra_deg, dec_deg: source position in degrees, as given in the transient config.
-        product: Stokes product string. Transients are injected into the first
-            (I, Q, U, V ordered) Stokes plane only, so that product's beam is used.
-        utime: unique times of this chunk (MJD seconds).
-        time: per-row times of this chunk (MJD seconds).
-        freq: channel frequencies (Hz).
-
-    Returns:
-        (time.size, freq.size) power beam gain.
-    """
-    assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."
-    prod = sorted(set(product))[0]
-    # returns (nchan, ntime) on this chunk's own grid, so no interpolation is needed
-    gain = beam_model.get_time_variable_beamgain(
-        SkyCoord(ra_deg * units.deg, dec_deg * units.deg, frame="fk5"),
-        times=Time(utime / (24 * 3600), format="mjd"),
-        freq=freq,
-        var="nstokes",
-        i=prod,
-        j=prod,
-    )
-    # rows are grouped by time so expand the unique time axis onto rows
-    return gain.T[np.searchsorted(utime, time)]
-
-
-def beam_for_band(
-    beam_model,
-    utime,
-    product,
-    real_type,
-    freq_out,
-    radec,
-    radec_new,
-    cell_deg,
-    nx,
-    ny,
-):
-    """Return the Stokes power beam on the output image grid.
-
-    Contract: (len(product), ny, nx) in cube/FITS (Y, X) order, matching the
-    image-space arrays in stokes_image (docs/wiki/image-and-beam-orientation.md).
-    """
-    if beam_model is not None:
-        assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."
-        # should we compute a weighted mean over freq instead of interpolating here?
-        bds = beam_model.bds
-        l_beam = bds.X.values
-        m_beam = bds.Y.values
-        t_beam = Time(utime / (24 * 3600), format="mjd")
-        # get_rotation_averaged_beam returns (Y, X)-ordered maps
-        # (see docs/wiki/image-and-beam-orientation.md)
-        beam = np.zeros((len(product), m_beam.size, l_beam.size), dtype=real_type)
-        if isinstance(freq_out, np.ndarray):
-            freq_out = freq_out.item()
-        # sorted to match the I, Q, U, V Stokes axis of the data (stokes_expr_funcs)
-        for i, p in enumerate(sorted(set(product))):
-            beam[i], _ = beam_model.get_rotation_averaged_beam(
-                l=l_beam,
-                m=m_beam,
-                times=t_beam,
-                freq=np.array([freq_out]),  # TODO - can we fold in the variance due to finite bandwidth?
-                time_stepping=1,
-                pixel_stepping=1,
-                var="nstokes",
-                i=p,
-                j=p,
-                verbose=0,
-            )
-        pbeam = reproject_and_interp_scat_beam(
-            beam,
-            l_beam,
-            m_beam,
-            radec,
-            radec_new,
-            cell_deg,
-            nx,
-            ny,
-            product,
-        ).astype(real_type)
-
-    else:
-        pbeam = np.ones((len(product), ny, nx), dtype=real_type)
-    return pbeam

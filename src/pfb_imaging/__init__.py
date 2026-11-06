@@ -3,6 +3,7 @@ import importlib
 import logging
 import os
 import platform
+import resource
 from importlib.metadata import PackageNotFoundError, version
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -144,6 +145,30 @@ def set_envs(nthreads, ncpu, log=None):
     return env_vars
 
 
+def raise_open_file_limit() -> int:
+    """Raise this process's soft open-file limit to its hard limit.
+
+    An open MSv4 tree holds ~140 file descriptors (one per table file of every
+    subtable), so the common soft limit of 1024 is exhausted by ~7 open
+    measurement sets. hci-msv4 workers keep each MS they read open for a
+    while (the Multiton TTL), and a MeerKLASS tile is thousands of
+    single-integration MSs (#358). Raising the soft limit up to the hard one
+    needs no privilege. Called in the driver and in every Ray worker.
+
+    Returns:
+        The soft limit now in force (unchanged if it could not be raised).
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = hard if hard != resource.RLIM_INFINITY else max(soft, 2**20)
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError):  # macOS refuses soft limits above OPEN_MAX
+        return soft
+    return target
+
+
 def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None):
     """Initialise Ray for a pfb-imaging sub-command.
 
@@ -157,6 +182,7 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
     import ray
 
     logger = log or logging
+    raise_open_file_limit()  # the raylet and the workers it starts inherit it
 
     if ray.is_initialized():
         logger.warning("Ray is already initialised. Requested Ray settings will be ignored.")
@@ -181,6 +207,7 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
 
 def setup_ray_worker():
     logger = pfb_logging.get_logger("RAY_WORKER")
+    raise_open_file_limit()
     # WARNING, not ERROR: this logger exists for the TBB warning below
     logger.setLevel(logging.WARNING)
     # meerkat-beams logs at INFO to its own stdout handler, and Ray forwards
