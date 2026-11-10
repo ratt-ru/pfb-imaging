@@ -190,9 +190,13 @@ def test_unknown_slab_is_an_error(tmp_path):
         w.add(_result(0, 3, 1.0))
 
 
-def test_finalise_drops_two_flagged_images_from_one_block(tmp_path):
-    """Two outliers in the same time block are both removed from the means (one block read)."""
-    store = _store(tmp_path, ntime=6, ipc=3)
+@pytest.mark.parametrize("spatial_chunk", [128, 8])
+def test_finalise_drops_two_flagged_images_from_one_block(tmp_path, spatial_chunk):
+    """Two outliers in the same time block are both removed from the means (one block read).
+
+    A spatial chunk of 8 makes the read-back two Y strips, read concurrently.
+    """
+    store = _store(tmp_path, ntime=6, ipc=3, spatial_chunk=spatial_chunk)
     w = CubeWriterImpl(store, _expected(6, 3), 3, np.array([1e6]), 1.5)
     rms = [1.0, 6.0, 7.0, 1.0, 1.1, 0.9]  # times 1 and 2 share block 0
     vals = [1.0, 50.0, 80.0, 2.0, 3.0, 4.0]

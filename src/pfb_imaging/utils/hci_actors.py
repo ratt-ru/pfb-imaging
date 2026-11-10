@@ -210,6 +210,25 @@ class CubeWriterImpl:
         for f in futures:
             f.result()  # re-raises the first failed strip's error
 
+    def _read_times(self, v: str, c: int, b: int, times: np.ndarray) -> np.ndarray:
+        """Read images ``times`` of one (stokes, band) back from the store, Y strips in parallel.
+
+        Every chunk holds a whole time block, so one image costs decompressing its block's
+        chunks: 34 GB at 5760^2 and 256 images per chunk. Read on one thread that was ~0.1 GB/s
+        (the MeerKLASS trial, #358: 696 s to drop 2 flagged images).
+        """
+        arr = self._root[v]
+        ychunk = arr.chunks[-2]
+        out = np.empty((times.size,) + arr.shape[-2:], dtype=arr.dtype)
+
+        def strip(y0: int) -> None:
+            ysl = slice(y0, y0 + ychunk)
+            out[:, ysl] = arr.oindex[c, b, times, ysl]
+
+        for f in [self._pool.submit(strip, y0) for y0 in range(0, arr.shape[-2], ychunk)]:
+            f.result()
+        return out
+
     def finalise(self) -> dict:
         """Write per-image scalars, flag, cube_mean, psf2 and channel_width.
 
@@ -251,11 +270,11 @@ class CubeWriterImpl:
             t1 = min(t0 + self._ipc, self._ntime)
             ts = np.nonzero(drop[c, b, t0:t1])[0]
             w = weight[c, b, t0 + ts]
-            cube = self._root["cube"][c, b, t0:t1][ts]
+            cube = self._read_times("cube", c, b, t0 + ts)
             self._cube_sum[c, b] -= np.tensordot(w, cube, axes=1)
             self._wsum[c, b] -= w.sum()
             if self._psf:
-                psf = self._root["psf"][c, b, t0:t1][ts]
+                psf = self._read_times("psf", c, b, t0 + ts)
                 self._psf_sum[c] -= ((w[:, None, None] * psf) ** 2).sum(axis=0)
                 self._w2sum[c] -= (w**2).sum()
 
