@@ -201,8 +201,13 @@ def test_finalise_drops_two_flagged_images_from_one_block(tmp_path, spatial_chun
     rms = [1.0, 6.0, 7.0, 1.0, 1.1, 0.9]  # times 1 and 2 share block 0
     vals = [1.0, 50.0, 80.0, 2.0, 3.0, 4.0]
     wts = [1.0, 2.0, 3.0, 1.0, 0.5, 2.0]
+    # a spatial ramp, so a strip read back into the wrong rows changes the means
+    ramp = np.arange(NY * NX, dtype=np.float32).reshape(1, NY, NX) / (NY * NX)
     for t in range(6):
-        w.add(_result(t, 0, vals[t], weight=wts[t], rms=rms[t]))
+        r = _result(t, 0, vals[t], weight=wts[t], rms=rms[t])
+        r["cube"] = r["cube"] + ramp
+        r["psf"] = r["psf"] + ramp
+        w.add(r)
     out = w.finalise()
     ds = xr.open_zarr(store)
     flag = ds.flag.values[0, 0]
@@ -210,8 +215,10 @@ def test_finalise_drops_two_flagged_images_from_one_block(tmp_path, spatial_chun
     assert out["nflagged"] == 2
     keep = ~flag
     ref = np.sum(np.array(vals)[keep] * np.array(wts)[keep]) / np.sum(np.array(wts)[keep])
-    assert_allclose(ds.cube_mean.values[0, 0], ref, rtol=1e-6)
-    assert_allclose(ds.psf2.values[0], 1.0, rtol=1e-6)
+    assert_allclose(ds.cube_mean.values[0, 0], ref + ramp[0], rtol=1e-6)
+    wk = np.array(wts)[keep]
+    psf_ref = np.sum(wk[:, None, None] ** 2 * (1.0 + ramp[0].astype(np.float64)) ** 2, axis=0) / np.sum(wk**2)
+    assert_allclose(ds.psf2.values[0], psf_ref, rtol=1e-6)
 
 
 def test_multiband_shuffled_with_missing_zero_weight_and_flagged_images(tmp_path):
