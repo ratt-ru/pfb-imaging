@@ -2084,7 +2084,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   slabs. Long TIME chunks (`--images-per-chunk`, default 128) keep chunk counts small.
 - **Consequences:**
   - **Memory.** Writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image
-    bytes`, the knob for 128 GB nodes (`--max-simul-chunks`, default 2).
+    bytes`, the knob for 128 GB nodes (`--max-simul-chunks`, default 2). Each worker (and each
+    legacy hci Ray worker) also keeps up to two beam reprojection maps (`hci_common.
+    _beam_reprojection`), float64 `(2, ny*nx)`: ~236 MB each at 3840^2, ~530 MB at 5760^2. They
+    pay off when images share a pointing; on-the-fly data (a new pointing per MS) misses every
+    time and still holds them.
+  - **Writer threads.** "One writer per chunk" means one process: the writer writes a slab as
+    one-chunk-tall Y strips on `write_threads` (default 8) threads, each strip owning disjoint
+    chunks, which zarr's directory store writes safely without a lock.
   - **gc.** Both actors `gc.collect()` at every method boundary as §8 requires, but first
     `gc.freeze()` the imported stack at the end of `__init__`: it is ~324k tracked objects and a
     full collect costs ~0.5 s, which the single writer paid per `add` -- a serial ceiling of

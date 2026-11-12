@@ -140,7 +140,7 @@ cabs:
         info:
           Y and X chunk of the output cube, in pixels.
           A chunk holds images-per-chunk x spatial-chunk^2 float32 values.
-          Clipped to the smallest image dimension.
+          Image variables are clipped to the image and PSF variables to the PSF.
         dtype: int
         default: 128
         metadata:

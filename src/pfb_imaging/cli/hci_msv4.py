@@ -228,7 +228,7 @@ def hci_msv4(
         typer.Option(
             help="Y and X chunk of the output cube, in pixels. "
             "A chunk holds images-per-chunk x spatial-chunk^2 float32 values. "
-            "Clipped to the smallest image dimension.",
+            "Image variables are clipped to the image and PSF variables to the PSF.",
             rich_help_panel="Performance",
         ),
     ] = 128,
