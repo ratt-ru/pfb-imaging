@@ -451,7 +451,8 @@ def hci(
     n_stokes = len(set(product))
     log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
     log.info(f"Padded grid size = (n_y={ny_pad}, n_x={nx_pad})")
-    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={128}, n_x={128})")
+    schunk = min(128, nx, ny)  # make_dummy_dataset's spatial_chunk, as build_scaffold clips it
+    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={schunk}, n_x={schunk})")
 
     if inject_transients is not None:
         # we need to do this here because we don't have access
@@ -642,7 +643,9 @@ def hci(
         wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
         wsumsqc = wsumsq.compute()[:, None, None]
         weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=(1, y_chunk, x_chunk)))
+        # the PSF has its own spatial chunk (build_scaffold clips it to the PSF, the cube's to the image)
+        psf_chunks = (1, chunk_sizes["Y_PSF"][0], chunk_sizes["X_PSF"][0])
+        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=psf_chunks))
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)

@@ -675,6 +675,34 @@ def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
         assert win.max() > 0.0, f"no flux recovered for rephased source at offset ({di},{dj})"
 
 
+@pytest.mark.slow
+def test_hci_psf_out_with_an_image_smaller_than_the_psf_chunk(ms_name, tmp_path):
+    """An image under 128 px chunks its cube below the 128-px PSF's chunk (#358 review).
+
+    The means pass rechunked psf2 to the image chunk, which zarr refused (overlapping
+    dask chunks) after all the imaging was done.
+    """
+    outname = str(tmp_path / "small.zarr")
+    hci_core(
+        [Path(ms_name)],
+        outname,
+        product="I",
+        data_column="DATA",
+        integrations_per_image=30,
+        images_per_chunk=2,
+        field_of_view=0.15,
+        psf_out=True,
+        precision="single",
+        epsilon=1e-4,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    ds = xr.open_zarr(outname)
+    assert ds.sizes["X"] < 128 <= ds.sizes["X_PSF"]
+    assert ds.psf2.encoding["chunks"][-1] == min(128, ds.sizes["X_PSF"])
+    assert "cube_mean" in ds
+
+
 @pmp("wgt_mode", ("l2", "minvar"))
 def test_hci_writes_cube(wgt_mode, ms_name, sky_truth, tmp_path):
     """`sky_truth` is requested because this test asserts the image is not dead,
