@@ -303,7 +303,9 @@ def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
     Processes, not threads: the open is GIL-bound (8 threads gave 4x, 32 threads
     less). With ``nprocs == 1`` or one MS each tree is opened and closed in turn
     in this process (#241). The plan is the same either way. The processes are spawned,
-    so a script calling ``hci_msv4`` must do so under ``if __name__ == "__main__":``.
+    which re-imports ``__main__`` only when it is a file: the ``pfb`` CLI (guarded) and
+    stimela's python flavour (``python -c``) are safe, while a script file that calls
+    ``hci_msv4`` at module level needs an ``if __name__ == "__main__":`` guard.
 
     Args:
         ms: Measurement-set paths.
