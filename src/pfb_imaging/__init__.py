@@ -159,7 +159,8 @@ def raise_open_file_limit() -> int:
         The soft limit now in force (unchanged if it could not be raised).
     """
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    target = hard if hard != resource.RLIM_INFINITY else max(soft, 2**20)
+    # capped: a container's hard limit can be ~1e9, which slows code that walks every fd
+    target = 2**20 if hard == resource.RLIM_INFINITY else min(hard, 2**20)
     if soft == resource.RLIM_INFINITY or soft >= target:
         return soft
     try:

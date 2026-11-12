@@ -41,6 +41,9 @@ from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, HciConfig
 log = pfb_logging.get_logger("HCI-MSV4")
 
 _WHOLE = (-1, 0, None)
+# planning processes: each imports the scientific stack (~0.5 GB), and on NFS more than this
+# bought little (#358: 8 threads 0.43 s/MS, 32 processes ~0.7 s/MS on a shared filer)
+_PLAN_PROCS = 8
 
 
 @dataclass(frozen=True)
@@ -299,7 +302,8 @@ def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
     thousands of single-integration MSs takes hours to plan in one process.
     Processes, not threads: the open is GIL-bound (8 threads gave 4x, 32 threads
     less). With ``nprocs == 1`` or one MS each tree is opened and closed in turn
-    in this process (#241). The plan is the same either way.
+    in this process (#241). The plan is the same either way. The processes are spawned,
+    so a script calling ``hci_msv4`` must do so under ``if __name__ == "__main__":``.
 
     Args:
         ms: Measurement-set paths.
@@ -528,7 +532,7 @@ def hci_msv4(
     # one MS open at a time, as hci (#241); the plan keeps what the checks below need
     plan = plan_ms(
         ms,
-        nprocs=min(nworkers, os.cpu_count() or 1),
+        nprocs=min(nworkers, _PLAN_PROCS, len(os.sched_getaffinity(0))),
         log=log,
         integrations_per_image=integrations_per_image,
         channels_per_image=channels_per_image,
