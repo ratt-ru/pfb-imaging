@@ -11,11 +11,6 @@ import numpy as np
 import psutil
 import ray
 import xarray as xr
-import yaml
-from astropy import units
-from astropy.coordinates import SkyCoord
-from astropy.io import fits
-from astropy.wcs import WCS
 
 from pfb_imaging.utils.optional import optional_dependency
 
@@ -28,24 +23,36 @@ with optional_dependency("The hci command"):
     from daskms import xds_from_storage_ms as xds_from_ms
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
-from meerkat_beams.utils import BeamWizard
 from zarr import ProcessSynchronizer
 
-from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.astrometry import resolve_target_radec
+from pfb_imaging.utils.hci_common import (
+    FITS_AXIS_KEYWORDS as _FITS_AXIS_KEYWORDS,  # noqa: F401
+)
+from pfb_imaging.utils.hci_common import (
+    STOKES_FITS_INDEX as _STOKES_FITS_INDEX,  # noqa: F401
+)
+from pfb_imaging.utils.hci_common import (
+    build_scaffold,
+    hci_beam_band,
+    hci_beam_wizard,
+    image_centre_deg,
+    write_fits_vars,
+    write_transient_spectra,
+)
+from pfb_imaging.utils.hci_common import (
+    default_phase_dir as _default_phase_dir,
+)
+from pfb_imaging.utils.hci_common import (
+    make_fits_header as _make_fits_header,  # noqa: F401
+)
+from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env
 from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, set_image_size
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import batch_stokes_image
-from pfb_imaging.utils.transients import generate_transient_spectra
 
 log = pfb_logging.get_logger("HCI")
-
-# FITS axis keywords that must be removed/renumbered when changing dimensionality
-_FITS_AXIS_KEYWORDS = ("CTYPE", "CRVAL", "CRPIX", "CDELT", "CUNIT", "NAXIS")
-
-# FITS Stokes parameter indices (FITS standard)
-_STOKES_FITS_INDEX = {"I": 1, "Q": 2, "U": 3, "V": 4}
 
 
 @pfb_logging.log_exceptions
@@ -73,7 +80,6 @@ def hci(
     channels_per_bin: int = -1,
     precision: str = "double",
     beam_model: str | None = None,
-    primary_beam_band: str | None = None,
     field_of_view: float | None = 1.0,
     super_resolution_factor: float = 1.0,
     cell_size: float | None = None,
@@ -155,6 +161,7 @@ def hci(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
     pfb_logging.log_to_file(logname)
+    phases = PhaseClock(log)
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -165,6 +172,11 @@ def hci(
         ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
     opts_dict["nthreads"] = nthreads
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
+
+    try:
+        beam_band = hci_beam_band(beam_model)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -200,7 +212,7 @@ def hci(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu, log=log)
     runtime_env = {
-        "env_vars": env_vars,
+        "env_vars": {**env_vars, **profile_env()},
         "worker_process_setup_hook": setup_ray_worker,
     }
 
@@ -216,6 +228,7 @@ def hci(
         object_store_memory=mem_limit,
         log=log,
     )
+    phases.lap("Ray start")
 
     fds_fs, fds_url = uri_and_fs(output_dataset)
     if fds_fs.exists(fds_url):
@@ -418,17 +431,15 @@ def hci(
     )
 
     log.info("Scaffolding complete")
+    phases.lap("Mappings and scaffold")
 
     # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
     if beam_model is None:
         log.info("No beam model specified, not applying primary beam correction")
-    elif beam_model.lower() != "meerkat-beams":
-        raise NotImplementedError("Only meerkat-beams is currently supported for beam_model")
     else:
-        if primary_beam_band not in ("U", "L", "S0", "S4"):
-            raise ValueError("primary_beam_band must be one of U, L, S0 or S4")
-        log.info("Using meerkat-beams to initialise BeamWizard")
-        beam_model = BeamWizard(image_name=output_dataset, band=primary_beam_band)
+        log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
+        beam_model = hci_beam_wizard(output_dataset, beam_band)
+        phases.lap("Beam wizard")
 
     # get the size of the padded grid
     nx_pad = good_size(int(min_padding * nx))
@@ -440,40 +451,32 @@ def hci(
     n_stokes = len(set(product))
     log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
     log.info(f"Padded grid size = (n_y={ny_pad}, n_x={nx_pad})")
-    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={128}, n_x={128})")
+    schunk = min(128, nx, ny)  # make_dummy_dataset's spatial_chunk, as build_scaffold clips it
+    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={schunk}, n_x={schunk})")
 
     if inject_transients is not None:
         # we need to do this here because we don't have access
         # to the full domain inside the call to stokes2im
         log.info("Computing transient spectra")
 
-        with open(inject_transients, "r") as f:
-            config = yaml.safe_load(f)
-        transients = config["transients"]
-        coords = {
-            "TIME": (("TIME",), all_times),
-            "FREQ": (("FREQ",), all_freqs),
-        }
-        names = []
-        ras = []
-        decs = []
-        transient_ds = xr.Dataset(coords=coords)
-        for transient in transients:
-            tprofile, fprofile = generate_transient_spectra(all_times, all_freqs, transient)
-            name = transient["name"]
-            transient_ds[f"{name}_time_profile"] = (("TIME",), tprofile)
-            transient_ds[f"{name}_freq_profile"] = (("FREQ",), fprofile)
-            names.append(name)
-            ras.append(transient["position"]["ra"])
-            decs.append(transient["position"]["dec"])
-        transient_ds = transient_ds.assign_attrs({"names": names, "ras": ras, "decs": decs})
-        transient_baseoname = inject_transients.removesuffix("yaml")
-        transient_ds.to_zarr(f"{transient_baseoname}zarr", mode="a")
+        write_transient_spectra(inject_transients, all_times, all_freqs)
         log.info("Spectra computed")
 
     tasks = []
     channel_width = {}
     ncompleted = 0
+    task_times = dict.fromkeys(("wall_s", "cpu_s", "read_s", "image_s", "write_s"), 0.0)
+
+    def completed(ready) -> None:
+        _, _, mem = ray.get(ready)[0]
+        for k in task_times:
+            task_times[k] += mem[k]
+        log.info(
+            f"Processed {ncompleted}/{ntasks} [{format_memory(mem)} | read {mem['read_s']:.1f} s "
+            f"image {mem['image_s']:.1f} s write {mem['write_s']:.1f} s]",
+            extra=pfb_logging.NO_MARKUP,
+        )
+
     # if opts.temp-dir is None dir will be /tmp
     with TemporaryDirectory(prefix="hci-", dir=temp_dir) as tempdir:
         synchronizer = ProcessSynchronizer(tempdir)
@@ -581,8 +584,7 @@ def hci(
                         if len(tasks) > max_simul_chunks:
                             ncompleted += 1
                             ready, tasks = ray.wait(tasks, num_returns=1)
-                            timeid, bandid = ray.get(ready)[0]
-                            log.info(f"Processed {ncompleted}/{ntasks}")
+                            completed(ready)
 
             # release the main MS TableProxy before opening the next MS — see
             # https://github.com/ratt-ru/pfb-imaging/issues/241
@@ -593,9 +595,15 @@ def hci(
         while remaining_tasks:
             ncompleted += 1
             ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-            timeid, bandid = ray.get(ready)[0]
-            log.info(f"Processed {ncompleted}/{ntasks}")
+            completed(ready)
 
+    phases.lap("Imaging", mem=True)
+    if ncompleted:
+        t = task_times
+        log.info(
+            f"Tasks (s, summed over {ncompleted}): wall {t['wall_s']:.0f} cpu {t['cpu_s']:.0f} "
+            f"read {t['read_s']:.0f} image {t['image_s']:.0f} write {t['write_s']:.0f}"
+        )
     log.info("Computing means")
     cwidths = []
     for _, val in channel_width.items():
@@ -635,7 +643,9 @@ def hci(
         wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
         wsumsqc = wsumsq.compute()[:, None, None]
         weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=(1, y_chunk, x_chunk)))
+        # the PSF has its own spatial chunk (build_scaffold clips it to the PSF, the cube's to the image)
+        psf_chunks = (1, chunk_sizes["Y_PSF"][0], chunk_sizes["X_PSF"][0])
+        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=psf_chunks))
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)
@@ -645,140 +655,18 @@ def hci(
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(fds_url, mode="r+")
     log.info("Reduction complete")
+    phases.lap("Means")
 
     if fits_vars is not None:
-        # reopen with chunking aligned to zarr layout for efficient streaming
-        cds = xr.open_zarr(fds_url, chunks={"TIME": images_per_chunk})
-        stokes_params = list(cds.coords["STOKES"].values)
-        # reconstruct the base header from stored attrs
-        base_hdr = dict(cds.attrs["fits_header"])
-        for var in fits_vars:
-            match var:
-                case "cube" | "psf" | "beam_weight" | "weight_grid":
-                    if cds.get(var, None) is None:
-                        log.warning(f"{var} not found in dataset, skipping FITS export")
-                        continue
-                    cube = cds.get(var).data  # (STOKES, FREQ, TIME, Y, X)
-                    n_stokes, n_freqs, n_time, ny, nx = cube.shape
+        write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
+        phases.lap("FITS")
 
-                    # --- per-band time cubes via StreamingHDU ---
-                    # target shape per band: (STOKES, TIME, Y, X)
-                    # FITS axes: NAXIS1=X, NAXIS2=Y, NAXIS3=TIME, NAXIS4=STOKES
-                    # drop FITS axis 4 (FREQ) from the 5-axis header
-                    band_shape = (n_stokes, n_time, ny, nx)
-                    for f in range(n_freqs):
-                        band_hdr = _make_fits_header(base_hdr, band_shape, stokes_params, drop_axes={4})
-
-                        filename = fits_output_folder / f"{var}.band{f:04d}.fits"
-                        if Path(filename).exists():
-                            Path(filename).unlink()
-                        log.info(f"Streaming {var} band {f} to {filename}")
-
-                        shdu = fits.StreamingHDU(str(filename), band_hdr)
-                        for s in range(n_stokes):
-                            for t in range(0, n_time, images_per_chunk):
-                                tend = min(t + images_per_chunk, n_time)
-                                chunk = cube[s, f, t:tend, :, :].compute()
-                                shdu.write(chunk)
-                        shdu.close()
-                case "cube_mean":
-                    # --- mean image (small enough to write at once) ---
-                    # target shape: (STOKES, FREQ, Y, X)
-                    # drop FITS axis 3 (TIME/INTEGRATION) from the 5-axis header
-                    cube_mean = cds.cube_mean.data  # (STOKES, FREQ, Y, X)
-                    mean_hdr = _make_fits_header(base_hdr, cube_mean.shape, stokes_params, drop_axes={3})
-
-                    mean_filename = fits_output_folder / "cube_mean.fits"
-                    log.info(f"Writing mean image to {mean_filename}")
-                    mean_data = cube_mean.compute()
-                    hdu = fits.PrimaryHDU(mean_data, mean_hdr)
-                    hdu.writeto(str(mean_filename), overwrite=True)
-
-            log.info("FITS export complete")
-
+    phases.summary()
+    dump_timeline(log)
     log.info(f"All done after {time.time() - time_start}s")
 
     if not keep_ray_alive:
         ray.shutdown()
-
-
-def _make_fits_header(base_hdr, data_shape, stokes_params, drop_axes):
-    """Build an ordered FITS header from the stored 5-axis header.
-
-    Drops the specified axes, renumbers the remaining ones, explicitly sets
-    the STOKES axis from the coordinate values, and ensures mandatory
-    keywords appear first (required by StreamingHDU).
-
-    Args:
-        base_hdr: dict of FITS header keyword-value pairs (from attrs["fits_header"]).
-        data_shape: tuple of the target array shape in numpy order
-            e.g. (STOKES, TIME, Y, X) or (STOKES, FREQ, Y, X).
-        stokes_params: list of Stokes parameter strings e.g. ["I"] or ["I", "Q"].
-        drop_axes: set of 1-based FITS axis numbers to drop from the 5-axis header.
-
-    Returns:
-        astropy.io.fits.Header with correct ordering and keywords.
-    """
-    hdr = base_hdr.copy()
-    orig_naxis = hdr["NAXIS"]
-    ndim = len(data_shape)
-    # FITS shape is reversed from numpy shape
-    fits_shape = data_shape[::-1]
-
-    # remove WCSAXES early — we'll set it at the end
-    hdr.pop("WCSAXES", None)
-
-    # collect which original axes survive (1-based, in order)
-    kept_axes = [ax for ax in range(1, orig_naxis + 1) if ax not in drop_axes]
-
-    # build the new axis keywords: new axis i gets old axis kept_axes[i-1]
-    # first, collect the new values
-    new_axis_kws = {}
-    for new_ax, old_ax in enumerate(kept_axes, 1):
-        for kw in _FITS_AXIS_KEYWORDS:
-            old_key = f"{kw}{old_ax}"
-            if old_key in hdr:
-                new_axis_kws[f"{kw}{new_ax}"] = hdr[old_key]
-
-    # remove all old axis keywords
-    for ax in range(1, orig_naxis + 1):
-        for kw in _FITS_AXIS_KEYWORDS:
-            hdr.pop(f"{kw}{ax}", None)
-
-    # set NAXIS and NAXISn
-    hdr["NAXIS"] = ndim
-    for i, size in enumerate(fits_shape, 1):
-        new_axis_kws[f"NAXIS{i}"] = size
-
-    # find which new axis is STOKES and set it explicitly
-    stokes_rvals = [_STOKES_FITS_INDEX[s] for s in stokes_params]
-    stokes_delta = stokes_rvals[1] - stokes_rvals[0] if len(stokes_rvals) > 1 else 1
-    stokes_ax = ndim  # STOKES is always the last (slowest) FITS axis
-    new_axis_kws[f"CTYPE{stokes_ax}"] = "STOKES"
-    new_axis_kws[f"CRPIX{stokes_ax}"] = 1
-    new_axis_kws[f"CRVAL{stokes_ax}"] = stokes_rvals[0]
-    new_axis_kws[f"CDELT{stokes_ax}"] = stokes_delta
-    new_axis_kws[f"CUNIT{stokes_ax}"] = ""
-
-    # build ordered header: mandatory keywords first
-    mandatory = ["SIMPLE", "BITPIX", "NAXIS"] + [f"NAXIS{i}" for i in range(1, ndim + 1)]
-    ordered = {}
-    for kw in mandatory:
-        if kw in hdr:
-            ordered[kw] = hdr.pop(kw)
-        elif kw in new_axis_kws:
-            ordered[kw] = new_axis_kws.pop(kw)
-
-    # then the rest of the original header (EXTEND, BSCALE, BZERO, etc.)
-    ordered.update(hdr)
-
-    # then the WCS axis keywords
-    ordered.update(new_axis_kws)
-
-    # set WCSAXES at the end
-    ordered["WCSAXES"] = ndim
-
-    return fits.Header(ordered)
 
 
 def make_dummy_dataset(
@@ -871,226 +759,25 @@ def make_dummy_dataset(
 
     # spatial coordinates
     if phase_dir is None:
-        # these are in radians
-        out_ra = np.unique(out_ra)
-        out_dec = np.unique(out_dec)
-        if out_ra.size > 1 or out_dec.size > 1:
-            # compute the barycenter and propagate it as phase_dir so workers rephase to
-            # the same reference; otherwise the scaffold and the images would be centred
-            # on different skies.
-            log.info("Using barycenter as phase center since no phase-dir was specified")
-            cos_dec = np.cos(out_dec)
-            x = np.mean(cos_dec * np.cos(out_ra))
-            y = np.mean(cos_dec * np.sin(out_ra))
-            z = np.mean(np.sin(out_dec))
-            ra0 = np.arctan2(y, x) % (2.0 * np.pi)
-            dec0 = np.arctan2(z, np.hypot(x, y))
-            bary = SkyCoord(ra=ra0 * units.rad, dec=dec0 * units.rad, frame="fk5")
-            phase_dir = (
-                f"{bary.ra.to_string(unit=units.hourangle, sep=':')},{bary.dec.to_string(unit=units.deg, sep=':')}"
-            )
+        phase_dir = _default_phase_dir(out_ra, out_dec)
+    out_ra_deg, out_dec_deg = image_centre_deg(np.asarray(out_ra), np.asarray(out_dec), phase_dir, target, out_times)
 
-    if phase_dir is None:
-        # single-field / single radec — use the MS phase centre directly
-        out_ra_deg = np.rad2deg(out_ra)
-        out_dec_deg = np.rad2deg(out_dec)
-    else:
-        ra_str, dec_str = phase_dir.split(",")
-        coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
-        # match the deg->rad->deg path inside stokes_image so the rounded Y/X coords
-        # agree bitwise with what the workers write back.
-        out_ra_deg = np.array([np.rad2deg(np.deg2rad(coord.ra.value))])
-        out_dec_deg = np.array([np.rad2deg(np.deg2rad(coord.dec.value))])
-
-    # remove duplicates
-    out_times = np.unique(out_times)
-    out_freqs = np.unique(out_freqs)
-
-    # --target moves the image centre off the tangent point, so the scaffold's
-    # X/Y coords (and the header's CRVAL) must move with it: stokes_image labels
-    # its grid from the target, and its slab is written back with
-    # to_zarr(region="auto"), which resolves the region by looking those values
-    # up here. Same resolver on both sides so they cannot disagree.
-    if target is not None:
-        ra_t, dec_t, moving = resolve_target_radec(target, float(out_times[0]))
-        if moving and out_times.size > 1:
-            # an ephemeris target moves between images, but X/Y is one axis shared
-            # across TIME, so no single labelling is correct for the whole cube
-            refs = np.rad2deg([resolve_target_radec(target, float(t))[:2] for t in out_times])
-            if not np.all(refs == refs[0]):
-                raise ValueError(
-                    f"target '{target}' is a solar-system body, so its position differs across the "
-                    f"{out_times.size} output time bins ({np.ptp(refs[:, 0]):.4f} deg in RA, "
-                    f"{np.ptp(refs[:, 1]):.4f} deg in Dec) and the cube's shared X/Y axis cannot "
-                    "label all of them. Either ask for a single time bin "
-                    "(--integrations-per-image >= the number of integrations in the scan), or pass "
-                    "the position explicitly as --target 'HH:MM:SS,DD:MM:SS'."
-                )
-        out_ra_deg = np.array([np.rad2deg(ra_t)])
-        out_dec_deg = np.array([np.rad2deg(dec_t)])
-
-    n_stokes = len(set(product))
-    n_times = out_times.size
-    n_freqs = out_freqs.size
-
-    # guard against chunk sizes larger than the image size
-    spatial_chunk = np.minimum(spatial_chunk, min(nx, ny, nx_psf, ny_psf))
-
-    cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (1, 1, images_per_chunk, spatial_chunk, spatial_chunk)
-
-    mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
-
-    rms_dims = (n_stokes, n_freqs, n_times)
-    rms_chunks = (1, 1, images_per_chunk)
-
-    ra_dim = "RA--SIN"
-    dec_dim = "DEC--SIN"
-    if out_freqs.size > 1:
-        delta_freq = np.diff(out_freqs).min()
-    else:
-        delta_freq = 1
-    if out_times.size > 1:
-        delta_time = np.diff(out_times).min()
-    else:
-        delta_time = 1
-
-    # construct reference header
-    w = WCS(naxis=5)
-    w.wcs.ctype = ["RA---SIN", "DEC--SIN", "INTEGRATION", "FREQ", "STOKES"]
-    w.wcs.cdelt = [-cell_deg, cell_deg, delta_time, delta_freq, 1]
-    w.wcs.cunit = ["deg", "deg", "s", "Hz", ""]
-    w.wcs.crval = [out_ra_deg[0], out_dec_deg[0], out_times[0], out_freqs[0], 1]
-    w.wcs.crpix = [1 + nx // 2, 1 + ny // 2, 1, 1, 1]
-    w.wcs.equinox = 2000.0
-    wcs_hdr = w.to_header()
-
-    # the order does seem to matter here,
-    # especially when using with StreamingHDU
-    hdr = fits.Header()
-    hdr["SIMPLE"] = (True, "conforms to FITS standard")
-    hdr["BITPIX"] = (-32, "array data type")
-    hdr["NAXIS"] = (5, "number of array dimensions")
-    data_shape = (nx, ny, n_times, n_freqs, n_stokes)
-    for i, size in enumerate(data_shape, 1):
-        hdr[f"NAXIS{i}"] = (size, f"length of data axis {i}")
-
-    hdr["EXTEND"] = True
-    hdr["BSCALE"] = 1.0
-    hdr["BZERO"] = 0.0
-    hdr["BUNIT"] = "Jy/beam"
-    hdr["EQUINOX"] = 2000.0
-    hdr["BTYPE"] = "Intensity"
-    hdr.update(wcs_hdr)
-    hdr["TIMESCAL"] = delta_time
-    if obs_label is not None:
-        hdr["OBSLABEL"] = obs_label
-
-    # if we don't pass these into stokes2im they get overwritten
-    attrs = {
-        "pfb-imaging-version": pfb_version,
-        # Store dicts as list since zarr doesn't maintain dict order.
-        "fits_header": list(dict(hdr).items()),
-        "radec_dims": (ra_dim, dec_dim),
-        "fits_dims": (("X", ra_dim), ("Y", dec_dim), ("TIME", "TIME"), ("FREQ", "FREQ"), ("STOKES", "STOKES")),
-    }
-
-    # Quantise to 1e-12 deg (3.6 nanoarcsec) so the workers' independently computed
-    # X/Y coords agree bitwise with this scaffold: they write back with
-    # to_zarr(region="auto"), which looks the values up in the stored coords and
-    # raises KeyError on a 1-ulp difference. Redundant with the deg->rad->deg
-    # symmetry above -- either alone suffices; keep both.
-    # See wiki design-decisions D36 (#155).
-    out_ras = out_ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
-    out_decs = out_dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
-    out_ras = np.round(out_ras, decimals=12)
-    out_decs = np.round(out_decs, decimals=12)
-
-    dummy_ds = xr.Dataset(
-        data_vars={
-            "cube": (
-                ("STOKES", "FREQ", "TIME", "Y", "X"),
-                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32),
-            ),
-            "cube_mean": (("STOKES", "FREQ", "Y", "X"), da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)),
-            "rms": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
-            ),
-            "weight": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
-            ),
-            "nonzero": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_),
-            ),
-            "flag": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_),
-            ),
-            "psf_maj": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
-            ),
-            "psf_min": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
-            ),
-            "psf_pa": (
-                ("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
-            ),
-            "channel_width": (
-                ("FREQ",),
-                da.empty((n_freqs), chunks=(1), dtype=np.float32),
-            ),
-            # we can't add these as coordinates as they are not necessarily unique
-            # simplest to set them inside stokes2im
-            "orig_phase_dir_ra": (
-                ("TIME",),
-                da.empty((n_times), chunks=(images_per_chunk,), dtype=np.float64),
-            ),
-            "orig_phase_dir_dec": (
-                ("TIME",),
-                da.empty((n_times), chunks=(images_per_chunk,), dtype=np.float64),
-            ),
-        },
-        coords={
-            "TIME": (("TIME",), out_times),
-            "STOKES": (("STOKES",), list(sorted(set(product)))),
-            "FREQ": (("FREQ",), out_freqs),
-            "X": (("X",), out_ras),
-            "Y": (("Y",), out_decs),
-        },
-        attrs=attrs,
+    dummy_ds, attrs = build_scaffold(
+        out_times,
+        out_freqs,
+        out_ra_deg,
+        out_dec_deg,
+        product,
+        beam_model is not None,
+        psf_out,
+        nx,
+        ny,
+        nx_psf,
+        ny_psf,
+        cell_deg,
+        spatial_chunk=spatial_chunk,
+        images_per_chunk=images_per_chunk,
+        obs_label=obs_label,
     )
-
-    if beam_model is not None:
-        dummy_ds["beam_weight"] = (
-            ("STOKES", "FREQ", "TIME", "Y", "X"),
-            da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32),
-        )
-
-    if psf_out:
-        psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
-        dummy_ds = dummy_ds.assign_coords(
-            {
-                "Y_PSF": (("Y_PSF",), out_dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg),
-                "X_PSF": (("X_PSF",), out_ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg),
-            }
-        )
-        dummy_ds["psf"] = (
-            ("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
-            da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32),
-        )
-        dummy_ds["psf2"] = (
-            ("STOKES", "Y_PSF", "X_PSF"),
-            da.empty((n_stokes, ny_psf, nx_psf), chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32),
-        )
-
-    # Write scaffold and metadata to disk.
-    cds = f"{output_dataset}"
-    dummy_ds.to_zarr(cds, mode="w", compute=False)
-    return attrs, ntasks, n_times, n_freqs, phase_dir
+    dummy_ds.to_zarr(f"{output_dataset}", mode="w", compute=False)
+    return attrs, ntasks, dummy_ds.sizes["TIME"], dummy_ds.sizes["FREQ"], phase_dir

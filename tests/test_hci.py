@@ -16,6 +16,7 @@ import pytest
 import xarray as xr
 import yaml
 from africanus.coordinates import radec_to_lm
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 from daskms import xds_from_table
@@ -196,7 +197,7 @@ def test_make_fits_header_does_not_mutate_input():
 
 
 @pytest.mark.slow
-def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
+def test_hci_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
     """channels_per_bin must not change hci output when no beam model is supplied.
 
     With channels_per_image=-1 (a single image per spw) and no beam correction,
@@ -248,6 +249,7 @@ def test_hci_channels_per_bin_invariance_no_beam(ms_name, tmp_path):
     # sanity: the run actually produced data
     assert np.any(weight_full > 0)
     assert np.any(weight_bin4 > 0)
+    assert np.abs(np.nan_to_num(cube_full)).max() > 0  # weights do not depend on the data; the cube does
 
     # weights telescope exactly: sum_b max(PSF_b) at the central pixel equals
     # max(PSF_full) since each band's PSF max sits at the same pixel.
@@ -471,7 +473,6 @@ def test_hci_inject_transients_location_vs_distance(writable_ms, ms_meta, tmp_pa
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from astropy.io import fits
     from astropy.wcs import WCS
     from daskms import xds_from_ms, xds_to_table
@@ -589,7 +590,6 @@ def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_to_table
 
     xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]
@@ -673,6 +673,34 @@ def test_hci_inject_transients_rephased(writable_ms, ms_meta, tmp_path):
         err = np.hypot(ix_f - ix_pred, iy_f - iy_pred)
         assert err <= 1.0, f"rephased source at offset ({di},{dj}) landed {err:.1f} px from prediction"
         assert win.max() > 0.0, f"no flux recovered for rephased source at offset ({di},{dj})"
+
+
+@pytest.mark.slow
+def test_hci_psf_out_with_an_image_smaller_than_the_psf_chunk(ms_name, tmp_path):
+    """An image under 128 px chunks its cube below the 128-px PSF's chunk (#358 review).
+
+    The means pass rechunked psf2 to the image chunk, which zarr refused (overlapping
+    dask chunks) after all the imaging was done.
+    """
+    outname = str(tmp_path / "small.zarr")
+    hci_core(
+        [Path(ms_name)],
+        outname,
+        product="I",
+        data_column="DATA",
+        integrations_per_image=30,
+        images_per_chunk=2,
+        field_of_view=0.15,
+        psf_out=True,
+        precision="single",
+        epsilon=1e-4,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    ds = xr.open_zarr(outname)
+    assert ds.sizes["X"] < 128 <= ds.sizes["X_PSF"]
+    assert ds.psf2.encoding["chunks"][-1] == min(128, ds.sizes["X_PSF"])
+    assert "cube_mean" in ds
 
 
 @pmp("wgt_mode", ("l2", "minvar"))
@@ -806,6 +834,54 @@ def test_beam_for_band_stokes_order():
         assert_allclose(pbeam[index], levels[prod], rtol=1e-6)
 
 
+@pytest.mark.parametrize("grid_dtype", [np.float32, np.float64])
+def test_beam_for_band_reuses_the_reprojection_and_matches_reproject_interp(grid_dtype):
+    """The coordinate map is built once per field and changes nothing (#358).
+
+    The reference is the pre-cache body: reproject_interp per Stokes, zeroed outside the footprint.
+    """
+    from astropy.wcs import WCS
+    from reproject import reproject_interp
+
+    from pfb_imaging.utils import hci_common
+
+    hci_common._beam_reprojection.cache_clear()
+    nx, ny, cell_deg = 40, 36, 1.5e-2
+    l_beam = ((np.arange(64) - 32) * 1e-2).astype(grid_dtype)
+    m_beam = ((np.arange(48) - 24) * 1.2e-2).astype(grid_dtype)
+    rng = np.random.default_rng(0)
+    bw = _mock_beam_wizard(bds=SimpleNamespace(X=SimpleNamespace(values=l_beam), Y=SimpleNamespace(values=m_beam)))
+    bw.get_rotation_averaged_beam.side_effect = lambda **kw: (rng.random((m_beam.size, l_beam.size)), None)
+    radec, radec_new = np.array([0.5, -0.5]), np.array([0.502, -0.499])
+
+    for _ in range(3):
+        beam_for_band(bw, np.array([5.0e9]), "I", np.float64, np.array([1e9]), radec, radec_new, cell_deg, nx, ny)
+    info = hci_common._beam_reprojection.cache_info()
+    assert (info.misses, info.hits) == (1, 2)
+
+    # the same beam through the uncached reprojection
+    plane = rng.random((m_beam.size, l_beam.size))
+    bw.get_rotation_averaged_beam.side_effect = lambda **kw: (plane, None)
+    got = beam_for_band(bw, np.array([5.0e9]), "I", np.float64, np.array([1e9]), radec, radec_new, cell_deg, nx, ny)
+    dl, dm = l_beam[1] - l_beam[0], m_beam[1] - m_beam[0]
+    wcs_ref = WCS(naxis=2)
+    wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    wcs_ref.wcs.cdelt = np.array((dl, dm))
+    wcs_ref.wcs.cunit = ["deg", "deg"]
+    wcs_ref.wcs.crval = np.rad2deg(radec)
+    wcs_ref.wcs.crpix = [1.0 - l_beam[0] / dl, 1.0 - m_beam[0] / dm]
+    wcs_target = WCS(naxis=2)
+    wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    wcs_target.wcs.cdelt = np.array((-cell_deg, cell_deg))
+    wcs_target.wcs.cunit = ["deg", "deg"]
+    wcs_target.wcs.crval = np.rad2deg(radec_new)
+    wcs_target.wcs.crpix = [1 + nx // 2, 1 + ny // 2]
+    want, footprint = reproject_interp((plane, wcs_ref), wcs_target, shape_out=(ny, nx))
+    want[~footprint.astype(bool)] = 0.0
+    assert (got[0] > 0).any() and (got[0] == 0).any()  # the footprint edge is in the image
+    np.testing.assert_array_equal(got[0], want)
+
+
 def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, ms_meta, tmp_path):
     """The driver's scaffold coords must match what the workers compute, bitwise.
 
@@ -826,7 +902,6 @@ def test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre(ms_name, ms_meta, t
     mechanism -- see wiki design-decisions D36 (#155) before deleting either.
     """
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
 
     field = xds_from_table(f"{ms_name}::FIELD")[0]
     ra0, dec0 = (float(v) for v in field.PHASE_DIR.values.squeeze())
@@ -897,7 +972,6 @@ def test_hci_target_recentres_the_grid(writable_ms, ms_meta, tmp_path):
     import dask
     import dask.array as da
     from astropy import units as u
-    from astropy.coordinates import SkyCoord
     from daskms import xds_from_ms, xds_from_table, xds_to_table
 
     xds0 = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1, "corr": -1})[0]

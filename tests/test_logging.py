@@ -1,6 +1,7 @@
 """Exceptions reach the log file, not just the terminal (#348)."""
 
 import logging
+import sys
 
 import pytest
 import ray
@@ -124,3 +125,18 @@ def test_ray_worker_hook_reports_a_missing_tbb(monkeypatch):
     finally:
         mb_utils.set_console_logging_level(before)
     assert "Could not initialise the TBB threading layer" in " ".join(out.get().split())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="macOS caps the soft limit at OPEN_MAX")
+def test_raise_open_file_limit_reaches_the_hard_limit():
+    import resource
+
+    from pfb_imaging import raise_open_file_limit
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(256, hard), hard))
+        want = 2**20 if hard == resource.RLIM_INFINITY else min(hard, 2**20)
+        assert raise_open_file_limit() == want == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))

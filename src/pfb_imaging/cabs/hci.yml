@@ -5,7 +5,7 @@ cabs:
     name: hci
     info:
       High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+    image: ghcr.io/ratt-ru/pfb-imaging:hciconvert
     inputs:
       ms:
         info:
@@ -164,19 +164,10 @@ cabs:
           rich_help_panel: Imaging
       beam-model:
         info:
-          Which beam model to use.
-        choices:
-        - meerkat-beams
-        metadata:
-          rich_help_panel: Input
-      primary-beam-band:
-        info:
-          Which band to use.
-        choices:
-        - U
-        - L
-        - S0
-        - S4
+          Primary beam, as a meerkat-beams band name.
+          One of U, L, S0 or S4 initialises a BeamWizard from the meerkat-beams band cache.
+          katbeam is not supported here.
+        dtype: Optional[str]
         metadata:
           rich_help_panel: Input
       field-of-view:

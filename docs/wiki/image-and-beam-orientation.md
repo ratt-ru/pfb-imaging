@@ -3,7 +3,7 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-10-30T12:00:00Z
+timestamp: 2026-11-05T14:00:00Z
 last_verified_commit: bc66298
 ---
 
@@ -48,15 +48,16 @@ assignment (`out_ras` descending along `ix`, `out_decs` ascending along `iy`)
 and the legacy `save_fits` transpose (`(..., nx, ny) → (..., ny, nx)`, no flips,
 `CDELT1 = -cell`) label the sky correctly — long validated in production.
 
-The hci reference header (`core/hci.py`, scaffold construction):
+The hci reference header (`utils/hci_common.py::build_scaffold`, shared by `hci` and
+`hci-msv4`):
 `CTYPE = [RA---SIN, DEC--SIN, ...]`, `CDELT = [-cell_deg, +cell_deg, ...]`,
 `CRPIX = [1 + nx//2, 1 + ny//2, ...]`, `CRVAL = radec_new` (the rephased/
 barycentre target, **not** the per-scan pointing).
 
 ## 3. BeamWizard semantics that matter here
 
-* `BeamWizard(image_name=output_dataset, band=primary_beam_band)` attaches the hci
-  scaffold, so
+* `hci_beam_wizard` builds `BeamWizard(image_name=output_dataset, band=<--beam-model>,
+  freq_extrapolation="scale")`, which attaches the hci scaffold, so
   `wizard.centre` = the **image** centre (`radec_new`), and the default l/m grid
   is `l_grid = (arange(nx) - (crpix1-1)) * cdelt1` — descending, because
   `cdelt1 < 0`. Parallactic angles are therefore computed at the image centre,
@@ -186,9 +187,10 @@ one Stokes plane at a fixed sky position on the chunk's own `(row, chan)` grid
 (`get_time_variable_beamgain` returns `(nchan, ntime)`, expanded onto rows) —
 no maps, no reprojection, no transposes.
 
-Sources: `src/pfb_imaging/utils/stokes2im.py` (`beam_for_band`, coordinate
-assignment), `src/pfb_imaging/utils/beam.py`,
-`src/pfb_imaging/utils/stokes2vis_msv4.py` (`beam_on_image_grid`), `core/hci.py` (scaffold header),
+Sources: `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`,
+`beam_gain_for_source`, `build_scaffold` -- the scaffold header),
+`src/pfb_imaging/utils/stokes2im.py` (coordinate assignment), `src/pfb_imaging/utils/beam.py`,
+`src/pfb_imaging/utils/stokes2vis_msv4.py` (`beam_on_image_grid`),
 `utils/fits.py` (`save_fits`/`set_wcs`), commits `547458f`, `330bc5d`,
 `a516530`; meerkat-beams `616906b` + PR landmanbester/meerkat-beams#8;
 ratt-ru/pfb-imaging#263, ratt-ru/breifast#208.

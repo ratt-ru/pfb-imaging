@@ -4,6 +4,8 @@ from africanus.rime.fast_beam_cubes import beam_cube_dde
 from astropy.wcs import WCS
 from katbeam import JimBeam
 from reproject import reproject_interp
+from reproject.array_utils import map_coordinates
+from reproject.wcs_utils import pixel_to_pixel_with_roundtrip
 from scipy.interpolate import RegularGridInterpolator
 
 from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
@@ -230,36 +232,85 @@ def reproject_and_interp_scat_beam(
     """
     nstokes = beam.shape[0]
     assert nstokes == len(product), "Number of Stokes products in beam does not match length of product string"
-    assert beam.shape[1:] == (m_beam.size, l_beam.size), "Beam maps must be (Y, X)-ordered on the l/m grid"
+    return BeamReprojection(l_beam, m_beam, radec0, radecf, cell_deg_out, nxo, nyo, l0=l0, m0=m0)(beam)
 
-    dl = l_beam[1] - l_beam[0]
-    dm = m_beam[1] - m_beam[0]
 
-    # WCS describing the beam grid around the pointing direction
-    wcs_ref = WCS(naxis=2)
-    wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
-    wcs_ref.wcs.cdelt = np.array((dl, dm))
-    wcs_ref.wcs.cunit = ["deg", "deg"]
-    wcs_ref.wcs.crval = np.array((np.rad2deg(radec0[0]), np.rad2deg(radec0[1])))
-    # 1-based crpix of the zero-offset pixel
-    wcs_ref.wcs.crpix = [1.0 - l_beam[0] / dl, 1.0 - m_beam[0] / dm]
+class BeamReprojection:
+    """``reproject_interp`` from a beam grid to an hci image grid, with the coordinate map kept.
 
-    # target WCS = the hci output header (core/hci.py scaffold construction)
-    wcs_target = WCS(naxis=2)
-    wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
-    wcs_target.wcs.cdelt = np.array((-cell_deg_out, cell_deg_out))
-    wcs_target.wcs.cunit = ["deg", "deg"]
-    wcs_target.wcs.crval = np.array((np.rad2deg(radecf[0]), np.rad2deg(radecf[1])))
-    # facet convention (see utils.fits.set_wcs): RA axis has cdelt = -cell, so
-    # centring the image on the target shifts crpix by +l0/cell; Dec by -m0/cell
-    wcs_target.wcs.crpix = [
-        1 + nxo // 2 + np.rad2deg(l0) / cell_deg_out,
-        1 + nyo // 2 - np.rad2deg(m0) / cell_deg_out,
-    ]
+    ``reproject_interp`` spends nearly all its time mapping every output pixel to
+    an input pixel through astropy's WCS (``pixel_to_pixel_with_roundtrip``),
+    and only a fraction interpolating. The map depends on the two grids and the
+    two directions, not on the beam values, so an hci worker that images many
+    integrations of one field computes it once (#358: 18 s of a 28 s 3840^2
+    image). Calling the object reproduces ``reproject_interp(..., order=1)``
+    followed by zeroing outside the footprint exactly: the same map, the same
+    ``reproject.array_utils.map_coordinates`` and the same float64 output.
 
-    pbeam = np.zeros((nstokes, nyo, nxo), dtype=beam.dtype)
-    for i in range(nstokes):
-        pbeam[i], pmask = reproject_interp((beam[i], wcs_ref), wcs_target, shape_out=(nyo, nxo))
-        # set beam to zero where it is not defined
-        pbeam[i][~pmask.astype(bool)] = 0.0
-    return pbeam
+    Args:
+        l_beam: 1D l coordinates of the beam columns (deg, East positive), uniform.
+        m_beam: 1D m coordinates of the beam rows (deg, North positive), uniform.
+        radec0: original pointing direction (rad).
+        radecf: output image phase centre to project to (rad).
+        cell_deg_out: output cell size (deg).
+        nxo: number of output X pixels.
+        nyo: number of output Y pixels.
+        l0: image-centre offset from the tangent point in radians (--target).
+        m0: as ``l0``, for m.
+    """
+
+    def __init__(self, l_beam, m_beam, radec0, radecf, cell_deg_out, nxo, nyo, l0=0.0, m0=0.0):
+        dl = l_beam[1] - l_beam[0]
+        dm = m_beam[1] - m_beam[0]
+
+        # WCS describing the beam grid around the pointing direction
+        wcs_ref = WCS(naxis=2)
+        wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+        wcs_ref.wcs.cdelt = np.array((dl, dm))
+        wcs_ref.wcs.cunit = ["deg", "deg"]
+        wcs_ref.wcs.crval = np.array((np.rad2deg(radec0[0]), np.rad2deg(radec0[1])))
+        # 1-based crpix of the zero-offset pixel
+        wcs_ref.wcs.crpix = [1.0 - l_beam[0] / dl, 1.0 - m_beam[0] / dm]
+
+        # target WCS = the hci output header (core/hci.py scaffold construction)
+        wcs_target = WCS(naxis=2)
+        wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+        wcs_target.wcs.cdelt = np.array((-cell_deg_out, cell_deg_out))
+        wcs_target.wcs.cunit = ["deg", "deg"]
+        wcs_target.wcs.crval = np.array((np.rad2deg(radecf[0]), np.rad2deg(radecf[1])))
+        # facet convention (see utils.fits.set_wcs): RA axis has cdelt = -cell, so
+        # centring the image on the target shifts crpix by +l0/cell; Dec by -m0/cell
+        wcs_target.wcs.crpix = [
+            1 + nxo // 2 + np.rad2deg(l0) / cell_deg_out,
+            1 + nyo // 2 - np.rad2deg(m0) / cell_deg_out,
+        ]
+
+        # as reproject.interpolation.core._reproject_full: output pixel (row, col) -> input pixel
+        rows, cols = np.meshgrid(np.arange(nyo, dtype=float), np.arange(nxo, dtype=float), indexing="ij")
+        pixel_in = pixel_to_pixel_with_roundtrip(wcs_target, wcs_ref, cols.ravel(), rows.ravel())[::-1]
+        self.pixel_in = np.array(pixel_in)
+        self.shape_in = (m_beam.size, l_beam.size)
+        self.shape_out = (nyo, nxo)
+
+    def __call__(self, beam: np.ndarray) -> np.ndarray:
+        """Reproject ``(nstokes, m, l)`` (Y, X) beam maps; zero outside their coverage.
+
+        Returns:
+            ``(nstokes, nyo, nxo)`` maps in cube (Y, X) order, in ``beam``'s dtype.
+        """
+        assert beam.shape[1:] == self.shape_in, "Beam maps must be (Y, X)-ordered on the l/m grid"
+        pbeam = np.zeros((beam.shape[0],) + self.shape_out, dtype=beam.dtype)
+        values = np.empty(self.pixel_in.shape[1])
+        for i in range(beam.shape[0]):
+            map_coordinates(
+                beam[i],
+                self.pixel_in,
+                order=1,
+                cval=np.nan,
+                mode="constant",
+                output=values,
+                max_chunk_size=256 * 1024**2,
+            )
+            # set beam to zero where it is not defined
+            pbeam[i] = np.where(np.isnan(values), 0.0, values).reshape(self.shape_out)
+        return pbeam
