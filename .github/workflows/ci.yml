@@ -4,16 +4,13 @@ permissions:
   contents: read
   pull-requests: read
 
+# Pull requests only. A push to main is the merge of a PR whose head already
+# passed here, so re-running the matrix after merge bought nothing; a version
+# tag is gated by publish.yml, which runs the whole suite (`-m ""`) itself.
+# warm-caches.yml keeps main's dependency caches alive for new PRs to restore.
+# dev-* are long-lived integration branches (e.g. dev-0.1.0), each with an open
+# PR into main; the PR trigger tests the merge with main, not the tip alone.
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-  # dev-* are long-lived integration branches (e.g. dev-0.1.0). They are
-  # deliberately absent from push above: each carries an open PR into main, so
-  # a push trigger would duplicate every run. The PR trigger also tests the
-  # merge with main rather than the branch tip alone.
   pull_request:
     branches:
       - main
@@ -73,11 +70,6 @@ jobs:
   test:
     name: Tests (${{ matrix.arch }}, py${{ matrix.python-version }}, ${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
-    # The aarch64 casacore leg is informational: python-casacore has never
-    # published an aarch64 wheel, so it compiles from sdist against the
-    # runner's casacore-dev and can break for reasons outside this repo. It
-    # reports arm casacore health without gating the merge.
-    continue-on-error: ${{ matrix.experimental }}
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
@@ -90,30 +82,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ---- x86_64: full coverage, everything installed (was `--extra full`)
+          # ---- x86_64: everything installed, at the two ends of the supported
+          # Python range; the full-only leg below covers the middle (3.12).
           - runner: ubuntu-latest
             arch: x86_64
             python-version: "3.11"
             extras: "--extra all"
             label: all
-            apt_casacore: false
-            experimental: false
-            cmake_args: ""
-          - runner: ubuntu-latest
-            arch: x86_64
-            python-version: "3.12"
-            extras: "--extra all"
-            label: all
-            apt_casacore: false
-            experimental: false
             cmake_args: ""
           - runner: ubuntu-latest
             arch: x86_64
             python-version: "3.13"
             extras: "--extra all"
             label: all
-            apt_casacore: false
-            experimental: false
             cmake_args: ""
 
           # ---- x86_64: prove the cross-platform extra really is self-contained.
@@ -124,8 +105,6 @@ jobs:
             python-version: "3.12"
             extras: "--extra full"
             label: full-only
-            apt_casacore: false
-            experimental: false
             cmake_args: ""
 
           # ---- aarch64 on GitHub's free ubuntu-24.04-arm runners.
@@ -137,31 +116,6 @@ jobs:
             python-version: "3.12"
             extras: "--extra full"
             label: full-only
-            apt_casacore: false
-            experimental: false
-            cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
-
-          # ---- aarch64 + casacore: informational (see continue-on-error above).
-          #
-          # EXPECTED TO FAIL on ubuntu-24.04 today, for a known reason: noble's
-          # casacore 3.5.0 ships libcasa_python3.so.7 built against NumPy 1.x,
-          # and python-casacore links it rather than compiling against NumPy
-          # itself. Under our NumPy 2 the first table open raises
-          # "PycArray: failed to load the numpy API". x86_64 never sees this
-          # because its PyPI wheel bundles casacore 3.8 (libcasa_*.so.8) built
-          # against NumPy 2. Reproduces on x86_64 with --no-binary
-          # python-casacore, so it is an ABI problem, not an arm one.
-          #
-          # This leg therefore now answers "has the distro shipped a NumPy-2
-          # casacore yet?". When it goes green, [casacore] works on arm and
-          # README's aarch64 section can drop its conda-forge workaround.
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-            python-version: "3.12"
-            extras: "--extra all"
-            label: all
-            apt_casacore: true
-            experimental: true
             cmake_args: "-DDUCC0_ARCH_FLAGS=-march=armv8.2-a"
 
     steps:
@@ -189,30 +143,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # Native build dependencies for the closure members with no aarch64
-      # wheel. ducc0 needs only cmake + a C++17 compiler; python-casacore
-      # (behind the [casacore] extra) additionally needs the casacore C++
-      # stack, and dask-ms's numcodecs<0.16 pin means a numcodecs source
-      # build too.
+      # wheel: ducc0 needs only cmake + a C++17 compiler.
       - name: Install aarch64 build dependencies
         if: env.SKIP_CHECKS != 'true' && matrix.arch == 'aarch64'
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config
-          if [ "${{ matrix.apt_casacore }}" = "true" ]; then
-            # Surface a missing arm64 casacore-dev here, with a readable
-            # message, rather than halfway through the python-casacore compile.
-            apt-cache policy casacore-dev
-            # libopenblas-dev is not optional: casacore's FindCasacore.cmake does
-            # casacore_find_package(BLAS REQUIRED) and (LAPACK REQUIRED) for the
-            # scimath_f component. x86_64 never hits it because python-casacore has
-            # a manylinux wheel there and nothing compiles. OpenBLAS bundles LAPACK,
-            # so one package satisfies both; add liblapack-dev if FindLAPACK ever
-            # fails independently.
-            sudo apt-get install -y --no-install-recommends \
-              casacore-dev libboost-python-dev libcfitsio-dev wcslib-dev \
-              libopenblas-dev
-          fi
 
       - name: Set up uv
         if: env.SKIP_CHECKS != 'true'
@@ -275,7 +212,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       # Source-build cache. Without it every arm run repays the full ducc0
-      # (and, on the casacore leg, python-casacore + numcodecs) compile.
+      # (and numcodecs, while zarr<3 pins it below its first arm wheel) compile.
       # Keyed on uv.lock so it invalidates exactly when a pinned version moves.
       - name: Cache source builds (aarch64)
         if: env.SKIP_CHECKS != 'true' && matrix.arch == 'aarch64'
@@ -379,8 +316,8 @@ jobs:
 
       # The fast set only: pyproject's addopts carry `-m "not slow"` and
       # nothing here overrides them. The end-to-end pipeline tests are ~80% of
-      # the suite's wall time and ran on all six legs of every push until #338;
-      # they now run in acceptance.yml (on demand, and on every push to main)
+      # the suite's wall time and ran on every leg of every push until #338;
+      # they now run in acceptance.yml (on demand, via `/test-acceptance`)
       # and in publish.yml (which gates a release on `-m ""`).
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
