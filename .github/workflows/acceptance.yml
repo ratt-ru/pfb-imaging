@@ -2,19 +2,20 @@ name: pfb-imaging Acceptance Tests
 
 # The end-to-end pipeline tests (`-m slow`): every test whose cheapest
 # parametrisation costs >= 2 s, which is ~80% of the suite's wall time while
-# being ~5% of its test count. `ci.yml` used to run them on all six matrix
-# legs of every push; that is what this workflow exists to stop (#338).
+# being ~5% of its test count. `ci.yml` used to run them on every matrix leg
+# of every push; that is what this workflow exists to stop (#338).
 #
 # The split is: `ci.yml` answers "does this branch build, lint, import and
-# compute correctly on six platforms", on every push, in a couple of minutes.
-# This workflow answers "does the pipeline still image a sky", on demand and
-# after merge, on the two legs that matter -- x86_64 (the reference) and
+# compute correctly on four platforms", on every PR push, in a few minutes.
+# This workflow answers "does the pipeline still image a sky", on demand only,
+# on the two legs that matter -- x86_64 (the reference) and
 # aarch64 (where ducc0 is compiled from sdist, so a miscompiled SIMD kernel
 # returns wrong numbers rather than crashing).
 #
-# It runs:
-#   * on every push to main -- the post-merge signal
-#   * on demand when an authorized user comments `/test-acceptance` on a PR
+# It is opt-in, and meant to be run once just before merging a big PR -- not
+# on every push to an open PR, and not after merge (the merge is the PR head
+# that was already tested). It runs:
+#   * when an authorized user comments `/test-acceptance` on a PR
 #   * manually via the Actions UI (workflow_dispatch), optionally against a PR
 #
 # A release is gated on the whole suite independently: `publish.yml` runs
@@ -24,9 +25,6 @@ name: pfb-imaging Acceptance Tests
 # must stay in step with them. Factoring them into a composite action is the
 # right fix and is tracked separately.
 on:
-  push:
-    branches:
-      - main
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -65,8 +63,8 @@ concurrency:
 jobs:
   resolve:
     name: Resolve ref
-    # A push to main or a manual dispatch always runs. A comment runs only when
-    # it is on a PR and carries the command.
+    # A manual dispatch always runs. A comment runs only when it is on a PR and
+    # carries the command.
     if: >-
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request &&
@@ -77,7 +75,6 @@ jobs:
     outputs:
       pr: ${{ steps.ref.outputs.pr }}
       sha: ${{ steps.ref.outputs.sha }}
-      skip: ${{ steps.skip.outputs.skip }}
     steps:
       # `issue_comment` runs with write permissions on the base repo, so the
       # command must not be usable by arbitrary accounts.
@@ -122,22 +119,7 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Acceptance tests will run against $sha${pr:+ (PR #$pr)}"
 
-      # `update-cabs.yml` pushes regenerated cabs to main with `[skip checks]`;
-      # without this, every cab regeneration would run the whole slow set.
-      - name: Check for skip checks
-        id: skip
-        run: |
-          set -euo pipefail
-          MSG=$(gh api "repos/${{ github.repository }}/commits/${{ steps.ref.outputs.sha }}" --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipping acceptance tests because [skip checks] was found in the commit message."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Mark commit status pending
-        if: steps.skip.outputs.skip != 'true'
         run: |
           gh api -X POST "repos/${{ github.repository }}/statuses/${{ steps.ref.outputs.sha }}" \
             -f state=pending \
@@ -148,7 +130,6 @@ jobs:
   acceptance:
     name: Acceptance (${{ matrix.arch }}, py${{ matrix.python-version }}, ${{ matrix.label }})
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true'
     runs-on: ${{ matrix.runner }}
 
     # This is the only job that executes PR-head code -- pytest runs conftest.py
@@ -277,14 +258,14 @@ jobs:
 
       # `-m slow` overrides the `-m "not slow"` in pyproject's addopts (pytest
       # keeps a single value, last wins). The fast set is ci.yml's job; running
-      # it again here would pay for it a third time per push.
+      # it again here would pay for it twice.
       - name: Run acceptance tests
         run: uv run --frozen pytest -v -m slow tests/
 
   report:
     name: Report result
     needs: [resolve, acceptance]
-    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.skip != 'true'
+    if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}

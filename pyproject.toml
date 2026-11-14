@@ -148,8 +148,7 @@ full = [
 # so it builds and then raises "PycArray: failed to load the numpy API" at the
 # first table open under our NumPy 2. No pip/uv build flag can fix that -- the
 # ABI is in the casacore .so. A NumPy-2 casacore is required; conda-forge has
-# one for linux-aarch64 (casacore 3.8.1). See README's aarch64 section, and the
-# informational arm CI leg, which exists to notice when the distro catches up.
+# one for linux-aarch64 (casacore 3.8.1). See README's aarch64 section.
 # dask-ms additionally pins numcodecs<0.16 and zarr<3, and numcodecs only
 # gained aarch64 wheels at 0.16.0 -- so this extra also costs a numcodecs
 # source build on arm until dask-ms moves to zarr 3.x.
@@ -218,8 +217,8 @@ addopts = [
     "--verbose",
     # Fast by default: the end-to-end pipeline tests are deselected so the
     # development loop stays short, and `ci.yml` runs exactly this selection on
-    # every push -- it does NOT override. The slow set runs in
-    # `acceptance.yml` (`-m slow`, on demand and on push to main) and
+    # every PR push -- it does NOT override. The slow set runs in
+    # `acceptance.yml` (`-m slow`, opt-in via `/test-acceptance`) and
     # `publish.yml` (`-m ""`, so a release is gated on the whole suite); a
     # command-line -m wins over this one. Do not run the slow set locally --
     # see .claude/rules/testing-and-ci.md section 1.
