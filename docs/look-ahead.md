@@ -44,7 +44,7 @@ When a band is dropped, the imager keeps the original band id (gap, e.g. nodes
 products are unaffected (sum over nodes). If a per-band comparison or alignment
 is ever needed, match on `freq_out`, not on the band index.
 
-## 4. Transient-injection end-to-end test (written; awaiting its first full run)
+## 4. Transient-injection end-to-end test (done)
 
 Implemented as `tests/test_hci.py::test_hci_injected_transient_has_the_analytic_dynamic_spectrum`
 (zeroed base data via `DATA-DATA`, a source on an exact pixel centre, per-bin flux predicted
