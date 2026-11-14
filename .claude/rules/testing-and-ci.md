@@ -212,7 +212,9 @@ The CI pipeline uses a custom `[skip checks]` tag (not GitHub's `[skip ci]`).
 * **`acceptance.yml`**: the slow set (`-m slow`) on x86_64 and aarch64. Triggers and the
   reasoning: §1's CI-split table.
 * **`publish.yml`**: PyPI publishing on version tags. Runs quality + tests before publishing.
-* **`publish-container.yml`**: Build and push container images to GHCR.
+* **`publish-container.yml`**: Build and push container images to GHCR -- automatically as `:latest`
+  on push to `main` and as semver on version tags; a feature-branch image only on demand, via
+  `gh workflow run publish-container.yml --ref <branch>` (tagged with the branch name).
 * **`update-cabs.yml`**: Regenerate cab definitions on push to `main`. Uses `landman-ci-bot` GitHub App for auth.
 
 ## 6. Releases

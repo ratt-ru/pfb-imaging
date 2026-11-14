@@ -1,12 +1,21 @@
 name: Publish Container
 
+# Automatic after merge (:latest, which the cabs on main point at) and on
+# version tags (semver). A feature-branch image is opt-in, published only
+# when someone needs to test the branch through stimela before merge:
+#
+#   gh workflow run publish-container.yml --ref <branch>
+#
+# which tags the image with the branch name -- what `_container_image.py` is
+# set to on a feature branch. It used to build on every PR push (~11
+# runner-minutes each) for images nobody pulled. Deliberately not a PR-comment
+# command like /test-acceptance: that would build the PR head's Dockerfile
+# with this repo's packages:write token, handing it to a fork's code. A
+# dispatch runs only on branches in this repo and needs write access.
 on:
   push:
     tags:
       - 'v*.*.*'
-    branches:
-      - main
-  pull_request:
     branches:
       - main
   workflow_dispatch:
@@ -120,8 +129,9 @@ jobs:
             # For version tags: v1.2.3 -> 1.2.3, 1.2; v0.0.9rc1 -> 0.0.9rc1
             type=pep440,pattern={{version}}
             type=pep440,pattern={{major}}.{{minor}}
-            # For PRs: use branch name (e.g., ghcr.io/user/repo:feature-branch)
-            type=raw,value=${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
+            # For a dispatch from a feature branch: the branch name, sanitised
+            # into a valid tag (e.g. ghcr.io/ratt-ru/pfb-imaging:feature-branch)
+            type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
             # For main branch: use 'latest'
             type=raw,value=latest,enable={{is_default_branch}}
 
