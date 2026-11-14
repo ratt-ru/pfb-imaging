@@ -129,7 +129,7 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 ## Two passes and the counts product
 
-1. **Pass 1** (`utils/stokes2vis_msv4.stokes_vis`, one Ray task per fine piece): load the
+1. **Pass 1** (`utils/stokes2vis.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
    over surviving channels — this is what the beam is evaluated at, D28), beam on the

@@ -248,7 +248,7 @@ def image_item(
         ``weight``/``rms``/``nonzero``/``psf_maj``/``psf_min``/``psf_pa`` (degrees),
         and scalars ``orig_phase_dir_ra``/``orig_phase_dir_dec``/``time_mjd``/``freq_out``.
     """
-    # deferred: ducc objects break Ray serialisation of the enclosing module's functions (stokes2im precedent)
+    # deferred: ducc objects break Ray serialisation of the enclosing module's functions
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
 

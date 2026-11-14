@@ -238,7 +238,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `radiomesh.generated._stokes_expr` (radiomesh ≥ 0.1.2; diag-jones/minvar variants
   included) and `register_jitable`'d; the overload closure holds **only plain
   module-level functions and ints**; the outer njit is `cache=True`; every front-end
-  call site (`stokes2im`, `stokes2vis`, `stokes2vis_msv4`) feeds `weight_data`
+  call site (`stokes2im`, `stokes2vis`) feeds `weight_data`/`weight_data_msv4`
   C-contiguous readonly views via `utils/weighting.as_contiguous_readonly_view` so
   Ray's per-task readonly/writable mix doesn't multiply compiled signatures. The sympy
   derivation and its oracle test live in radiomesh
@@ -299,7 +299,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   path — beam maps (`get_rotation_averaged_beam`, native since meerkat-beams `616906b`;
   `reproject_and_interp_scat_beam`, fixed to the measured reproject semantics with the 1D
   `l_beam`/`m_beam` coords, signed cdelt/crpix, target WCS = the hci output header) *and*
-  `stokes_image`'s working arrays (`residual`/`psf`/`pbeam`) and cube outputs. **No data-moving
+  `image_item`'s working arrays (`residual`/`psf`/`pbeam`) and cube outputs. **No data-moving
   transposes and no flips exist.** ducc's x-major world is confined to the `vis2dirty` call
   sites, which fill the `(ny, nx)` buffers through zero-copy transposed views (`dirty=buf.T`;
   ducc accepts strided output). The other x-major seam is `fitcleanbeam` — shared with the
@@ -319,7 +319,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   exception on the hci path; D25 deleted it, so no transpose or flip remains there either.
   Changing any transpose/flip on this path must keep `tests/test_beam_orientation.py` green.
 - **Source:** `src/pfb_imaging/utils/beam.py`; `src/pfb_imaging/utils/stokes2im.py`
-  (`stokes_image`); `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`);
+  (`image_item`, ported verbatim from the retired `stokes_image`, D61);
+  `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`);
   `src/pfb_imaging/utils/misc.py` (`fitcleanbeam`);
   `tests/test_beam_orientation.py`; image-and-beam-orientation.md; commits `547458f`,
   `330bc5d`, `a516530`; meerkat-beams `616906b` / PR landmanbester/meerkat-beams#8;
@@ -452,7 +453,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   instability** — a step-size guard is proposed in #287.
 - **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy study);
   `tests/test_preconditioner_consistency.py` (fixed-point invariance; issue #287);
-  `utils/stokes2vis_msv4.py` beam block.
+  `utils/stokes2vis.py` beam block.
 
 ### D23 — The forward solver consumes the beam-attenuated gradient (BRESIDUAL)
 
@@ -494,7 +495,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 ### D24 — hci transient injection: fringe sign, differential rephasing, 1/n, w-term sign
 
 - **Context:** `pfb hci --inject-transients` adds analytic point-source transients into the
-  visibilities before imaging (`utils/stokes2im.stokes_image`). The source is built in the
+  visibilities before imaging (`utils/stokes2im.image_item`). The source is built in the
   ORIGINAL (field-centre) frame at the MS uvw — so a per-field beam can be applied there — then
   carried to the rephased frame when `--phase-dir` is set. Four convention traps live in that
   ~15-line block; each mis-places or mis-scales injected sources and none is caught by imaging
@@ -539,12 +540,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   growing single-field offset in a snapshot cube *is* this injection. The reliable discriminator
   is coverage, not field count: reproduce with full uv coverage; error vanishes ⇒ injection or
   gridder, error persists ⇒ downstream. Guards:
-  `tests/test_hci.py::test_hci_inject_transients_location_vs_distance` and
-  `::test_hci_inject_transients_rephased` (full synthesis; traps 1-3), plus
+  `tests/test_hci.py::test_hci_injected_sources_keep_their_sky_position_out_to_the_field_edge`
+  and `::test_hci_injected_sources_land_on_their_pixels_when_rephased` (full synthesis;
+  traps 1-3), plus
   `tests/test_hessian_approx.py::test_inject_transient_fringe_wterm` (snapshot; trap 4, drifts
   ≥2 px before the w-sign fix).
 - **Source:** commits bb76c03 (1/n), 68d7f19 (sign + tests), 1909bfa (differential), plus the
-  w-term sign fix and snapshot guard; `utils/stokes2im.stokes_image`; breifast#263, #280.
+  w-term sign fix and snapshot guard; `utils/stokes2im.image_item`; breifast#263, #280.
 
 ### D25 — `hci` beams are meerkat-beams only (band named separately until #358)
 
@@ -575,7 +577,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `if beam_model is not None and beam_model.lower() != "meerkat-beams": raise … else: assert band …`,
   whose `else` also catches `beam_model is None` — it needs three branches, not two.
 - **Amendment (#358): `--beam-model` takes the band name again; `--primary-beam-band` is
-  gone.** `hci` and `hci-msv4` now take `--beam-model` the way `imager` and `degrid` do: a
+  gone.** `hci` takes `--beam-model` the way `imager` and `degrid` do: a
   meerkat-beams band (`U`/`L`/`S0`/`S4`, case-insensitive) or unset for no beam. The stop-gap's
   reason no longer holds: the zarr branch is deleted, so a band name can only mean a
   meerkat-beams wizard, and "no beam" is unset rather than a band. Anything else, `katbeam`
@@ -584,12 +586,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   channels no longer raise. Validation and construction live in `hci_common.hci_beam_band`
   and `hci_beam_wizard`, shared by both drivers. A recipe passing
   `beam-model: meerkat-beams` with `primary-beam-band: L` must become `beam-model: L`.
-- **Source:** `src/pfb_imaging/core/hci.py`, `src/pfb_imaging/core/hci_msv4.py`;
-  `src/pfb_imaging/cli/hci.py`, `src/pfb_imaging/cli/hci_msv4.py`;
+- **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
   `src/pfb_imaging/utils/hci_common.py` (`hci_beam_band`, `hci_beam_wizard`, `beam_for_band`,
-  `beam_gain_for_source`); `tests/test_hci.py`,
-  `tests/test_hci_common.py::test_hci_beam_band_*`,
-  `tests/test_hci_msv4.py::test_hci_msv4_refusals_before_ray`;
+  `beam_gain_for_source`); `tests/test_hci_common.py::test_hci_beam_band_*`,
+  `tests/test_hci.py::test_hci_refusals_before_ray`;
   image-and-beam-orientation.md §5, §7.
 
 ### D26 — `--eta-mode` shapes eta over the image, in the preconditioner only
@@ -692,7 +692,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   vs `T = double`) tells you which side ducc believed.
 - **Source:** `src/pfb_imaging/operators/gridder.py` (`grid_partition`);
   `src/pfb_imaging/core/imager.py` (`_grid_image` accumulators, MFS PSF reduction);
-  `src/pfb_imaging/utils/stokes2im.py` (the hci path's `real_type`, the pattern this
+  `src/pfb_imaging/utils/stokes2im.py` (`image_item`'s `real_type`, the pattern this
   restores); `tests/test_imager_precision.py`.
 
 ### D28 — `freq_out` is the effective (weighted) frequency, reduced at three levels
@@ -739,7 +739,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   **Still open (#302):** FITS cubes keep a linear `CRVAL3`/`CDELT3` and so cannot represent
   a non-uniform frequency axis; per-plane `FREQ%04d` cards (or `--fits-split-bands`) are a
   separate follow-up.
-- **Source:** issue #296; `src/pfb_imaging/utils/stokes2vis_msv4.py` (`stokes_vis`);
+- **Source:** issue #296; `src/pfb_imaging/utils/stokes2vis.py` (`stokes_vis`);
   `src/pfb_imaging/core/imager.py` (`_concat_pieces`, `_grid_image`, `band_centres`);
   `src/pfb_imaging/utils/fits.py` (`dt2fits` sort key); commits 44bfbab, 090711e, 39cfb6c,
   5111b13; `tests/test_imager.py::test_stokes_vis_beam_follows_effective_freq`,
@@ -1159,6 +1159,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_hci.py::test_hci_zarr_coords_survive_an_ulp_hostile_phase_centre`.
 - **Amendment (D60):** `hci-msv4` writes integer regions, so the 1e-12 deg quantisation is kept
   there for coordinate parity with `hci` only, not for a region lookup.
+- **Amendment (D61):** the dask hci, its `make_dummy_dataset`, `batch_stokes_image`'s
+  `region="auto"` write and the ulp-hostile-centre test are gone. Nothing now looks coordinates
+  up, so the quantisation and `image_centre_deg`'s `rad2deg(deg2rad(...))` survive only to keep
+  `X`/`Y` bit-identical to cubes the old command wrote. The **Source** above is historical.
 
 ### D37 — `--target` recentres hci's grid, so one resolver serves the driver and the worker
 
@@ -1208,6 +1212,11 @@ update it (and this page's `last_verified_commit`) in the same session.
   the target land at their predicted pixels about the image centre),
   `…::test_hci_rejects_a_moving_target_across_multiple_time_bins`,
   `…::test_hci_accepts_a_moving_target_in_a_single_time_bin`.
+- **Amendment (D61):** with the dask hci gone the worker side is `utils/stokes2im.image_item`
+  (centred on `resolve_target_radec`), and the driver side `hci_common.image_centre_deg`. The
+  three tests were ported: `tests/test_hci.py::test_hci_target_recentres_the_grid`,
+  `…::test_hci_rejects_a_moving_target_across_several_images`,
+  `…::test_hci_accepts_a_moving_target_in_a_single_image`.
 
 ### D38 — degrid writes its own regions; no load/compute/write split
 
@@ -1337,7 +1346,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   beam does not — at exactly the level of detail upsampling exists to capture.
 - **Consequences:** the resolution is a **frequency-resolved** pinned beam, which is #324's
   job, not something degrid can paper over. Two findings worth keeping for whoever picks it
-  up: (1) the `.dt` holds only **diagonal** Mueller elements — `stokes2vis_msv4` evaluates
+  up: (1) the `.dt` holds only **diagonal** Mueller elements — `stokes2vis` evaluates
   `get_rotation_averaged_beam(var="nstokes", i=p, j=p)` — so a pinned `.dt` beam can never
   predict leakage, which needs `M[Q,I]`, `M[U,I]`, `M[V,I]`; (2) the `.dt` and meerkat-beams
   sources are fidelity levels, not competitors — gauge-exact but diagonal and per-band,
@@ -1347,7 +1356,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   tension above does not arise: nothing is read from the `.dt`. The "no beam" decision now
   holds only for the `.dt`'s pinned beam, which #324 still owns. Degrid now always lets ducc
   divide by `n`, beam or not; before #353 the no-beam path did not (D55).
-- **Source:** `src/pfb_imaging/utils/stokes2vis_msv4.py`, issues #324, #278, #353.
+- **Source:** `src/pfb_imaging/utils/stokes2vis.py`, issues #324, #278, #353.
 
 ### D43 — (Retired) the MSv2 `degrid` was retired outright rather than aliased or deprecated
 
@@ -1393,7 +1402,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   the MS between modules. **Any test that writes to it must take the `writable_ms` fixture (a
   function-scoped copy) and use it for *every* access in that test.** This includes writes
   through dask-ms `xds_to_table`, which a grep for `putcol` does not find — five such writers
-  existed (`test_hci.py`, `test_imager_pol.py`) and the bug they caused predated the branch,
+  existed (the dask hci's `test_hci.py`, and `test_imager_pol.py`; both now write through
+  arcae) and the bug they caused predated the branch,
   activated only by making `sky_truth` session-scoped. A forgotten writer passes in the fast loop
   and the slow loop *separately*, and fails only under `-m ""`.
 - **Measured (#336):** the fast loop fell 31% and the slow set 25%. Current absolute figures
@@ -1430,7 +1440,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   entirely). The stored `.dt` `BEAM` is real everywhere, and
   `H = Σ_p B_pᵀ G_pᵀ W_p G_p B_p`, `BDIRTY = Σ_p B_p·dirty_p` and the beam FITS
   path all assume a real `B`.
-- **Decision:** store `Re(B)` for the cross group. `utils/stokes2vis_msv4.real_beam_maps`
+- **Decision:** store `Re(B)` for the cross group. `utils/stokes2vis.real_beam_maps`
   takes the real part explicitly and records `max|Im|/max|Re|`. That number is
   carried out of the scratch store deliberately, because it is the decision's
   only mitigation: `_concat_pieces` reduces it across a partition's pieces as a
@@ -1762,7 +1772,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   - Cost on a tiny 64x32 model: `degrid_region` 14 ms without the beam, 24 ms with the L beam.
   - `flux_scale_warning` is logged only without `--beam-model` (D54).
   - **The imager's single-field beam was stored mirrored east-west until #355.** The
-    non-offset branch of `utils/stokes2vis_msv4.py` evaluated the beam at
+    non-offset branch of `utils/stokes2vis.py` evaluated the beam at
     `l = +(j - nx/2)·cell`, but under the wgridder conventions (`flip_u=False`) East is at low
     x. A beam of `1 + 30·l_deg + 10·m_deg` on a 64² grid at 1e-5 rad gave 0.519 at the East
     pixel j=4, where the reproject branch and `pixel_lm` give 1.481; m was right. That branch
@@ -2063,7 +2073,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Decision:** `HciWorker` actors read and image one image per call, prefetching the next item
   on a thread, and return only the image to a single `CubeWriter` actor. The writer assembles
   `(band, time-block)` slabs, so each slab is one set of zarr chunks with exactly one writer, and
-  writes each once to integer regions (`core/hci_msv4.py`, `utils/hci_actors.py`). No
+  writes each once to integer regions (`core/hci.py`, `utils/hci_actors.py`). No
   synchronizer, no `region="auto"`. The driver kills all actors in its `finally`, on success and
   on failure, and shuts Ray down unless `keep_ray_alive`; it does not `ray.cancel`, because Ray
   rejects `force=True` for actor tasks ("Only `force=False` is allowed for an Actor Task" in
@@ -2084,8 +2094,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   slabs. Long TIME chunks (`--images-per-chunk`, default 128) keep chunk counts small.
 - **Consequences:**
   - **Memory.** Writer RAM is `max_simul_chunks x nband x images_per_chunk x nstokes x image
-    bytes`, the knob for 128 GB nodes (`--max-simul-chunks`, default 2). Each worker (and each
-    legacy hci Ray worker) also keeps up to two beam reprojection maps (`hci_common.
+    bytes`, the knob for 128 GB nodes (`--max-simul-chunks`, default 2). Each worker also keeps up to two beam reprojection maps (`hci_common.
     _beam_reprojection`), float64 `(2, ny*nx)`: ~236 MB each at 3840^2, ~530 MB at 5760^2. They
     pay off when images share a pointing; on-the-fly data (a new pointing per MS) misses every
     time and still holds them.
@@ -2128,24 +2137,58 @@ update it (and this page's `last_verified_commit`) in the same session.
   - **Numerics.** Zero-weight images keep NaN `psf_maj`/`psf_min`/`psf_pa` exactly as `hci`; the
     only deliberate numerical deviation is in `cube_mean`, which excludes unreceived images and
     is 0 where the masked weight sum is 0. `TIME` stays MJD seconds for parity.
-    `test_hci_msv4_matches_hci` enforces `atol = 1e-5 * max|hci|` per variable; the agreement
+    `test_hci_msv4_matches_hci` enforced `atol = 1e-5 * max|hci|` per variable; the agreement
     measured by that test when it was added is at most 2.4e-7 (`cube_mean`, of 2.4; cube 8.5e-8,
-    `psf2` 1.2e-7). `test_matches_stokes_image` holds one image to `1e-6 x max` against
+    `psf2` 1.2e-7). `test_matches_stokes_image` held one image to `1e-6 x max` against
     `stokes_image`, the legacy side reading its phase centre and antenna positions from MSv2.
+    Both went with the dask hci (D61).
   - **Tests.** Every end-to-end `hci-msv4` run is `slow` under D45, as are the equivalence,
     model-column and l2 tests (numba compiles); the fast set has the refusals and the unit tests
     of the gain reader, writer, worker refusals and dispatch loop.
-- **Source:** #279, #257, #320 (fix 77978ce); `src/pfb_imaging/core/hci_msv4.py`,
+- **Source:** #279, #257, #320 (fix 77978ce); `src/pfb_imaging/core/hci.py` (was `hci_msv4.py`),
   `src/pfb_imaging/utils/hci_actors.py`, `src/pfb_imaging/utils/gains.py`,
   `tests/test_hci_writer.py`, `tests/test_hci_dispatch.py`, `tests/test_gains.py`,
-  `tests/test_hci_msv4.py::test_hci_msv4_matches_hci`,
-  `…::test_hci_msv4_refuses_off_grid_gains_before_ray`, `…::test_hci_msv4_refusals_before_ray`,
-  `…::test_hci_msv4_overwrite_keeps_the_cube_when_validation_fails`;
-  `tests/test_stokes2im_msv4.py::test_l2_reweight_is_per_stokes`; review of PR #358.
+  `tests/test_hci.py::test_hci_refuses_off_grid_gains_before_ray`, `…::test_hci_refusals_before_ray`,
+  `…::test_hci_overwrite_keeps_the_cube_when_validation_fails`;
+  `tests/test_stokes2im.py::test_l2_reweight_is_per_stokes`; review of PR #358.
+
+### D61 — The dask-ms `hci` was retired, and `hci-msv4` took its name
+
+- **Was:** two high-cadence imagers side by side: the dask-ms/MSv2 `pfb hci` (`core/hci.py`,
+  `utils/stokes2im.batch_stokes_image`/`stokes_image`, `misc.construct_mappings`) and its MSv4
+  successor `pfb hci-msv4`, run together until they were "shown to agree up to chunking".
+- **Evidence that they agree:** on MeerKLASS tile 21 (residuals, 7594 images at 5760^2,
+  `--channels-per-bin 256`) the first 1696 images the legacy run finished before the node was
+  rebooted matched hci-msv4 with per-image `max|d| / max|cube|` median 2.8e-6, 99th percentile
+  4.7e-6, worst 2.8e-4 (one image, at an image corner where `beam_weight` is 7.6e-4); coords and
+  attrs equal, scalars to <= 1.7e-6. hci-msv4 ran 3.7x faster there (0.16 vs 0.043 images/s) and
+  ~2x on SGRA. The test-MS equivalence tests (D60) passed throughout.
+- **Decision:** delete the dask hci outright and give its name to the MSv4 command, with **no
+  alias and no deprecation period** -- D43's reasoning for `degrid`: the option surfaces are
+  incompatible, so an old recipe fails at parse time instead of silently meaning something
+  else. `utils/stokes2vis.py` (the MSv2 imager's, imported by nothing since the MSv4 imager) went
+  in the same change, and the `_msv4` suffix was dropped from the survivors:
+  `core/hci_msv4.py` -> `core/hci.py`, `utils/stokes2im_msv4.py` -> `utils/stokes2im.py`,
+  `utils/stokes2vis.py` -> `utils/stokes2vis.py`, and their tests.
+- **Current option contract** of `pfb hci` (all from `hci-msv4`): selection by
+  `--field-names`/`--spw-names`/`--scan-names`; `--temp-dir` and `--check-ants` gone;
+  `--weight-grid-out`, `--sigma-column` and `--transfer-model-from` refused; gain flags honoured;
+  `FLAG_ROW` not (D60's list of differences is the full one).
+- **Tests:** the legacy suite's shared-behaviour tests were ported onto the MSv4 command
+  (transient injection and its astrometry, rephasing, `--target`, moving targets,
+  channels-per-bin invariance, weighting modes, the FITS-header and beam units). The two
+  equivalence tests that used the old code as their reference were dropped rather than frozen
+  into golden files: the absolute tests (analytic injection, ground-truth sky, gain scaling)
+  pin correctness without a reference that could never be regenerated. Not ported, as
+  legacy-only: the means-pass `psf2` rechunk regression and D36's ulp-hostile-centre test.
+- **What fell out with it:** `misc.construct_mappings`, the last dask-ms reader in `src/`;
+  conftest's dask-ms helpers and `collect_ignore`; `tests/test_hci.yml`. dask-ms itself is still
+  declared under `[casacore]`; removing it is the dependency follow-up.
+- **Source:** PR #358 (the port and the MeerKLASS comparison), this retirement's PR; D43.
 
 ## Known debt
 
-- **`hci-msv4` has no antenna-dependent gain test.** Both end-to-end gain tests give every
+- **`hci` has no antenna-dependent gain test.** Both end-to-end gain tests give every
   antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a
   mis-ordered Jones antenna axis or a dropped conjugate would all pass. The reader's antenna
   mapping is unit-tested (`tests/test_gains.py`) and `weight_data_msv4` matches the legacy
@@ -2160,7 +2203,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   produced uncalibrated images with nothing in the log to say so (#333). It is now
   refused outright at the top of `imager()` -- an explicit `NotImplementedError`
   before `init_ray` -- which fixes the silence but not the gap. Implementing it
-  means threading gains into `utils/stokes2vis_msv4.stokes_vis` the way
+  means threading gains into `utils/stokes2vis.stokes_vis` the way
   `utils/stokes2im` does for `hci`; note that reading QuartiCal output currently
   goes through `daskms.experimental.zarr.xds_from_zarr`, which would put
   python-casacore back on the `imager` path, so the MSv4-native route is to read
@@ -2313,7 +2356,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `np.any((a - b) > tol)` only fires when `a` is larger on *every* axis, so it silently
   accepts half of all mismatches — two fields 1.1 rad apart passed the `init` guard
   this way for as long as it existed (`6be3ea7`). A naive `np.abs` is not the fix
-  either: `construct_mappings` normalises ra into [0, 2pi), so a pair straddling
+  either: hci's planner (`core/hci.py`) normalises ra into [0, 2pi), so a pair straddling
   RA = 0 reads as ~2pi apart when it is 2e-9. Wrap first, then take magnitudes:
   `np.abs((a - b + np.pi) % (2 * np.pi) - np.pi)`. Dec never wraps, so applying it
   elementwise to the (ra, dec) pair is safe.
@@ -2336,8 +2379,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Transient-injection checks must read the raw `cube`, not `cube_mean`.** With zeroed
   base data (`data_column="DATA-DATA"`), hci's per-bin RMS flag (`rms > 1.5·median_rms`,
   median ≈ 0) flags exactly the bright transient bins and suppresses them in
-  `cube_mean`; the raw `cube` is unaffected. (`utils/transients.py`; the designed
-  end-to-end test is still unimplemented — see `docs/look-ahead.md`.)
+  `cube_mean`; the raw `cube` is unaffected. (`utils/transients.py`;
+  `tests/test_hci.py::test_hci_injected_transient_has_the_analytic_dynamic_spectrum`.)
 - **Never write the skip-checks tag into a commit message you want tested.** Every
   `ci.yml` job greps the head commit's message for the literal tag and sets
   `SKIP_CHECKS=true` on a hit — it does not care *where* in the message it appears. A

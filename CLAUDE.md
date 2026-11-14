@@ -41,8 +41,8 @@ reasoning about. The rules say what you must do; the wiki says why.
 | an odd MSv4 write-path failure | `docs/msv4_issues.md` |
 
 **The front-ends.** `pfb imager` (MSv4 -> `.dt`), `pfb deconv` (`.dt` -> model),
-`pfb restore` (`.dt` -> restored FITS) and `pfb degrid` (`.mds` -> MSv4), plus `pfb hci` for
-high-cadence imaging and `pfb hci-msv4`, its MSv4 successor (run side by side for now). `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
+`pfb restore` (`.dt` -> restored FITS) and `pfb degrid` (`.mds` -> MSv4), plus `pfb hci`
+(MSv4 -> high-cadence zarr cube). `.claude/rules/architecture.md` §6 enumerates the pipeline and §8 the
 imager's invariants; `docs/wiki/imager-pipeline.md` has the tree layout.
 
 **Two things that bite hardest, so they are stated here as well as there:** never
