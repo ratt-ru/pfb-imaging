@@ -46,12 +46,13 @@ What skips now is only what genuinely needs the extra, and each declares it for 
 
 | | needs | why |
 |---|---|---|
-| `ms_meta`, and `sky_truth` through it | dask-ms | reads the MS with `xds_from_ms` |
 | the `pctable` fixture | python-casacore | casacore's *write* API — `addrows`, `putcell` on subtables, `removecols` — which arcae does not expose |
 | `drop_column`, `make_multi_spw_ms` | python-casacore | same |
 | `test_stokes_vis_beam_on_image_grid` | pyrap | rephasing calls africanus' `synthesize_uvw` |
-| `test_stokes2im_msv4.py::test_matches_stokes_image` | dask-ms (+ pyrap for its rephased case) | its reference is the legacy `stokes_image` reading MSv2 through dask-ms |
-| `test_hci.py`, `test_imager_pol.py` | dask-ms | module-scope imports, so `collect_ignore` rather than a skip (pytest reports a collection-time ImportError as an error, not a skip) |
+| the `needs_rephasing` fixture (`--phase-dir`, `--target` tests in `test_imager.py`, `test_hci.py`) | pyrap | `utils/astrometry` wraps pyrap measures |
+
+No test needs dask-ms any more: `ms_meta`, `sky_truth` and every test that writes the MS go
+through arcae, and the dask-ms `hci` and its tests are gone (D61).
 
 A test needing casacore's write API takes the `pctable` fixture rather than importing it —
 one reason string, one place to change.
@@ -111,15 +112,15 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 1086 tests, ~115 s -- run THIS
+uv run pytest tests/          # 1079 tests, ~115 s -- run THIS
 ```
 
-(One of those skips without the `[casacore]` extra; the rest pass. Counts here are *collected*
+(Without the `[casacore]` extra 12 of those skip -- casacore's write API and rephasing; the rest pass. Counts here are *collected*
 counts, which `scripts/check_docs.py` measures and checks — pass/skip totals are not pinned
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 71 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+runs the 72 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
 already runs the fast set on every PR push across four legs — x86_64 3.11 and 3.13 with
 `--extra all`, x86_64 3.12 and aarch64 3.12 with `--extra full` — and the slow set separately
 (see below).
@@ -154,7 +155,7 @@ since setup-uv prunes pre-built wheels before saving. The numba cache is not war
 because that means running the suite, so a PR's first run JIT-compiles cold and its later
 pushes restore their own cache.
 
-The slow set is 71 of the 1157 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 72 of the 1151 collected tests and ~80% of the suite's wall time, so running it
 on every leg of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters

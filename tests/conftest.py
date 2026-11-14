@@ -22,7 +22,6 @@ os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
 import functools  # noqa: E402
 import hashlib  # noqa: E402
-import importlib.util  # noqa: E402
 import shutil  # noqa: E402
 import tarfile  # noqa: E402
 import tempfile  # noqa: E402
@@ -85,10 +84,6 @@ gdrive_id = "1rfGXGjjJ2XtF26LImlyJzCJMCNQZgEFT"
 url = "https://drive.google.com/uc?id={id}".format(id=gdrive_id)
 
 
-def _have_daskms():
-    return importlib.util.find_spec("daskms") is not None
-
-
 @functools.lru_cache(maxsize=1)
 def casacore_unusable_reason():
     """Why python-casacore cannot be used here, or None if it works.
@@ -135,26 +130,6 @@ def casacore_unusable_reason():
 def require_casacore():
     """Skip unless python-casacore is installed *and* actually works."""
     reason = casacore_unusable_reason()
-    if reason:
-        pytest.skip(reason)
-
-
-def daskms_unusable_reason():
-    """Why dask-ms cannot be used here, or None if it works.
-
-    dask-ms reads and writes through python-casacore, so "dask-ms is
-    importable" is not enough -- on a casacore whose NumPy ABI does not match
-    (see `casacore_unusable_reason`) every dask-ms call fails at the first
-    table open, exactly as a direct casacore call would.
-    """
-    if not _have_daskms():
-        return "dask-ms is not installed ([casacore] extra)"
-    return casacore_unusable_reason()
-
-
-def require_daskms():
-    """Skip unless dask-ms is installed and its casacore actually works."""
-    reason = daskms_unusable_reason()
     if reason:
         pytest.skip(reason)
 
@@ -644,19 +619,6 @@ def sky_truth(ms_name, ms_meta, image_geometry):
         wcs=w,
         sky_coords=sky_coords,
     )
-
-
-# Modules that import dask-ms at module scope. pytest reports a collection-time
-# ImportError as an error rather than a skip, so these have to be excluded
-# before collection when dask-ms cannot be used.
-#
-# "cannot be used" covers more than "not installed": dask-ms works through
-# python-casacore, so a casacore that imports but cannot open a table (the
-# distro NumPy-1 ABI case, #330) makes every one of these fail at runtime with
-# the same message. Excluding them there keeps the failure reported once, by
-# `test_optional_extras.test_casacore_is_usable_when_installed`, instead of
-# once per test.
-collect_ignore = [] if daskms_unusable_reason() is None else ["test_hci.py", "test_imager_pol.py"]
 
 
 @pytest.fixture

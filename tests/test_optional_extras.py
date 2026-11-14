@@ -45,6 +45,9 @@ CASACORE_FREE_ENTRY_POINTS = [
     # was a DaskMSStore used for globbing and for `.url`/`.exists()`/`.rm()`;
     # `utils/naming.uri_and_fs` and `glob_uris` do that with plain fsspec.
     "pfb_imaging.core.imager",
+    # hci (the MSv4 one, D61) reads through xarray-ms and defers pyrap to the
+    # rephasing and --target branches of its workers.
+    "pfb_imaging.core.hci",
     "pfb_imaging.cli",
 ]
 
@@ -63,10 +66,10 @@ def _module_scope_imports(path):
     Deferred imports inside a function are exactly the mechanism this split
     relies on, so they must not count as violations.
 
-    `With` is in the recursed set alongside `If`/`Try` because `core/hci.py`
-    wraps its module-scope dask-ms import in `with optional_dependency(...)`:
-    that import *does* execute on import, and without recursing into `With` the
-    walker would report hci -- or any module copying that pattern -- as clean.
+    `With` is in the recursed set alongside `If`/`Try` because a module-scope
+    import wrapped in `with optional_dependency(...)` (the retired dask hci's
+    pattern) *does* execute on import, and without recursing into `With` the
+    walker would report any module using that pattern as clean.
     """
     tree = ast.parse(path.read_text())
     found = []

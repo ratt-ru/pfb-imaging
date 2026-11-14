@@ -3,10 +3,8 @@ from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import (
-    ListInt,
     ListStr,
     StimelaMeta,
-    parse_list_int,
     parse_list_str,
     parse_upath,
     stimela_cab,
@@ -19,12 +17,12 @@ URI = NewType("URI", Path)
 
 @stimela_cab(
     name="hci",
-    info="High cadence imaging algorithm.",
+    info="High cadence imaging of MSv4 data.",
 )
 @stimela_output(
     dtype="Directory",
     name="output-dataset",
-    info="Basename of output.",
+    info="Basename of output. On a multi-node Ray cluster it must be on a filesystem every node can see.",
     required=True,
     policies={"positional": True},
     must_exist=True,
@@ -50,12 +48,6 @@ URI = NewType("URI", Path)
     must_exist=False,
     mkdir=False,
     path_policies={"write_parent": True},
-    metadata={"rich_help_panel": "Output"},
-)
-@stimela_output(
-    dtype="Directory",
-    name="temp-dir",
-    info="A temporary directory to store ephemeral files.",
     metadata={"rich_help_panel": "Output"},
 )
 @stimela_output(
@@ -94,7 +86,7 @@ def hci(
         typer.Option(
             ...,
             parser=parse_upath,
-            help="Basename of output.",
+            help="Basename of output. On a multi-node Ray cluster it must be on a filesystem every node can see.",
             rich_help_panel="Output",
         ),
         StimelaMeta(
@@ -112,31 +104,27 @@ def hci(
             rich_help_panel="Data Selection",
         ),
     ] = "I",
-    scans: Annotated[
-        ListInt | None,
+    scan_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
-            help="List of SCAN_NUMBERS to image. "
-            "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            parser=parse_list_str,
+            help="Scan names to image. All scans if not set.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    ddids: Annotated[
-        ListInt | None,
+    spw_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
-            help="List of DATA_DESC_ID's to images. "
-            "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI.",
+            parser=parse_list_str,
+            help="Spectral window names to image. All spectral windows if not set.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
-    fields: Annotated[
-        ListInt | None,
+    field_names: Annotated[
+        ListStr | None,
         typer.Option(
-            parser=parse_list_int,
-            help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
+            parser=parse_list_str,
+            help="Field names to image. All fields if not set.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -157,7 +145,7 @@ def hci(
     transfer_model_from: Annotated[
         str | None,
         typer.Option(
-            help="Name of dataset to use for model initialisation",
+            help="Not supported by hci and refused. Use the degrid app to populate a model column instead.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -171,6 +159,13 @@ def hci(
             rich_help_panel="Data Selection",
         ),
     ] = "DATA",
+    data_group: Annotated[
+        str,
+        typer.Option(
+            help="MSv4 data group to read. DATA resolves to its correlated data variable.",
+            rich_help_panel="Data Selection",
+        ),
+    ] = "base",
     model_column: Annotated[
         str | None,
         typer.Option(
@@ -188,9 +183,8 @@ def hci(
     sigma_column: Annotated[
         str | None,
         typer.Option(
-            help="Column containing standard devations. "
-            "Will be used to initialise natural weights if detected. "
-            "Must be the same across MSs",
+            help="Not supported by hci and refused, since xarray-ms does not expose SIGMA. "
+            "Use --weight-column instead.",
             rich_help_panel="Data Selection",
         ),
     ] = None,
@@ -205,7 +199,8 @@ def hci(
         list[URI] | None,
         typer.Option(
             parser=parse_upath,
-            help="Path to Quartical gain table containing NET gains. "
+            help="Path to a QuartiCal gain term, gains.qc/NET or gains.qc::NET. "
+            "Any term name is accepted. "
             "There must be a table for each MS. "
             "glob(ms) and glob(gt) should match up when running from CLI.",
             rich_help_panel="Input",
@@ -214,17 +209,29 @@ def hci(
     max_simul_chunks: Annotated[
         int,
         typer.Option(
-            help="Maximum number of chunks to process simultaneously.",
+            help="Maximum number of time blocks the writer holds in memory at once. "
+            "Bounds writer memory together with images-per-chunk.",
             rich_help_panel="Performance",
         ),
-    ] = 4,
+    ] = 2,
     images_per_chunk: Annotated[
         int,
         typer.Option(
-            help="Number of images per chunk.",
+            help="Number of images per TIME chunk of the output cube. "
+            "Downstream readers want long time axes. "
+            "The writer holds max-simul-chunks such blocks per band in memory.",
             rich_help_panel="Performance",
         ),
-    ] = 16,
+    ] = 128,
+    spatial_chunk: Annotated[
+        int,
+        typer.Option(
+            help="Y and X chunk of the output cube, in pixels. "
+            "A chunk holds images-per-chunk x spatial-chunk^2 float32 values. "
+            "Image variables are clipped to the image and PSF variables to the PSF.",
+            rich_help_panel="Performance",
+        ),
+    ] = 128,
     integrations_per_image: Annotated[
         int,
         typer.Option(
@@ -357,22 +364,15 @@ def hci(
     weight_grid_out: Annotated[
         bool,
         typer.Option(
-            help="Whether to produce an image of the weighted grid or not.",
+            help="Not supported by hci and refused. The cube scaffold has no weight_grid.",
             rich_help_panel="Output",
         ),
     ] = False,
     natural_grad: Annotated[
         bool,
         typer.Option(
-            help="Compute naural gradient",
+            help="Compute natural gradient. Needs a PSF twice the image size (--psf-relative-size 2).",
             rich_help_panel="Imaging",
-        ),
-    ] = False,
-    check_ants: Annotated[
-        bool,
-        typer.Option(
-            help="Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.",
-            rich_help_panel="Control",
         ),
     ] = False,
     inject_transients: Annotated[
@@ -439,22 +439,24 @@ def hci(
     ray_address: Annotated[
         str,
         typer.Option(
-            help="Address of the ray cluster to connect to. If not provided, will run locally.",
+            help="Address of the ray cluster to connect to. "
+            "If not provided, will run locally. "
+            "A multi-node cluster needs a filesystem shared by every node. "
+            "It must hold the output store, measurement sets, gain terms and transient files.",
             rich_help_panel="Performance",
         ),
     ] = "local",
     nworkers: Annotated[
         int,
         typer.Option(
-            help="Number of worker processes. Use with distributed scheduler.",
+            help="Number of HciWorker actors. Each reads and images one image at a time.",
             rich_help_panel="Performance",
         ),
     ] = 1,
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (for FFTs and gridding). "
-            "Each dask thread can in principle spawn this many threads. "
+            help="Number of threads per HciWorker actor, used for gridding and FFTs. "
             "Will attempt to use half the available threads by default.",
             rich_help_panel="Performance",
         ),
@@ -485,7 +487,7 @@ def hci(
         typer.Option(
             parser=parse_list_str,
             help="Write these variables to fits. "
-            "Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'. "
+            "Options are 'cube', 'cube_mean', 'psf' and 'beam_weight'. "
             "Variables are written per band.",
             rich_help_panel="Output",
         ),
@@ -545,14 +547,6 @@ def hci(
             },
         ),
     ] = None,
-    temp_dir: Annotated[
-        Directory | None,
-        typer.Option(
-            parser=parse_upath,
-            help="A temporary directory to store ephemeral files.",
-            rich_help_panel="Output",
-        ),
-    ] = None,
     backend: Annotated[
         Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
         typer.Option(
@@ -573,7 +567,7 @@ def hci(
     ] = False,
 ):
     """
-    High cadence imaging algorithm.
+    High cadence imaging of MSv4 data.
     """
     if backend == "native" or backend == "auto":
         try:
@@ -585,13 +579,14 @@ def hci(
                 dict(
                     ms=ms,
                     product=product,
-                    scans=scans,
-                    ddids=ddids,
-                    fields=fields,
+                    scan_names=scan_names,
+                    spw_names=spw_names,
+                    field_names=field_names,
                     freq_range=freq_range,
                     overwrite=overwrite,
                     transfer_model_from=transfer_model_from,
                     data_column=data_column,
+                    data_group=data_group,
                     model_column=model_column,
                     weight_column=weight_column,
                     sigma_column=sigma_column,
@@ -599,6 +594,7 @@ def hci(
                     gain_table=gain_table,
                     max_simul_chunks=max_simul_chunks,
                     images_per_chunk=images_per_chunk,
+                    spatial_chunk=spatial_chunk,
                     integrations_per_image=integrations_per_image,
                     channels_per_image=channels_per_image,
                     channels_per_bin=channels_per_bin,
@@ -617,7 +613,6 @@ def hci(
                     psf_out=psf_out,
                     weight_grid_out=weight_grid_out,
                     natural_grad=natural_grad,
-                    check_ants=check_ants,
                     inject_transients=inject_transients,
                     filter_counts_level=filter_counts_level,
                     npix_super=npix_super,
@@ -639,7 +634,6 @@ def hci(
                     output_dataset=output_dataset,
                     log_directory=log_directory,
                     fits_output_folder=fits_output_folder,
-                    temp_dir=temp_dir,
                 ),
             )
 
@@ -651,13 +645,14 @@ def hci(
                 ms,
                 output_dataset,
                 product=product,
-                scans=scans,
-                ddids=ddids,
-                fields=fields,
+                scan_names=scan_names,
+                spw_names=spw_names,
+                field_names=field_names,
                 freq_range=freq_range,
                 overwrite=overwrite,
                 transfer_model_from=transfer_model_from,
                 data_column=data_column,
+                data_group=data_group,
                 model_column=model_column,
                 weight_column=weight_column,
                 sigma_column=sigma_column,
@@ -665,6 +660,7 @@ def hci(
                 gain_table=gain_table,
                 max_simul_chunks=max_simul_chunks,
                 images_per_chunk=images_per_chunk,
+                spatial_chunk=spatial_chunk,
                 integrations_per_image=integrations_per_image,
                 channels_per_image=channels_per_image,
                 channels_per_bin=channels_per_bin,
@@ -683,7 +679,6 @@ def hci(
                 psf_out=psf_out,
                 weight_grid_out=weight_grid_out,
                 natural_grad=natural_grad,
-                check_ants=check_ants,
                 inject_transients=inject_transients,
                 filter_counts_level=filter_counts_level,
                 npix_super=npix_super,
@@ -704,7 +699,6 @@ def hci(
                 flag_excess_rms=flag_excess_rms,
                 log_directory=log_directory,
                 fits_output_folder=fits_output_folder,
-                temp_dir=temp_dir,
             )
             return
         except ImportError:
@@ -724,13 +718,14 @@ def hci(
         dict(
             ms=ms,
             product=product,
-            scans=scans,
-            ddids=ddids,
-            fields=fields,
+            scan_names=scan_names,
+            spw_names=spw_names,
+            field_names=field_names,
             freq_range=freq_range,
             overwrite=overwrite,
             transfer_model_from=transfer_model_from,
             data_column=data_column,
+            data_group=data_group,
             model_column=model_column,
             weight_column=weight_column,
             sigma_column=sigma_column,
@@ -738,6 +733,7 @@ def hci(
             gain_table=gain_table,
             max_simul_chunks=max_simul_chunks,
             images_per_chunk=images_per_chunk,
+            spatial_chunk=spatial_chunk,
             integrations_per_image=integrations_per_image,
             channels_per_image=channels_per_image,
             channels_per_bin=channels_per_bin,
@@ -756,7 +752,6 @@ def hci(
             psf_out=psf_out,
             weight_grid_out=weight_grid_out,
             natural_grad=natural_grad,
-            check_ants=check_ants,
             inject_transients=inject_transients,
             filter_counts_level=filter_counts_level,
             npix_super=npix_super,
@@ -778,7 +773,6 @@ def hci(
             output_dataset=output_dataset,
             log_directory=log_directory,
             fits_output_folder=fits_output_folder,
-            temp_dir=temp_dir,
         ),
         image=image,
         backend=backend,

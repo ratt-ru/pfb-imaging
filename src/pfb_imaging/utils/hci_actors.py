@@ -1,4 +1,4 @@
-"""Ray actor bodies for pfb hci-msv4: the image workers and the single cube writer.
+"""Ray actor bodies for pfb hci: the image workers and the single cube writer.
 
 Plain classes so they can be exercised in-process; the driver wraps them with
 ray.remote. The writer is the only process that writes to the cube store while
@@ -17,7 +17,7 @@ from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging.utils.memprof import ActorCapture, SectionClock, cpu_seconds, task_memory
 from pfb_imaging.utils.msv4 import get_engine
-from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, image_item, read_item
+from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, image_item, read_item
 
 _IMAGE_VARS = ("cube", "beam_weight", "psf")
 _SCALAR_VARS = ("weight", "rms", "nonzero", "psf_maj", "psf_min", "psf_pa")
@@ -256,7 +256,7 @@ class CubeWriterImpl:
         for c in range(nstokes):
             for b in range(nband):
                 nz = nonzero[c, b]
-                # median over an empty selection is NaN, so nothing exceeds it: as hci
+                # median over an empty selection is NaN, so nothing exceeds it
                 med = np.median(rms[c, b, nz]) if nz.any() else np.nan
                 flag[c, b] = (rms[c, b] > self._flag_excess_rms * med) | ~nz
 

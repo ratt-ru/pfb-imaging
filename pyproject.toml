@@ -81,9 +81,10 @@ full = [
     # meerkat-beams[<extra>] once dask-ms is split out upstream.
     #
     # zarr<3 is kept because dask-ms still pins it. dask-ms comes in behind
-    # [casacore] (the legacy `hci`) and through meerkat-beams' [full] extra, which
-    # [all] pulls; pfb-model-spec and meerkat-beams' core dependencies do not pin
-    # zarr<3. Leave it until the legacy `hci`, and with it dask-ms, is removed. It costs
+    # [casacore] (no pfb code imports it since the dask hci went, D61) and through
+    # meerkat-beams' [full] extra, which [all] pulls; pfb-model-spec and
+    # meerkat-beams' core dependencies do not pin zarr<3. Leave it until dask-ms is
+    # dropped from both, and lift it as its own change (a writer format change). It costs
     # a numcodecs source build on aarch64 (numcodecs only gained aarch64 wheels
     # at 0.16.0, and zarr 2.18 pins numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
     # >=0.2.0: get_rotation_averaged_beam/partition_mueller take nthreads and
@@ -115,22 +116,18 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# python-casacore (via dask-ms and africanus). EXACTLY three things need it:
+# python-casacore (via africanus; dask-ms is no longer imported by pfb, D61).
+# EXACTLY two things need it, both options rather than commands:
 #
-#   1. `pfb hci` (legacy)      -- dask-ms `xds_from_ms`/`construct_mappings`, and
-#                                 QuartiCal gains via `xds_from_zarr`. `pfb hci-msv4`
-#                                 does not need dask-ms, but still needs
-#                                 python-casacore when it rephases (2): `utils/
-#                                 astrometry.synthesize_uvw` uses `pyrap.measures`;
-#   2. rephasing               -- `--phase-dir`, and any multi-field selection,
+#   1. rephasing               -- `--phase-dir`, and any multi-field selection,
 #                                 which barycentres. `utils/astrometry.py` wraps
 #                                 pyrap measures for `synthesize_uvw`;
-#   3. `--target <body>`       -- `get_coordinates`, same pyrap measures, on both
+#   2. `--target <body>`       -- `get_coordinates`, same pyrap measures, on both
 #                                 the `imager` and `hci` paths.
 #
-# (2) and (3) are deferred imports inside `imager`/`stokes2vis_msv4`, so `imager`
-# itself installs and runs without this extra -- it is only the two options that
-# need it. Everything else is casacore-free: `imager` and `degrid` open MSv2 CASA
+# Both are deferred imports (`imager`, `stokes2vis`, `stokes2im`), so every
+# command installs and runs without this extra -- it is only the two options
+# that need it. Everything else is casacore-free: `imager` and `degrid` open MSv2 CASA
 # tables through arcae/xarray-ms, which vendors casacore and publishes aarch64
 # wheels; `deconv` and `restore` never touch an MS at all. `degrid` joined that
 # set in #330 with the retirement of the MSv2 command of the same name, and
