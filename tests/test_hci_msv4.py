@@ -86,41 +86,6 @@ def test_hci_msv4_output_layout(ms_name, tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.timeout(900)  # two full runs (hci and hci-msv4) can exceed the 300 s default
-@pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
-def test_hci_msv4_matches_hci(ms_name, sky_truth, tmp_path, phase_dir):
-    pytest.importorskip("daskms")
-    from pfb_imaging.core.hci import hci as hci_core  # deferred: legacy reference needs the [casacore] extra
-
-    old, new = str(tmp_path / "old.zarr"), str(tmp_path / "new.zarr")
-    hci_core([ms_name], old, images_per_chunk=4, phase_dir=phase_dir, **COMMON)
-    hci_msv4_core([ms_name], new, images_per_chunk=8, phase_dir=phase_dir, **COMMON)
-    a, b = xr.open_zarr(old), xr.open_zarr(new)
-    assert np.abs(np.nan_to_num(a.cube.values)).max() > 0  # else the comparison below is 0 == 0
-    assert set(a.data_vars) == set(b.data_vars)
-    assert a.attrs == b.attrs
-    for c in ("STOKES", "X", "Y", "X_PSF", "Y_PSF"):
-        np.testing.assert_array_equal(a[c].values, b[c].values)
-    assert_allclose(a.TIME.values, b.TIME.values, rtol=0, atol=1e-6)
-    assert_allclose(a.FREQ.values, b.FREQ.values, rtol=1e-12)
-    # hci leaves cube_mean uninitialised where the flag-masked weight sum is zero;
-    # hci-msv4 writes 0 there (a deliberate deviation), so those (stokes, band) are excluded
-    masked_wsum = (a.weight.values * ~a.flag.values).sum(axis=-1)
-    for v in a.data_vars:
-        av, bv = a[v].values, b[v].values
-        assert av.dtype == bv.dtype, v
-        if v == "cube_mean":
-            keep = masked_wsum > 0
-            av, bv = av[keep], bv[keep]
-        if av.dtype == bool:
-            np.testing.assert_array_equal(av, bv, err_msg=v)
-        else:
-            finite = np.abs(av[np.isfinite(av)])
-            scale = max(finite.max() if finite.size else 0.0, 1e-30)
-            assert_allclose(bv, av, rtol=0, atol=1e-5 * scale, err_msg=v)
-
-
-@pytest.mark.slow
 def test_hci_msv4_constant_gain_scales_cube(ms_name, sky_truth, tmp_path):
     """Applying a constant diagonal gain g divides the normalised image by |g|^2."""
     node = _vis_node(ms_name)

@@ -10,7 +10,6 @@ from numpy.testing import assert_allclose
 
 from pfb_imaging.utils import stokes2im_msv4
 from pfb_imaging.utils.gains import NodeGains
-from pfb_imaging.utils.misc import chunkify_rows
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.stokes2im_msv4 import HciConfig, image_item, read_item
 
@@ -123,78 +122,6 @@ def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node,
     assert second["read_s"] > 0  # read on the prefetch thread, still reported
     (f,) = tmp_path.glob("hci_worker-*.pstats")
     assert "image_item" in {k[2] for k in pstats.Stats(str(f)).stats}
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize("phase_dir", [None, "00:20:00,-30:00:00"])
-def test_matches_stokes_image(ms_name, sky_truth, node, phase_dir):
-    """Same single-integration image through the legacy dask-ms path.
-
-    The legacy side gets its phase centre and antenna positions from the MSv2 FIELD and
-    ANTENNA tables, as hci reads them, so the port's own MSv4 reads are checked too.
-    """
-    pytest.importorskip("daskms")
-    if phase_dir is not None:
-        pytest.importorskip("pyrap.measures")
-    from daskms import xds_from_storage_ms, xds_from_table  # deferred: [casacore] extra, legacy reference only
-
-    from pfb_imaging.utils.stokes2im import stokes_image  # deferred: imports pyrap at module scope ([casacore])
-
-    tree, sel = node
-    cfg = _cfg(phase_dir=phase_dir)
-    inp = read_item(tree, {"time": slice(0, 1), "frequency": slice(0, sel.nchan)}, cfg)
-    new = image_item(inp, cfg, None, 128, 128)
-
-    # the test MS carries a per-row WEIGHT and no WEIGHT_SPECTRUM; xarray-ms
-    # broadcasts WEIGHT over channels, so give the legacy path the same
-    columns = ("DATA", "FLAG", "UVW", "ANTENNA1", "ANTENNA2", "TIME", "INTERVAL", "FLAG_ROW", "WEIGHT")
-    schema = {c: {"dims": ("chan", "corr")} for c in ("DATA", "FLAG")}
-    ds = xds_from_storage_ms(
-        ms_name, columns=columns, table_schema=schema, group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
-    )[0]
-    utime = np.unique(ds.TIME.values)
-    _, ridx, rcnt = chunkify_rows(ds.TIME.values, 1)
-    dsi = ds[{"row": slice(0, int(rcnt[0]))}].load(scheduler="sync")
-    nchan = dsi.DATA.shape[1]
-    wspec = np.broadcast_to(dsi.WEIGHT.values[:, None, :], dsi.DATA.shape).copy()
-    dsi = dsi.assign(WEIGHT_SPECTRUM=(("row", "chan", "corr"), wspec))
-    assert nchan == inp.freq.size
-    antpos = xds_from_table(f"{ms_name}::ANTENNA")[0].POSITION.values
-    radec = xds_from_table(f"{ms_name}::FIELD")[0].PHASE_DIR.values[int(ds.FIELD_ID), 0].copy()
-    radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings
-    old = stokes_image._function(
-        dc1="DATA",
-        ds=dsi,
-        nx=128,
-        ny=128,
-        freq=inp.freq,
-        cell_rad=cfg.cell_rad,
-        utime=utime[:1],
-        tbin_idx=ridx[:1],
-        tbin_counts=rcnt[:1],
-        radec=radec,
-        antpos=antpos,
-        poltype=inp.poltype,
-        bandid=0,
-        timeid=0,
-        msid=0,
-        nthreads=2,
-        precision="double",
-        weight_column="WEIGHT_SPECTRUM",
-        product="I",
-        phase_dir=phase_dir,
-        robustness=0.0,
-        epsilon=1e-7,
-        psf_out=True,
-        wgt_mode="l2",
-    )
-    scale = np.abs(old.cube.values).max()
-    assert scale > 0  # else the cube comparison below is 0 == 0 at atol=0
-    assert_allclose(new["cube"], old.cube.values[:, 0, 0], atol=1e-6 * scale)
-    assert_allclose(new["psf"], old.psf.values[:, 0, 0], atol=1e-6)
-    assert_allclose(new["weight"], old.weight.values[:, 0, 0], rtol=1e-6)
-    assert_allclose(new["rms"], old.rms.values[:, 0, 0], rtol=1e-5)
-    assert_allclose(new["time_mjd"], old.TIME.values[0], atol=1e-6)
 
 
 def test_read_item_gain_flags_follow_antennas(node, monkeypatch):

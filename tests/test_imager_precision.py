@@ -227,7 +227,7 @@ def test_unknown_precision_is_refused():
         check_gridder_epsilon("quadruple", 1e-5)
 
 
-@pytest.mark.parametrize("command", ["imager", "deconv", "degrid", "hci"])
+@pytest.mark.parametrize("command", ["imager", "deconv", "degrid", "hci_msv4"])
 @pytest.mark.parametrize("do_wgridding", [True, False])
 def test_cli_epsilon_default_is_reachable_in_single_precision(command, do_wgridding):
     """Every command's --epsilon default must work at either --precision.

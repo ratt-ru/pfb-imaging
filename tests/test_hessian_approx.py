@@ -187,7 +187,7 @@ def test_wgridder_conventions(center_offset):
 
 @pytest.mark.slow
 def test_inject_transient_fringe_wterm():
-    """The transient-injection fringe in utils/stokes2im.stokes_image must be the
+    """The transient-injection fringe in utils/stokes2im_msv4.image_item must be the
     wgridder forward model, so injected sources land at their true position.
 
     This pins the regime that exposed the w-term sign bug (ratt-ru/breifast#263):
@@ -197,7 +197,7 @@ def test_inject_transient_fringe_wterm():
     down to sub-pixel, which is why the existing injection tests (all run with
     integrations_per_image = ntime, i.e. full synthesis) never caught it.
 
-    The fringe is replicated inline exactly as stokes_image builds it (mirroring
+    The fringe is replicated inline exactly as image_item builds it (mirroring
     the test_psfvis pattern); keep the two in sync.
     """
     np.random.seed(42)
@@ -252,7 +252,7 @@ def test_inject_transient_fringe_wterm():
         return np.unravel_index(np.argmax(np.abs(dirty)), dirty.shape)
 
     base = signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy
-    # exactly utils/stokes2im.stokes_image: phase += uvw[:, 2:] * (n0t - 1) (fixed)
+    # exactly utils/stokes2im_msv4.image_item: phase += uvw[:, 2:] * (n0t - 1) (fixed)
     fringe = np.exp(-freqfactor * (base + uvw[:, 2:] * (n0t - 1))) / n0t
     ix, iy = peak(fringe)
     assert abs(ix - ex) <= 1 and abs(iy - ey) <= 1
