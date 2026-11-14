@@ -2188,7 +2188,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **What fell out with it:** `misc.construct_mappings`, the last dask-ms reader in `src/`;
   conftest's dask-ms helpers and `collect_ignore`; `tests/test_hci.yml`. dask-ms itself is still
   declared under `[casacore]`; removing it is the dependency follow-up.
-- **Source:** PR #358 (the port and the MeerKLASS comparison), this retirement's PR; D43.
+- **Source:** PR #358 (the port and the MeerKLASS comparison), PR #393 (this retirement); D43.
 
 ## Known debt
 
