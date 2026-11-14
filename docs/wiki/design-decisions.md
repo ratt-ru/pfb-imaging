@@ -2173,7 +2173,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   else. `utils/stokes2vis.py` (the MSv2 imager's, imported by nothing since the MSv4 imager) went
   in the same change, and the `_msv4` suffix was dropped from the survivors:
   `core/hci_msv4.py` -> `core/hci.py`, `utils/stokes2im_msv4.py` -> `utils/stokes2im.py`,
-  `utils/stokes2vis.py` -> `utils/stokes2vis.py`, and their tests.
+  `utils/stokes2vis_msv4.py` -> `utils/stokes2vis.py`, and their tests.
 - **Current option contract** of `pfb hci` (all from `hci-msv4`): selection by
   `--field-names`/`--spw-names`/`--scan-names`; `--temp-dir` and `--check-ants` gone;
   `--weight-grid-out`, `--sigma-column` and `--transfer-model-from` refused; gain flags honoured;

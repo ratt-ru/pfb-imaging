@@ -38,7 +38,7 @@ from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, HciConfig
 
-log = pfb_logging.get_logger("HCI-MSV4")
+log = pfb_logging.get_logger("HCI")
 
 _WHOLE = (-1, 0, None)
 # planning processes: each imports the scientific stack (~0.5 GB), and on NFS more than this
@@ -487,7 +487,7 @@ def hci(
         gain_table = [g.removeprefix("file://") for g in gainnames]
         opts_dict["gain_table"] = gain_table
 
-    log.log_options_dict(opts_dict, title="HCI-MSV4 options")
+    log.log_options_dict(opts_dict, title="HCI options")
 
     # refusals before any I/O-heavy work
     if weight_grid_out:

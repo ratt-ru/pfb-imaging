@@ -1,9 +1,9 @@
 """Per-image read and imaging for ``pfb hci``.
 
 Pure functions, numpy in and out, no Ray. ``read_item`` does one image's I/O
-from an MSv4 node; ``image_item`` is the maths of the legacy
-``utils/stokes2im.stokes_image`` on its output, with visibilities kept in
-MSv4 ``(time, baseline, chan, corr)`` order up to the Stokes conversion.
+from an MSv4 node; ``image_item`` images it, with visibilities kept in MSv4
+``(time, baseline, chan, corr)`` order up to the Stokes conversion. The maths
+is the retired dask hci's ``stokes_image``, ported verbatim (D61).
 """
 
 from collections.abc import Mapping
@@ -229,7 +229,7 @@ IMAGE_SECTIONS = ("prep", "beam", "dirty", "psf", "post")
 def image_item(
     inp: ItemData, cfg: HciConfig, beam_model, nx_psf: int, ny_psf: int, clock: SectionClock | None = None
 ) -> dict:
-    """Image one :class:`ItemData` exactly as the legacy ``stokes_image`` does.
+    """Image one :class:`ItemData`: weights, optional rephasing and transient injection, dirty and PSF.
 
     Args:
         inp: The image's inputs from :func:`read_item`.
@@ -342,7 +342,7 @@ def image_item(
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
         # Recompute the OLD uvw via the same measures call so the systematic
         # between pyrap's earth orientation and the MS UVW cancels in w_diff
-        # (pfb-imaging#280; see stokes2im.stokes_image for the full story).
+        # (pfb-imaging#280; the same differential scheme as D21 on the imager path).
         uvw_ref = synthesize_uvw(antpos, time, ant1, ant2, radec)
 
         # chgcentre style wdiff rephasing (differential w)
@@ -418,8 +418,8 @@ def image_item(
     ).astype(complex_type)
 
     # The transient is simulated at the old uvw and carried to the new phase
-    # centre with the data's w-difference; the sign conventions are explained
-    # in stokes2im.stokes_image (ratt-ru/breifast#263).
+    # centre with the data's w-difference; the four sign/scale conventions are
+    # wiki design-decisions D24 (ratt-ru/breifast#263).
     if cfg.inject_transients is not None:
         transient_name = cfg.inject_transients.removesuffix("yaml") + "zarr"
         transient_ds = xr.open_zarr(transient_name, chunks=None)

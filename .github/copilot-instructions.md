@@ -49,7 +49,7 @@ def mycommand(...):
 
 All other modules (core, operators, wavelets, etc.) should use top-level imports. Exceptions:
 - `ray`, imported lazily in `operators/psi.py` because it is an optional runtime.
-- **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` pull in python-casacore. As of **arcae 0.5.2** this coexists with the `arcae` MSv4 reader in one process, but the imager/gridding/FITS path still keeps these out of module scope (deferred into the functions that need them — see `construct_mappings` in `utils/misc.py`, `interp_beam` in `utils/beam.py`) to keep the path lightweight. Prefer `scipy.constants` for `lightspeed` and `utils/misc.to_unix_time` (not `casacore.quanta`).
+- **python-casacore-pulling imports on the MSv4 imaging path.** `africanus`, `daskms` and `casacore` pull in python-casacore. As of **arcae 0.5.2** this coexists with the `arcae` MSv4 reader in one process, but the imager/gridding/FITS path still keeps these out of module scope (deferred into the functions that need them — see the pyrap imports in `utils/stokes2im.image_item`) to keep the path lightweight. Prefer `scipy.constants` for `lightspeed` and `utils/misc.to_unix_time` (not `casacore.quanta`).
 
 ### 3. Mathematical Operators
 

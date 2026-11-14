@@ -133,7 +133,7 @@ def test_hci_beam_band_refuses_anything_else(given):
 def _make_base_fits_header():
     """Build a 5-axis FITS header mirroring the layout stored by hci.
 
-    Axis order matches make_dummy_dataset: (X, Y, TIME/INTEGRATION, FREQ, STOKES).
+    FITS axis order: (X, Y, TIME/INTEGRATION, FREQ, STOKES).
     """
     hdr = fits.Header()
     hdr["SIMPLE"] = True

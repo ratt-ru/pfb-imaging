@@ -497,7 +497,9 @@ def test_hci_injected_sources_land_on_their_pixels_when_rephased(writable_ms, ms
         integrations_per_image=ms_meta.ntime,
         images_per_chunk=1,
     )
-    img = xr.open_zarr(out).cube.values[0, 0, 0]
+    ds = xr.open_zarr(out)
+    assert (ds.sizes["FREQ"], ds.sizes["TIME"]) == (1, 1)
+    img = ds.cube.values[0, 0, 0]
     for di, dj in offsets:
         ix, iy, peak = _peak_near(img, nx // 2 - di, ny // 2 + dj, 5)
         assert peak > 0.0, f"no flux recovered at offset ({di},{dj})"

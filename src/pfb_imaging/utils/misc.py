@@ -417,15 +417,6 @@ def convolve2gaussres(
     return image
 
 
-@dask.delayed
-def fetch_poltype(corr_type):
-    corr_type = set(tuple(corr_type))
-    if corr_type.issubset(set([9, 10, 11, 12])):
-        return "linear"
-    elif corr_type.issubset(set([5, 6, 7, 8])):
-        return "circular"
-
-
 def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nfwhm=5):
     """
     xin         - grid of x coordinates

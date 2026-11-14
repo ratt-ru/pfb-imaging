@@ -1,4 +1,4 @@
-"""stokes2im reproduces stokes_image on the same image."""
+"""stokes2im: one image's read and imaging -- zero-weight images, l2 reweighting, section timing, refusals."""
 
 import dataclasses
 
