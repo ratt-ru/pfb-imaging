@@ -19,7 +19,6 @@ from numpy.testing import assert_allclose
 
 from pfb_imaging.core import hci as hci_module
 from pfb_imaging.core.hci import hci as hci_core
-from pfb_imaging.utils.astrometry import resolve_target_radec
 from pfb_imaging.utils.misc import radec_barycentre, radec_to_lm, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
 from pfb_imaging.utils.transients import generate_transient_spectra
@@ -72,11 +71,16 @@ def _gain_term(path, node, gain_time, value, gain_freq=None):
 
 
 @pytest.mark.slow
-def test_hci_output_layout(ms_name, tmp_path):
+def test_hci_output_layout(ms_name, ms_meta, tmp_path):
     out = str(tmp_path / "cube.zarr")
     hci_core([ms_name], out, images_per_chunk=4, **COMMON)
     ds = xr.open_zarr(out)
     assert ds.cube.dims == ("STOKES", "FREQ", "TIME", "Y", "X")
+    assert ds.cube_mean.dims == ("STOKES", "FREQ", "Y", "X")
+    assert list(ds.STOKES.values) == ["I"]
+    # one spw and channels_per_image=-1: one band; integrations_per_image=1: one image per integration
+    assert (ds.sizes["FREQ"], ds.sizes["TIME"]) == (1, ms_meta.ntime)
+    assert np.all(ds.channel_width.values > 0)
     assert ds.cube.encoding["chunks"] == (1, 1, 4, 64, 64)
     assert ds.rms.encoding["chunks"] == (1, 1, 4)
     for v in ("cube_mean", "psf", "psf2", "flag", "weight", "nonzero", "channel_width"):
@@ -546,6 +550,8 @@ def test_hci_rejects_a_moving_target_across_several_images(ms_name, tmp_path, ne
 @pytest.mark.slow
 def test_hci_accepts_a_moving_target_in_a_single_image(ms_name, ms_meta, tmp_path, needs_rephasing):
     """One image has one target position: coords and FITS CRVAL are the body's at that time."""
+    from pfb_imaging.utils.astrometry import resolve_target_radec  # deferred: pyrap ([casacore]) at module scope
+
     out = str(tmp_path / "cube.zarr")
     hci_core(
         [ms_name],

@@ -2065,6 +2065,10 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D60 — hci-msv4 writes through one actor writer
 
+> **Names (D61):** written while both commands existed. Below, `hci` means the retired dask-ms
+> command and `hci-msv4` the MSv4 one, which is now `pfb hci` (`core/hci.py`). Statements
+> about what "`hci`" does describe the retired command.
+
 - **Context:** legacy `hci` has every Ray worker write its own `(TIME, FREQ)` slab with
   `to_zarr(region="auto")` into a scaffold, relying on a node-local lock for chunk safety.
   zarr 3 has no `ProcessSynchronizer`, and the lock never spanned nodes (#279, #257 item 4).

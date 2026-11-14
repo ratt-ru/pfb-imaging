@@ -45,6 +45,9 @@ CASACORE_FREE_ENTRY_POINTS = [
     # was a DaskMSStore used for globbing and for `.url`/`.exists()`/`.rm()`;
     # `utils/naming.uri_and_fs` and `glob_uris` do that with plain fsspec.
     "pfb_imaging.core.imager",
+    # hci (the MSv4 one, D61) reads through xarray-ms and defers pyrap to the
+    # rephasing and --target branches of its workers.
+    "pfb_imaging.core.hci",
     "pfb_imaging.cli",
 ]
 

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-11-05T14:00:00Z
-last_verified_commit: bc66298
+timestamp: 2026-11-14T16:00:00Z
+last_verified_commit: 53a2068
 ---
 
 # Image and beam orientation conventions (hci)
@@ -176,9 +176,9 @@ equivalent in output against the pre-refactor code on the test MS (cube/psf to
 single-precision threading noise ~1e-7; `psf_pa` exactly). The interim
 no-reprojection state (`a516530`, the jagged-gain sampling experiment for
 breifast#208 — which ruled out coarse sampling as the cause) is gone. So is the
-zarr-beam branch, along with its hack and the pre-D19 reproject bugs: `hci` now
-accepts only `--beam-model meerkat-beams` (design-decisions.md D25), leaving
-`utils/beam.reproject_and_interp_beam` uncalled.
+zarr-beam branch, along with its hack and the pre-D19 reproject bugs: `hci`'s
+`--beam-model` accepts only a meerkat-beams band name (design-decisions.md D25),
+leaving `utils/beam.reproject_and_interp_beam` uncalled.
 
 The transient-injection beam is a separate, point-evaluated path with no
 orientation content: `beam_gain_for_source` asks the wizard for the power beam of
