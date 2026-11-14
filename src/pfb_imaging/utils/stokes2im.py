@@ -1,4 +1,4 @@
-"""Per-image read and imaging for ``pfb hci-msv4``.
+"""Per-image read and imaging for ``pfb hci``.
 
 Pure functions, numpy in and out, no Ray. ``read_item`` does one image's I/O
 from an MSv4 node; ``image_item`` is the maths of the legacy

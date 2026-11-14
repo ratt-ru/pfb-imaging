@@ -1,4 +1,4 @@
-"""pfb hci-msv4: high cadence imaging of MSv4 data with worker actors and an actor writer."""
+"""pfb hci: high cadence imaging of MSv4 data with worker actors and an actor writer."""
 
 import contextlib
 import gc
@@ -36,7 +36,7 @@ from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, 
 from pfb_imaging.utils.misc import check_gridder_epsilon, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
-from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS, HciConfig
+from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, HciConfig
 
 log = pfb_logging.get_logger("HCI-MSV4")
 
@@ -154,10 +154,10 @@ def _scan_tree(
             max_blength = max(max_blength, float(np.hypot(uvw[:, 0], uvw[:, 1]).max()))
         max_freq = max(max_freq, float(freqs.max()))
         radec = np.array(sel.field_radec, dtype=np.float64)
-        radec[0] = radec[0] % (2 * np.pi)  # as hci's construct_mappings and read_item
+        radec[0] = radec[0] % (2 * np.pi)  # as read_item, and the retired dask hci
         radecs.append(radec)
         all_times.append(tmjd)
-        all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range, as hci
+        all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range
         nodes[(ims, sel.path)] = PlannedNode(
             str(sel.scan_name),
             str(sel.field_name),
@@ -305,7 +305,7 @@ def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
     in this process (#241). The plan is the same either way. The processes are spawned,
     which re-imports ``__main__`` only when it is a file: the ``pfb`` CLI (guarded) and
     stimela's python flavour (``python -c``) are safe, while a script file that calls
-    ``hci_msv4`` at module level needs an ``if __name__ == "__main__":`` guard.
+    ``hci`` at module level needs an ``if __name__ == "__main__":`` guard.
 
     Args:
         ms: Measurement-set paths.
@@ -340,7 +340,7 @@ def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
 
 
 @pfb_logging.log_exceptions
-def hci_msv4(
+def hci(
     ms: list[Path],
     output_dataset: str,
     log_directory: str | None = None,
@@ -446,7 +446,7 @@ def hci_msv4(
     opts_dict["log_directory"] = log_directory
     log_directory.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/hci_msv4_{timestamp}.log"
+    logname = f"{str(log_directory)}/hci_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     phases = PhaseClock(log)
 
@@ -492,7 +492,7 @@ def hci_msv4(
     # refusals before any I/O-heavy work
     if weight_grid_out:
         log.error_and_raise(
-            "--weight-grid-out is not supported by hci-msv4 (hci's scaffold has no weight_grid either)",
+            "--weight-grid-out is not supported by hci: the cube scaffold has no weight_grid",
             NotImplementedError,
         )
     if transfer_model_from is not None:
@@ -505,7 +505,7 @@ def hci_msv4(
         log.error_and_raise(f"nworkers must be >= 1 (got {nworkers})", ValueError)
     if sigma_column is not None:
         log.error_and_raise(
-            "--sigma-column is not supported by hci-msv4: xarray-ms does not expose SIGMA. Use --weight-column",
+            "--sigma-column is not supported by hci: xarray-ms does not expose SIGMA. Use --weight-column",
             NotImplementedError,
         )
     if gain_table is not None:
@@ -531,7 +531,7 @@ def hci_msv4(
         freq_max = np.inf
 
     log.info("Planning images")
-    # one MS open at a time, as hci (#241); the plan keeps what the checks below need
+    # one MS open at a time (#241); the plan keeps what the checks below need
     plan = plan_ms(
         ms,
         nprocs=min(nworkers, _PLAN_PROCS, len(os.sched_getaffinity(0))),
@@ -548,7 +548,7 @@ def hci_msv4(
     )
     phases.lap("Plan")
 
-    # crude column arithmetic, as hci
+    # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
         dc1, dc2 = dc.split("+")
@@ -906,7 +906,7 @@ def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> dict:
             writing[writer.add.remote(img_ref)] = (item, mem_ref)
             idle.remove(w)
         if not imaging and not writing:
-            raise RuntimeError("hci-msv4 dispatch stalled with work remaining; this is a bug")
+            raise RuntimeError("hci dispatch stalled with work remaining; this is a bug")
         if idle:
             if len(writing) >= max_writing:
                 why = "writer"

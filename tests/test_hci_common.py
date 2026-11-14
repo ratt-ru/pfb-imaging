@@ -28,14 +28,14 @@ from pfb_imaging.utils.misc import radec_barycentre
 
 
 @pytest.mark.slow  # a fresh interpreter importing the scientific stack: ~14-18 s (D45)
-def test_hci_msv4_imports_without_daskms_or_pyrap():
+def test_hci_imports_without_daskms_or_pyrap():
     code = (
         "import sys\n"
         "sys.modules['daskms'] = None\n"
         "sys.modules['pyrap'] = None\n"
         "sys.modules['casacore'] = None\n"
-        "import pfb_imaging.core.hci_msv4\n"
-        "import pfb_imaging.cli.hci_msv4\n"
+        "import pfb_imaging.core.hci\n"
+        "import pfb_imaging.cli.hci\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

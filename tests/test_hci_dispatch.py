@@ -1,4 +1,4 @@
-"""hci-msv4 `_dispatch` against stub actors: in-process under a fake Ray, and on the session cluster.
+"""hci `_dispatch` against stub actors: in-process under a fake Ray, and on the session cluster.
 
 The fake reproduces the Ray semantics `_dispatch` depends on -- an actor runs its calls one
 at a time in submission order, a call waits for its ref arguments (head-of-line blocking),
@@ -8,7 +8,7 @@ actor goes next at random, so several seeds exercise many interleavings in milli
 The real-cluster test is slow (D45): every stub actor is a new worker process, Ray starts at
 most `num_cpus` of them at a time, and a start costs seconds. Everything those actors touch is
 defined inside `_stubs`, so Ray pickles it by value and a stub process never imports the
-scientific stack (unpickling a real `WorkItem` imports `core.hci_msv4`). `_dispatch` only
+scientific stack (unpickling a real `WorkItem` imports `core.hci`). `_dispatch` only
 reads `.block` off an item.
 """
 
@@ -19,8 +19,8 @@ import numpy as np
 import pytest
 import ray
 
-from pfb_imaging.core import hci_msv4
-from pfb_imaging.core.hci_msv4 import HciPlan, _dispatch
+from pfb_imaging.core import hci
+from pfb_imaging.core.hci import HciPlan, _dispatch
 
 
 def _stubs():
@@ -190,7 +190,7 @@ class _FakeActor:
 def test_dispatch_invariants_in_process(monkeypatch, seed):
     item_cls, stub_worker, stub_writer = _stubs()
     fake = _FakeRay(seed)
-    monkeypatch.setattr(hci_msv4, "ray", fake)
+    monkeypatch.setattr(hci, "ray", fake)
     plan = _plan(item_cls, ntime=12, nband=3)
     workers = [stub_worker() for _ in range(3)]
     writer = stub_writer()
@@ -209,7 +209,7 @@ def test_dispatch_invariants_in_process(monkeypatch, seed):
 
     # a worker error surfaces with its own type, whichever ref the driver sees first
     fake = _FakeRay(seed)
-    monkeypatch.setattr(hci_msv4, "ray", fake)
+    monkeypatch.setattr(hci, "ray", fake)
     for w in workers:
         w.reset(7)
     writer.reset(plan.expected, 2)
@@ -253,7 +253,7 @@ def test_narrow_window_keeps_every_worker_busy(monkeypatch, seed):
     """
     item_cls, stub_worker, stub_writer = _stubs()
     fake = _FakeRay(seed)
-    monkeypatch.setattr(hci_msv4, "ray", fake)
+    monkeypatch.setattr(hci, "ray", fake)
     plan = _plan(item_cls, ntime=32, nband=1, ipc=4)
     workers = [stub_worker() for _ in range(8)]
     writer = stub_writer()

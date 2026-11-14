@@ -1,4 +1,4 @@
-"""pfb hci-msv4 end to end: output layout, agreement with hci, gains, errors.
+"""pfb hci end to end: output layout, gains, transients, rephasing, targets, errors.
 
 Every run of the command starts fresh worker actors that compile their kernels,
 so even a four-image run costs ~4 s warm: the end-to-end tests are slow (D45).
@@ -17,8 +17,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from numpy.testing import assert_allclose
 
-from pfb_imaging.core import hci_msv4 as hci_msv4_module
-from pfb_imaging.core.hci_msv4 import hci_msv4 as hci_msv4_core
+from pfb_imaging.core import hci as hci_module
+from pfb_imaging.core.hci import hci as hci_core
 from pfb_imaging.utils.astrometry import resolve_target_radec
 from pfb_imaging.utils.misc import radec_barycentre, radec_to_lm, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
@@ -72,9 +72,9 @@ def _gain_term(path, node, gain_time, value, gain_freq=None):
 
 
 @pytest.mark.slow
-def test_hci_msv4_output_layout(ms_name, tmp_path):
+def test_hci_output_layout(ms_name, tmp_path):
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core([ms_name], out, images_per_chunk=4, **COMMON)
+    hci_core([ms_name], out, images_per_chunk=4, **COMMON)
     ds = xr.open_zarr(out)
     assert ds.cube.dims == ("STOKES", "FREQ", "TIME", "Y", "X")
     assert ds.cube.encoding["chunks"] == (1, 1, 4, 64, 64)
@@ -82,24 +82,24 @@ def test_hci_msv4_output_layout(ms_name, tmp_path):
     for v in ("cube_mean", "psf", "psf2", "flag", "weight", "nonzero", "channel_width"):
         assert v in ds
     assert np.isfinite(ds.cube.values).all()
-    assert ds.TIME.values[0] > 4e9  # MJD seconds, as hci
+    assert ds.TIME.values[0] > 4e9  # MJD seconds, as the retired dask hci
 
 
 @pytest.mark.slow
-def test_hci_msv4_constant_gain_scales_cube(ms_name, sky_truth, tmp_path):
+def test_hci_constant_gain_scales_cube(ms_name, sky_truth, tmp_path):
     """Applying a constant diagonal gain g divides the normalised image by |g|^2."""
     node = _vis_node(ms_name)
     _gain_term(f"{tmp_path}/gains.qc/NET/NET_0", node, to_mjd_time(node.ds.time.values[:1]), 2.0 + 0j)
     plain, gained = str(tmp_path / "plain.zarr"), str(tmp_path / "gained.zarr")
-    hci_msv4_core([ms_name], plain, **COMMON)
-    hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **COMMON)
+    hci_core([ms_name], plain, **COMMON)
+    hci_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **COMMON)
     a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
     assert np.abs(a).max() > 0
     assert_allclose(b, a / 4.0, rtol=1e-6, atol=1e-9 * np.abs(a).max())
 
 
 @pytest.mark.slow
-def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, sky_truth, tmp_path):
+def test_hci_data_resolution_gains_with_several_bands(ms_name, sky_truth, tmp_path):
     """Per-time, per-channel gains with channels_per_image < nchan: each image scales by 1/|g|^2.
 
     |g| is constant within an image but differs between images and bands, and the phase varies
@@ -123,8 +123,8 @@ def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, sky_truth, t
     )
     opts = {**COMMON, "integrations_per_image": ipi, "channels_per_image": cpi}
     plain, gained = str(tmp_path / "plain.zarr"), str(tmp_path / "gained.zarr")
-    hci_msv4_core([ms_name], plain, **opts)
-    hci_msv4_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **opts)
+    hci_core([ms_name], plain, **opts)
+    hci_core([ms_name], gained, gain_table=[f"{tmp_path}/gains.qc::NET"], **opts)
     a, b = xr.open_zarr(plain).cube.values, xr.open_zarr(gained).cube.values
     nband = -(-nchan // cpi)
     assert np.abs(a).max() > 0
@@ -133,12 +133,12 @@ def test_hci_msv4_data_resolution_gains_with_several_bands(ms_name, sky_truth, t
     assert_allclose(b, a / scale[None, :, :, None, None], rtol=1e-6, atol=1e-9 * np.abs(a).max())
 
 
-def test_hci_msv4_gain_table_count_mismatch(ms_name, tmp_path):
+def test_hci_gain_table_count_mismatch(ms_name, tmp_path):
     with pytest.raises(ValueError, match="one gain table per"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), gain_table=["a::NET", "b::NET"], **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), gain_table=["a::NET", "b::NET"], **COMMON)
 
 
-def test_hci_msv4_refuses_off_grid_gains_before_ray(ms_name, tmp_path, monkeypatch):
+def test_hci_refuses_off_grid_gains_before_ray(ms_name, tmp_path, monkeypatch):
     """An off-grid gain term is refused by the driver from coordinates alone, before Ray starts.
 
     Worker-error propagation itself is covered by tests/test_hci_dispatch.py.
@@ -150,18 +150,18 @@ def test_hci_msv4_refuses_off_grid_gains_before_ray(ms_name, tmp_path, monkeypat
     def no_ray(*args, **kwargs):
         raise AssertionError("Ray was started")
 
-    monkeypatch.setattr(hci_msv4_module, "init_ray", no_ray)
+    monkeypatch.setattr(hci_module, "init_ray", no_ray)
     with pytest.raises(ValueError, match=r"bad\.qc/NET does not apply to .* node .*on-grid only"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), gain_table=[f"{tmp_path}/bad.qc::NET"], **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), gain_table=[f"{tmp_path}/bad.qc::NET"], **COMMON)
 
 
-def test_hci_msv4_refuses_weight_grid_out(ms_name, tmp_path):
+def test_hci_refuses_weight_grid_out(ms_name, tmp_path):
     with pytest.raises(NotImplementedError, match="weight-grid-out"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), weight_grid_out=True, **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), weight_grid_out=True, **COMMON)
 
 
 @pytest.mark.slow
-def test_hci_msv4_two_ms_centre_on_the_barycentre(ms_name, tmp_path, pctable):
+def test_hci_two_ms_centre_on_the_barycentre(ms_name, tmp_path, pctable):
     """#320's configuration: one field per MS, different pointings and times."""
     second = str(tmp_path / "second.ms")
     shutil.copytree(ms_name, second)
@@ -177,7 +177,7 @@ def test_hci_msv4_two_ms_centre_on_the_barycentre(ms_name, tmp_path, pctable):
     with pctable(f"{ms_name}::FIELD", ack=False) as t:
         pd0 = t.getcol("PHASE_DIR")[0, 0]
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core([ms_name, second], out, **COMMON)
+    hci_core([ms_name, second], out, **COMMON)
     ds = xr.open_zarr(out)
     ra0, dec0 = np.rad2deg(radec_barycentre(np.array([pd0, pd0 + [0, np.deg2rad(0.2)]])))
     nx, ny = ds.sizes["X"], ds.sizes["Y"]
@@ -185,12 +185,12 @@ def test_hci_msv4_two_ms_centre_on_the_barycentre(ms_name, tmp_path, pctable):
     assert_allclose(ds.Y.values[ny // 2], dec0, atol=1e-9)
 
 
-def test_hci_msv4_refuses_non_positive_max_simul_chunks(ms_name, tmp_path):
+def test_hci_refuses_non_positive_max_simul_chunks(ms_name, tmp_path):
     with pytest.raises(ValueError, match="max_simul_chunks must be >= 1"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), max_simul_chunks=0, **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), max_simul_chunks=0, **COMMON)
 
 
-def test_hci_msv4_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
+def test_hci_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
     """Each MS's tree is closed before the next opens, and on a planning error (#241)."""
     events = []
     real_open, real_close = xr.open_datatree, xr.DataTree.close
@@ -208,13 +208,13 @@ def test_hci_msv4_plans_one_ms_at_a_time(ms_name, tmp_path, monkeypatch):
     # the same MS twice maps two partitions to each output image: planning fails after both are read
     with pytest.raises(ValueError, match="same output image"):
         # one worker plans in this process; more scan in a process pool (plan_ms)
-        hci_msv4_core([ms_name, ms_name], str(tmp_path / "x.zarr"), **{**COMMON, "nworkers": 1})
+        hci_core([ms_name, ms_name], str(tmp_path / "x.zarr"), **{**COMMON, "nworkers": 1})
     assert events == ["open", "close", "open", "close"]
 
 
-def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
+def test_hci_refuses_unknown_column(ms_name, tmp_path):
     with pytest.raises(ValueError, match="NOPE"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), data_column="DATA-NOPE", **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), data_column="DATA-NOPE", **COMMON)
 
 
 @pytest.mark.parametrize(
@@ -227,39 +227,39 @@ def test_hci_msv4_refuses_unknown_column(ms_name, tmp_path):
         ({"spatial_chunk": 0}, ValueError, "spatial_chunk must be >= 1"),
     ],
 )
-def test_hci_msv4_refusals_before_ray(ms_name, tmp_path, monkeypatch, over, err, match):
+def test_hci_refusals_before_ray(ms_name, tmp_path, monkeypatch, over, err, match):
     def no_ray(*args, **kwargs):
         raise AssertionError("Ray was started")
 
-    monkeypatch.setattr(hci_msv4_module, "init_ray", no_ray)
+    monkeypatch.setattr(hci_module, "init_ray", no_ray)
     with pytest.raises(err, match=match):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), **{**COMMON, **over})
+        hci_core([ms_name], str(tmp_path / "x.zarr"), **{**COMMON, **over})
 
 
-def test_hci_msv4_overwrite_keeps_the_cube_when_validation_fails(ms_name, tmp_path):
+def test_hci_overwrite_keeps_the_cube_when_validation_fails(ms_name, tmp_path):
     """A typo with --overwrite must not cost the previous cube."""
     out = tmp_path / "x.zarr"
     out.mkdir()
     (out / "keep").write_text("previous cube")
     with pytest.raises(ValueError, match="NOPE"):
-        hci_msv4_core([ms_name], str(out), data_column="DATA-NOPE", **COMMON)
+        hci_core([ms_name], str(out), data_column="DATA-NOPE", **COMMON)
     assert (out / "keep").read_text() == "previous cube"
 
 
-def test_hci_msv4_refuses_rephasing_without_casacore_before_ray(ms_name, tmp_path, monkeypatch):
-    real = hci_msv4_module.importlib.util.find_spec
+def test_hci_refuses_rephasing_without_casacore_before_ray(ms_name, tmp_path, monkeypatch):
+    real = hci_module.importlib.util.find_spec
     monkeypatch.setattr(
-        hci_msv4_module.importlib.util, "find_spec", lambda name, *a: None if name == "pyrap" else real(name, *a)
+        hci_module.importlib.util, "find_spec", lambda name, *a: None if name == "pyrap" else real(name, *a)
     )
-    monkeypatch.setattr(hci_msv4_module, "init_ray", lambda *a, **k: pytest.fail("Ray was started"))
+    monkeypatch.setattr(hci_module, "init_ray", lambda *a, **k: pytest.fail("Ray was started"))
     with pytest.raises(ImportError, match="python-casacore"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), phase_dir="00:20:00,-30:00:00", **COMMON)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), phase_dir="00:20:00,-30:00:00", **COMMON)
 
 
-# ---- ported from the legacy hci's tests: the behaviour both commands share ----
+# ---- ported from the retired dask hci's tests ----
 
-# The legacy tests' geometry: field-of-view sizing, one worker, natural weighting.
-LEGACY = dict(
+# Field-of-view sizing, one worker, natural weighting: the geometry these tests predict pixels from.
+FOV_RUN = dict(
     product="I",
     channels_per_image=-1,
     max_simul_chunks=1,
@@ -322,16 +322,16 @@ def _peak_near(img, ix, iy, half):
 
 
 @pytest.mark.slow
-def test_hci_msv4_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
+def test_hci_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
     """Without a beam, sub-binning an image's channels telescopes back to one bin.
 
     The cube is a weight-normalised sum over bins of linear wgridder outputs, so
     cube, cube_mean and weight must not depend on channels_per_bin.
     """
-    opts = {**LEGACY, "integrations_per_image": 10, "images_per_chunk": 6, "robustness": 0.0}
+    opts = {**FOV_RUN, "integrations_per_image": 10, "images_per_chunk": 6, "robustness": 0.0}
     full, bin4 = str(tmp_path / "full.zarr"), str(tmp_path / "bin4.zarr")
-    hci_msv4_core([ms_name], full, channels_per_bin=-1, **opts)
-    hci_msv4_core([ms_name], bin4, channels_per_bin=4, **opts)
+    hci_core([ms_name], full, channels_per_bin=-1, **opts)
+    hci_core([ms_name], bin4, channels_per_bin=4, **opts)
     a, b = xr.open_zarr(full), xr.open_zarr(bin4)
     assert np.any(a.weight.values > 0)
     assert np.abs(np.nan_to_num(a.cube.values)).max() > 0  # weights do not depend on the data; the cube does
@@ -343,10 +343,10 @@ def test_hci_msv4_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_pa
 
 @pytest.mark.slow
 @pytest.mark.parametrize("wgt_mode", ("l2", "minvar"))
-def test_hci_msv4_weighting_modes_image_the_sky(wgt_mode, ms_name, sky_truth, tmp_path):
+def test_hci_weighting_modes_image_the_sky(wgt_mode, ms_name, sky_truth, tmp_path):
     """minvar is the mode that exercised the weight_data recompile bug in production (#273)."""
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [ms_name],
         out,
         **{**COMMON, "integrations_per_image": 8, "images_per_chunk": 4, "precision": "single", "epsilon": 1e-4},
@@ -359,17 +359,17 @@ def test_hci_msv4_weighting_modes_image_the_sky(wgt_mode, ms_name, sky_truth, tm
     assert np.abs(imaged).max() > 0
 
 
-def test_hci_msv4_refuses_an_existing_output_without_overwrite(ms_name, tmp_path):
+def test_hci_refuses_an_existing_output_without_overwrite(ms_name, tmp_path):
     out = tmp_path / "x.zarr"
     out.mkdir()
     (out / "marker").write_text("do not delete")
     with pytest.raises(RuntimeError, match="exists"):
-        hci_msv4_core([ms_name], str(out), **{**COMMON, "overwrite": False})
+        hci_core([ms_name], str(out), **{**COMMON, "overwrite": False})
     assert (out / "marker").exists()
 
 
 @pytest.mark.slow
-def test_hci_msv4_injected_transient_has_the_analytic_dynamic_spectrum(writable_ms, ms_meta, tmp_path):
+def test_hci_injected_transient_has_the_analytic_dynamic_spectrum(writable_ms, ms_meta, tmp_path):
     """An injected transient lands on its pixel with the injected (freq, time) profile.
 
     The base visibilities are zeroed (``DATA-DATA``) so the cube holds only the
@@ -392,10 +392,10 @@ def test_hci_msv4_injected_transient_has_the_analytic_dynamic_spectrum(writable_
     }
     ipi, cpi = 4, 2  # 60 integrations -> 15 images; 8 channels -> 4 bands
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [writable_ms],
         out,
-        **{**LEGACY, "channels_per_image": cpi},
+        **{**FOV_RUN, "channels_per_image": cpi},
         data_column="DATA-DATA",
         inject_transients=_write_transients(tmp_path / "transient.yaml", [transient]),
         integrations_per_image=ipi,
@@ -420,7 +420,7 @@ def test_hci_msv4_injected_transient_has_the_analytic_dynamic_spectrum(writable_
 
 
 @pytest.mark.slow
-def test_hci_msv4_injected_sources_keep_their_sky_position_out_to_the_field_edge(writable_ms, ms_meta, tmp_path):
+def test_hci_injected_sources_keep_their_sky_position_out_to_the_field_edge(writable_ms, ms_meta, tmp_path):
     """Sources at increasing distance land on their pixel, and the cube's WCS maps it back to them.
 
     The controlled experiment of ratt-ru/breifast#263 on the test MS: both a
@@ -433,10 +433,10 @@ def test_hci_msv4_injected_sources_keep_their_sky_position_out_to_the_field_edge
     offsets = [(20, 15), (60, 45), (100, 75), (140, 105), (170, 128)]
     radecs = [_lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0) for di, dj in offsets]
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [writable_ms],
         out,
-        **{**LEGACY, "field_of_view": fov, "epsilon": 1e-8},
+        **{**FOV_RUN, "field_of_view": fov, "epsilon": 1e-8},
         data_column="DATA-DATA",
         inject_transients=_write_transients(
             tmp_path / "t.yaml", [_steady(f"src{k}", ra, dec) for k, (ra, dec) in enumerate(radecs)]
@@ -469,7 +469,7 @@ def _as_parsed_phase_dir(ra, dec):
 
 
 @pytest.mark.slow
-def test_hci_msv4_injected_sources_land_on_their_pixels_when_rephased(writable_ms, ms_meta, tmp_path, needs_rephasing):
+def test_hci_injected_sources_land_on_their_pixels_when_rephased(writable_ms, ms_meta, tmp_path, needs_rephasing):
     """A chgcentre w-difference sign error displaced every source by -2*(field -> tangent) (breifast#263).
 
     Sources are injected about the rephasing centre, on which the image is centred.
@@ -485,10 +485,10 @@ def test_hci_msv4_injected_sources_land_on_their_pixels_when_rephased(writable_m
         for k, (di, dj) in enumerate(offsets)
     ]
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [writable_ms],
         out,
-        **{**LEGACY, "epsilon": 1e-8},
+        **{**FOV_RUN, "epsilon": 1e-8},
         data_column="DATA-DATA",
         inject_transients=_write_transients(tmp_path / "t.yaml", transients),
         phase_dir=phase_dir,
@@ -503,7 +503,7 @@ def test_hci_msv4_injected_sources_land_on_their_pixels_when_rephased(writable_m
 
 
 @pytest.mark.slow
-def test_hci_msv4_target_recentres_the_grid(writable_ms, ms_meta, tmp_path, needs_rephasing):
+def test_hci_target_recentres_the_grid(writable_ms, ms_meta, tmp_path, needs_rephasing):
     """``--target`` centres the image, and labels its coords, on the target rather than the phase centre."""
     _clear_flags(writable_ms)
     nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
@@ -516,10 +516,10 @@ def test_hci_msv4_target_recentres_the_grid(writable_ms, ms_meta, tmp_path, need
         _steady(f"src{k}", *_lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)) for k, (di, dj) in enumerate(offsets)
     ]
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [writable_ms],
         out,
-        **{**LEGACY, "epsilon": 1e-8},
+        **{**FOV_RUN, "epsilon": 1e-8},
         data_column="DATA-DATA",
         inject_transients=_write_transients(tmp_path / "t.yaml", transients),
         target=target,
@@ -537,20 +537,20 @@ def test_hci_msv4_target_recentres_the_grid(writable_ms, ms_meta, tmp_path, need
     assert_allclose(ds.Y.values[ny // 2], tc.dec.deg, atol=1e-9)
 
 
-def test_hci_msv4_rejects_a_moving_target_across_several_images(ms_name, tmp_path, needs_rephasing):
+def test_hci_rejects_a_moving_target_across_several_images(ms_name, tmp_path, needs_rephasing):
     """``--target Sun`` moves between images, so one shared X/Y axis cannot label them all."""
     with pytest.raises(ValueError, match="solar-system body"):
-        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), **LEGACY, target="Sun", integrations_per_image=20)
+        hci_core([ms_name], str(tmp_path / "x.zarr"), **FOV_RUN, target="Sun", integrations_per_image=20)
 
 
 @pytest.mark.slow
-def test_hci_msv4_accepts_a_moving_target_in_a_single_image(ms_name, ms_meta, tmp_path, needs_rephasing):
+def test_hci_accepts_a_moving_target_in_a_single_image(ms_name, ms_meta, tmp_path, needs_rephasing):
     """One image has one target position: coords and FITS CRVAL are the body's at that time."""
     out = str(tmp_path / "cube.zarr")
-    hci_msv4_core(
+    hci_core(
         [ms_name],
         out,
-        **{**LEGACY, "robustness": 0.0},
+        **{**FOV_RUN, "robustness": 0.0},
         target="Sun",
         integrations_per_image=ms_meta.ntime,
         images_per_chunk=1,

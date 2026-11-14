@@ -1,11 +1,10 @@
 cabs:
-  hci_msv4:
+  hci:
     flavour: python
-    command: pfb_imaging.core.hci_msv4.hci_msv4
-    name: hci_msv4
+    command: pfb_imaging.core.hci.hci
+    name: hci
     info:
       High cadence imaging of MSv4 data.
-      Same output as hci with larger time chunks.
     image: ghcr.io/ratt-ru/pfb-imaging:latest
     inputs:
       ms:
@@ -61,7 +60,7 @@ cabs:
           rich_help_panel: Control
       transfer-model-from:
         info:
-          Not supported by hci-msv4 and refused.
+          Not supported by hci and refused.
           Use the degrid app to populate a model column instead.
         dtype: Optional[str]
         metadata:
@@ -98,7 +97,7 @@ cabs:
           rich_help_panel: Data Selection
       sigma-column:
         info:
-          Not supported by hci-msv4 and refused, since xarray-ms does not expose SIGMA.
+          Not supported by hci and refused, since xarray-ms does not expose SIGMA.
           Use --weight-column instead.
         dtype: Optional[str]
         metadata:
@@ -272,8 +271,8 @@ cabs:
           rich_help_panel: Output
       weight-grid-out:
         info:
-          Not supported by hci-msv4 and refused.
-          The hci scaffold has no weight_grid either.
+          Not supported by hci and refused.
+          The cube scaffold has no weight_grid.
         dtype: bool
         default: false
         metadata:

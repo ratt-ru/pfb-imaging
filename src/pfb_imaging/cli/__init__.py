@@ -44,9 +44,9 @@ from pfb_imaging.cli.degrid import degrid  # noqa: E402
 app.command(name="degrid")(degrid)
 
 
-from pfb_imaging.cli.hci_msv4 import hci_msv4  # noqa: E402
+from pfb_imaging.cli.hci import hci  # noqa: E402
 
-app.command(name="hci-msv4")(hci_msv4)
+app.command(name="hci")(hci)
 
 from pfb_imaging.cli.imager import imager  # noqa: E402
 

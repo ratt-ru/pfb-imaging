@@ -361,7 +361,7 @@ def _run_stokes_vis(
     flag_chans: optional channel slice to flag before conversion, used to shift
     the piece's effective frequency away from the nominal band centre (#296).
     """
-    from pfb_imaging.utils.stokes2vis_msv4 import stokes_vis
+    from pfb_imaging.utils.stokes2vis import stokes_vis
 
     node = _open_first_vis_node(ms_name)
     dc1 = node.ds.attrs["data_groups"]["base"]["correlated_data"]
@@ -1346,7 +1346,7 @@ def test_real_group_beams_are_complex_only_for_the_cross_group():
     from astropy.time import Time
     from meerkat_beams.utils import BeamWizard
 
-    from pfb_imaging.utils.stokes2vis_msv4 import real_beam_maps
+    from pfb_imaging.utils.stokes2vis import real_beam_maps
 
     lm = np.linspace(-1.0, 1.0, 32)
     times = Time(np.array([60000.0]), format="mjd")

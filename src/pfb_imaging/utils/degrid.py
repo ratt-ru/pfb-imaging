@@ -4,7 +4,7 @@ Everything here is pure and Ray-free: turning a `(time, frequency)` region of
 a visibility node into the arguments `pfb_model_spec.utils.degrid` wants, and
 turning its answer back into a minimal Dataset `to_msv2` can write to that
 same region. The numerics live in pfb-model-spec; the distribution and the
-CLI live in `core/degrid.py`. This mirrors `utils/stokes2vis_msv4.py`,
+CLI live in `core/degrid.py`. This mirrors `utils/stokes2vis.py`,
 which plays the same role for the imager's pass 1.
 
 Axis convention: the `.mds` (spec 0.1), pfb-model-spec's rendered images and

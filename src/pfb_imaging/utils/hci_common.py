@@ -1,4 +1,4 @@
-"""Pieces shared by pfb hci and pfb hci-msv4. Must not import dask-ms or pyrap."""
+"""Cube scaffold, FITS export, beams and transients for pfb hci. Must not import dask-ms or pyrap."""
 
 import functools
 from pathlib import Path
@@ -56,7 +56,7 @@ def hci_beam_band(beam_model: str | None) -> str | None:
 
 
 def hci_beam_wizard(output_dataset: str, band: str) -> BeamWizard:
-    """The BeamWizard hci and hci-msv4 attach to the cube scaffold.
+    """The BeamWizard hci attaches to the cube scaffold.
 
     Built with the same lambda/D frequency extrapolation as imager and degrid
     (``BEAM_FREQ_EXTRAPOLATION``), so band-edge channels do not raise.
@@ -575,8 +575,8 @@ def _beam_reprojection(
 ) -> BeamReprojection:
     """One ``BeamReprojection`` per (beam grid, pointing, phase centre, image grid) in this process.
 
-    Every image of a field shares these, so an hci-msv4 worker (and a legacy hci Ray worker,
-    which is reused across tasks) builds the map once. Two entries, each a float64
+    Every image of a field shares these, so an hci worker, which is reused across images,
+    builds the map once. Two entries, each a float64
     ``(2, ny*nx)`` map: 236 MB at 3840^2. The beam grids are keyed by ``(dtype, bytes)``.
     """
     return BeamReprojection(
@@ -605,7 +605,7 @@ def beam_for_band(
     """Return the Stokes power beam on the output image grid.
 
     Contract: (len(product), ny, nx) in cube/FITS (Y, X) order, matching the
-    image-space arrays in stokes2im_msv4.image_item (docs/wiki/image-and-beam-orientation.md).
+    image-space arrays in stokes2im.image_item (docs/wiki/image-and-beam-orientation.md).
     """
     if beam_model is not None:
         assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."

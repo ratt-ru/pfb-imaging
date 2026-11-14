@@ -2,7 +2,7 @@
 
 NOTE: only the gain-free path is covered. The legacy test also parametrised
 do_gains=True through init+grid, but the imager's pass 1 currently applies an
-identity jones stub (utils/stokes2vis_msv4.stokes_vis: "Fake jones for now"),
+identity jones stub (utils/stokes2vis.stokes_vis: "Fake jones for now"),
 so a gain-corrupted variant cannot pass until gain application is implemented
 on the MSv4 path. Add the do_gains=True parametrisation when it is.
 """

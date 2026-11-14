@@ -16,8 +16,8 @@ URI = NewType("URI", Path)
 
 
 @stimela_cab(
-    name="hci_msv4",
-    info="High cadence imaging of MSv4 data. Same output as hci with larger time chunks.",
+    name="hci",
+    info="High cadence imaging of MSv4 data.",
 )
 @stimela_output(
     dtype="Directory",
@@ -71,7 +71,7 @@ URI = NewType("URI", Path)
     must_exist=False,
     path_policies={"write_parent": True},
 )
-def hci_msv4(
+def hci(
     ms: Annotated[
         list[URI],
         typer.Option(
@@ -145,7 +145,7 @@ def hci_msv4(
     transfer_model_from: Annotated[
         str | None,
         typer.Option(
-            help="Not supported by hci-msv4 and refused. Use the degrid app to populate a model column instead.",
+            help="Not supported by hci and refused. Use the degrid app to populate a model column instead.",
             rich_help_panel="Input",
         ),
     ] = None,
@@ -183,7 +183,7 @@ def hci_msv4(
     sigma_column: Annotated[
         str | None,
         typer.Option(
-            help="Not supported by hci-msv4 and refused, since xarray-ms does not expose SIGMA. "
+            help="Not supported by hci and refused, since xarray-ms does not expose SIGMA. "
             "Use --weight-column instead.",
             rich_help_panel="Data Selection",
         ),
@@ -364,7 +364,7 @@ def hci_msv4(
     weight_grid_out: Annotated[
         bool,
         typer.Option(
-            help="Not supported by hci-msv4 and refused. The hci scaffold has no weight_grid either.",
+            help="Not supported by hci and refused. The cube scaffold has no weight_grid.",
             rich_help_panel="Output",
         ),
     ] = False,
@@ -568,7 +568,6 @@ def hci_msv4(
 ):
     """
     High cadence imaging of MSv4 data.
-    Same output as hci with larger time chunks.
     """
     if backend == "native" or backend == "auto":
         try:
@@ -576,7 +575,7 @@ def hci_msv4(
             from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
             preflight_remote_must_exist(
-                hci_msv4,
+                hci,
                 dict(
                     ms=ms,
                     product=product,
@@ -639,10 +638,10 @@ def hci_msv4(
             )
 
             # Lazy import the core implementation
-            from pfb_imaging.core.hci_msv4 import hci_msv4 as hci_msv4_core  # noqa: E402
+            from pfb_imaging.core.hci import hci as hci_core  # noqa: E402
 
             # Call the core function with all parameters
-            hci_msv4_core(
+            hci_core(
                 ms,
                 output_dataset,
                 product=product,
@@ -715,7 +714,7 @@ def hci_msv4(
         raise RuntimeError("No Container URL in pfb-imaging metadata.")
 
     run_in_container(
-        hci_msv4,
+        hci,
         dict(
             ms=ms,
             product=product,

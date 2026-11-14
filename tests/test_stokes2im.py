@@ -1,4 +1,4 @@
-"""stokes2im_msv4 reproduces stokes_image on the same image."""
+"""stokes2im reproduces stokes_image on the same image."""
 
 import dataclasses
 
@@ -8,10 +8,10 @@ import pytest
 import xarray as xr
 from numpy.testing import assert_allclose
 
-from pfb_imaging.utils import stokes2im_msv4
+from pfb_imaging.utils import stokes2im
 from pfb_imaging.utils.gains import NodeGains
 from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
-from pfb_imaging.utils.stokes2im_msv4 import HciConfig, image_item, read_item
+from pfb_imaging.utils.stokes2im import HciConfig, image_item, read_item
 
 
 def _cfg(**over):
@@ -86,7 +86,7 @@ def test_image_item_fully_flagged_returns_zero_weight(node):
     assert not out["nonzero"][0]
     assert out["cube"].shape == (1, 128, 128) and out["cube"].dtype == np.float32
     assert np.all(out["cube"] == 0)
-    # legacy hci stores NaN beam parameters for a zero-weight image
+    # a zero-weight image stores NaN beam parameters, as the retired dask hci did
     for key in ("psf_maj", "psf_min", "psf_pa"):
         assert out[key].shape == (1,) and np.isnan(out[key]).all()
 
@@ -98,10 +98,10 @@ def test_worker_telemetry_times_the_read_and_each_imaging_section(ms_name, node,
     """
     import pstats
 
-    from pfb_imaging.core.hci_msv4 import WorkItem
+    from pfb_imaging.core.hci import WorkItem
     from pfb_imaging.utils.hci_actors import HciWorkerImpl
     from pfb_imaging.utils.memprof import CPROFILE_DIR_ENV, MEMRAY_DIR_ENV
-    from pfb_imaging.utils.stokes2im_msv4 import IMAGE_SECTIONS
+    from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS
 
     monkeypatch.delenv(MEMRAY_DIR_ENV, raising=False)
     monkeypatch.setenv(CPROFILE_DIR_ENV, str(tmp_path))
@@ -145,7 +145,7 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
 
     region = {"time": slice(0, 2), "frequency": slice(4, 7)}
     base = read_item(tree, region, _cfg()).flag
-    monkeypatch.setattr(stokes2im_msv4, "load_node_gains", fake_gains)
+    monkeypatch.setattr(stokes2im, "load_node_gains", fake_gains)
     inp = read_item(tree, region, _cfg(), gain_spec="g.qc/NET")
     assert seen == {
         "spec": "g.qc/NET",
