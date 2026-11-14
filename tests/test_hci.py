@@ -385,9 +385,7 @@ def test_hci_injected_transient_has_the_analytic_dynamic_spectrum(writable_ms, m
     ra0, dec0 = _field_centre(writable_ms)
     di, dj = -20, 16  # X (l) and Y (m) pixel offsets from the central pixel
     ra, dec = _lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)
-    assert_allclose(
-        radec_to_lm(np.array([[ra, dec]]), np.array([ra0, dec0])).squeeze(), [di * cell_rad, dj * cell_rad], atol=1e-12
-    )
+    assert_allclose(radec_to_lm((ra, dec), (ra0, dec0)), [di * cell_rad, dj * cell_rad], atol=1e-12)
     transient = {
         "name": "test_transient",
         "time": {"peak_time": 1200.0, "duration": 600.0, "shape": "gaussian"},
