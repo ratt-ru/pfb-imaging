@@ -6,15 +6,23 @@ so even a four-image run costs ~4 s warm: the end-to-end tests are slow (D45).
 
 import shutil
 
+import arcae
 import numpy as np
 import pytest
 import xarray as xr
+import yaml
+from astropy import units
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.wcs import WCS
 from numpy.testing import assert_allclose
 
 from pfb_imaging.core import hci_msv4 as hci_msv4_module
 from pfb_imaging.core.hci_msv4 import hci_msv4 as hci_msv4_core
-from pfb_imaging.utils.misc import radec_barycentre, to_mjd_time
+from pfb_imaging.utils.astrometry import resolve_target_radec
+from pfb_imaging.utils.misc import radec_barycentre, radec_to_lm, set_image_size, to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
+from pfb_imaging.utils.transients import generate_transient_spectra
 
 COMMON = dict(
     product="I",
@@ -281,3 +289,314 @@ def test_hci_msv4_refuses_rephasing_without_casacore_before_ray(ms_name, tmp_pat
     monkeypatch.setattr(hci_msv4_module, "init_ray", lambda *a, **k: pytest.fail("Ray was started"))
     with pytest.raises(ImportError, match="python-casacore"):
         hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), phase_dir="00:20:00,-30:00:00", **COMMON)
+
+
+# ---- ported from the legacy hci's tests: the behaviour both commands share ----
+
+# The legacy tests' geometry: field-of-view sizing, one worker, natural weighting.
+LEGACY = dict(
+    product="I",
+    channels_per_image=-1,
+    max_simul_chunks=1,
+    field_of_view=0.5,
+    super_resolution_factor=2.0,
+    nworkers=1,
+    nthreads=1,
+    beam_model=None,
+    robustness=None,
+    epsilon=1e-7,
+    overwrite=True,
+    keep_ray_alive=True,
+)
+
+
+def _lm_to_radec(lcoord, mcoord, ra0, dec0):
+    """Invert the SIN (orthographic) projection about ``(ra0, dec0)``, all in radians."""
+    n = np.sqrt(1.0 - lcoord**2 - mcoord**2)
+    dec = np.arcsin(mcoord * np.cos(dec0) + n * np.sin(dec0))
+    ra = ra0 + np.arctan2(lcoord, n * np.cos(dec0) - mcoord * np.sin(dec0))
+    return ra, dec
+
+
+def _field_centre(ms):
+    """The test MS's single phase centre ``(ra, dec)`` in radians."""
+    with arcae.table(f"{ms}::FIELD") as tab:
+        return (float(v) for v in np.asarray(tab.getcol("PHASE_DIR")).squeeze())
+
+
+def _clear_flags(ms):
+    """Unflag every sample, so a per-sample analytic expectation holds."""
+    with arcae.table(ms, readonly=False) as tab:
+        flag = np.asarray(tab.getcol("FLAG"))
+        tab.putcol("FLAG", np.zeros_like(flag))
+        tab.putcol("FLAG_ROW", np.zeros(flag.shape[0], dtype=bool))
+
+
+def _write_transients(path, transients):
+    with open(path, "w") as f:
+        yaml.safe_dump({"transients": transients}, f)
+    return str(path)
+
+
+def _steady(name, ra, dec):
+    """A flat-spectrum source bright across the whole observation."""
+    return {
+        "name": name,
+        "time": {"peak_time": 1800.0, "duration": 3000.0, "shape": "gaussian"},
+        "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": 0.0},
+        "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+    }
+
+
+def _peak_near(img, ix, iy, half):
+    """Pixel of the maximum in a ``(2*half+1)``-wide window about ``(ix, iy)``, and that maximum."""
+    lo_y, lo_x = max(0, iy - half), max(0, ix - half)
+    win = img[lo_y : iy + half + 1, lo_x : ix + half + 1]
+    ly, lx = np.unravel_index(np.argmax(win), win.shape)
+    return lo_x + lx, lo_y + ly, win.max()
+
+
+@pytest.mark.slow
+def test_hci_msv4_channels_per_bin_invariance_no_beam(ms_name, sky_truth, tmp_path):
+    """Without a beam, sub-binning an image's channels telescopes back to one bin.
+
+    The cube is a weight-normalised sum over bins of linear wgridder outputs, so
+    cube, cube_mean and weight must not depend on channels_per_bin.
+    """
+    opts = {**LEGACY, "integrations_per_image": 10, "images_per_chunk": 6, "robustness": 0.0}
+    full, bin4 = str(tmp_path / "full.zarr"), str(tmp_path / "bin4.zarr")
+    hci_msv4_core([ms_name], full, channels_per_bin=-1, **opts)
+    hci_msv4_core([ms_name], bin4, channels_per_bin=4, **opts)
+    a, b = xr.open_zarr(full), xr.open_zarr(bin4)
+    assert np.any(a.weight.values > 0)
+    assert np.abs(np.nan_to_num(a.cube.values)).max() > 0  # weights do not depend on the data; the cube does
+    assert_allclose(b.weight.values, a.weight.values, rtol=1e-6, atol=1e-6)
+    for v in ("cube", "cube_mean"):
+        scale = float(max(np.abs(a[v].values).max(), 1.0))
+        assert_allclose(b[v].values, a[v].values, rtol=1e-5, atol=1e-5 * scale, err_msg=v)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("wgt_mode", ("l2", "minvar"))
+def test_hci_msv4_weighting_modes_image_the_sky(wgt_mode, ms_name, sky_truth, tmp_path):
+    """minvar is the mode that exercised the weight_data recompile bug in production (#273)."""
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [ms_name],
+        out,
+        **{**COMMON, "integrations_per_image": 8, "images_per_chunk": 4, "precision": "single", "epsilon": 1e-4},
+        wgt_mode=wgt_mode,
+    )
+    ds = xr.open_zarr(out, chunks=None)
+    imaged = ds.cube.values[ds.weight.values > 0]
+    assert imaged.size, "no data was imaged"
+    assert np.isfinite(imaged).all()
+    assert np.abs(imaged).max() > 0
+
+
+def test_hci_msv4_refuses_an_existing_output_without_overwrite(ms_name, tmp_path):
+    out = tmp_path / "x.zarr"
+    out.mkdir()
+    (out / "marker").write_text("do not delete")
+    with pytest.raises(RuntimeError, match="exists"):
+        hci_msv4_core([ms_name], str(out), **{**COMMON, "overwrite": False})
+    assert (out / "marker").exists()
+
+
+@pytest.mark.slow
+def test_hci_msv4_injected_transient_has_the_analytic_dynamic_spectrum(writable_ms, ms_meta, tmp_path):
+    """An injected transient lands on its pixel with the injected (freq, time) profile.
+
+    The base visibilities are zeroed (``DATA-DATA``) so the cube holds only the
+    transient, which sits on an exact pixel centre: under natural weighting the
+    PSF-peak normalisation then recovers the binned dynamic spectrum directly.
+    """
+    _clear_flags(writable_ms)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+    ra0, dec0 = _field_centre(writable_ms)
+    di, dj = -20, 16  # X (l) and Y (m) pixel offsets from the central pixel
+    ra, dec = _lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)
+    assert_allclose(
+        radec_to_lm(np.array([[ra, dec]]), np.array([ra0, dec0])).squeeze(), [di * cell_rad, dj * cell_rad], atol=1e-12
+    )
+    transient = {
+        "name": "test_transient",
+        "time": {"peak_time": 1200.0, "duration": 600.0, "shape": "gaussian"},
+        "frequency": {"peak_flux": 2.0, "reference_freq": 1.4e9, "spectral_index": -1.5},
+        "position": {"ra": float(np.rad2deg(ra)), "dec": float(np.rad2deg(dec))},
+    }
+    ipi, cpi = 4, 2  # 60 integrations -> 15 images; 8 channels -> 4 bands
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [writable_ms],
+        out,
+        **{**LEGACY, "channels_per_image": cpi},
+        data_column="DATA-DATA",
+        inject_transients=_write_transients(tmp_path / "transient.yaml", [transient]),
+        integrations_per_image=ipi,
+        images_per_chunk=15,
+    )
+    ds = xr.open_zarr(out)
+    n_tbin, n_fbin = ms_meta.ntime // ipi, ms_meta.nchan // cpi
+    assert (ds.sizes["FREQ"], ds.sizes["TIME"]) == (n_fbin, n_tbin)
+    assert_allclose(ds.TIME.values, ms_meta.utime.reshape(n_tbin, ipi).mean(axis=1), atol=1e-6)
+    assert_allclose(ds.FREQ.values, ms_meta.freq.reshape(n_fbin, cpi).mean(axis=1), atol=1e-3)
+
+    # predicted from (l, m), not ds.X/ds.Y: the cube's RA labels omit the cos(dec) factor
+    ix, iy = nx // 2 - di, ny // 2 + dj
+    tprofile, fprofile = generate_transient_spectra(ms_meta.utime, ms_meta.freq, transient)
+    expected_t = tprofile.reshape(n_tbin, ipi).mean(axis=1)
+    expected_f = fprofile.reshape(n_fbin, cpi).mean(axis=1)
+    img = ds.cube.values[0, int(np.argmax(expected_f)), int(np.argmax(expected_t))]
+    assert np.unravel_index(np.argmax(img), img.shape) == (iy, ix)
+    expected_ft = expected_f[:, None] * expected_t[None, :]
+    # observed agreement is < 0.1%; 1% leaves margin for gridder numerics across platforms
+    assert_allclose(ds.cube.values[0, :, :, iy, ix], expected_ft, rtol=1e-2, atol=1e-2 * expected_ft.max())
+
+
+@pytest.mark.slow
+def test_hci_msv4_injected_sources_keep_their_sky_position_out_to_the_field_edge(writable_ms, ms_meta, tmp_path):
+    """Sources at increasing distance land on their pixel, and the cube's WCS maps it back to them.
+
+    The controlled experiment of ratt-ru/breifast#263 on the test MS: both a
+    pixel-placement and a coordinate-labelling error would grow with distance.
+    """
+    _clear_flags(writable_ms)
+    fov = 1.0
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, fov, 2.0)
+    ra0, dec0 = _field_centre(writable_ms)
+    offsets = [(20, 15), (60, 45), (100, 75), (140, 105), (170, 128)]
+    radecs = [_lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0) for di, dj in offsets]
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [writable_ms],
+        out,
+        **{**LEGACY, "field_of_view": fov, "epsilon": 1e-8},
+        data_column="DATA-DATA",
+        inject_transients=_write_transients(
+            tmp_path / "t.yaml", [_steady(f"src{k}", ra, dec) for k, (ra, dec) in enumerate(radecs)]
+        ),
+        integrations_per_image=ms_meta.ntime,  # one image
+        images_per_chunk=1,
+    )
+    ds = xr.open_zarr(out)
+    img = ds.cube.values[0, 0, 0]
+    hdr = fits.Header()
+    for key, val in ds.attrs["fits_header"]:
+        hdr[key] = val
+    wcs = WCS(hdr).celestial
+    cell_arcsec = np.rad2deg(cell_rad) * 3600.0
+    for (di, dj), (ra, dec) in zip(offsets, radecs):
+        ix, iy, _ = _peak_near(img, nx // 2 - di, ny // 2 + dj, 6)
+        assert np.hypot(ix - (nx // 2 - di), iy - (ny // 2 + dj)) <= 1.0, f"source ({di},{dj}) misplaced"
+        sep = wcs.pixel_to_world(ix, iy).separation(SkyCoord(ra * units.rad, dec * units.rad, frame="fk5"))
+        assert sep.to_value("arcsec") <= 0.2 * cell_arcsec, (
+            f"source ({di},{dj}): WCS off by {sep.to_value('arcsec'):.2f} arcsec"
+        )
+
+
+def _as_parsed_phase_dir(ra, dec):
+    """The ``hh:mm:ss,dd:mm:ss`` string for ``(ra, dec)`` radians and the radians it parses back to."""
+    cc = SkyCoord(ra * units.rad, dec * units.rad, frame="fk5")
+    text = f"{cc.ra.to_string(unit=units.hourangle, sep=':')},{cc.dec.to_string(unit=units.deg, sep=':')}"
+    back = SkyCoord(*text.split(","), frame="fk5", unit=(units.hourangle, units.deg))
+    return text, back
+
+
+@pytest.mark.slow
+def test_hci_msv4_injected_sources_land_on_their_pixels_when_rephased(writable_ms, ms_meta, tmp_path, needs_rephasing):
+    """A chgcentre w-difference sign error displaced every source by -2*(field -> tangent) (breifast#263).
+
+    Sources are injected about the rephasing centre, on which the image is centred.
+    """
+    _clear_flags(writable_ms)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+    ra0, dec0 = _field_centre(writable_ms)
+    phase_dir, cc = _as_parsed_phase_dir(ra0 + np.deg2rad(0.1) / np.cos(dec0), dec0 + np.deg2rad(0.05))
+    ra_c, dec_c = cc.ra.rad, cc.dec.rad
+    offsets = [(0, 0), (-25, -18), (25, 18), (-30, 25)]
+    transients = [
+        _steady(f"src{k}", *_lm_to_radec(di * cell_rad, dj * cell_rad, ra_c, dec_c))
+        for k, (di, dj) in enumerate(offsets)
+    ]
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [writable_ms],
+        out,
+        **{**LEGACY, "epsilon": 1e-8},
+        data_column="DATA-DATA",
+        inject_transients=_write_transients(tmp_path / "t.yaml", transients),
+        phase_dir=phase_dir,
+        integrations_per_image=ms_meta.ntime,
+        images_per_chunk=1,
+    )
+    img = xr.open_zarr(out).cube.values[0, 0, 0]
+    for di, dj in offsets:
+        ix, iy, peak = _peak_near(img, nx // 2 - di, ny // 2 + dj, 5)
+        assert peak > 0.0, f"no flux recovered at offset ({di},{dj})"
+        assert np.hypot(ix - (nx // 2 - di), iy - (ny // 2 + dj)) <= 1.0, f"rephased source ({di},{dj}) misplaced"
+
+
+@pytest.mark.slow
+def test_hci_msv4_target_recentres_the_grid(writable_ms, ms_meta, tmp_path, needs_rephasing):
+    """``--target`` centres the image, and labels its coords, on the target rather than the phase centre."""
+    _clear_flags(writable_ms)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(ms_meta.max_blength, ms_meta.max_freq, 0.5, 2.0)
+    ra0, dec0 = _field_centre(writable_ms)
+    dit, djt = 30, -20
+    target, tc = _as_parsed_phase_dir(*_lm_to_radec(dit * cell_rad, djt * cell_rad, ra0, dec0))
+    # offsets from the phase centre; the first is the target, so it lands dead centre
+    offsets = [(dit, djt), (dit - 25, djt - 18), (dit + 25, djt + 18)]
+    transients = [
+        _steady(f"src{k}", *_lm_to_radec(di * cell_rad, dj * cell_rad, ra0, dec0)) for k, (di, dj) in enumerate(offsets)
+    ]
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [writable_ms],
+        out,
+        **{**LEGACY, "epsilon": 1e-8},
+        data_column="DATA-DATA",
+        inject_transients=_write_transients(tmp_path / "t.yaml", transients),
+        target=target,
+        integrations_per_image=ms_meta.ntime,
+        images_per_chunk=1,
+    )
+    ds = xr.open_zarr(out)
+    img = ds.cube.values[0, 0, 0]
+    for di, dj in offsets:
+        ix_pred, iy_pred = nx // 2 - (di - dit), ny // 2 + (dj - djt)
+        ix, iy, peak = _peak_near(img, ix_pred, iy_pred, 5)
+        assert peak > 0.0, f"no flux recovered at offset ({di},{dj})"
+        assert np.hypot(ix - ix_pred, iy - iy_pred) <= 1.0, f"source ({di},{dj}) misplaced"
+    assert_allclose(ds.X.values[nx // 2], tc.ra.deg, atol=1e-9)
+    assert_allclose(ds.Y.values[ny // 2], tc.dec.deg, atol=1e-9)
+
+
+def test_hci_msv4_rejects_a_moving_target_across_several_images(ms_name, tmp_path, needs_rephasing):
+    """``--target Sun`` moves between images, so one shared X/Y axis cannot label them all."""
+    with pytest.raises(ValueError, match="solar-system body"):
+        hci_msv4_core([ms_name], str(tmp_path / "x.zarr"), **LEGACY, target="Sun", integrations_per_image=20)
+
+
+@pytest.mark.slow
+def test_hci_msv4_accepts_a_moving_target_in_a_single_image(ms_name, ms_meta, tmp_path, needs_rephasing):
+    """One image has one target position: coords and FITS CRVAL are the body's at that time."""
+    out = str(tmp_path / "cube.zarr")
+    hci_msv4_core(
+        [ms_name],
+        out,
+        **{**LEGACY, "robustness": 0.0},
+        target="Sun",
+        integrations_per_image=ms_meta.ntime,
+        images_per_chunk=1,
+    )
+    ds = xr.open_zarr(out)
+    assert ds.sizes["TIME"] == 1
+    ra_sun, dec_sun, moving = resolve_target_radec("Sun", float(ds.TIME.values[0]))
+    assert moving
+    nx, ny = ds.sizes["X"], ds.sizes["Y"]
+    assert_allclose(ds.X.values[nx // 2], np.rad2deg(ra_sun), atol=1e-9)
+    assert_allclose(ds.Y.values[ny // 2], np.rad2deg(dec_sun), atol=1e-9)
+    hdr = dict(ds.attrs["fits_header"])
+    assert_allclose(hdr["CRVAL1"], np.rad2deg(ra_sun), atol=1e-9)
+    assert_allclose(hdr["CRVAL2"], np.rad2deg(dec_sun), atol=1e-9)

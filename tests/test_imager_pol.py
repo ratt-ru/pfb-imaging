@@ -9,12 +9,10 @@ on the MSv4 path. Add the do_gains=True parametrisation when it is.
 
 from pathlib import Path
 
-import dask
-import dask.array as da
+import arcae
 import numpy as np
 import pytest
 import xarray as xr
-from daskms import xds_from_ms, xds_to_table
 from ducc0.wgridder.experimental import dirty2vis
 from numpy.testing import assert_allclose
 
@@ -84,13 +82,10 @@ def test_imager_polproducts(writable_ms, ms_meta, image_geometry, tmp_path):
 
     # write DATA and clear flags so every sample participates (flag handling
     # is covered by the sky_truth-based tests)
-    flag = np.zeros((nrow, nchan, ncorr), dtype=bool)
-    xds_w = xds_from_ms(writable_ms, chunks={"row": -1, "chan": -1})[0].assign(
-        DATA=(("row", "chan", "corr"), da.from_array(model_vis, chunks=(-1, -1, -1))),
-        FLAG=(("row", "chan", "corr"), da.from_array(flag, chunks=(-1, -1, -1))),
-        FLAG_ROW=(("row",), da.zeros(nrow, dtype=bool, chunks=-1)),
-    )
-    dask.compute(xds_to_table(xds_w, writable_ms, columns=["DATA", "FLAG", "FLAG_ROW"]))
+    with arcae.table(writable_ms, readonly=False) as tab:
+        tab.putcol("DATA", model_vis.astype(np.asarray(tab.getcol("DATA", (slice(0, 1),))).dtype))
+        tab.putcol("FLAG", np.zeros((nrow, nchan, ncorr), dtype=bool))
+        tab.putcol("FLAG_ROW", np.zeros(nrow, dtype=bool))
 
     outname = str(tmp_path / "pol")
     for p in ["I", "Q", "U", "V", "IQUV"]:

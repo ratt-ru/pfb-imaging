@@ -170,15 +170,11 @@ def test_imager_concat_row_collapses_time(ms_name, sky_truth, tmp_path):
 
 def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
-    from tests.conftest import require_daskms
+    import arcae
 
-    require_daskms()
-
-    from daskms import xds_from_ms
-
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
-    data = xds.DATA.values
-    flag = xds.FLAG.values
+    with arcae.table(ms_name) as tab:
+        data = np.asarray(tab.getcol("DATA"))
+        flag = np.asarray(tab.getcol("FLAG"))
     assert data.any(), "fixture wrote all-zero DATA"
     np.testing.assert_array_equal(flag, sky_truth.flag)
     assert flag[:, sky_truth.flagged_chan, :].all()
