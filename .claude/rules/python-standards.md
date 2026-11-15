@@ -3,10 +3,10 @@
 Read this when editing or creating `**/*.py` files.
 
 ## 1. Type Hints and Modern Python
-* Python 3.10+ features are allowed and encouraged.
+* Python 3.11+ features are allowed and encouraged.
 * Always use type hints for function signatures.
 * Use `from typing import Any` for generic types.
-* Use `typing_extensions.Annotated` when needed for forward compatibility, but assume the project only supports Python 3.10+. Do not import from `typing_extensions` unless required.
+* Use `typing_extensions.Annotated` when needed for forward compatibility, but assume the project only supports Python 3.11+. Do not import from `typing_extensions` unless required.
 
 ## 2. Typer Option/Argument Syntax (CRITICAL)
 **NEVER** use `None` as a positional argument to `typer.Option()` as it causes AttributeError.

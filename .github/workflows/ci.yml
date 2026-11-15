@@ -110,7 +110,6 @@ jobs:
           # ---- aarch64 on GitHub's free ubuntu-24.04-arm runners.
           # This is the DGX Spark target. [full] needs only a ducc0 source
           # build, so the leg stays fast enough to gate on.
-          # 3.10 is deliberately absent: arcae ships no cp310 aarch64 wheel.
           - runner: ubuntu-24.04-arm
             arch: aarch64
             python-version: "3.12"
