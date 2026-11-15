@@ -43,7 +43,7 @@ The dependencies are split so the cross-platform stack installs cleanly on
 | extra | contents | notes |
 |---|---|---|
 | `full` | the cross-platform scientific stack | every command: `imager`, `deconv`, `degrid`, `restore` and `hci` |
-| `casacore` | `dask-ms`, `codex-africanus[python-casacore]` | rephasing and `--target`. No aarch64 wheel — see below |
+| `casacore` | `codex-africanus[python-casacore]` | rephasing and `--target`. No aarch64 wheel — see below |
 | `x86` | `tbb` | x86_64-only; a no-op elsewhere |
 | `all` | all of the above | safe on every architecture |
 

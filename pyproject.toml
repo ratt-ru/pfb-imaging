@@ -55,9 +55,7 @@ full = [
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
     "ducc0>=0.35.0",
-    "sympy>=1.9",
     "jax[cpu]>=0.4.31",
-    "lz4>=4.3.3",
     # fsspec resolves s3:// URLs (utils/naming, core/hci, core/degrid) through
     # s3fs lazily. It used to arrive incidentally via dask-ms[s3]; now that
     # dask-ms is behind [casacore] it has to be requested directly.
@@ -69,9 +67,8 @@ full = [
     "regions>=0.9 ; python_version < '3.11'",
     "regions>=0.12 ; python_version >= '3.11'",
     "psutil>=5.9.8",
-    "matplotlib>=3.9.2",
-    "pydantic>=2",
-    "omegaconf>=2.3",
+    # Not imported by pfb: a security floor on a transitive dependency
+    # (scikit-image, reproject, imageio), raised by dependabot in #230.
     "pillow>=12.2.0",
     # meerkat-beams WITHOUT its [full] extra, plus the deps its BeamWizard
     # actually needs. meerkat_beams.utils.BeamWizard -- the only thing pfb
@@ -81,11 +78,11 @@ full = [
     # casacore straight back onto the cross-platform path. Revert to
     # meerkat-beams[<extra>] once dask-ms is split out upstream.
     #
-    # zarr<3 is kept because dask-ms still pins it. dask-ms comes in behind
-    # [casacore] (no pfb code imports it since the dask hci went, D61) and through
+    # zarr<3 is kept because dask-ms still pins it. No pfb code imports dask-ms
+    # (D61) and no pfb extra asks for it, but it still comes in through
     # meerkat-beams' [full] extra, which [all] pulls; pfb-model-spec and
     # meerkat-beams' core dependencies do not pin zarr<3. Leave it until dask-ms is
-    # dropped from both, and lift it as its own change (a writer format change). It costs
+    # dropped from meerkat-beams[full], and lift it as its own change (a writer format change). It costs
     # a numcodecs source build on aarch64 (numcodecs only gained aarch64 wheels
     # at 0.16.0, and zarr 2.18 pins numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
     # >=0.2.0: get_rotation_averaged_beam/partition_mueller take nthreads and
@@ -94,9 +91,7 @@ full = [
     # (landmanbester/meerkat-beams#42, D59).
     "meerkat-beams>=0.3.0 ; python_version >= '3.11'",
     "xarray",
-    "xarray-fits",
     "zarr<3",
-    "numcodecs",
     "astropy",
     "scipy",
     # write support lives on the 0.4.0-alpha line, which is cut from commits
@@ -117,7 +112,7 @@ full = [
     "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
-# python-casacore (via africanus; dask-ms is no longer imported by pfb, D61).
+# python-casacore (via africanus).
 # EXACTLY two things need it, both options rather than commands:
 #
 #   1. rephasing               -- `--phase-dir`, and any multi-field selection,
@@ -147,12 +142,8 @@ full = [
 # first table open under our NumPy 2. No pip/uv build flag can fix that -- the
 # ABI is in the casacore .so. A NumPy-2 casacore is required; conda-forge has
 # one for linux-aarch64 (casacore 3.8.1). See README's aarch64 section.
-# dask-ms additionally pins numcodecs<0.16 and zarr<3, and numcodecs only
-# gained aarch64 wheels at 0.16.0 -- so this extra also costs a numcodecs
-# source build on arm until dask-ms moves to zarr 3.x.
 casacore = [
     "codex-africanus[python-casacore] >= 0.4.4",
-    "dask-ms[s3,xarray,zarr,katdal]>=0.2.31",
 ]
 
 # x86_64-only accelerators. The marker is deliberate and not redundant with the

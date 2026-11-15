@@ -78,7 +78,7 @@ with that, each established by breaking it:
   `pytest-xdist`.
 * **Any test that writes to the session MS takes the `writable_ms` fixture** (a function-scoped
   copy) instead of `ms_name`, and uses it for *every* access in that test — including writes
-  through dask-ms `xds_to_table`, which a grep for `putcol` will not find. A forgotten writer
+  through casacore's write API (`pctable`), which a grep for `putcol` will not find. A forgotten writer
   passes in the fast loop and the slow loop separately and fails only under `-m ""`.
 
 `tests/test_band_pool.py` pins the reuse equivalence. Why each of these holds: **D44**.
@@ -95,7 +95,7 @@ uv sync --extra all --group dev    # + the scientific stack — tests, and local
 ```
 
 **Never put `pfb-imaging[full]` into the `dev` group.** `dev` is a uv default group, so
-doing so drags ray/ducc0/jax/dask-ms/africanus into `uv sync --group dev` — i.e. into the
+doing so drags ray/ducc0/jax/africanus into `uv sync --group dev` — i.e. into the
 Code Quality job, whose entire body is `ruff format --check .` and `ruff check .`, and into
 `update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra all`
 explicitly.

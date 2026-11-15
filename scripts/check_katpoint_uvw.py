@@ -25,6 +25,8 @@ Conventions
 Usage
 -----
     python scripts/check_katpoint_uvw.py [MS] [--rows N]
+
+Needs dask-ms and katpoint, neither of which pfb depends on: install them by hand.
 """
 
 import argparse
