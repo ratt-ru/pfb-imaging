@@ -4,8 +4,8 @@ cabs:
     command: pfb_imaging.core.hci.hci
     name: hci
     info:
-      High cadence imaging algorithm.
-    image: ghcr.io/ratt-ru/pfb-imaging:latest
+      High cadence imaging of MSv4 data.
+    image: ghcr.io/ratt-ru/pfb-imaging:hci-retire-legacy
     inputs:
       ms:
         info:
@@ -23,28 +23,25 @@ cabs:
         default: I
         metadata:
           rich_help_panel: Data Selection
-      scans:
+      scan-names:
         info:
-          List of SCAN_NUMBERS to image.
-          Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+          Scan names to image.
+          All scans if not set.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
-      ddids:
+      spw-names:
         info:
-          List of DATA_DESC_ID's to images.
-          Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+          Spectral window names to image.
+          All spectral windows if not set.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
-      fields:
+      field-names:
         info:
-          List of FIELD_ID's to image.
-          Defaults to all.
-          Input as comma separated list 0,2 if running from CLI.
-        dtype: Optional[List[int]]
+          Field names to image.
+          All fields if not set.
+        dtype: Optional[List[str]]
         metadata:
           rich_help_panel: Data Selection
       freq-range:
@@ -63,7 +60,8 @@ cabs:
           rich_help_panel: Control
       transfer-model-from:
         info:
-          Name of dataset to use for model initialisation
+          Not supported by hci and refused.
+          Use the degrid app to populate a model column instead.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Input
@@ -74,6 +72,13 @@ cabs:
           Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA').
           When gains are present this column will be corrected.
         default: DATA
+        metadata:
+          rich_help_panel: Data Selection
+      data-group:
+        info:
+          MSv4 data group to read.
+          DATA resolves to its correlated data variable.
+        default: base
         metadata:
           rich_help_panel: Data Selection
       model-column:
@@ -92,9 +97,8 @@ cabs:
           rich_help_panel: Data Selection
       sigma-column:
         info:
-          Column containing standard devations.
-          Will be used to initialise natural weights if detected.
-          Must be the same across MSs
+          Not supported by hci and refused, since xarray-ms does not expose SIGMA.
+          Use --weight-column instead.
         dtype: Optional[str]
         metadata:
           rich_help_panel: Data Selection
@@ -107,7 +111,8 @@ cabs:
           rich_help_panel: Data Selection
       gain-table:
         info:
-          Path to Quartical gain table containing NET gains.
+          Path to a QuartiCal gain term, gains.qc/NET or gains.qc::NET.
+          Any term name is accepted.
           There must be a table for each MS.
           glob(ms) and glob(gt) should match up when running from CLI.
         dtype: Optional[List[URI]]
@@ -115,16 +120,28 @@ cabs:
           rich_help_panel: Input
       max-simul-chunks:
         info:
-          Maximum number of chunks to process simultaneously.
+          Maximum number of time blocks the writer holds in memory at once.
+          Bounds writer memory together with images-per-chunk.
         dtype: int
-        default: 4
+        default: 2
         metadata:
           rich_help_panel: Performance
       images-per-chunk:
         info:
-          Number of images per chunk.
+          Number of images per TIME chunk of the output cube.
+          Downstream readers want long time axes.
+          The writer holds max-simul-chunks such blocks per band in memory.
         dtype: int
-        default: 16
+        default: 128
+        metadata:
+          rich_help_panel: Performance
+      spatial-chunk:
+        info:
+          Y and X chunk of the output cube, in pixels.
+          A chunk holds images-per-chunk x spatial-chunk^2 float32 values.
+          Image variables are clipped to the image and PSF variables to the PSF.
+        dtype: int
+        default: 128
         metadata:
           rich_help_panel: Performance
       integrations-per-image:
@@ -254,25 +271,20 @@ cabs:
           rich_help_panel: Output
       weight-grid-out:
         info:
-          Whether to produce an image of the weighted grid or not.
+          Not supported by hci and refused.
+          The cube scaffold has no weight_grid.
         dtype: bool
         default: false
         metadata:
           rich_help_panel: Output
       natural-grad:
         info:
-          Compute naural gradient
+          Compute natural gradient.
+          Needs a PSF twice the image size (--psf-relative-size 2).
         dtype: bool
         default: false
         metadata:
           rich_help_panel: Imaging
-      check-ants:
-        info:
-          Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
-        dtype: bool
-        default: false
-        metadata:
-          rich_help_panel: Control
       inject-transients:
         info:
           YAML file containing transients to inject into the data.
@@ -338,21 +350,22 @@ cabs:
         info:
           Address of the ray cluster to connect to.
           If not provided, will run locally.
+          A multi-node cluster needs a filesystem shared by every node.
+          It must hold the output store, measurement sets, gain terms and transient files.
         default: local
         metadata:
           rich_help_panel: Performance
       nworkers:
         info:
-          Number of worker processes.
-          Use with distributed scheduler.
+          Number of HciWorker actors.
+          Each reads and images one image at a time.
         dtype: int
         default: 1
         metadata:
           rich_help_panel: Performance
       nthreads:
         info:
-          Number of threads used to scale vertically (for FFTs and gridding).
-          Each dask thread can in principle spawn this many threads.
+          Number of threads per HciWorker actor, used for gridding and FFTs.
           Will attempt to use half the available threads by default.
         dtype: Optional[int]
         metadata:
@@ -380,7 +393,7 @@ cabs:
       fits-vars:
         info:
           Write these variables to fits.
-          Options are 'cube', 'cube_mean', 'psf', 'beam_weight' and 'weight_grid'.
+          Options are 'cube', 'cube_mean', 'psf' and 'beam_weight'.
           Variables are written per band.
         dtype: Optional[List[str]]
         metadata:
@@ -414,6 +427,7 @@ cabs:
         dtype: Directory
         info:
           Basename of output.
+          On a multi-node Ray cluster it must be on a filesystem every node can see.
         required: true
         policies:
           positional: true
@@ -443,12 +457,6 @@ cabs:
         mkdir: false
         path_policies:
           write_parent: true
-        metadata:
-          rich_help_panel: Output
-      temp-dir:
-        dtype: Directory
-        info:
-          A temporary directory to store ephemeral files.
         metadata:
           rich_help_panel: Output
       numba-cache-dir:

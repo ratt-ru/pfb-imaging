@@ -45,7 +45,7 @@ from pfb_imaging.utils.msv4 import (
     wrapped_angle_diff,
 )
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
-from pfb_imaging.utils.stokes2vis_msv4 import safe_stokes_vis
+from pfb_imaging.utils.stokes2vis import safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
 
 ignore_xarray_ms_warnings()
@@ -1126,7 +1126,7 @@ def imager(
     # avoids a check-then-create race (ContainsGroupError) on the shared parent;
     # combined with consolidated=False on the worker writes (consolidation is
     # done once below, in the driver), it removes all shared-mutable-state races
-    # on the scratch store. See utils/stokes2vis_msv4.stokes_vis.
+    # on the scratch store. See utils/stokes2vis.stokes_vis.
     scratch_root = zarr.open_group(scratch_url, mode="a")
     created_parents = set()
     # bandid -> [lo, hi]: outer channel edges of every block assigned to the band

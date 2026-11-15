@@ -5,11 +5,11 @@ import pytest
 import xarray as xr
 from numpy.testing import assert_array_equal
 
-from pfb_imaging.core.hci_msv4 import plan_images
+from pfb_imaging.core.hci import plan_images
 from pfb_imaging.utils import hci_actors
 from pfb_imaging.utils.hci_actors import HciWorkerImpl
 from pfb_imaging.utils.msv4 import get_engine
-from pfb_imaging.utils.stokes2im_msv4 import HciConfig, image_item, read_item
+from pfb_imaging.utils.stokes2im import HciConfig, image_item, read_item
 
 
 def _cfg():

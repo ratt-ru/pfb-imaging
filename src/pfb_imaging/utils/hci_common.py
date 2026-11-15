@@ -1,4 +1,4 @@
-"""Pieces shared by pfb hci and pfb hci-msv4. Must not import dask-ms or pyrap."""
+"""Cube scaffold, FITS export, beams and transients for pfb hci. Must not import dask-ms or pyrap."""
 
 import functools
 from pathlib import Path
@@ -56,7 +56,7 @@ def hci_beam_band(beam_model: str | None) -> str | None:
 
 
 def hci_beam_wizard(output_dataset: str, band: str) -> BeamWizard:
-    """The BeamWizard hci and hci-msv4 attach to the cube scaffold.
+    """The BeamWizard hci attaches to the cube scaffold.
 
     Built with the same lambda/D frequency extrapolation as imager and degrid
     (``BEAM_FREQ_EXTRAPOLATION``), so band-edge channels do not raise.
@@ -197,8 +197,8 @@ def image_centre_deg(
     else:
         ra_str, dec_str = phase_dir.split(",")
         coord = SkyCoord(ra_str, dec_str, frame="fk5", unit=(units.hourangle, units.deg))
-        # match the deg->rad->deg path inside stokes_image so the rounded Y/X coords
-        # agree bitwise with what the workers write back.
+        # deg->rad->deg, as the retired dask hci's workers labelled their slabs (D36):
+        # kept so the stored Y/X coords stay bit-identical to cubes it produced.
         out_ra_deg = np.array([np.rad2deg(np.deg2rad(coord.ra.value))])
         out_dec_deg = np.array([np.rad2deg(np.deg2rad(coord.dec.value))])
 
@@ -206,10 +206,8 @@ def image_centre_deg(
     out_times = np.unique(out_times)
 
     # --target moves the image centre off the tangent point, so the scaffold's
-    # X/Y coords (and the header's CRVAL) must move with it: stokes_image labels
-    # its grid from the target, and its slab is written back with
-    # to_zarr(region="auto"), which resolves the region by looking those values
-    # up here. Same resolver on both sides so they cannot disagree.
+    # X/Y coords (and the header's CRVAL) must move with it: the workers centre
+    # their grid on the target through the same resolver, so the two agree.
     if target is not None:
         from pfb_imaging.utils.astrometry import (
             resolve_target_radec,
@@ -577,8 +575,8 @@ def _beam_reprojection(
 ) -> BeamReprojection:
     """One ``BeamReprojection`` per (beam grid, pointing, phase centre, image grid) in this process.
 
-    Every image of a field shares these, so an hci-msv4 worker (and a legacy hci Ray worker,
-    which is reused across tasks) builds the map once. Two entries, each a float64
+    Every image of a field shares these, so an hci worker, which is reused across images,
+    builds the map once. Two entries, each a float64
     ``(2, ny*nx)`` map: 236 MB at 3840^2. The beam grids are keyed by ``(dtype, bytes)``.
     """
     return BeamReprojection(
@@ -607,7 +605,7 @@ def beam_for_band(
     """Return the Stokes power beam on the output image grid.
 
     Contract: (len(product), ny, nx) in cube/FITS (Y, X) order, matching the
-    image-space arrays in stokes_image (docs/wiki/image-and-beam-orientation.md).
+    image-space arrays in stokes2im.image_item (docs/wiki/image-and-beam-orientation.md).
     """
     if beam_model is not None:
         assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."

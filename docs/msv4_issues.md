@@ -36,8 +36,8 @@ xarray-ms 0.4.0a12 / arcae 0.4.0a14 are the floors that carry the fixes for issu
 | 4 | Every `MSv2Structure` build retains ~1.5 MB | arcae | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed** by ska-sa/arcae#244 (0.4.0a13); 0.0185 MB/build on a14 |
 | 5 | No public way to evict xarray-ms's own table cache | rarg-python-patterns | [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177) | **Fixed**: keyed `Multiton.clear_cache` in 0.0.5 (via xarray-ms 0.4.0a12) |
 | 6 | `open_datatree` ignores `cache`, so every load is cached on the tree | xarray-ms | not yet | Worked around by `utils.msv4.load_detached` |
-| 7 | `FLAG_ROW` is ignored when `FLAG` is present | xarray-ms | not yet | Documented, not worked around (`hci-msv4`, D60) |
-| 8 | `SIGMA`/`SIGMA_SPECTRUM` are not exposed | xarray-ms | not yet | `hci-msv4` refuses `--sigma-column` (D60) |
+| 7 | `FLAG_ROW` is ignored when `FLAG` is present | xarray-ms | not yet | Documented, not worked around (`hci`, D60) |
+| 8 | `SIGMA`/`SIGMA_SPECTRUM` are not exposed | xarray-ms | not yet | `hci` refuses `--sigma-column` (D60) |
 
 ---
 
@@ -202,7 +202,7 @@ wipe that destroys *every* consumer's Multitons as collateral.
 - [`1b4ca7d8`](https://github.com/ratt-ru/xarray-ms/commit/1b4ca7d8) (a9, "Only release
   derived factories from the store that owns them") is adjacent — it stops a write store
   evicting factories it borrowed — but adds no consumer-facing hook.
-- Our helper was `utils/stokes2vis_msv4._release_ms_caches` (retired 2026-10, #325), flagged for deletion once a hook
+- Our helper was `utils/stokes2vis._release_ms_caches` (retired 2026-10, #325), flagged for deletion once a hook
   exists. Filed together with issue 4 as [ratt-ru/xarray-ms#177](https://github.com/ratt-ru/xarray-ms/issues/177): the wholesale wipe is the only eviction
   available, and it also forces the structure rebuild that issue 4 makes expensive.
 
@@ -240,10 +240,10 @@ a row flagged *only* through `FLAG_ROW` comes back unflagged in the MSv4 `FLAG`.
 clears `FLAG`) on every row of the first timestamp of a copy of the MS; on xarray-ms 0.4.0a12 /
 arcae 0.4.0a14 the MSv4 `FLAG` at that time is 0% set over all 351 baselines.
 
-**Why it matters to us.** Legacy `pfb hci` ORs `FLAG_ROW` into its flags itself
-(`utils/stokes2im.py`), `pfb hci-msv4` takes the MSv4 `FLAG` as is, so the two differ on any MS
-whose flagger set `FLAG_ROW` without also setting `FLAG`. Most flaggers write both, which is
-why the agreement test does not see it. Deliberately documented rather than worked around
+**Why it matters to us.** The retired dask-ms `pfb hci` ORed `FLAG_ROW` into its flags
+itself; the MSv4 `pfb hci` takes the MSv4 `FLAG` as is, so a row flagged only through
+`FLAG_ROW` is imaged. Most flaggers write both, which is why the old side-by-side agreement
+test never saw it. Deliberately documented rather than worked around
 (D60): the fix belongs in xarray-ms's `FLAG` factory, which should OR in `FLAG_ROW` whenever
 both columns exist. The ask upstream is exactly that.
 
@@ -257,11 +257,11 @@ standard column except `CORRECTED_DATA`, `CORRECTED_WEIGHT_SPECTRUM`, `MODEL_DAT
 [`sigma_not_exposed.py`](../scripts/msv4_issues/sigma_not_exposed.py) lists both sides; on
 xarray-ms 0.4.0a12 the test MS has `SIGMA` in MSv2 and no sigma variable in MSv4.
 
-**Why it matters to us.** `pfb hci --sigma-column SIGMA` initialises natural weights as
-`1/σ²`; `pfb hci-msv4` cannot, so it refuses the option before any I/O rather than failing in
+**Why it matters to us.** The dask-ms `pfb hci --sigma-column SIGMA` initialised natural
+weights as `1/σ²`; the MSv4 `pfb hci` cannot, so it refuses the option before any I/O rather than failing in
 the column check (D60). The ask upstream: expose `SIGMA` (and `SIGMA_SPECTRUM`, broadcast like
 `WEIGHT`) as data variables, or add them to the pass-through set. Once it lands, drop the
-refusal in `core/hci_msv4.py` and map `SIGMA` through the data group as `WEIGHT` is.
+refusal in `core/hci.py` and map `SIGMA` through the data group as `WEIGHT` is.
 
 ### 9. Opening a tree probes every secondary column's row shapes (~1 s per MS) — NOT YET FILED
 
@@ -275,7 +275,7 @@ standard columns) one open took ~1.9 s, ~1 s of it there, and the time is GIL-bo
 prints the per-open time and the share. An open tree also holds ~138 file descriptors (one
 per table file of every subtable), so ~7 open trees exhaust a 1024 soft limit.
 
-**Why it matters to us.** `pfb hci-msv4` plans by opening every MS once: ~4 h serially for
+**Why it matters to us.** `pfb hci` plans by opening every MS once: ~4 h serially for
 that tile. `plan_ms` now scans MSs in a spawn process pool, and `raise_open_file_limit`
 lifts the soft fd limit in the driver and every Ray worker. The ask upstream: probe only the
 first row's shape of a column whose shape is fixed (`ColumnDesc` ndim/shape), or defer the

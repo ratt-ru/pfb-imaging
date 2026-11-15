@@ -150,7 +150,7 @@ def raise_open_file_limit() -> int:
 
     An open MSv4 tree holds ~140 file descriptors (one per table file of every
     subtable), so the common soft limit of 1024 is exhausted by ~7 open
-    measurement sets. hci-msv4 workers keep each MS they read open for a
+    measurement sets. hci workers keep each MS they read open for a
     while (the Multiton TTL), and a MeerKLASS tile is thousands of
     single-integration MSs (#358). Raising the soft limit up to the hard one
     needs no privilege. Called in the driver and in every Ray worker.

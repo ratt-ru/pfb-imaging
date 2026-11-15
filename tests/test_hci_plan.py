@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from pfb_imaging.core.hci_msv4 import _assemble_plan, _scan_ms, plan_images, plan_ms
+from pfb_imaging.core.hci import _assemble_plan, _scan_ms, plan_images, plan_ms
 from pfb_imaging.utils.misc import to_mjd_time
 from pfb_imaging.utils.msv4 import get_engine
 

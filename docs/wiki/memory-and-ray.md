@@ -398,7 +398,7 @@ Four Serve-specific notes:
   sympy's caches are global. Caching the compiled model expression belongs in
   pfb-model-spec.
 
-## The hci-msv4 workers and writer
+## The hci workers and writer
 
 - Workers and the writer claim nominal CPUs (D8 reasoning) and the local cluster is sized
   `nworkers + 2`.
@@ -428,8 +428,8 @@ Four Serve-specific notes:
   driver stops dispatching. A worker's `shm` can therefore sit at a few images while the writer
   catches up; the cap bounds it, and a ratchet beyond that is still the signal above.
 
-**Where the hci time goes.** Both `hci` and `hci-msv4` end with `Time by phase:` and honour
-`PFB_RAY_TIMELINE`/`PFB_CPROFILE_DIR`/`PFB_MEMRAY_DIR`. In `hci-msv4` each `Imaged:` line adds
+**Where the hci time goes.** `hci` ends with `Time by phase:` and honours
+`PFB_RAY_TIMELINE`/`PFB_CPROFILE_DIR`/`PFB_MEMRAY_DIR`. Each `Imaged:` line adds
 the call's `read` (the item's read, usually on the prefetch thread), `blocked` (the part of it
 the call waited for, i.e. not hidden behind the previous image) and the `image_item` sections
 `prep`/`beam`/`dirty`/`psf`/`post`; each `Wrote band` line carries the slab write's wall/cpu.
@@ -445,8 +445,6 @@ times a slab has no image for. On the SGRA run (#358, 3840^2, 128-image slabs) t
 threaded write was 35 s per slab at 0.39 GB/s and each add 231 ms; the beam reprojection,
 not the writer, was then the bottleneck (18 of 28 s per image, now computed once per field).
 The worker and writer actors take one `ActorCapture` each (stopped in `close`/`finalise`).
-Legacy `hci`'s `Processed:` lines carry each `batch_stokes_image` task's read, image (waiting
-on its nested `stokes_image` tasks) and write times.
 
 ## Runbook: cleaning up after an interrupted run (Ctrl+C, swap thrash)
 

@@ -44,19 +44,12 @@ When a band is dropped, the imager keeps the original band id (gap, e.g. nodes
 products are unaffected (sum over nodes). If a per-band comparison or alignment
 is ever needed, match on `freq_out`, not on the band index.
 
-## 4. Transient-injection end-to-end test (designed, unimplemented)
+## 4. Transient-injection end-to-end test (done)
 
-The `hci` `inject_transients` feature (`utils/transients.py`, wired through
-`core/hci.py`/`stokes2im.py`) has no end-to-end test. A reviewed design existed and
-was removed with the other specs when `docs/superpowers/` became ephemeral scratch
-(recoverable from git history if ever needed); everything durable from it is
-summarised here. Key ingredients to preserve: isolate the
-transient with `data_column="DATA-DATA"` (zero base data); place it on an exact pixel
-centre by inverting the SIN projection so flux reads without PSF ambiguity; predict
-per-bin flux from `generate_transient_spectra` profiles averaged over contiguous
-time/chan blocks; assert against the raw `cube`, never `cube_mean` (the RMS-flag
-gotcha in `docs/wiki/design-decisions.md`); an unexplained recovered/injected scale
-factor is reported, not absorbed into a tolerance.
+Implemented as `tests/test_hci.py::test_hci_injected_transient_has_the_analytic_dynamic_spectrum`
+(zeroed base data via `DATA-DATA`, a source on an exact pixel centre, per-bin flux predicted
+from `generate_transient_spectra`, asserted against the raw `cube`), with the position tests
+beside it. Kept here only so the numbering of the sections below does not move.
 
 ## 5. Larger follow-ups (from the design review)
 

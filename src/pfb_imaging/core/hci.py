@@ -1,58 +1,342 @@
-import gc
-import time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from tempfile import TemporaryDirectory
+"""pfb hci: high cadence imaging of MSv4 data with worker actors and an actor writer."""
 
-import dask
-import dask.array as da
+import contextlib
+import gc
+import importlib.util
+import multiprocessing
+import os
+import time
+from collections import Counter, deque
+from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import fsspec
 import numpy as np
 import psutil
 import ray
 import xarray as xr
-
-from pfb_imaging.utils.optional import optional_dependency
-
-# dask-ms (and therefore python-casacore, which has no linux-aarch64 wheel)
-# lives behind the optional [casacore] extra. Guard the import here rather than
-# in cli/hci.py: hip-cargo round-trips the CLI module against the cab
-# definition and requires it to match the generated form byte for byte, so the
-# command body cannot carry extra statements.
-with optional_dependency("The hci command"):
-    from daskms import xds_from_storage_ms as xds_from_ms
-from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
-from zarr import ProcessSynchronizer
 
 from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.hci_common import (
-    FITS_AXIS_KEYWORDS as _FITS_AXIS_KEYWORDS,  # noqa: F401
-)
-from pfb_imaging.utils.hci_common import (
-    STOKES_FITS_INDEX as _STOKES_FITS_INDEX,  # noqa: F401
-)
+from pfb_imaging.utils.gains import check_node_grid, open_term, term_path
+from pfb_imaging.utils.hci_actors import CubeWriterImpl, HciWorkerImpl
 from pfb_imaging.utils.hci_common import (
     build_scaffold,
+    default_phase_dir,
     hci_beam_band,
     hci_beam_wizard,
     image_centre_deg,
     write_fits_vars,
     write_transient_spectra,
 )
-from pfb_imaging.utils.hci_common import (
-    default_phase_dir as _default_phase_dir,
-)
-from pfb_imaging.utils.hci_common import (
-    make_fits_header as _make_fits_header,  # noqa: F401
-)
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env
-from pfb_imaging.utils.misc import check_gridder_epsilon, construct_mappings, set_image_size
+from pfb_imaging.utils.misc import check_gridder_epsilon, set_image_size, to_mjd_time
+from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
-from pfb_imaging.utils.stokes2im import batch_stokes_image
+from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, HciConfig
 
 log = pfb_logging.get_logger("HCI")
+
+_WHOLE = (-1, 0, None)
+# planning processes: each imports the scientific stack (~0.5 GB), and on NFS more than this
+# bought little (#358: 8 threads 0.43 s/MS, 32 processes ~0.7 s/MS on a shared filer)
+_PLAN_PROCS = 8
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    """One output image: a (time, frequency) region of one MSv4 node."""
+
+    ms_index: int
+    node_path: str
+    time: slice  # full-node indices
+    frequency: slice  # full-node indices (already offset by SelectedNode.chan0)
+    time_index: int  # into the output TIME axis
+    band_index: int  # into the output FREQ axis
+    block: int  # time_index // images_per_chunk
+
+    @property
+    def region(self) -> dict[str, slice]:
+        return {"time": self.time, "frequency": self.frequency}
+
+
+@dataclass(frozen=True)
+class PlannedNode:
+    """What the driver checks per selected node once the trees are closed."""
+
+    scan_name: str
+    field_name: str
+    antenna_names: tuple[str, ...]  # antenna_xds order, as the workers index gains
+    times_unix: np.ndarray  # the node's time coordinate
+    freqs: np.ndarray  # Hz, the selected channels: the union of the node's image regions
+    data_vars: frozenset[str]  # the node's data variables
+    data_group: dict  # the node's entry for the requested data group, e.g. {"correlated_data": ...}
+
+
+@dataclass
+class HciPlan:
+    """The full set of work items plus the output axes and global scalars."""
+
+    items: list[WorkItem]  # sorted by (block, band_index, time_index)
+    out_times: np.ndarray  # (ntime,) MJD seconds, sorted unique image mean times
+    out_freqs: np.ndarray  # (nband,) Hz, sorted unique band mean frequencies
+    expected: dict[tuple[int, int], int]  # (band_index, block) -> images planned in that slab
+    channel_width: np.ndarray  # (nband,) max - min channel frequency of the band
+    field_radecs: np.ndarray  # (nnode, 2) radians, one row per selected node
+    max_blength: float
+    max_freq: float
+    all_times: np.ndarray  # unique MJD integration times over the selection (transients)
+    all_freqs: np.ndarray  # unique channel frequencies of the selected nodes' full spws (transients)
+    nodes: dict[tuple[int, str], PlannedNode] = field(default_factory=dict)  # (ms_index, path) -> node
+
+
+@dataclass
+class _MsScan:
+    """What one measurement set contributes to the plan (picklable, so it can come from a process)."""
+
+    raw: list = field(default_factory=list)  # (ms_index, path, tslice, fslice, tmean_mjd, fmean, fwidth)
+    radecs: list = field(default_factory=list)
+    all_times: list = field(default_factory=list)
+    all_freqs: list = field(default_factory=list)
+    nodes: dict = field(default_factory=dict)
+    max_blength: float = 0.0
+    max_freq: float = 0.0
+
+
+def _check_plan_args(integrations_per_image: int, channels_per_image: int, images_per_chunk: int) -> None:
+    if integrations_per_image not in _WHOLE and integrations_per_image < 1:
+        raise ValueError(
+            f"integrations_per_image must be >= 1, or -1 for one image per scan (got {integrations_per_image})"
+        )
+    if channels_per_image not in _WHOLE and channels_per_image < 1:
+        raise ValueError(
+            f"channels_per_image must be >= 1, or -1 for one image per spectral window (got {channels_per_image})"
+        )
+    if images_per_chunk < 1:
+        raise ValueError(f"images_per_chunk must be >= 1 (got {images_per_chunk})")
+
+
+def _scan_tree(
+    ims: int,
+    dt: xr.DataTree,
+    *,
+    integrations_per_image: int,
+    channels_per_image: int,
+    data_group: str = "base",
+    field_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    scan_names: list[str] | None = None,
+    freq_min: float = -np.inf,
+    freq_max: float = np.inf,
+) -> _MsScan:
+    """Plan one opened MS: its selected nodes and their image regions."""
+    scan = _MsScan()
+    raw, radecs, all_times, all_freqs, nodes = scan.raw, scan.radecs, scan.all_times, scan.all_freqs, scan.nodes
+    max_blength, max_freq = 0.0, 0.0
+    for sel in select_vis_nodes(
+        dt,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
+        freq_min=freq_min,
+        freq_max=freq_max,
+    ):
+        node = dt[sel.path]
+        tmjd = to_mjd_time(node.ds.time.values)
+        freqs = node.ds.frequency.values[sel.chan0 : sel.chan0 + sel.nchan]
+        uvw = node.ds.UVW.values  # coordinates only; never a blanket node load
+        uvw = uvw[~np.isnan(uvw).any(axis=-1)]
+        if uvw.size:
+            max_blength = max(max_blength, float(np.hypot(uvw[:, 0], uvw[:, 1]).max()))
+        max_freq = max(max_freq, float(freqs.max()))
+        radec = np.array(sel.field_radec, dtype=np.float64)
+        radec[0] = radec[0] % (2 * np.pi)  # as read_item, and the retired dask hci
+        radecs.append(radec)
+        all_times.append(tmjd)
+        all_freqs.append(node.ds.frequency.values)  # full spw, unfiltered by freq range
+        nodes[(ims, sel.path)] = PlannedNode(
+            str(sel.scan_name),
+            str(sel.field_name),
+            tuple(map(str, node["antenna_xds"].antenna_name.values)),
+            node.ds.time.values,
+            freqs,
+            frozenset(node.ds.data_vars),
+            dict(node.ds.attrs["data_groups"][data_group]),
+        )
+        ipi = tmjd.size if integrations_per_image in _WHOLE else integrations_per_image
+        cpi = freqs.size if channels_per_image in _WHOLE else min(channels_per_image, freqs.size)
+        for t0 in range(0, tmjd.size, ipi):
+            t1 = min(t0 + ipi, tmjd.size)
+            for f0 in range(0, freqs.size, cpi):
+                f1 = min(f0 + cpi, freqs.size)
+                raw.append(
+                    (
+                        ims,
+                        sel.path,
+                        slice(t0, t1),
+                        slice(sel.chan0 + f0, sel.chan0 + f1),
+                        float(np.mean(tmjd[t0:t1])),
+                        float(np.mean(freqs[f0:f1])),
+                        float(freqs[f0:f1].max() - freqs[f0:f1].min()),
+                    )
+                )
+    scan.max_blength, scan.max_freq = max_blength, max_freq
+    return scan
+
+
+def _scan_ms(ims: int, ms_name: str, kw: dict) -> _MsScan:
+    """Open, plan and close one MS: the unit of work of a planning process."""
+    dt = xr.open_datatree(ms_name, **get_engine(ms_name))
+    try:
+        return _scan_tree(ims, dt, **kw)
+    finally:
+        dt.close()
+
+
+def _assemble_plan(scans: Iterable[_MsScan], images_per_chunk: int) -> HciPlan:
+    """Merge per-MS scans, in MS order, into the plan."""
+    raw, radecs, all_times, all_freqs, nodes = [], [], [], [], {}
+    max_blength, max_freq = 0.0, 0.0
+    for sc in scans:
+        raw += sc.raw
+        radecs += sc.radecs
+        all_times += sc.all_times
+        all_freqs += sc.all_freqs
+        nodes.update(sc.nodes)
+        max_blength = max(max_blength, sc.max_blength)
+        max_freq = max(max_freq, sc.max_freq)
+    if not raw:
+        raise ValueError("Selection matched no data")
+
+    out_times = np.unique([r[4] for r in raw])
+    out_freqs = np.unique([r[5] for r in raw])
+    channel_width = np.zeros(out_freqs.size)
+    items, seen = [], set()
+    for ims, path, ts, fs, tm, fm, fw in raw:
+        ti = int(np.searchsorted(out_times, tm))
+        bi = int(np.searchsorted(out_freqs, fm))
+        if (ti, bi) in seen:
+            raise ValueError(
+                f"Two partitions map to the same output image (TIME {tm}, FREQ {fm}); "
+                "select fields/spws/scans so each output image has one source"
+            )
+        seen.add((ti, bi))
+        channel_width[bi] = fw
+        items.append(WorkItem(ims, path, ts, fs, ti, bi, ti // images_per_chunk))
+    items.sort(key=lambda it: (it.block, it.band_index, it.time_index))
+    expected = Counter((it.band_index, it.block) for it in items)
+    return HciPlan(
+        items=items,
+        out_times=out_times,
+        out_freqs=out_freqs,
+        expected=dict(expected),
+        channel_width=channel_width,
+        field_radecs=np.asarray(radecs),
+        max_blength=max_blength,
+        max_freq=max_freq,
+        all_times=np.unique(np.concatenate(all_times)),
+        all_freqs=np.unique(np.concatenate(all_freqs)),
+        nodes=nodes,
+    )
+
+
+def plan_images(
+    dts: Iterable[xr.DataTree],
+    *,
+    integrations_per_image: int,
+    channels_per_image: int,
+    images_per_chunk: int,
+    data_group: str = "base",
+    field_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    scan_names: list[str] | None = None,
+    freq_min: float = -np.inf,
+    freq_max: float = np.inf,
+) -> HciPlan:
+    """One WorkItem per output image, with hci's time and band semantics.
+
+    Args:
+        dts: Opened MSv4 DataTrees, one per measurement set. Each is visited once, in order,
+            and not used after the next is requested, so a generator may close each in turn.
+        integrations_per_image: Integrations per image; -1/0/None means one image per scan.
+        channels_per_image: Channels per image; -1/0/None means all selected channels.
+        images_per_chunk: Output images per time block.
+        data_group: Data group used to resolve the field_and_source subtable.
+        field_names: Field names to keep; None keeps all.
+        spw_names: Spectral window names to keep; None keeps all.
+        scan_names: Scan names to keep; None keeps all.
+        freq_min: Lower frequency bound in Hz, inclusive.
+        freq_max: Upper frequency bound in Hz, inclusive.
+
+    Returns:
+        The HciPlan.
+
+    Raises:
+        ValueError: on an empty selection, a non-positive integrations_per_image or
+            channels_per_image other than the whole-scan/spw sentinels, a non-positive
+            images_per_chunk, or two partitions mapping to the same output image.
+    """
+    _check_plan_args(integrations_per_image, channels_per_image, images_per_chunk)
+    kw = dict(
+        integrations_per_image=integrations_per_image,
+        channels_per_image=channels_per_image,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
+        freq_min=freq_min,
+        freq_max=freq_max,
+    )
+    return _assemble_plan((_scan_tree(ims, dt, **kw) for ims, dt in enumerate(dts)), images_per_chunk)
+
+
+def plan_ms(ms: list[str], *, nprocs: int = 1, log=None, **kw) -> HciPlan:
+    """``plan_images`` over measurement-set paths, scanning them in ``nprocs`` processes.
+
+    Opening an MSv4 tree costs ~2 s of mostly-Python work in xarray-ms (most of it
+    probing secondary-column shapes; docs/msv4_issues.md), so a MeerKLASS tile of
+    thousands of single-integration MSs takes hours to plan in one process.
+    Processes, not threads: the open is GIL-bound (8 threads gave 4x, 32 threads
+    less). With ``nprocs == 1`` or one MS each tree is opened and closed in turn
+    in this process (#241). The plan is the same either way. The processes are spawned,
+    which re-imports ``__main__`` only when it is a file: the ``pfb`` CLI (guarded) and
+    stimela's python flavour (``python -c``) are safe, while a script file that calls
+    ``hci`` at module level needs an ``if __name__ == "__main__":`` guard.
+
+    Args:
+        ms: Measurement-set paths.
+        nprocs: Planning processes.
+        log: Optional logger for progress.
+        **kw: ``plan_images`` keyword arguments.
+
+    Returns:
+        The HciPlan.
+    """
+    images_per_chunk = kw.pop("images_per_chunk")
+    _check_plan_args(kw["integrations_per_image"], kw["channels_per_image"], images_per_chunk)
+    nprocs = max(1, min(nprocs, len(ms)))
+    if nprocs == 1:
+        trees = _each_tree(ms)
+        try:
+            return plan_images(trees, images_per_chunk=images_per_chunk, **kw)
+        finally:
+            trees.close()
+
+    def scans():
+        # spawn: the driver may already hold threads (numba, arcae) that fork would copy mid-state
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=nprocs, mp_context=ctx) as ex:
+            chunk = max(1, min(64, len(ms) // (4 * nprocs)))
+            for n, sc in enumerate(ex.map(_scan_ms, range(len(ms)), ms, [kw] * len(ms), chunksize=chunk), 1):
+                if log is not None and (n % 500 == 0 or n == len(ms)):
+                    log.info(f"Planned {n} / {len(ms)} measurement sets")
+                yield sc
+
+    return _assemble_plan(scans(), images_per_chunk)
 
 
 @pfb_logging.log_exceptions
@@ -61,20 +345,22 @@ def hci(
     output_dataset: str,
     log_directory: str | None = None,
     product: str = "I",
-    scans: str | None = None,
-    ddids: str | None = None,
-    fields: str | None = None,
+    scan_names: list[str] | None = None,
+    spw_names: list[str] | None = None,
+    field_names: list[str] | None = None,
     freq_range: str | None = None,
     overwrite: bool = False,
     transfer_model_from: str | None = None,
     data_column: str = "DATA",
+    data_group: str = "base",
     model_column: str | None = None,
     weight_column: str | None = None,
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
-    max_simul_chunks: int = 4,
-    images_per_chunk: int = 16,
+    max_simul_chunks: int = 2,
+    images_per_chunk: int = 128,
+    spatial_chunk: int = 128,
     integrations_per_image: int = 1,
     channels_per_image: int = -1,
     channels_per_bin: int = -1,
@@ -86,14 +372,13 @@ def hci(
     nx: int | None = None,
     ny: int | None = None,
     psf_relative_size: float | None = None,
-    robustness: float = None,
+    robustness: float | None = None,
     target: str | None = None,
     l2_reweight_dof: int | None = None,
     eta: float = 1e-05,
     psf_out: bool = False,
     weight_grid_out: bool = False,
     natural_grad: bool = False,
-    check_ants: bool = False,
     inject_transients: str | None = None,
     filter_counts_level: float = 10,
     npix_super: int = 0,
@@ -108,16 +393,18 @@ def hci(
     cg_maxit: int = 150,
     object_store_memory: float | None = None,
     fits_output_folder: str | None = None,
-    fits_vars: list[str] = None,
+    fits_vars: list[str] | None = None,
     wgt_mode: str = "l2",
     obs_label: str | None = None,
     flag_excess_rms: float = 1.5,
-    temp_dir: str | None = None,
     ray_address: str = "local",
     keep_ray_alive: bool = False,  # not used by CLI
 ):
-    """
-    Produce high cadence residual images.
+    """Produce high cadence residual images from MSv4 data.
+
+    The output store is hci's, up to chunking: a long TIME chunk
+    (``images_per_chunk``) is assembled by a single writer actor while
+    ``nworkers`` image actors read and grid one image each.
     """
     # for logging options
     opts_dict = locals().copy()
@@ -173,17 +460,11 @@ def hci(
     opts_dict["nthreads"] = nthreads
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
-    try:
-        beam_band = hci_beam_band(beam_model)
-    except ValueError as e:
-        log.error_and_raise(str(e), ValueError)
-
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
 
-    # ducc only refuses an unreachable epsilon when it is handed data; say so up
-    # front instead (#340).
+    # ducc only refuses an unreachable epsilon when it is handed data; say so up front (#340)
     try:
         check_gridder_epsilon(precision, epsilon, do_wgridding=do_wgridding)
     except ValueError as e:
@@ -198,131 +479,74 @@ def hci(
     ms = msnames
     opts_dict["ms"] = ms
     if gain_table is not None:
+        # gains.qc/NET or gains.qc::NET; an unmatched pattern is kept so the count
+        # check below reports first and open_term then names the missing term
         gainnames = []
         for gt in map(str, gain_table):
-            matches = glob_uris(gt)
-            if not matches:
-                log.error_and_raise(f"No gain table at {gt}", ValueError)
-            gainnames += matches
-        gain_table = gainnames
+            gainnames += glob_uris(term_path(gt)) or [term_path(gt)]
+        gain_table = [g.removeprefix("file://") for g in gainnames]
         opts_dict["gain_table"] = gain_table
 
     log.log_options_dict(opts_dict, title="HCI options")
 
-    resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu, log=log)
-    runtime_env = {
-        "env_vars": {**env_vars, **profile_env()},
-        "worker_process_setup_hook": setup_ray_worker,
-    }
-
-    if object_store_memory is not None:
-        mem_limit = object_store_memory * 1e9  # convert GB -> B
-    else:
-        mem_limit = None
-
-    init_ray(
-        nworkers,
-        ray_address=ray_address,
-        runtime_env=runtime_env,
-        object_store_memory=mem_limit,
-        log=log,
-    )
-    phases.lap("Ray start")
+    # refusals before any I/O-heavy work
+    if weight_grid_out:
+        log.error_and_raise(
+            "--weight-grid-out is not supported by hci: the cube scaffold has no weight_grid",
+            NotImplementedError,
+        )
+    if transfer_model_from is not None:
+        log.error_and_raise("Use the degrid app to populate a model column instead", NotImplementedError)
+    if spatial_chunk < 1:
+        log.error_and_raise(f"spatial_chunk must be >= 1 (got {spatial_chunk})", ValueError)
+    if max_simul_chunks < 1:
+        log.error_and_raise(f"max_simul_chunks must be >= 1 (got {max_simul_chunks})", ValueError)
+    if nworkers < 1:
+        log.error_and_raise(f"nworkers must be >= 1 (got {nworkers})", ValueError)
+    if sigma_column is not None:
+        log.error_and_raise(
+            "--sigma-column is not supported by hci: xarray-ms does not expose SIGMA. Use --weight-column",
+            NotImplementedError,
+        )
+    if gain_table is not None:
+        if len(gain_table) != len(ms):
+            log.error_and_raise(f"Need one gain table per MS: got {len(gain_table)} for {len(ms)} MSs", ValueError)
+        for g in gain_table:
+            open_term(g)  # fail now, not in a worker
+    try:
+        beam_band = hci_beam_band(beam_model)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
     fds_fs, fds_url = uri_and_fs(output_dataset)
-    if fds_fs.exists(fds_url):
-        if overwrite:
-            log.info(f"Overwriting {output_dataset}")
-            fds_fs.rm(fds_url, recursive=True)
-        else:
-            log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
-
-    fds_fs.makedirs(fds_url, exist_ok=True)
-
-    if gain_table is not None:
-
-        def tmpf(x):
-            return "::".join(x.rsplit("/", 1))
-
-        gain_names = list(map(tmpf, gain_table))
-    else:
-        gain_names = None
+    if fds_fs.exists(fds_url) and not overwrite:
+        log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
 
     if freq_range is not None:
         fmin, fmax = freq_range.strip(" ").split(":")
-        if len(fmin) > 0:
-            freq_min = float(fmin)
-        else:
-            freq_min = -np.inf
-        if len(fmax) > 0:
-            freq_max = float(fmax)
-        else:
-            freq_max = np.inf
+        freq_min = float(fmin) if len(fmin) > 0 else -np.inf
+        freq_max = float(fmax) if len(fmax) > 0 else np.inf
     else:
         freq_min = -np.inf
         freq_max = np.inf
 
-    group_by = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]
-
-    # write model to tmp ds
-    if transfer_model_from is not None:
-        log.error_and_raise("Use the degrid app to populate a model column instead", NotImplementedError)
-
-    log.info("Constructing mapping")
-    (
-        row_mapping,
-        freq_mapping,
-        time_mapping,
-        freqs,
-        utimes,
-        ms_chunks,
-        gains,
-        radecs,
-        chan_widths,
-        max_blength,
-        antpos,
-        poltype,
-    ) = construct_mappings(
+    log.info("Planning images")
+    # one MS open at a time (#241); the plan keeps what the checks below need
+    plan = plan_ms(
         ms,
-        gain_names,
-        ipi=images_per_chunk * integrations_per_image,
-        cpi=channels_per_image,
+        nprocs=min(nworkers, _PLAN_PROCS, len(os.sched_getaffinity(0))),
+        log=log,
+        integrations_per_image=integrations_per_image,
+        channels_per_image=channels_per_image,
+        images_per_chunk=images_per_chunk,
+        data_group=data_group,
+        field_names=field_names,
+        spw_names=spw_names,
+        scan_names=scan_names,
         freq_min=freq_min,
         freq_max=freq_max,
-        field_ids=fields,
-        ddids=ddids,
-        scans=scans,
     )
-
-    max_freq = 0
-
-    # get the full (time, freq) domain
-    all_times = []
-    all_freqs = []
-    for ms_name in ms:
-        for idt in freqs[ms_name].keys():
-            freq = freqs[ms_name][idt]
-            all_freqs.extend(freq)
-            all_times.extend(utimes[ms_name][idt])
-            mask = (freq <= freq_max) & (freq >= freq_min)
-            max_freq = np.maximum(max_freq, freq[mask].max())
-
-    all_freqs = np.unique(all_freqs)
-    all_times = np.unique(all_times)
-
-    # image size
-    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
-        max_blength,
-        max_freq,
-        field_of_view,
-        super_resolution_factor,
-        cell_size=cell_size,
-        nx=nx,
-        ny=ny,
-        psf_oversize=psf_relative_size,  # 128 pix if not specified
-        log=log,
-    )
+    phases.lap("Plan")
 
     # crude column arithmetic
     dc = data_column.replace(" ", "")
@@ -337,434 +561,93 @@ def hci(
         dc2 = None
         operator = None
 
-    columns = (dc1, flag_column, "UVW", "ANTENNA1", "ANTENNA2", "TIME", "INTERVAL", "FLAG_ROW")
-    schema = {}
-    schema[flag_column] = {"dims": ("chan", "corr")}
-    schema[dc1] = {"dims": ("chan", "corr")}
-    if dc2 is not None:
-        columns += (dc2,)
-        schema[dc2] = {"dims": ("chan", "corr")}
+    # MSv2 column names -> the data group's MSv4 variables
+    grp = plan.nodes[(plan.items[0].ms_index, plan.items[0].node_path)].data_group
+    col_map = {"DATA": grp["correlated_data"], "WEIGHT_SPECTRUM": grp["weight"], "FLAG": grp["flag"]}
 
-    # only WEIGHT column gets special treatment
-    # any other column must have channel axis
+    def resolve(name: str | None) -> str | None:
+        return None if name is None else col_map.get(name, name)
+
+    wanted = [dc1, dc2, model_column, sigma_column if sigma_column else weight_column, flag_column]
+    for (ims, path), pn in plan.nodes.items():  # every node, not just the first: fail now, not in a worker
+        missing = [n for n in wanted if n is not None and resolve(n) not in pn.data_vars]
+        if missing:
+            log.error_and_raise(
+                f"{missing} not found in data group {data_group!r} of {ms[ims]} node {path}; "
+                f"have {sorted(pn.data_vars)}",
+                ValueError,
+            )
+
+    if gain_table is not None:
+        # coordinates only, with the workers' own selection and alignment: fail now, not hours in
+        missing_ants = {}
+        for (ims, path), pn in plan.nodes.items():
+            try:
+                missing = check_node_grid(
+                    gain_table[ims],
+                    pn.scan_name,
+                    pn.times_unix,
+                    pn.freqs,
+                    field_name=pn.field_name,
+                    antenna_names=pn.antenna_names,
+                )
+            except ValueError as e:
+                log.error_and_raise(
+                    f"Gain term {gain_table[ims]} does not apply to {ms[ims]} node {path}: {e}", ValueError
+                )
+            missing_ants.setdefault(ims, set()).update(missing)
+        for ims, missing in missing_ants.items():
+            if missing:
+                log.warning(f"Antennas {sorted(missing)} are not in {gain_table[ims]}; their data will be flagged")
+
     if sigma_column is not None:
         log.info(f"Initialising weights from {sigma_column} column")
-        columns += (sigma_column,)
-        schema[sigma_column] = {"dims": ("chan", "corr")}
     elif weight_column is not None:
         log.info(f"Using weights from {weight_column} column")
-        columns += (weight_column,)
-        # hack for https://github.com/ratt-ru/dask-ms/issues/268
-        if weight_column != "WEIGHT":
-            schema[weight_column] = {"dims": ("chan", "corr")}
     else:
         log.info("No weights provided, using unity weights")
 
-    if model_column is not None:
-        columns += (model_column,)
-        schema[model_column] = {"dims": ("chan", "corr")}
-
-    # distinct freq groups
-    sgroup = 0
-    freq_groups = []
-    freq_sgroups = []
-    for ms_name in ms:
-        for idt, freq in freqs[ms_name].items():
-            ilo = idt.find("DDID") + 4
-            ihi = idt.rfind("_")
-            ddid = int(idt[ilo:ihi])
-            if (ddids is not None) and (ddid not in ddids):
-                continue
-            if not len(freq_groups):
-                freq_groups.append(freq)
-                freq_sgroups.append(sgroup)
-                sgroup += freq_mapping[ms_name][idt]["counts"].size
-            else:
-                in_group = False
-                for fs in freq_groups:
-                    if freq.size == fs.size and np.all(freq == fs):
-                        in_group = True
-                        break
-                if not in_group:
-                    freq_groups.append(freq)
-                    freq_sgroups.append(sgroup)
-                    sgroup += freq_mapping[ms_name][idt]["counts"].size
-
-    # band mapping
-    msddid2bid = {}
-    for ms_name in ms:
-        msddid2bid[ms_name] = {}
-        for idt, freq in freqs[ms_name].items():
-            # find group where it matches
-            for sgroup, fs in zip(freq_sgroups, freq_groups):
-                if freq.size == fs.size and np.all(freq == fs):
-                    msddid2bid[ms_name][idt] = sgroup
-
-    log.info("Creating scaffold for stacked cube")
-    attrs, ntasks, n_timeo, n_freqo, phase_dir = make_dummy_dataset(
-        ms,
-        output_dataset,
-        fields,
-        ddids,
-        scans,
-        phase_dir,
-        product,
-        beam_model,
-        psf_out,
-        utimes,
-        freqs,
-        radecs,
-        time_mapping,
-        freq_mapping,
-        freq_min,
-        freq_max,
-        nx,
-        ny,
-        nx_psf,
-        ny_psf,
-        cell_deg,
-        target=target,
-        spatial_chunk=128,  # hardcode for now
-        images_per_chunk=images_per_chunk,
-        integrations_per_image=integrations_per_image,
-        obs_label=obs_label,
+    # image size and centre
+    if phase_dir is None:
+        phase_dir = default_phase_dir(plan.field_radecs[:, 0], plan.field_radecs[:, 1])
+    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
+        plan.max_blength,
+        plan.max_freq,
+        field_of_view,
+        super_resolution_factor,
+        cell_size=cell_size,
+        nx=nx,
+        ny=ny,
+        psf_oversize=psf_relative_size,  # 128 pix if not specified
+        log=log,
+    )
+    if natural_grad and (nx_psf, ny_psf) != (2 * nx, 2 * ny):
+        log.error_and_raise(
+            f"--natural-grad needs a PSF twice the image size ({2 * nx}x{2 * ny}), got {nx_psf}x{ny_psf}; "
+            "set --psf-relative-size 2",
+            ValueError,
+        )
+    # rephasing and --target resolve coordinates with pyrap in the workers: fail now, not after Ray starts
+    if (phase_dir is not None or target is not None) and importlib.util.find_spec("pyrap") is None:
+        log.error_and_raise(
+            "Rephasing (--phase-dir, or several pointings) and --target need python-casacore: "
+            "install pfb-imaging[casacore]",
+            ImportError,
+        )
+    out_ra_deg, out_dec_deg = image_centre_deg(
+        plan.field_radecs[:, 0], plan.field_radecs[:, 1], phase_dir, target, plan.out_times
     )
 
-    log.info("Scaffolding complete")
-    phases.lap("Mappings and scaffold")
+    # every refusal is behind us: only now may an existing cube go
+    if fds_fs.exists(fds_url):
+        log.info(f"Overwriting {output_dataset}")
+        fds_fs.rm(fds_url, recursive=True)
+    fds_fs.makedirs(fds_url, exist_ok=True)
 
-    # this is a bit hacky but I doubt we use anything but MeerKAT beams for now
-    if beam_model is None:
-        log.info("No beam model specified, not applying primary beam correction")
-    else:
-        log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
-        beam_model = hci_beam_wizard(output_dataset, beam_band)
-        phases.lap("Beam wizard")
-
-    # get the size of the padded grid
-    nx_pad = good_size(int(min_padding * nx))
-    while nx_pad % 2:
-        nx_pad = good_size(nx_pad + 1)
-    ny_pad = good_size(int(min_padding * ny))
-    while ny_pad % 2:
-        ny_pad = good_size(ny_pad + 1)
-    n_stokes = len(set(product))
-    log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
-    log.info(f"Padded grid size = (n_y={ny_pad}, n_x={nx_pad})")
-    schunk = min(128, nx, ny)  # make_dummy_dataset's spatial_chunk, as build_scaffold clips it
-    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={schunk}, n_x={schunk})")
-
-    if inject_transients is not None:
-        # we need to do this here because we don't have access
-        # to the full domain inside the call to stokes2im
-        log.info("Computing transient spectra")
-
-        write_transient_spectra(inject_transients, all_times, all_freqs)
-        log.info("Spectra computed")
-
-    tasks = []
-    channel_width = {}
-    ncompleted = 0
-    task_times = dict.fromkeys(("wall_s", "cpu_s", "read_s", "image_s", "write_s"), 0.0)
-
-    def completed(ready) -> None:
-        _, _, mem = ray.get(ready)[0]
-        for k in task_times:
-            task_times[k] += mem[k]
-        log.info(
-            f"Processed {ncompleted}/{ntasks} [{format_memory(mem)} | read {mem['read_s']:.1f} s "
-            f"image {mem['image_s']:.1f} s write {mem['write_s']:.1f} s]",
-            extra=pfb_logging.NO_MARKUP,
-        )
-
-    # if opts.temp-dir is None dir will be /tmp
-    with TemporaryDirectory(prefix="hci-", dir=temp_dir) as tempdir:
-        synchronizer = ProcessSynchronizer(tempdir)
-        for ims, ms_name in enumerate(ms):
-            xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by)
-
-            for ds in xds:
-                fid = ds.FIELD_ID
-                ddid = ds.DATA_DESC_ID
-                scanid = ds.SCAN_NUMBER
-                if (fields is not None) and (fid not in fields):
-                    continue
-                if (ddids is not None) and (ddid not in ddids):
-                    continue
-                if (scans is not None) and (scanid not in scans):
-                    continue
-
-                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-
-                idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
-                if not idx.any():
-                    continue
-
-                titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
-                for ti, (tlow, tcounts) in titr:
-                    time_slice = slice(tlow, tlow + tcounts)
-                    row_index = row_mapping[ms_name][idt]["start_indices"][time_slice]
-                    row_counts = row_mapping[ms_name][idt]["counts"][time_slice]
-                    # select all rows for output dataset
-                    row_slice = slice(row_index[0], row_index[-1] + row_counts[-1])
-
-                    fitr = enumerate(
-                        zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"])
-                    )
-                    b0 = msddid2bid[ms_name][idt]
-                    for fi, (flow, fcounts) in fitr:
-                        freq_slice = slice(flow, flow + fcounts)
-
-                        subds = ds[{"row": row_slice, "chan": freq_slice}]
-                        subds = subds.chunk({"row": -1, "chan": -1})
-                        if gains[ms_name][idt] is not None:
-                            subgds = gains[ms_name][idt][{"gain_time": time_slice, "gain_freq": freq_slice}]
-                            jones = subgds.gains.data
-                        else:
-                            jones = None
-
-                        fut = batch_stokes_image.remote(
-                            dc1=dc1,
-                            dc2=dc2,
-                            operator=operator,
-                            ds=subds,
-                            jones=jones,
-                            nx=nx,
-                            ny=ny,
-                            freq=freqs[ms_name][idt][freq_slice],
-                            utime=utimes[ms_name][idt][time_slice],
-                            rbin_idx=row_index,
-                            rbin_counts=row_counts,
-                            cell_rad=cell_rad,
-                            radec=radecs[ms_name][idt],
-                            antpos=antpos[ms_name],
-                            poltype=poltype[ms_name],
-                            fds_store=fds_url,
-                            bandid=b0 + fi,
-                            timeid=ti,
-                            msid=ims,
-                            attrs=attrs,
-                            integrations_per_image=integrations_per_image,
-                            channels_per_bin=channels_per_bin,
-                            nthreads=nthreads,
-                            precision=precision,
-                            sigma_column=sigma_column,
-                            weight_column=weight_column,
-                            model_column=model_column,
-                            product=product,
-                            check_ants=check_ants,
-                            phase_dir=phase_dir,
-                            beam_model=beam_model,
-                            target=target,
-                            robustness=robustness,
-                            min_padding=min_padding,
-                            filter_counts_level=filter_counts_level,
-                            npix_super=npix_super,
-                            psf_relative_size=psf_relative_size,
-                            inject_transients=inject_transients,
-                            epsilon=epsilon,
-                            do_wgridding=do_wgridding,
-                            double_accum=double_accum,
-                            natural_grad=natural_grad,
-                            eta=eta,
-                            cg_tol=cg_tol,
-                            cg_maxit=cg_maxit,
-                            psf_out=psf_out,
-                            weight_grid_out=weight_grid_out,
-                            l2_reweight_dof=l2_reweight_dof,
-                            synchronizer=synchronizer,
-                            wgt_mode=wgt_mode,
-                        )
-                        tasks.append(fut)
-                        channel_width[b0 + fi] = (
-                            freqs[ms_name][idt][freq_slice].max() - freqs[ms_name][idt][freq_slice].min()
-                        )
-
-                        # limit the number of chunks that are processed simultaneously
-                        if len(tasks) > max_simul_chunks:
-                            ncompleted += 1
-                            ready, tasks = ray.wait(tasks, num_returns=1)
-                            completed(ready)
-
-            # release the main MS TableProxy before opening the next MS — see
-            # https://github.com/ratt-ru/pfb-imaging/issues/241
-            del xds
-            gc.collect()
-
-        remaining_tasks = tasks.copy()
-        while remaining_tasks:
-            ncompleted += 1
-            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-            completed(ready)
-
-    phases.lap("Imaging", mem=True)
-    if ncompleted:
-        t = task_times
-        log.info(
-            f"Tasks (s, summed over {ncompleted}): wall {t['wall_s']:.0f} cpu {t['cpu_s']:.0f} "
-            f"read {t['read_s']:.0f} image {t['image_s']:.0f} write {t['write_s']:.0f}"
-        )
-    log.info("Computing means")
-    cwidths = []
-    for _, val in channel_width.items():
-        cwidths.append(val)
-    # reduction over FREQ and TIME so use max chunk sizes
-    ds = xr.open_zarr(fds_url, chunks={"FREQ": -1, "TIME": -1})
-    chunk_sizes = ds.chunks
-    x_chunk = chunk_sizes["X"][0]
-    y_chunk = chunk_sizes["Y"][0]
-    cube = ds.cube.data
-    wsums = ds.weight.data
-    # needed for flagging
-    nonzero = ds.nonzero.values
-    rms = ds.rms.values
-    ncorr, nband, ntime = nonzero.shape
-    flag = np.zeros((ncorr, nband, ntime), dtype=bool)
-    for corr in range(ncorr):
-        for band in range(nband):
-            nzero = nonzero[corr, band, :]
-            medianrms = np.median(rms[corr, band, nzero])
-            flag[corr, band, :] = (rms[corr, band, :] > flag_excess_rms * medianrms) | ~nzero
-    # need flag (as mask) in dask graph
-    mask = da.from_array((~flag).astype(np.uint8), chunks=(1, -1, -1))
-    wsums = wsums * mask
-    # all variables have been normalised by wsum so we first
-    # undo the normalisation (wsum=0 where there is no data)
-    taxis = ds.cube.get_axis_num("TIME")
-    faxis = ds.cube.get_axis_num("FREQ")
-    wsum = da.sum(wsums, axis=taxis)
-    # we need this for the where clause in da.divide, should be cheap
-    wsumc = wsum.compute()[:, :, None, None]
-    weighted_sum = da.sum(cube * wsums[:, :, :, None, None], axis=taxis)
-    weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc > 0)
-    if psf_out:
-        psfsq = (ds.psf.data * wsums[:, :, :, None, None]) ** 2
-        weighted_psfsq_sum = da.sum(psfsq, axis=(faxis, taxis))
-        wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
-        wsumsqc = wsumsq.compute()[:, None, None]
-        weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        # the PSF has its own spatial chunk (build_scaffold clips it to the PSF, the cube's to the image)
-        psf_chunks = (1, chunk_sizes["Y_PSF"][0], chunk_sizes["X_PSF"][0])
-        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=psf_chunks))
-    # only write new variables
-    drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
-    ds = ds.drop_vars(drop_vars)
-    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean.rechunk(chunks=(1, 1, y_chunk, x_chunk)))
-    ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
-    ds["flag"] = (("STOKES", "FREQ", "TIME"), da.from_array(flag, chunks=(1, 1, images_per_chunk)))
-    with dask.config.set(pool=ThreadPoolExecutor(8)):
-        ds.to_zarr(fds_url, mode="r+")
-    log.info("Reduction complete")
-    phases.lap("Means")
-
-    if fits_vars is not None:
-        write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
-        phases.lap("FITS")
-
-    phases.summary()
-    dump_timeline(log)
-    log.info(f"All done after {time.time() - time_start}s")
-
-    if not keep_ray_alive:
-        ray.shutdown()
-
-
-def make_dummy_dataset(
-    ms,
-    output_dataset,
-    fields,
-    ddids,
-    scans,
-    phase_dir,
-    product,
-    beam_model,
-    psf_out,
-    utimes,
-    freqs,
-    radecs,
-    time_mapping,
-    freq_mapping,
-    freq_min,
-    freq_max,
-    nx,
-    ny,
-    nx_psf,
-    ny_psf,
-    cell_deg,
-    target=None,
-    spatial_chunk=128,
-    images_per_chunk=16,
-    integrations_per_image=1,
-    obs_label=None,
-):
-    out_ra = []
-    out_dec = []
-    out_times = []
-    out_freqs = []
-    ntasks = 0
-    for ms_name in ms:
-        xds = xds_from_ms(ms_name, columns="TIME", group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"])
-        for ds in xds:
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            if (fields is not None) and (fid not in fields):
-                continue
-            if (ddids is not None) and (ddid not in ddids):
-                continue
-            if (scans is not None) and (scanid not in scans):
-                continue
-
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-
-            idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
-            if not idx.any():
-                continue
-
-            out_ra.append(radecs[ms_name][idt][0])
-            out_dec.append(radecs[ms_name][idt][1])
-
-            titr = zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"])
-            for tlow, tcounts in titr:
-                fitr = zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"])
-                for flow, fcounts in fitr:
-                    freq_slice = slice(flow, flow + fcounts)
-                    out_freqs.append(np.mean(freqs[ms_name][idt][freq_slice]))
-                    ntasks += 1
-
-                    for t0 in range(tlow, tlow + tcounts, integrations_per_image):
-                        tmax = np.minimum(tlow + tcounts, t0 + integrations_per_image)
-                        time_slice = slice(t0, tmax)
-                        out_times.append(np.mean(utimes[ms_name][idt][time_slice]))
-
-        # release the main MS TableProxy before opening the next MS — see
-        # https://github.com/ratt-ru/pfb-imaging/issues/241
-        del xds
-        gc.collect()
-
-    # remove duplicates
-    out_times = np.unique(out_times)
-    out_freqs = np.unique(out_freqs)
-    n_times = out_times.size
-    n_freqs = out_freqs.size
-
-    if n_times == 0 or n_freqs == 0:
-        # the time loop steps by integrations_per_image, so a value < 1 gives an
-        # empty range and hence no output images at all
-        raise ValueError(
-            f"selection produced {n_times} time bins and {n_freqs} frequency bins, so there is "
-            f"nothing to image. integrations_per_image must be >= 1 (got {integrations_per_image}); "
-            "pass the scan length for a single time bin."
-        )
-
-    # spatial coordinates
-    if phase_dir is None:
-        phase_dir = _default_phase_dir(out_ra, out_dec)
-    out_ra_deg, out_dec_deg = image_centre_deg(np.asarray(out_ra), np.asarray(out_dec), phase_dir, target, out_times)
-
-    dummy_ds, attrs = build_scaffold(
-        out_times,
-        out_freqs,
+    log.info("Creating scaffold for stacked cube")
+    scaffold, _ = build_scaffold(
+        plan.out_times,
+        plan.out_freqs,
         out_ra_deg,
         out_dec_deg,
         product,
@@ -779,5 +662,295 @@ def make_dummy_dataset(
         images_per_chunk=images_per_chunk,
         obs_label=obs_label,
     )
-    dummy_ds.to_zarr(f"{output_dataset}", mode="w", compute=False)
-    return attrs, ntasks, dummy_ds.sizes["TIME"], dummy_ds.sizes["FREQ"], phase_dir
+    scaffold.to_zarr(output_dataset, mode="w", compute=False)
+    nstokes = len(set(product))
+    nband = plan.out_freqs.size
+    log.info(
+        f"Cube size = (n_stokes={nstokes}, n_freq={nband}, n_time={plan.out_times.size}, n_y={ny}, n_x={nx}); "
+        f"{len(plan.items)} images"
+    )
+    chunk = scaffold.cube.encoding.get("chunks") or tuple(c[0] for c in scaffold.cube.chunks)
+    log.info(f"Cube chunks = {dict(zip(scaffold.cube.dims, chunk))}: {np.prod(chunk) * 4 / 2**20:.1f} MiB uncompressed")
+
+    per_image = nx * ny * (1 + (beam_model is not None)) + (nx_psf * ny_psf if psf_out else 0)
+    est = max_simul_chunks * nband * images_per_chunk * per_image * nstokes * 4  # float32 slabs
+    log.info(
+        f"Writer holds up to {max_simul_chunks} time blocks of {images_per_chunk} images per band: "
+        f"~{est / 2**30:.1f} GiB"
+    )
+    if est > psutil.virtual_memory().available:
+        log.warning("Writer estimate exceeds available memory; reduce --images-per-chunk or --max-simul-chunks")
+
+    if inject_transients is not None:
+        # needs the full (time, freq) domain, which no single worker sees
+        log.info("Computing transient spectra")
+        write_transient_spectra(inject_transients, plan.all_times, plan.all_freqs)
+
+    cfg = HciConfig(
+        dc1=resolve(dc1),
+        dc2=resolve(dc2),
+        operator=operator,
+        model_column=resolve(model_column),
+        weight_column=resolve(weight_column),
+        sigma_column=sigma_column,
+        flag_column=resolve(flag_column),
+        product=product,
+        precision=precision,
+        nx=nx,
+        ny=ny,
+        cell_rad=cell_rad,
+        psf_relative_size=psf_relative_size,
+        phase_dir=phase_dir,
+        target=target,
+        robustness=robustness,
+        min_padding=min_padding,
+        filter_counts_level=filter_counts_level,
+        npix_super=npix_super,
+        channels_per_bin=channels_per_bin,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        double_accum=double_accum,
+        natural_grad=natural_grad,
+        eta=eta,
+        cg_tol=cg_tol,
+        cg_maxit=cg_maxit,
+        psf_out=psf_out,
+        l2_reweight_dof=l2_reweight_dof,
+        wgt_mode=wgt_mode,
+        inject_transients=inject_transients,
+        nthreads=nthreads,
+    )
+    gc.collect()  # every planning tree is closed; drop what they left in cycles
+    phases.lap("Checks and scaffold")
+
+    resize_thread_pool(nthreads)
+    env_vars = set_envs(nthreads, ncpu, log=log)
+    init_ray(
+        nworkers + 2,
+        ray_address=ray_address,
+        runtime_env={"env_vars": {**env_vars, **profile_env()}, "worker_process_setup_hook": setup_ray_worker},
+        object_store_memory=None if object_store_memory is None else object_store_memory * 1e9,
+        log=log,
+    )
+    phases.lap("Ray start")
+    actors = []
+    try:
+        beam_ref = None
+        if beam_model is not None:
+            log.info(f"Initialising a meerkat-beams BeamWizard for band {beam_band}")
+            beam_ref = ray.put(hci_beam_wizard(output_dataset, beam_band))
+            phases.lap("Beam wizard")
+        # nominal CPU claims: a real claim can deadlock scheduling (D8)
+        writer = ray.remote(num_cpus=1e-2)(CubeWriterImpl).remote(
+            output_dataset, plan.expected, images_per_chunk, plan.channel_width, flag_excess_rms
+        )
+        actors.append(writer)
+        workers = [
+            ray.remote(num_cpus=1e-2)(HciWorkerImpl).remote(ms, cfg, nx_psf, ny_psf, data_group, gain_table, beam_ref)
+            for _ in range(nworkers)
+        ]
+        actors += workers
+        # waiting here keeps actor start-up (imports, MS opens) out of the imaging phase
+        ray.get([a.__ray_ready__.remote() for a in actors])
+        phases.lap("Actor start")
+        stats = _dispatch(plan, workers, writer, max_simul_chunks)
+        phases.lap("Imaging", mem=True)
+        _log_utilisation(stats)
+        ray.get([w.close.remote() for w in workers])
+        out = ray.get(writer.finalise.remote())
+        log.info(f"Flagged {out['nflagged']} images with excess rms")
+        phases.lap("Finalise")
+        dump_timeline(log)
+    finally:
+        # actors would outlive this call under keep_ray_alive; killing one also
+        # fails its pending tasks, which is the error path's cancellation
+        for actor in actors:
+            with contextlib.suppress(Exception):  # the original error, if any, must win
+                ray.kill(actor)
+        if not keep_ray_alive:
+            ray.shutdown()
+
+    if fits_vars is not None:
+        write_fits_vars(fds_url, fits_vars, fits_output_folder, images_per_chunk, log)
+        phases.lap("FITS")
+
+    phases.summary()
+    log.info(f"All done after {time.time() - time_start}s")
+
+
+def _each_tree(ms: list[str]) -> Iterator[xr.DataTree]:
+    """Open each MS's DataTree in turn, closing it once the consumer moves on."""
+    for m in ms:
+        dt = xr.open_datatree(m, **get_engine(m))
+        try:
+            yield dt
+        finally:
+            dt.close()
+
+
+_WORKER_TIMES = ("wall_s", "cpu_s", "read_s", "wait_s") + tuple(f"{k}_s" for k in IMAGE_SECTIONS)
+
+
+def _image_times(mem: dict) -> str:
+    """The per-image part of a progress line: the read and where the imaging time went."""
+    parts = " ".join(f"{k} {mem[f'{k}_s']:.1f}" for k in IMAGE_SECTIONS)
+    return f" | read {mem['read_s']:.1f} s (blocked {mem['wait_s']:.1f}) {parts}"
+
+
+def _log_utilisation(stats: dict) -> None:
+    """Summarise where the workers' time went over the imaging phase.
+
+    ``busy`` is the summed call wall time over ``nworkers x`` the phase's wall time; the
+    rest is idle, charged by the dispatcher to why each idle worker had no work: ``writer``
+    (backpressure: too many unacknowledged writer calls), ``window`` (the next item is in a
+    time block beyond ``--max-simul-chunks``) or ``drain`` (nothing left to hand out).
+    """
+    n, nw, span = stats["nimages"], stats["nworkers"], stats["wall_s"]
+    if not n or span <= 0:
+        return
+    t = stats["times"]
+    capacity = nw * span
+    per = " ".join(f"{k} {t[f'{k}_s'] / n:.2f}" for k in IMAGE_SECTIONS)
+    idle = " ".join(f"{k} {100 * v / capacity:.0f}%" for k, v in stats["idle_s"].items())
+    log.info(
+        f"Workers: {n} images in {span:.0f} s on {nw} workers ({n / span:.2f} images/s); "
+        f"busy {100 * t['wall_s'] / capacity:.0f}% "
+        f"(blocked on reads {100 * t['wait_s'] / capacity:.0f}%), idle: {idle or 'none'}; "
+        f"per image (s): call {t['wall_s'] / n:.2f} read {t['read_s'] / n:.2f} "
+        f"blocked {t['wait_s'] / n:.2f} {per}; cores per busy worker {t['cpu_s'] / max(t['wall_s'], 1e-9):.1f}"
+    )
+    w = stats["writer"]
+    if w["adds"]:
+        log.info(
+            f"Writer: busy {100 * w['busy_s'] / span:.0f}% of the imaging phase; {w['adds']} adds "
+            f"({1e3 * (w['busy_s'] - w['write_s']) / w['adds']:.0f} ms each); {w['slabs']} slabs, "
+            f"{w['write_s']:.0f} s writing {w['write_gb']:.1f} GB "
+            f"({w['write_gb'] / max(w['write_s'], 1e-9):.2f} GB/s, {w['write_s'] / max(w['slabs'], 1):.1f} s per slab)"
+        )
+
+
+def _dispatch(plan: HciPlan, workers: list, writer, max_open: int) -> dict:
+    """Deal items to workers with a one-item lookahead; at most ``max_open`` time blocks in the writer.
+
+    Each worker's next item is promised at call time so its prefetch is always for an item it
+    will receive. A promise is made only when the allowed window still holds an item for every
+    other idle, unpromised worker, so a narrow window keeps every worker busy, not half. Image
+    refs go straight from worker to writer; the driver only sees telemetry.
+    A worker is free again as soon as its own image call finishes, not when the writer has
+    stored the image: Ray runs an actor's calls in submission order, so gating on the writer
+    would make every worker wait on every earlier writer call (head-of-line blocking). Writer
+    acks drive slab accounting only, and at most ``2 * len(workers)`` of them are outstanding.
+
+    Args:
+        plan: The image plan; items are sorted by (block, band, time).
+        workers: HciWorkerImpl actor handles.
+        writer: The CubeWriterImpl actor handle.
+        max_open: Maximum number of time blocks open in the writer at once.
+
+    Returns:
+        Telemetry for ``_log_utilisation``: ``nimages``, ``nworkers``, ``wall_s`` (dispatch
+        span), ``times`` (worker times summed over images), ``idle_s`` (idle worker-seconds
+        by reason) and ``writer`` (``CubeWriterImpl.stats``).
+
+    Raises:
+        Exception: The first worker or writer error, re-raised as Ray delivers it; a worker's
+            error is preferred over the writer error it causes.
+        RuntimeError: If dispatch stalls with work remaining (a bug).
+    """
+    queue = deque(plan.items)
+    slabs_left = Counter(block for _, block in plan.expected)  # block -> slabs not yet written
+    promised: dict[int, WorkItem] = {}
+    idle = list(range(len(workers)))
+    imaging: dict = {}  # worker telemetry ref -> (worker index, item)
+    writing: dict = {}  # writer ack -> (item, worker telemetry ref)
+    max_writing = 2 * len(workers)
+    nitems = len(plan.items)
+    ndone = 0
+    times = dict.fromkeys(_WORKER_TIMES, 0.0)
+    idle_s = {"writer": 0.0, "window": 0.0, "drain": 0.0}
+    t_start = time.perf_counter()
+
+    def allowed(item: WorkItem) -> bool:
+        lowest_open = min(slabs_left) if slabs_left else np.iinfo(np.int64).max
+        return item.block < lowest_open + max_open
+
+    def spare(nwanted: int) -> bool:
+        """More than ``nwanted`` allowed items are queued (the queue is sorted by block)."""
+        n = 0
+        for it in queue:
+            if not allowed(it):
+                return False
+            n += 1
+            if n > nwanted:
+                return True
+        return False
+
+    while queue or promised or imaging or writing:
+        for w in list(idle):
+            if len(writing) >= max_writing:
+                break  # backpressure: the writer is behind
+            if w in promised:
+                item = promised.pop(w)
+            elif queue and allowed(queue[0]):
+                item = queue.popleft()
+            else:
+                continue
+            # promise a next item only if every other idle, unpromised worker can still get one
+            # now: in a window narrower than the pool, lookahead would idle half the workers
+            waiting = sum(1 for v in idle if v != w and v not in promised)
+            nxt = queue.popleft() if spare(waiting) else None
+            if nxt is not None:
+                promised[w] = nxt
+            img_ref, mem_ref = workers[w].image.options(num_returns=2).remote(item, nxt)
+            imaging[mem_ref] = (w, item)
+            writing[writer.add.remote(img_ref)] = (item, mem_ref)
+            idle.remove(w)
+        if not imaging and not writing:
+            raise RuntimeError("hci dispatch stalled with work remaining; this is a bug")
+        if idle:
+            if len(writing) >= max_writing:
+                why = "writer"
+            elif queue:
+                why = "window"
+            else:
+                why = "drain"
+        t_wait = time.perf_counter()
+        (ref,), _ = ray.wait(list(imaging) + list(writing), num_returns=1)
+        if idle:
+            idle_s[why] += len(idle) * (time.perf_counter() - t_wait)
+        if ref in imaging:
+            w, item = imaging.pop(ref)
+            try:
+                mem = ray.get(ref)
+            except Exception:
+                log.error(f"Failed on {item}")
+                raise
+            idle.append(w)
+            ndone += 1
+            for k in _WORKER_TIMES:
+                times[k] += mem[k]
+            log.info(
+                f"Imaged: {ndone} / {nitems} [{format_memory(mem)}{_image_times(mem)}]", extra=pfb_logging.NO_MARKUP
+            )
+            continue
+        item, mem_ref = writing.pop(ref)
+        try:
+            slab = ray.get(ref)
+        except Exception:
+            log.error(f"Failed writing {item}")
+            ray.get(mem_ref)  # re-raises the worker's own error if it failed there
+            raise
+        if slab is not None:
+            (band, block), wmem = slab
+            log.info(f"Wrote band {band} block {block}: writer [{format_memory(wmem)}]", extra=pfb_logging.NO_MARKUP)
+            slabs_left[block] -= 1
+            if slabs_left[block] == 0:
+                del slabs_left[block]
+    return {
+        "nimages": ndone,
+        "nworkers": len(workers),
+        "wall_s": time.perf_counter() - t_start,
+        "times": times,
+        "idle_s": idle_s,
+        "writer": ray.get(writer.stats.remote()),
+    }

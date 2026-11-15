@@ -7,7 +7,7 @@ Lists the MSv2 MAIN columns, then the data variables of the first MSv4 visibilit
 xarray-ms drops every *standard* MAIN column it does not map explicitly, keeping only
 CORRECTED_DATA, CORRECTED_WEIGHT_SPECTRUM, MODEL_DATA and FLOAT_DATA
 (``CorrelatedFactory``'s secondary-variable pass), so SIGMA and SIGMA_SPECTRUM never
-appear, while a non-standard column would. ``pfb hci-msv4`` therefore refuses
+appear, while a non-standard column would. ``pfb hci`` therefore refuses
 ``--sigma-column``. Read only: the MS is not modified.
 """
 

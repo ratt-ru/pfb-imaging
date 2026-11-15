@@ -170,15 +170,11 @@ def test_imager_concat_row_collapses_time(ms_name, sky_truth, tmp_path):
 
 def test_sky_truth_fixture_writes_ms(sky_truth, ms_name, ms_meta):
     """The fixture's DATA/FLAG writes land in the MS and are deterministic."""
-    from tests.conftest import require_daskms
+    import arcae
 
-    require_daskms()
-
-    from daskms import xds_from_ms
-
-    xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1, "corr": -1})[0]
-    data = xds.DATA.values
-    flag = xds.FLAG.values
+    with arcae.table(ms_name) as tab:
+        data = np.asarray(tab.getcol("DATA"))
+        flag = np.asarray(tab.getcol("FLAG"))
     assert data.any(), "fixture wrote all-zero DATA"
     np.testing.assert_array_equal(flag, sky_truth.flag)
     assert flag[:, sky_truth.flagged_chan, :].all()
@@ -365,7 +361,7 @@ def _run_stokes_vis(
     flag_chans: optional channel slice to flag before conversion, used to shift
     the piece's effective frequency away from the nominal band centre (#296).
     """
-    from pfb_imaging.utils.stokes2vis_msv4 import stokes_vis
+    from pfb_imaging.utils.stokes2vis import stokes_vis
 
     node = _open_first_vis_node(ms_name)
     dc1 = node.ds.attrs["data_groups"]["base"]["correlated_data"]
@@ -1350,7 +1346,7 @@ def test_real_group_beams_are_complex_only_for_the_cross_group():
     from astropy.time import Time
     from meerkat_beams.utils import BeamWizard
 
-    from pfb_imaging.utils.stokes2vis_msv4 import real_beam_maps
+    from pfb_imaging.utils.stokes2vis import real_beam_maps
 
     lm = np.linspace(-1.0, 1.0, 32)
     times = Time(np.array([60000.0]), format="mjd")

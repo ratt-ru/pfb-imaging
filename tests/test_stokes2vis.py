@@ -1,4 +1,4 @@
-"""Unit tests for pure helpers in utils/stokes2vis_msv4."""
+"""Unit tests for pure helpers in utils/stokes2vis."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from pfb_model_spec.utils.degrid import pixel_lm
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
-from pfb_imaging.utils.stokes2vis_msv4 import beam_on_image_grid, integration_edges, real_beam_maps
+from pfb_imaging.utils.stokes2vis import beam_on_image_grid, integration_edges, real_beam_maps
 
 
 def test_real_maps_pass_through_with_zero_ratio():

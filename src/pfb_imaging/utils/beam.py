@@ -272,7 +272,7 @@ class BeamReprojection:
         # 1-based crpix of the zero-offset pixel
         wcs_ref.wcs.crpix = [1.0 - l_beam[0] / dl, 1.0 - m_beam[0] / dm]
 
-        # target WCS = the hci output header (core/hci.py scaffold construction)
+        # target WCS = the hci output header (hci_common.build_scaffold)
         wcs_target = WCS(naxis=2)
         wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
         wcs_target.wcs.cdelt = np.array((-cell_deg_out, cell_deg_out))

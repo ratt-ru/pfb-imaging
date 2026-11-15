@@ -19,9 +19,9 @@ resolve.
 **Always place imports at the top of the file when possible.** Lazy (in-function) imports are only acceptable for:
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
-2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods; `dask`/`daskms` deferred to `utils/misc.construct_mappings`. (`distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
+2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods. (`dask-ms` lost its last importer with the dask `hci` (D61); `distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
-4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.stokes_image`).
+4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.image_item`).
 5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s `primal_dual_numba`).
 
 **Every in-function import must carry a short inline comment stating why it cannot live
@@ -83,17 +83,18 @@ rationale ledger: `docs/wiki/design-decisions.md`.
    is deconv's forward model; `--spectral linear` interpolates between the apparent model at
    each chunk's end channels (D59). Load-bearing decisions: D38-D42, D55, D59.
 
-`pfb hci` is the separate high-cadence-imaging front-end.
-`pfb hci-msv4` is hci on MSv4 (xarray-ms/arcae), run side by side with `hci` until the two are
-shown to agree up to chunking, after which it replaces it. One `HciWorker` actor per worker reads
+`pfb hci` is the separate high-cadence-imaging front-end, on MSv4 (xarray-ms/arcae). It was
+`pfb hci-msv4` until it replaced the dask-ms `hci` and took its name, with no alias (D61). One
+`HciWorker` actor per worker reads
 and images one image per call, prefetching the next on a thread, so visibilities never enter the
 object store; a single `CubeWriter` actor assembles `(band, time-block)` slabs and writes each
 once to integer zarr regions -- no synchronizer, no `region="auto"` (D60). `--images-per-chunk`
 (default 128) is the TIME chunk and `--spatial-chunk` (default 128) the Y/X chunk; `--max-simul-chunks` (default 2) bounds writer memory.
 Selection is by name (`--field-names`/`--spw-names`/`--scan-names`), as `degrid`. Behaviour
-changes from `hci`: gain flags are honoured, `FLAG_ROW` is not (xarray-ms ignores it when `FLAG`
-exists; `docs/msv4_issues.md` issue 7), two partitions mapping to one output image raise,
-`--temp-dir` is dropped, `--weight-grid-out` is refused and `--check-ants` is removed.
+changes from the dask hci: gain flags are honoured, `FLAG_ROW` is not (xarray-ms ignores it when
+`FLAG` exists; `docs/msv4_issues.md` issue 7), two partitions mapping to one output image raise,
+`--temp-dir` is dropped, `--weight-grid-out` is refused and `--check-ants` is removed. An old
+recipe therefore fails at parse time rather than silently doing something else.
 
 **`degrid`'s option contract is MSv4-native and is not the MSv2 command's.** Selection is by
 **name** — `--scan-names`/`--spw-names`/`--field-names`, not integer ids; chunking is
@@ -112,13 +113,11 @@ spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
 
 * Numba JIT with TBB threading for critical loops.
 * DUCC0 for gridding and FFT.
-* Dask for parallel chunk processing on the legacy **`hci`** path only (`core/hci.py`, `utils/misc.py`,
-  `operators/fft.py`, `utils/spi.py`, `utils/correlations.py`); threads for FFTs/gridding (`--nthreads`).
-  `hci-msv4` uses dask nowhere in its compute path: its only dask-backed step is the FITS export,
-  which reads the finished zarr through `xr.open_zarr` chunks (`utils/hci_common.write_fits_vars`).
-  The imager/deconv/degrid/hci-msv4 path is
-  Ray, and `degrid`'s `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the
-  last `distributed` consumer).
+* No compute path uses dask. `hci`'s only dask-backed step is the FITS export, which reads the
+  finished zarr through `xr.open_zarr` chunks (`utils/hci_common.write_fits_vars`); threads do the
+  FFTs/gridding (`--nthreads`). The imager/deconv/degrid/hci path is Ray, and `degrid`'s
+  `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the last `distributed`
+  consumer).
 * Ray actors for process-level parallelism in wavelet operators.
 * See `scripts/profiling.md` for profiling guides.
 
@@ -161,7 +160,7 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
     model). If an eviction is ever needed, use the keyed `Multiton.clear_cache(where=...)`.
   * Large arrays never travel as Ray task arguments or return values -- write them to the
     store and pass the path (D10; #339). They land in the object store and show as `shm`.
-    The one deliberate exception is `hci-msv4`: each finished image goes worker -> writer as a
+    The one deliberate exception is `hci`: each finished image goes worker -> writer as a
     Ray ref, because the single writer is what assembles the slabs; visibilities still never
     leave the worker (D60).
   * Read the per-task post-gc telemetry in the progress lines before theorising:

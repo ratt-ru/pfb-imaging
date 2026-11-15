@@ -71,7 +71,7 @@ def open_term(path: str) -> tuple[xr.Dataset, ...]:
         # older dask-ms wrote no _ARRAY_DIMENSIONS, which xarray needs to name the axes
         raise ValueError(
             f"{path} is not readable as plain zarr ({e}); it was probably written by an older "
-            "dask-ms. Rewrite it with a current QuartiCal, or use pfb hci."
+            "dask-ms. Rewrite it with a current QuartiCal."
         ) from e
 
 

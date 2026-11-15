@@ -6,8 +6,8 @@
 Sets FLAG_ROW on every row of the first timestamp while leaving FLAG False there,
 then opens the MS through xarray-ms. MSv2 says a FLAG_ROW row is flagged whatever
 FLAG holds; xarray-ms only reads FLAG_ROW when the FLAG column is absent, so the
-MSv4 FLAG for that time comes back all False. Legacy ``pfb hci`` ORs FLAG_ROW in
-itself (utils/stokes2im.py); ``pfb hci-msv4`` takes the MSv4 FLAG as is.
+MSv4 FLAG for that time comes back all False. The retired dask-ms ``pfb hci`` ORed
+FLAG_ROW in itself; the MSv4 ``pfb hci`` takes the MSv4 FLAG as is.
 
 It copies the MS first, so the original is untouched.
 """
