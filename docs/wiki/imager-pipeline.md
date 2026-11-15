@@ -158,7 +158,7 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    intermediate. The driver streams per-piece counts into **one grid per applied
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
    time), `per-band` (sum over time), `per-time` (`counts_key` in
-   `core/imager.imager`; semantics in `utils/weighting.reduce_counts`).
+   `core/imager.imager` defines the groups).
    `utils/weighting.write_group_counts` does it one group at a time — one dense
    accumulator, into which each piece's occupied cells are added — applies
    `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result

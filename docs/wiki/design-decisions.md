@@ -212,7 +212,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Decision:** One counts grid per applied weighting group (`per-band-time` default),
   never per `(band,time)` node; natural weighting skips counts entirely.
 - **Rationale:** Bounds driver memory at `ngroups` grids on wide-band runs.
-- **Source:** `core/imager.py` (`counts_key`); `utils/weighting.reduce_counts`.
+- **Source:** `core/imager.py` (`counts_key`); `utils/weighting.write_group_counts`.
 
 ### D16 — Super-uniform weighting is a box-filter preprocessing of counts
 
