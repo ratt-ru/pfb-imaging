@@ -58,9 +58,10 @@ full = [
     "sympy>=1.9",
     "jax[cpu]>=0.4.31",
     "lz4>=4.3.3",
-    # pfb_imaging.utils.naming imports s3fs at module scope. It used to arrive
-    # incidentally via dask-ms[s3]; now that dask-ms is behind [casacore] it has
-    # to be requested directly. Pure-python, so it costs nothing on any arch.
+    # fsspec resolves s3:// URLs (utils/naming, core/hci, core/degrid) through
+    # s3fs lazily. It used to arrive incidentally via dask-ms[s3]; now that
+    # dask-ms is behind [casacore] it has to be requested directly.
+    # Pure-python, so it costs nothing on any arch.
     "s3fs",
     # regions 0.12 is the first release with a manylinux aarch64 wheel, but it
     # requires python>=3.11. Keep the floor low on 3.10, which is x86-only in

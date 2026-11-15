@@ -187,7 +187,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   original band attrs (`75d55d1` fixed silent attr loss).
 - **Source:** architecture.md §8; `core/deconv.py` write-back comment.
 
-### D13 — Time epochs: `.dt` is unix seconds, `.dds` is MJD seconds
+### D13 — Time epochs: `.dt` is unix seconds, MSv2 is MJD seconds
 
 - **Decision:** `utils/fits.set_wcs(time_is_unix=…)` selects the convention.
 - **Consequences:** Applying the MJD→unix shift twice puts FITS `DATE-OBS` ~111 years
