@@ -9,7 +9,6 @@ from astropy.wcs import WCS
 
 from pfb_imaging import pfb_version
 from pfb_imaging.utils.misc import to_unix_time
-from pfb_imaging.utils.naming import xds_from_list
 
 
 def to4d(data):
@@ -23,20 +22,6 @@ def to4d(data):
         return data[None, None, None]
     else:
         raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
-
-
-def data_from_header(hdr, axis=3):
-    npix = hdr["NAXIS" + str(axis)]
-    refpix = hdr["CRPIX" + str(axis)]
-    delta = hdr["CDELT" + str(axis)]
-    ref_val = hdr["CRVAL" + str(axis)]
-    return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta, ref_val
-
-
-def load_fits(name, dtype=np.float32):
-    data = fits.getdata(name)
-    data = np.transpose(to4d(data), axes=(1, 0, 3, 2))  # fits and beams table
-    return np.require(data, dtype=dtype, requirements="C")
 
 
 def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None, yx_order=False):
@@ -273,151 +258,6 @@ def create_beams_table(beams_data, cell2deg):
 
 
 @ray.remote
-def rdds2fits(*args, **kwargs):
-    return dds2fits(*args, **kwargs)
-
-
-def dds2fits(
-    dsl,
-    column,
-    outname,
-    norm_wsum=True,
-    otype=np.float32,
-    nthreads=1,
-    do_mfs=True,
-    do_cube=True,
-    psfpars_mfs=None,
-    psfparsf=None,
-    force_unit=None,
-):
-    """Render data variables in dds to FITS files.
-
-    Args:
-        dsl: List of dataset names.
-        column: Data variable to render.
-        outname: Output name for FITS files. Will be appended with _time{timeid}.
-        norm_wsum: If True, divide by wsum to get Jy/beam, otherwise output Jy/pixel.
-        otype: Output data type for FITS file.
-        nthreads: Number of threads to use for loading data.
-        do_mfs: If True, render the MFS image.
-        do_cube: If True, render the cube.
-        psfpars_mfs: Dict mapping timeid to MFS beam parameters (emaj, emin, pa)
-            in degrees with shape (ncorr, 3).
-        psfparsf: Dict mapping timeid to beam parameters for cube with shape
-            (nband, ncorr, 3) in degrees.
-        force_unit: If not None, override the unit in the FITS header with this value.
-
-    Returns:
-        The column name that was rendered.
-    """
-    basename = outname + "_" + column.lower()
-    if norm_wsum:
-        unit = "Jy/beam"
-    else:
-        unit = "Jy/pixel"
-    if force_unit is not None:
-        unit = force_unit
-    dds = xds_from_list(dsl, drop_all_but=[column, "PSFPARSN", "WSUM"], nthreads=nthreads, order_freq=False)
-    timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
-    freqs = [ds.freq_out for ds in dds]
-    freqs = np.unique(freqs)
-    nband = freqs.size
-    for timeid in timeids:
-        # filter by time ID
-        dst = [ds for ds in dds if int(ds.timeid) == timeid]
-        # concat creating a new band axis
-        dsb = xr.concat(dst, dim="band")
-        # LB - these seem to remain in the correct order
-        dsb = dsb.assign_coords({"band": np.arange(nband)})
-        wsums = dsb.WSUM.values
-        wsum = dsb.WSUM.sum(dim="band").values
-        cube = dsb.get(column).values
-        _, _, nx, ny = cube.shape
-        # these should be the same across band and corr axes
-        radec = (dsb.ra, dsb.dec)
-        cell_deg = np.rad2deg(dsb.cell_rad)
-        nband = dsb.band.size
-        ncorr = dsb.corr.size
-
-        if psfpars_mfs is not None:
-            psfpars_mfs_timeid = psfpars_mfs[dsb.timeid]
-            assert psfpars_mfs_timeid.shape == (ncorr, 3), "psfpars_mfs should have shape (ncorr, 3)"
-            da_mfs_timeid = xr.DataArray(
-                data=np.array(psfpars_mfs_timeid)[None, :, :],
-                coords={"band": np.arange(1), "corr": dsb.corr.values, "bpar": dsb.bpar.values},
-            )
-            beams_hdu = create_beams_table(da_mfs_timeid, cell2deg=cell_deg)
-            psfpars_mfs_timeid = psfpars_mfs_timeid[0]  # always Stokes I in fits header
-        else:
-            psfpars_mfs_timeid = None
-            beams_hdu = None
-
-        if do_mfs:
-            # we need a single freq_mfs for the cube
-            freq_mfs = np.sum(freqs[:, None] * wsums) / wsum.sum()
-            hdr = set_wcs(
-                cell_deg,
-                cell_deg,
-                nx,
-                ny,
-                radec,
-                freq_mfs,
-                unit=unit,
-                ms_time=dsb.time_out,
-                gausspar=psfpars_mfs_timeid,
-            )
-            hdr["WSUM"] = wsum[0]  # always Stokes I in fits header
-            if norm_wsum:
-                # already weighted by wsum
-                cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
-            else:
-                # weigted sum
-                cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
-
-            name = basename + f"_time{dsb.timeid}_mfs.fits"
-            save_fits(cube_mfs, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)
-
-        if do_cube:
-            if norm_wsum:
-                cube = cube / wsums[:, :, None, None]
-            name = basename + f"_time{dsb.timeid}.fits"
-            if psfparsf is not None:
-                psfparsf_timeid = psfparsf[dsb.timeid]
-                assert psfparsf_timeid.shape == (nband, ncorr, 3), "psfparsf should have shape (nband, ncorr, 3)"
-                da_timeid = xr.DataArray(
-                    data=psfparsf_timeid,
-                    coords={"band": dsb.band.values, "corr": dsb.corr.values, "bpar": dsb.bpar.values},
-                )
-                psfparsf_timeid = psfparsf_timeid[:, 0]  # always Stokes I in fits header
-                beams_hdu = create_beams_table(da_timeid, cell2deg=cell_deg)
-            elif "PSFPARSN" in dsb:
-                da_timeid = dsb.PSFPARSN
-                psfparsf_timeid = da_timeid.values[:, 0]  # always Stokes I in fits header
-                beams_hdu = create_beams_table(da_timeid, cell2deg=cell_deg)
-            else:
-                psfparsf_timeid = None
-                beams_hdu = None
-
-            hdr = set_wcs(
-                cell_deg,
-                cell_deg,
-                nx,
-                ny,
-                radec,
-                freqs,
-                unit=unit,
-                ms_time=dsb.time_out,
-                gausspar=psfpars_mfs_timeid,
-                gausspars=psfparsf_timeid,
-            )
-            for i in range(nband):
-                hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
-            save_fits(cube, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)
-
-    return column
-
-
-@ray.remote
 def rdt2fits(*args, **kwargs):
     return dt2fits(*args, **kwargs)
 
@@ -439,11 +279,9 @@ def dt2fits(
 ):
     """Render a band-node variable from the imager ``.dt`` DataTree to FITS.
 
-    The DataTree analogue of :func:`dds2fits`: it sources band-stacked data from
-    the ``.dt`` store (one group per output image ``band{b}_time{t}``) instead of
-    a flat ``.dds`` list, and reuses the access-agnostic helpers
-    :func:`set_wcs`/:func:`save_fits`/:func:`create_beams_table`. :func:`dds2fits`
-    is left untouched for the live ``.dds`` consumers.
+    Sources band-stacked data from the ``.dt`` store (one group per output image
+    ``band{b}_time{t}``) and reuses the access-agnostic helpers
+    :func:`set_wcs`/:func:`save_fits`/:func:`create_beams_table`.
 
     Args:
         store_url: path/URL of the ``.dt`` store.

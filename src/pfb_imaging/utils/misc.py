@@ -1,17 +1,12 @@
 import logging
 
-import dask
 import dask.array as da
 import jax
 import jax.numpy as jnp
-import numexpr as ne
 import numpy as np
 from ducc0.fft import c2r, good_size, r2c
 from jax import value_and_grad
-from numba import njit, prange
-from numba.extending import overload
 from scipy.constants import c as lightspeed
-from scipy.linalg import solve_triangular
 from scipy.optimize import fmin_l_bfgs_b
 from skimage.morphology import label
 
@@ -170,54 +165,6 @@ def kron_matvec(op, b):
         zmat = op[d].dot(xmat).T
         x = zmat.ravel()
     return x.reshape(b.shape)
-
-
-@njit(parallel=False, cache=True, nogil=True)
-def kron_matvec2(op, b):
-    dim = len(op)
-    npix = b.size
-    x = b
-
-    for d in range(dim):
-        gd = op[d].shape[0]
-        ngd = npix // gd
-        xmat = np.reshape(x, (gd, ngd))
-        zmat = np.zeros((gd, ngd), dtype=op[0].dtype)
-        opd = op[d]
-        for i in range(gd):
-            for j in range(gd):
-                for k in range(ngd):
-                    zmat[j, k] += opd[i, j] * xmat[i, k]
-        x[:] = zmat.T.ravel()
-    return x
-
-
-def give_edges(p, q, nx, ny, nx_psf, ny_psf):
-    nx0 = nx_psf // 2
-    ny0 = ny_psf // 2
-
-    # image overlap edges
-    # left edge for x coordinate
-    dxl = p - nx0
-    xl = np.maximum(dxl, 0)
-
-    # right edge for x coordinate
-    dxu = p + nx0
-    xu = np.minimum(dxu, nx)
-    # left edge for y coordinate
-    dyl = q - ny0
-    yl = np.maximum(dyl, 0)
-    # right edge for y coordinate
-    dyu = q + ny0
-    yu = np.minimum(dyu, ny)
-
-    # PSF overlap edges
-    xlpsf = np.maximum(nx0 - p, 0)
-    xupsf = np.minimum(nx0 + nx - p, nx_psf)
-    ylpsf = np.maximum(ny0 - q, 0)
-    yupsf = np.minimum(ny0 + ny - q, ny_psf)
-
-    return slice(xl, xu), slice(yl, yu), slice(xlpsf, xupsf), slice(ylpsf, yupsf)
 
 
 def get_padding_info(nx, ny, pfrac):
@@ -627,102 +574,6 @@ def fitcleanbeam(
     return np.array(gausspars)
 
 
-def init_mask(mask, model, output_type, log):
-    if model.ndim == 3:
-        _, nx, ny = model.shape
-    elif model.ndim == 2:
-        nx, ny = model.shape
-    if mask is None:
-        print("No mask provided")
-        mask = np.ones((nx, ny), dtype=output_type)
-    elif mask.endswith(".fits"):
-        try:
-            # avoids circular import
-            from pfb_imaging.utils.fits import load_fits
-
-            mask = load_fits(mask, dtype=output_type).squeeze()
-            assert mask.shape == (nx, ny)
-            print("Using provided fits mask")
-        except Exception as e:
-            print(f"No mask found at {mask}")
-            raise e
-    elif mask.lower() == "model":
-        mask = np.any(model, axis=0)
-        print("Using model to construct mask")
-    else:
-        raise ValueError(f"Unsupported masking option {mask}")
-    return mask
-
-
-def dds2cubes(dds, nband, apparent=False, dual=True, modelname="MODEL", residname="RESIDUAL"):
-    real_type = dds[0].DIRTY.dtype
-    complex_type = np.result_type(real_type, np.complex64)
-    nx, ny = dds[0].DIRTY.shape
-    dirty = [da.zeros((nx, ny), chunks=(-1, -1), dtype=real_type) for _ in range(nband)]
-    model = [da.zeros((nx, ny), chunks=(-1, -1), dtype=real_type) for _ in range(nband)]
-    if residname in dds[0]:
-        residual = [da.zeros((nx, ny), chunks=(-1, -1), dtype=real_type) for _ in range(nband)]
-    else:
-        residual = None
-    wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
-    if "PSF" in dds[0]:
-        nx_psf, ny_psf = dds[0].PSF.shape
-        psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1), dtype=real_type) for _ in range(nband)]
-    else:
-        psf = None
-    if "PSFHAT" in dds[0]:
-        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
-        psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1), dtype=complex_type) for _ in range(nband)]
-    else:
-        psfhat = None
-    mean_beam = [da.zeros((nx, ny), chunks=(-1, -1), dtype=real_type) for _ in range(nband)]
-    if dual and "DUAL" in dds[0]:
-        nbasis, nymax, nxmax = dds[0].DUAL.shape
-        dual = [da.zeros((nbasis, nymax, nxmax), chunks=(-1, -1, -1), dtype=real_type) for _ in range(nband)]
-    else:
-        dual = None
-    for ds in dds:
-        b = ds.bandid
-        if apparent:
-            dirty[b] += ds.DIRTY.data
-            if residname in ds:
-                residual[b] += getattr(ds, residname).data
-        else:
-            dirty[b] += ds.DIRTY.data * ds.BEAM.data
-            if residname in ds:
-                residual[b] += getattr(ds, residname).data * ds.BEAM.data
-        if "PSF" in ds:
-            psf[b] += ds.PSF.data
-        if "PSFHAT" in ds:
-            psfhat[b] += ds.PSFHAT.data
-        if modelname in ds:
-            model[b] = getattr(ds, modelname).data
-        if dual and "DUAL" in ds:
-            dual[b] = ds.DUAL.data
-        mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
-        wsums[b] += ds.WSUM.data[0]
-    wsums = da.stack(wsums).reshape(nband)
-    wsum = wsums.sum()
-    dirty = da.stack(dirty) / wsum
-    model = da.stack(model)
-    if residname in ds:
-        residual = da.stack(residual) / wsum
-    if "PSF" in ds:
-        psf = da.stack(psf) / wsum
-    if "PSFHAT" in ds:
-        psfhat = da.stack(psfhat) / wsum
-    if dual and "DUAL" in ds:
-        dual = da.stack(dual)
-    for b in range(nband):
-        if wsums[b]:
-            mean_beam[b] /= wsums[b]
-    mean_beam = da.stack(mean_beam)
-    dirty, model, residual, psf, psfhat, mean_beam, wsums, dual = dask.compute(
-        dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
-    )
-    return (dirty, model, residual, psf, psfhat, mean_beam, wsums, dual)
-
-
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     utimes, time_bin_counts = np.unique(time, return_counts=True)
     n_time = len(utimes)
@@ -755,136 +606,6 @@ def l1reweight_func(csum, rmsfactor=None, rms_comps=None, alpha=4):
         return (1 + rmsfactor) / (1 + mcomps**alpha / rms_comps[:, None, None] ** alpha)
     else:
         return (1 + rmsfactor) / (1 + mcomps**alpha / rms_comps**alpha)
-
-
-@njit(nogil=True, cache=True)
-def norm_diff(x, xp):
-    return norm_diff_impl(x, xp)
-
-
-def norm_diff_impl(x, xp):
-    return NotImplementedError
-
-
-# @overload(norm_diff_impl, jit_options={**JIT_OPTIONS, "parallel":True})
-@overload(norm_diff_impl, jit_options={**JIT_OPTIONS})  # parallel reduction slower?
-def nb_norm_diff_impl(x, xp):
-    if x.ndim == 3:
-
-        def impl(x, xp):
-            nband, nx, ny = x.shape
-            num = 0.0
-            den = 1e-12  # avoid div by zero
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        num += (x[b, i, j] - xp[b, i, j]) ** 2
-                        den += x[b, i, j] ** 2
-            return np.sqrt(num / den)
-    elif x.ndim == 2:
-
-        def impl(x, xp):
-            nx, ny = x.shape
-            num = 0.0
-            den = 1e-12  # avoid div by zero
-            for i in prange(nx):
-                for j in range(ny):
-                    num += (x[i, j] - xp[i, j]) ** 2
-                    den += x[i, j] ** 2
-            return np.sqrt(num / den)
-    else:
-        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
-
-    return impl
-
-
-def remove_large_islands(x, max_island_size=100):
-    islands = label(x.squeeze())
-    num_islands = islands.max()
-    for i in range(1, num_islands + 1):
-        msk = islands == i
-        num_pix = np.sum(msk)
-        if num_pix > max_island_size:
-            x[msk] = 0.0
-    return x
-
-
-@njit(parallel=False, nogil=True, cache=True, inline="always")
-def freqmul(aop, x):
-    nband, nx, ny = x.shape
-    out = np.zeros_like(x)
-    for k in range(nband):
-        for li in range(nband):
-            for i in range(nx):
-                for j in range(ny):
-                    out[k, i, j] += aop[k, li] * x[li, i, j]
-    return out
-
-
-def setup_parametrisation(mode="id", minval=1e-5, sigma=1.0, freq=None, lscale=1.0):
-    """
-    Given a parametrisation x = f(s) return:
-
-    func - operator that evaluates x
-    finv - operator that evaluates s = f^{-1}(x)
-    dfunc - operator that evaluates dx/ds at fixed x = x0
-    dhfunc - operator that evaluates the adjoint of dfunc at x = x0
-    """
-    nu = freq / np.mean(freq)
-    nband = nu.size
-    nudiffsq = (nu[:, None] - nu[None, :]) ** 2
-    kmat = sigma**2 * np.exp(-nudiffsq / (2 * lscale**2))
-    lmat = np.linalg.cholesky(kmat + 1e-10 * np.eye(nband))
-    lmath = lmat.T
-    if mode == "id":
-
-        def func(x):
-            return freqmul(lmat, x)
-
-        def finv(x):
-            return solve_triangular(lmat, x, lower=True)
-
-        def dfunc(x0, v):
-            return freqmul(lmat, v)
-
-        def dhfunc(x0, v):
-            return freqmul(lmath, v)
-    elif mode == "exp":
-
-        def func(x):
-            return np.exp(freqmul(lmat, x))
-
-        def finv(x):
-            tmp = solve_triangular(lmat, x, lower=True)
-            return np.log(np.maximum(np.abs(tmp), minval))
-
-        def dfunc(x0, v):
-            return np.exp(freqmul(lmat, x0)) * freqmul(lmat, v)
-
-        def dhfunc(x0, v):
-            return freqmul(lmath, v * np.exp(freqmul(lmat, x0)))
-
-    else:
-        raise ValueError(f"Unknown mode - {mode}")
-
-    return func, finv, dfunc, dhfunc
-
-
-def weight_from_sigma(sigma):
-    weight = ne.evaluate("1.0/(s*s)", local_dict={"s": sigma}, casting="same_kind")
-    return weight
-
-
-def combine_columns(x, y, dc, dc1, dc2):
-    """
-    x   - dask array containing dc1
-    y   - dask array containing dc2
-    dc  - string that numexpr can evaluate
-    dc1 - name of x
-    dc2 - name of y
-    """
-    ne.evaluate(dc, local_dict={dc1: x, dc2: y}, out=x, casting="same_kind")
-    return x
 
 
 def set_image_size(
@@ -955,18 +676,6 @@ def set_image_size(
     return nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg
 
 
-@njit(parallel=True)
-def parallel_standard_normal(shape):
-    rows, cols = shape
-    result = np.empty(shape, dtype=np.float64)
-
-    for i in prange(rows):
-        for j in range(cols):
-            result[i, j] = np.random.standard_normal()
-
-    return result
-
-
 def taperf(shape, taper_width):
     tapers1d = ()
     for npix in shape:
@@ -975,48 +684,3 @@ def taperf(shape, taper_width):
         taper[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9 * np.pi, taper_width)))
         tapers1d += (taper,)
     return np.outer(*tapers1d)
-
-
-def wplanar(uvw, threshold=1e-5):
-    """
-    Checks if uv lie in a plane using PCA.
-
-    """
-    cov_mat = np.cov(uvw, rowvar=False)
-    eigenvalues = np.linalg.eigvalsh(cov_mat)
-    # sorted in ascending order
-    ratio = eigenvalues[0] / eigenvalues[-1]
-    if ratio > threshold:
-        return False
-    else:
-        return True
-
-
-def fit_hyperplane(x, y):
-    """Approximate a surface by a hyperplane in D dimensions
-
-    inputs:
-        x - D x N array of coordinates.
-        y - N array of (possibly noisy) observations.
-            Can be complex valued.
-
-    outputs:
-        theta - a vector of coefficients suct that X.T.dot(theta)
-                is the hyperplane approximation of y and X is x
-                with a row of ones appended as the final axis
-    """
-    dim, _ = x.shape
-    y = y.squeeze()[None, :]
-    z = np.vstack((x, y))
-    cov = np.cov(z)
-    s, vec = np.linalg.eigh(cov)
-    n = vec[:, 0].conj()  # defines normal to the plane
-    theta = np.zeros(dim + 1, dtype=y.dtype)
-    for d in range(dim + 1):
-        if d < dim:
-            theta[d] = -n[d] / n[-1]
-        else:
-            # we need to take the mean here because y can be noisy
-            # i.e. we do not have a point exactly in the plane
-            theta[d] = np.mean(n[None, 0:-1].dot(x) / n[-1] + y)
-    return theta

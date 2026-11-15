@@ -180,7 +180,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 - **Decision:** Consumers of the imager tree use `xr.open_datatree`,
   `ds.to_zarr(group=…, mode="a")` and `dt.children` directly — no
-  `xds_from_url`/`xds_from_list`-style wrappers (those remain for the legacy `.dds`),
+  `xds_from_url`/`xds_from_list`-style wrappers (the legacy `.dds` ones are gone),
   and no one-level shims over the native API.
 - **Gotcha bundled with it:** `to_zarr(mode="a")` replaces a group's **attrs
   wholesale** (variables merge, attrs don't) — write-back must start from the full
@@ -313,8 +313,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   image-and-beam-orientation.md.
 - **Consequences:** Non-square images work. The refactor was verified output-equivalent against
   the pre-refactor code on the test MS (cube/psf to single-precision threading noise ~1e-7;
-  `psf_pa` bitwise). The `.dt` imager path has since followed (D20); only the legacy `.dds`
-  reference code keeps wgridder (X, Y) arrays. The zarr-beam branch
+  `psf_pa` bitwise). The `.dt` imager path has since followed (D20), and the legacy `.dds`
+  reference code that kept wgridder (X, Y) arrays has been deleted. The zarr-beam branch
   (`reproject_and_interp_beam` + its surviving hack + the feed→sky parity question) was the one
   exception on the hci path; D25 deleted it, so no transpose or flip remains there either.
   Changing any transpose/flip on this path must keep `tests/test_beam_orientation.py` green.
@@ -570,7 +570,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   made "no beam" and "MeerKAT L-band" indistinguishable to the validation code.
 - **Consequences:** callers pass two options instead of one; a beam model with a
   missing or invalid band raises `ValueError` up front rather than deep in a Ray task.
-  `utils/beam.reproject_and_interp_beam` is now uncalled (see Known debt). MdV
+  `utils/beam.reproject_and_interp_beam` became uncalled and was later deleted (in git at
+  `12c52aa`). MdV
   feed→sky parity becomes entirely meerkat-beams' question. If a second model ever
   needs a different band vocabulary, `--primary-beam-band` is the option to revisit.
   **Gotcha:** the deprecation branch was first written as
@@ -2250,10 +2251,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   way, and `HessianTree` survives only by accident (f8 scratch silently upcasts a c4 `psfhat`).
   The fix is casting at the ducc seams while image-space cubes stay f8 — deferred, since the
   second-order schemes want double anyway. Until then a single-precision tree is imager/FITS-only.
-- `utils/beam.reproject_and_interp_beam` is dead code — uncalled since D25 deleted the
-  zarr-beam branch, and still carrying the pre-D19 reproject bugs it was written
-  against. Delete it once it is clear raw MdV zarr beams are not coming back; if they
-  are, rewrite it along D19 lines and settle the feed-plane→sky parity question first
+- Raw MdV zarr beams have no reader. `utils/beam.reproject_and_interp_beam`, uncalled since
+  D25 deleted the zarr-beam branch, was removed in the dead-code sweep (last in git at
+  `12c52aa`) with the pre-D19 reproject bugs it was written against. If raw MdV beams come
+  back, rewrite it along D19 lines and settle the feed-plane→sky parity question first
   (image-and-beam-orientation.md §5).
 
 ## Recurring gotchas

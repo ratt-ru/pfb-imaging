@@ -20,19 +20,6 @@ JIT_OPTIONS = {
 }
 
 
-@njit(**JIT_OPTIONS, inline="always")
-def _es_kernel(x, y, xkern, ykern, betak):
-    for i in range(x.size):
-        if x[i] * x[i] < 1:
-            xkern[i] = np.exp(betak * (np.sqrt(1 - x[i] * x[i]) - 1))
-        else:
-            xkern[i] = 0.0
-        if y[i] * y[i] < 1:
-            ykern[i] = np.exp(betak * (np.sqrt(1 - y[i] * y[i]) - 1))
-        else:
-            ykern[i] = 0.0
-
-
 @njit(nogil=True, cache=True)
 def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
     """Nearest-cell sum of the weights on the (folded, v >= 0) padded uv grid.

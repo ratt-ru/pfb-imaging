@@ -20,7 +20,7 @@ resolve.
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
 2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods. (`dask-ms` lost its last importer with the dask `hci` (D61); `distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
-3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `utils/misc` ↔ `utils/fits` (`load_fits`), `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
+3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.image_item`).
 5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s `primal_dual_numba`).
 
@@ -129,8 +129,8 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
 `docs/wiki/imager-pipeline.md`.** Do not restate them here.
 
 * **Native DataTree API only.** `xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`.
-  Do not add `xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (those remain only
-  for the legacy `.dds` consumers), and do not add one-level-deep shims around the native API.
+  Do not add `xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (the legacy `.dds`
+  ones were deleted with their last consumer), and do not add one-level-deep shims around the native API.
 * **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")`,
   scratch beam `("corr", "m_beam", "l_beam")`. ducc's x-major world exists only behind
   zero-copy `.T` views at the wgridder call sites (D19/D20).
