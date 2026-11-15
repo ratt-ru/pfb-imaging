@@ -137,7 +137,7 @@ def set_wcs(
         header["ORIGIN"] = f"pfb-imaging: v{pfb_version}"
         header["SPECSYS"] = "TOPOCENT"
         if ms_time is not None:
-            # MSv2 (.dds) carries MJD seconds; MSv4 (.dt) already carries unix
+            # MSv2 times are MJD seconds; MSv4 (.dt) already carries unix
             unix_time = ms_time if time_is_unix else to_unix_time(ms_time)
             utc_iso = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             header["UTC_TIME"] = utc_iso

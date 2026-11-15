@@ -134,7 +134,7 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
 * **Image-space arrays are (Y, X)-ordered end to end** — `.dt` dims `("corr", "y", "x")`,
   scratch beam `("corr", "m_beam", "l_beam")`. ducc's x-major world exists only behind
   zero-copy `.T` views at the wgridder call sites (D19/D20).
-* **`.dt` times are unix seconds; the legacy `.dds` is MJD seconds.** `utils/fits.set_wcs`
+* **`.dt` times are unix seconds; MSv2 times (and the hci cube's `TIME`) are MJD seconds.** `utils/fits.set_wcs`
   takes `time_is_unix=` — the wrong convention shifts FITS `DATE-OBS` by ~111 years (D13).
 * **The stored `BEAM` is the effective response `B/n`** and every ducc call on this path stays
   `divide_by_n=False` (D22). Do not "fix" this; consumers wanting the bare primary beam must

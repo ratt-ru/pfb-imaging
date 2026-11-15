@@ -29,8 +29,8 @@ data-moving transposes exist**: ducc's x-major world is confined to the
 `vis2dirty` call sites, which fill the `(ny, nx)` buffers through zero-copy
 transposed views (`dirty=buf.T` — ducc accepts strided output; verified to
 1e-12 against the C-ordered return path). The other x-major citizen is
-`fitcleanbeam` (shared with the legacy `.dds` path, PA convention defined by
-its input axes); `image_item` calls it with `yx_order=True`, which adapts via
+`fitcleanbeam` (shared with the imager and restore paths, PA convention defined
+by its input axes); `image_item` calls it with `yx_order=True`, which adapts via
 an internal zero-copy view and returns bitwise-identical parameters.
 
 ## 2. Measured ground truth for the wgridder image

@@ -303,7 +303,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   transposes and no flips exist.** ducc's x-major world is confined to the `vis2dirty` call
   sites, which fill the `(ny, nx)` buffers through zero-copy transposed views (`dirty=buf.T`;
   ducc accepts strided output). The other x-major seam is `fitcleanbeam` — shared with the
-  legacy `.dds` path, its PA convention defined by its input axes — called with
+  imager and restore paths, its PA convention defined by its input axes — called with
   `yx_order=True`, an explicit flag that adapts via an internal zero-copy view and returns
   identical parameters for either order.
 - **Rationale:** Every layer keeps the index order its producer defines (astropy/reproject, the

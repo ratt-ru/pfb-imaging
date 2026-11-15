@@ -1,10 +1,6 @@
 import numpy as np
 from numba import njit, prange
 
-ifftshift = np.fft.ifftshift
-fftshift = np.fft.fftshift
-
-
 # Pixels per tile. The (b, c) loops re-touch one band slice of ``out`` per band,
 # so the tile must be small enough that the slice stays in L2 -- otherwise the
 # kernel re-streams ``out`` nband times from memory and loses to numpy at

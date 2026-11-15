@@ -125,7 +125,7 @@ All partitions in a band share one output grid: multi-field selections are repha
 pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`
 offsets are the `l0, m0` attrs, with `x0,y0`/`flip_*` derived on demand from
 `wgridder_conventions(l0, m0)` rather than stored. `time_out` is **unix seconds** (the
-legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
+MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 ## Two passes and the counts product
 

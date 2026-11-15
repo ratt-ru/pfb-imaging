@@ -34,4 +34,4 @@ methods/attributes. To contribute an algorithm:
    `DeconvSolver` Protocol (`first/forward/backward/last`) directly instead.
 
 The legacy per-algorithm drivers (`core/sara.py`, `core/kclean.py`, reading the
-`.dds`) remain as validation oracles; `pfb deconv` reads the imager `.dt`.
+`.dds`) were removed in 0.1.0 (#277); `pfb deconv` reads the imager `.dt`.
