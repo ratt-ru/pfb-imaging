@@ -436,8 +436,9 @@ def deconv(
         # MODEL_BEST is written when a cycle improves on best_rms, so the best
         # model never needs to be held in memory. A resume carries best_rms over
         # from the run that wrote MODEL_BEST (#380); before best_rms was stored,
-        # the rms/rmax attrs held the best values, so an older .dt falls back to them.
-        if "best_rms" in first.attrs:
+        # the rms/rmax attrs held the last run's best, so an older .dt falls back
+        # to them. Without a MODEL_BEST (say, a hand reset) there is no best to keep.
+        if "MODEL_BEST" in first and "best_rms" in first.attrs:
             best_rms, best_rmax = first.attrs["best_rms"], first.attrs["best_rmax"]
         elif "MODEL_BEST" in first and "rms" in first.attrs:
             best_rms, best_rmax = first.attrs["rms"], first.attrs["rmax"]

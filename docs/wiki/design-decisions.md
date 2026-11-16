@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-16T13:00:00Z
-last_verified_commit: 6a3fbc8
+timestamp: 2026-11-16T14:00:00Z
+last_verified_commit: d7b58aa
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -2455,5 +2455,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `niters`/`rms`/`rmax`/`best_rms`/`best_rmax`/`hess_norm` attrs from each band group (zarr),
   then `zarr.consolidate_metadata`. A stored `BRESIDUAL` is read even without a `MODEL`,
   so leaving it resumes from a stale gradient. `rms`/`rmax` are the written `MODEL`'s;
-  `best_rms`/`best_rmax` are `MODEL_BEST`'s and carry over a resume (#380). On a `.dt`
-  written before #380, `rms`/`rmax` held the best values, and a resume reads them as such.
+  `best_rms`/`best_rmax` are `MODEL_BEST`'s and carry over a resume when `MODEL_BEST` is
+  there (#380). On a `.dt` written before #380, `rms`/`rmax` held the best of the *last* run
+  only, and a resume reads them as the best. That can be worse than a `MODEL_BEST` kept from an
+  earlier run, so such a store is better protected than before but not fully.
