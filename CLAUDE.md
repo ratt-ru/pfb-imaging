@@ -90,7 +90,7 @@ rediscovery:
   logs. The imager progress lines carry per-task post-gc RSS, wall and CPU telemetry — read it
   before theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`). For
   where the time goes inside the remote calls, set `PFB_RAY_TIMELINE` and `PFB_CPROFILE_DIR`
-  and read them with `scripts/profile_report.py`.
+  and read them with `scripts/profiling/profile_report.py`.
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
   (serialisation, lazy loading, retention) reproduces on the test MS (extract
   `tests/data/test_ascii_1h60.0s.MS.tar.gz` to scratch) with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
@@ -128,7 +128,7 @@ src/pfb_imaging/
 └── wavelets/             # wavelet transforms
 ```
 
-`scripts/` holds profiling and automation helpers, plus `scripts/msv4_issues/` reproducers
+`scripts/` holds automation helpers, `scripts/profiling/` (start at its README), plus `scripts/msv4_issues/` reproducers
 and `scripts/check_docs.py`, which gates this file and the wiki against each other.
 
 ## Agent skills

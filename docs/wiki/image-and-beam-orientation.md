@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-11-15T18:00:00Z
-last_verified_commit: ade04fb
+timestamp: 2026-11-16T12:30:00Z
+last_verified_commit: 6a3fbc8
 ---
 
 # Image and beam orientation conventions (hci)
@@ -13,7 +13,7 @@ Three different array orders coexist on the `hci` beam path. Every historical
 alignment bug (including the "hack to get the images to align",
 `547458f`/`330bc5d`) came from conflating them. The facts below were **measured**
 with synthetic point sources / asymmetric beams, not derived from documentation —
-re-run the pinning test (planned, see Status) before "fixing" anything here.
+re-run the pinning test (`tests/test_beam_orientation.py`, see Status) before "fixing" anything here.
 
 ## 1. The three array orders
 

@@ -469,7 +469,7 @@ def test_prior_needs_more_cg_iterations_and_that_is_expected(band_pool):
     ``lambda_max(M)`` is fixed, so ``cond(M)`` rises by up to ``gp_cap`` and CG
     needs of order ``sqrt(gp_cap)`` more iterations. Measured on real data:
     95 -> >150 applications for one forward solve
-    (``scripts/profile_freq_correlated_hessian.py``). Expecting a prior to *help*
+    (``scripts/profiling/profile_freq_correlated_hessian.py``). Expecting a prior to *help*
     CG is reading it as added regularisation; this one is a relaxation.
     """
     from pfb_imaging.operators.hessian import freq_precision

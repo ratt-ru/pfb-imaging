@@ -51,7 +51,7 @@ cores it kept busy, so a task that should use ``--nthreads`` threads but shows
 Usage::
 
     PFB_RAY_TIMELINE=prof/timeline.json PFB_CPROFILE_DIR=prof/pstats pfb imager ...
-    python scripts/profile_report.py prof/timeline.json prof/pstats > profile.txt
+    uv run python scripts/profiling/profile_report.py prof/timeline.json prof/pstats > profile.txt
 
 Run it with the environment's own python (``.venv/bin/python``), not ``uv run``:
 under ``uv run`` Ray relaunches its workers without your ``--extra`` flags.

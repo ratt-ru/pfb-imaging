@@ -51,7 +51,7 @@ term over nband is reported alongside (``--coupling-nbands``).
 
 Run (from the repo root)::
 
-    uv run python scripts/profile_freq_correlated_hessian.py /path/to/out_I.dt \
+    uv run python scripts/profiling/profile_freq_correlated_hessian.py /path/to/out_I.dt \
         --gp-length-scale 0.5 --nthreads 8
 
 Writes ``<dt>_freq_prior_profile_gp<ls>_cap<cap>.json``.

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-10-24T18:40:00Z
-last_verified_commit: 055751b
+timestamp: 2026-11-16T12:30:00Z
+last_verified_commit: 6a3fbc8
 ---
 
 # MSv4 DataTree imager pipeline
@@ -89,7 +89,7 @@ D27. Pinned by `tests/test_imager_precision.py`.
 `--beam` (default on) gates only the beam FITS; the `.dt` `BEAM` is load-bearing (D22)
 and always stored. Beam FITS are dimensionless (`BUNIT=""`), not wsum-normalised, and
 carry a `BEAMINCN` card because the stored beam includes the folded n-term. Without `--transfer-model-from` the imager does not write `RESIDUAL`, so **`deconv` falls back to `DIRTY` when it is absent**
-(`core/deconv.py:281`). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
+(`core/deconv.py`, where the driver loads the band cubes). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
 apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point (D52) right after it; all of them before Ray starts. Frequency coverage is checked after pass 2, against each band's effective `freq_out`, the frequency the model was rendered at (D52).
@@ -132,8 +132,10 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 1. **Pass 1** (`utils/stokes2vis.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
-   over surviving channels — this is what the beam is evaluated at, D28), beam on the
-   small grid, and write the piece keyed
+   over surviving channels — this is what the beam is evaluated at, D28), the beam
+   evaluated on a small field-centred grid and placed on the output image grid
+   (`beam_on_image_grid`, #281; the full-resolution beam per piece is most of the scratch
+   and of both passes' I/O on large images, #365), and write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
    counts under robust weighting (natural weighting skips gridding them,
    `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
@@ -223,15 +225,17 @@ The PSF is computed once in pass 2 and **never recomputed**:
   arrays; owns mosaic correctness (per-partition beam + offsets). An exact-gridder
   `HessianTree` mode was deliberately dropped as redundant with this function.
 
-This mirrors the legacy `image_data_products`/`compute_residual` split.
+This mirrors the split the retired MSv2 pipeline had between `image_data_products` and `compute_residual`.
 
 ## Access layer and testing strategy
 
 Native DataTree API only (`xr.open_datatree`, `ds.to_zarr(group=…, mode="a")`,
 `dt.children`) — no `xds_from_url`-style wrappers for the `.dt` (design-decisions.md
-D12, including the `mode="a"` attrs-replacement gotcha). Correctness rests on the
-legacy path as oracle: single-field imager↔`init`+`grid` MFS equivalence
-(`tests/test_imager.py`, in-process since arcae 0.5.2), `grid_partition`
+D12, including the `mode="a"` attrs-replacement gotcha). Correctness rests on ground
+truth, since the legacy `init`+`grid` oracle was retired with those commands in 0.1.0
+(#277): an injected point-source sky recovered at its known positions and fluxes
+(`tests/test_imager.py::test_imager_groundtruth`) and the dirty image against a direct
+Fourier transform (`test_imager_matches_dft`); then `grid_partition`
 row-additivity and `residual_from_partitions` invariants (`tests/test_imager_pass2.py`),
 `HessianTree` delta-PSF/two-partition identities (`tests/test_hessian_tree.py`), counts
 reductions (`tests/test_weighting.py`), tree FITS (`tests/test_fits_tree.py`), and the
@@ -259,8 +263,8 @@ linear in rows, so the two must agree to gridder precision).
   groups regardless: the extension dishes carry the longest spacings (`MPMP` up
   to 8.6 km, `MPM` up to 11.8 km, against 6.3 km for the longest `MM`), so they
   hold the high-resolution uv coverage.
-- **Band-drop indexing:** a fully-flagged band leaves a gap in imager band ids while
-  legacy `init`+`grid` reindexes contiguously; align on `freq_out`, never on band index.
+- **Band-drop indexing:** a fully-flagged band leaves a gap in imager band ids (the
+  retired `init`+`grid` reindexed contiguously); align on `freq_out`, never on band index.
 
 ## Shared MSv4 access
 

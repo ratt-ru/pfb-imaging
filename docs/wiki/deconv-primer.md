@@ -3,8 +3,8 @@ type: Domain Primer
 title: Deconvolution primer — the PFB framework, math to code
 description: Maps the preconditioned forward-backward algorithm, the SARA prior and their numerical conventions onto the pfb deconv code, including the constants that break convergence when wrong.
 tags: [deconvolution, sara, primal-dual, forward-backward, protocols, conventions]
-timestamp: 2026-10-19T21:00:00Z
-last_verified_commit: 4ba2821
+timestamp: 2026-11-16T12:30:00Z
+last_verified_commit: 6a3fbc8
 ---
 
 # Deconvolution primer — the PFB framework, math to code
@@ -67,7 +67,7 @@ is limited by the weakly-measured large-scale (short-baseline) modes; and (2) a 
 (the `abs(PSFHAT)` preconditioner underestimates curvature — off-axis, via the w-term, and
 via **PSF truncation**: `nx_psf = good_size(psf_oversize·nx)`, default 1.4 not 2, so the
 convolution is not aliasing-exact) needs `γ < 2/λmax(M⁻¹H_exact)`, which can drop below the
-driver's fixed `gamma=0.95`, so the unregularised diagnostic — or a low-`psf_oversize` run —
+default step (`--gamma` is 1.0 on the CLI, 0.95 when `deconv_core` is called directly), so the unregularised diagnostic — or a low-`psf_oversize` run —
 may diverge at full step where a regularised run (prox stabilised) does not. Truncation
 degrades this rate/stability but **never the fixed point** (measured to ~1e-13 across
 `psf_oversize ∈ [1, 2]`; κ(M⁻¹H) ~5.5 at 2× → ~8 at the 1.4× default → ~50 at 1×). Guarded
@@ -88,7 +88,7 @@ here), and Ψ is the concatenation of `nbasis` orthonormal bases (`self` + Daube
   `nu=1.0` the dual step is
   ~nbasis× too large and the backward solve **diverges on multi-band data** (single-band
   can survive on stability margin, which is why tests missed it). `deconv/presets.py`
-  `make_sara` passes `nu=len(bases)` to `L21`; legacy `core/sara.py` passes
+  `make_sara` passes `nu=len(bases)` to `L21`, as the retired `core/sara.py` passed
   `nu=nbasis` to `primal_dual`. Guarded by
   `tests/test_pfb_solver.py::test_make_sara_sets_dictionary_nu`.
 - **`hess_norm`** is the spectral norm of the *cube* Hessian (max over bands), power-

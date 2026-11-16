@@ -17,13 +17,13 @@ For a square (N, N) input both approaches do the same number of multiply-adds,
 so any difference is purely due to memory access pattern and parallelisation.
 
 Usage:
-    python scripts/profile_polyphase.py [--size 2048] [--warmup 5] [--repeats 30]
+    uv run python scripts/profiling/profile_polyphase.py [--size 2048] [--warmup 5] [--repeats 30]
 """
+
+from _common import setup_threads
 
 import argparse
 import gc
-import shutil
-from pathlib import Path
 from time import time
 
 import numba
@@ -37,19 +37,6 @@ from pfb_imaging.wavelets.convolutions import (
     upsampling_convolution_valid_sf,
     upsampling_convolution_valid_sf_set,
 )
-
-# ── Clear stale Numba caches ────────────────────────────────────────
-# Numba's file cache (`cache=True`) is keyed per-function by source hash.
-# Functions decorated with `inline="always"` get compiled into their callers,
-# but Numba does NOT track this cross-function dependency.  If an inlined
-# function changes while the caller's source stays the same, the caller's
-# cached machine code is stale and loading it can segfault.
-#
-# Clearing __pycache__ dirs on every session start is cheap (~ms) and
-# eliminates the problem entirely during development.
-_src_root = Path(__file__).resolve().parent.parent / "src" / "pfb_imaging"
-for _cache_dir in _src_root.rglob("__pycache__"):
-    shutil.rmtree(_cache_dir, ignore_errors=True)
 
 
 def coeff_size(nsignal, nfilter):
@@ -200,7 +187,9 @@ def main():
     parser.add_argument("--size", type=int, default=2048, help="Square image dimension")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup iterations")
     parser.add_argument("--repeats", type=int, default=30, help="Timed iterations")
+    parser.add_argument("--nthreads", type=int, default=None, help="numba threads (default: all cores)")
     args = parser.parse_args()
+    setup_threads(args.nthreads)
 
     size = args.size
     warmup = args.warmup
@@ -208,7 +197,7 @@ def main():
     wavelets = ["db1", "db2", "db3", "db4", "db5"]
 
     print(f"Image: ({size}, {size}),  warmup={warmup},  repeats={repeats}")
-    print(f"Numba {numba.__version__},  threads={numba.config.NUMBA_NUM_THREADS}")
+    print(f"Numba {numba.__version__},  threads={numba.get_num_threads()}")
     print()
     print("ROW  = prange over rows, plain downsampling/upsampling_convolution (axis-1, contiguous)")
     print("POLY = conv_{down,up}sample_axis0_polyphase_pair (axis-0, strided)")

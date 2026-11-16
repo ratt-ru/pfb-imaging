@@ -49,7 +49,7 @@ capture file, so there are two ways to capture -- use either or both.
 Then, in the same environment (native frames resolve against that machine's
 shared libraries)::
 
-    python scripts/memray_report.py /scratch/mem > memray_report.txt
+    uv run python scripts/profiling/memray_report.py /scratch/mem > memray_report.txt
 
 For each capture it prints:
 
