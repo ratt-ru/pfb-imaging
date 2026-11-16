@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-16T14:00:00Z
-last_verified_commit: 0b73ac5
+timestamp: 2026-11-16T15:00:00Z
+last_verified_commit: be52163
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -2432,9 +2432,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   intuition. When the quotient has a closed form (Gaussians do), evaluate it; see
   D31. The same reasoning applies to any "divide by the transform of a model
   kernel" step, and widening the kernel's support only fixes the truncation half.
-- **Warm-cache timing:** back-to-back runs on the same MS read from page cache
-  (stimela stats `R GB` ≈ 0); only compare wall times at matching cache state.
-- **stimela deconv memory stats are dominated by fixed Ray overhead** on small tests
+- **Warm-cache timing:** back-to-back runs on the same MS read from page cache and
+  hardly touch the disk; only compare wall times at matching cache state.
+- **deconv's process memory on small tests is dominated by fixed Ray overhead**
   (plasma reservation + resident worker processes), not data — don't chase them below
   ~1 GB/process.
 - **Transient-injection checks must read the raw `cube`, not `cube_mean`.** With zeroed
