@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-11-16T12:30:00Z
-last_verified_commit: 6a3fbc8
+timestamp: 2026-11-16T15:00:00Z
+last_verified_commit: be52163
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -141,8 +141,8 @@ likely) -- where the same code without memray peaked at 3.5 GB.
 
 ## Where the time goes
 
-Stimela's stats give one wall time per step. Three finer sources, all read by
-`scripts/profiling/profile_report.py` (its docstring is the how-to):
+A run's total wall time says nothing about where it went. Three finer sources,
+all read by `scripts/profiling/profile_report.py` (its docstring is the how-to):
 
 - **Driver phases, always on.** `memprof.PhaseClock` ends the imager,
   `degrid` and `deconv` logs with a `Time by phase:` line (a phase that recurs,
@@ -326,7 +326,7 @@ and exact-residual inputs. Its memory/scheduling rules:
   "startup concurrency" warning.
 - **Fixed overhead floor.** A deconv session costs ~9 resident processes for
   4 bands (band actors + Ray prestarts) plus the plasma reservation; on small
-  test images this dwarfs the data and dominates stimela's memory stats.
+  test images this dwarfs the data and dominates whole-run memory figures.
   Judge data-scale behaviour by the per-worker `rss_gb` telemetry, not the
   session total.
 - **Telemetry.** `BandWorkerPool.log_telemetry` logs each worker's post-gc

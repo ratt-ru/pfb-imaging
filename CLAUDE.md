@@ -84,13 +84,19 @@ timings, the marking rule and the CI split: `.claude/rules/testing-and-ci.md` §
 Lessons from real debugging sessions in this repo — follow them; they are cheaper than
 rediscovery:
 
-* **Profiling loop:** the maintainer drops stimela logs into `tmp/` for comparison (e.g.
-  `tmp/logs_dirty_and_init` as the legacy baseline vs `tmp/logs_imager*`). Start with
-  `stimela.stats.summary.txt` (wall / CPU% / peak-mem / total-I/O per step), then the per-step
-  logs. The imager progress lines carry per-task post-gc RSS, wall and CPU telemetry — read it
-  before theorising about memory (interpretation guide: `docs/wiki/memory-and-ray.md`). For
-  where the time goes inside the remote calls, set `PFB_RAY_TIMELINE` and `PFB_CPROFILE_DIR`
-  and read them with `scripts/profiling/profile_report.py`.
+* **Profiling uses the built-in machinery, switched on by environment variables:**
+  * Start with what every run logs. `imager`, `degrid` and `deconv` end with a
+    `Time by phase:` line. The progress lines carry per-task post-gc RSS, wall and CPU
+    telemetry; read it before theorising about memory.
+  * For time inside the remote calls, set `PFB_RAY_TIMELINE=<file.json>` and
+    `PFB_CPROFILE_DIR=<dir>`, then read both with `scripts/profiling/profile_report.py`.
+  * For what allocated the memory, set `PFB_MEMRAY_DIR=<dir>` and read it with
+    `scripts/profiling/memray_report.py` (`PFB_MEMRAY_NATIVE=0` drops native-stack
+    tracking). Take timings and peaks from a run without memray, since it slows everything
+    and inflates RSS.
+  * How to read all of these: `docs/wiki/memory-and-ray.md` ("Where the time goes" and "The
+    diagnostic that separates the layers"); kernel-level benchmarks:
+    `scripts/profiling/README.md`.
 * **Reproduce locally before proposing fixes:** cluster-scale Ray/xarray behaviour
   (serialisation, lazy loading, retention) reproduces on the test MS (extract
   `tests/data/test_ascii_1h60.0s.MS.tar.gz` to scratch) with a pickle-roundtrip harness — pickling a datatree node is exactly what Ray does to task
@@ -100,8 +106,8 @@ rediscovery:
   A hypothesis that does not add up to the measured GB is incomplete — the residual usually
   lives below Python (library caches, allocator arenas) where `gc` and object counting are
   blind.
-* **Beware warm-cache timing:** back-to-back runs on the same MS read from page cache (the
-  stats `R GB` column shows ~0); only compare wall times at matching cache state.
+* **Beware warm-cache timing:** back-to-back runs on the same MS read from page cache and
+  hardly touch the disk; only compare wall times at matching cache state.
 * **One mechanism per commit,** with the measured before/after in the commit message. It keeps
   cluster-run bisection possible when a change must be re-litigated.
 * **`gh issue view` and `gh pr edit` are permanently broken on this machine — use `gh api`.**
