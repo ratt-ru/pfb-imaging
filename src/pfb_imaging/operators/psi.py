@@ -673,8 +673,11 @@ class PsiNocopyt(object):
         self.ny = ny
         self.nbasis = len(bases)
         self.nthreads = nthreads
-        self.nxmax = self.psib[0].nxmax
-        self.nymax = self.psib[0].nymax
+        # the jitclass writes (nbasis, nxmax, nymax) in its own naming; a
+        # PsiOperator's (nymax, nxmax) are its coefficient buffer's axes
+        # (#376), so the names cross here
+        self.nymax = self.psib[0].nxmax
+        self.nxmax = self.psib[0].nymax
 
         effective = min(nthreads, numba.config.NUMBA_NUM_THREADS)
         numba.set_num_threads(effective)
@@ -751,7 +754,9 @@ class PsiNocopytRay:
         elif workers.nband != nband:
             raise ValueError(f"workers pool has {workers.nband} bands, expected {nband}")
         self._pool = workers
-        self.nxmax, self.nymax = self._pool.init_psi(nx, ny, bases, nlevel)
+        # the workers' jitclass writes (nbasis, nxmax, nymax) in its own naming;
+        # a PsiOperator's (nymax, nxmax) are its coefficient buffer's axes (#376)
+        self.nymax, self.nxmax = self._pool.init_psi(nx, ny, bases, nlevel)
         self._bases = tuple(bases)
         self._nlevel = nlevel
         self._psib_sum = None
@@ -779,7 +784,7 @@ class PsiNocopytRay:
             self._psib_sum = psi_band_maker_nocopyt(
                 self.ny, self.nx, self._bases, self._nlevel, synthesis_scratch=False
             )
-            self._csum = np.empty((self.nbasis, self._psib_sum.nxmax, self._psib_sum.nymax))
+            self._csum = np.empty((self.nbasis, self.nymax, self.nxmax))
             self._xsum = np.empty((self.ny, self.nx))
             self._psib_sum.dot(np.zeros((self.ny, self.nx)), self._csum)  # JIT warm-up
 

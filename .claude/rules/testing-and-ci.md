@@ -112,7 +112,7 @@ wiki design-decisions D14).
 `pyproject.toml`'s `addopts` carries `-m "not slow"`, so the bare command is the loop:
 
 ```bash
-uv run pytest tests/          # 1133 tests, ~115 s -- run THIS
+uv run pytest tests/          # 1141 tests, ~115 s -- run THIS
 ```
 
 (Without the `[casacore]` extra 12 of those skip -- casacore's write API and rephasing; the rest pass. Counts here are *collected*
@@ -120,7 +120,7 @@ counts, which `scripts/check_docs.py` measures and checks — pass/skip totals a
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 74 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+runs the 75 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
 already runs the fast set on every PR push across four legs — x86_64 3.11 and 3.13 with
 `--extra all`, x86_64 3.12 and aarch64 3.12 with `--extra full` — and the slow set separately
 (see below).
@@ -155,7 +155,7 @@ since setup-uv prunes pre-built wheels before saving. The numba cache is not war
 because that means running the suite, so a PR's first run JIT-compiles cold and its later
 pushes restore their own cache.
 
-The slow set is 74 of the 1207 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 75 of the 1216 collected tests and ~80% of the suite's wall time, so running it
 on every leg of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters

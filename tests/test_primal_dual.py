@@ -143,6 +143,13 @@ def test_dual_warm_start_and_reset():
     assert not np.any(pd._v)
 
 
+@pmp("maxit", [0, -1])
+def test_maxit_below_one_is_refused(maxit):
+    """A zero-iteration solve used to raise UnboundLocalError (#377)."""
+    with pytest.raises(ValueError, match="maxit >= 1"):
+        PrimalDual(maxit=maxit, verbosity=0)
+
+
 def test_solve_raises_without_setup_or_grad():
     pd = PrimalDual(verbosity=0)
     with pytest.raises(RuntimeError, match="setup"):
@@ -192,7 +199,7 @@ def test_worker_held_dual_matches_the_driver_held_dual(band_pool, nband, dual_dt
     """
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
 
-    nx, ny, bases, nlevel = 32, 32, ("self", "db1", "db2"), 2
+    nx, ny, bases, nlevel = 32, 48, ("self", "db1", "db2"), 2  # non-square: #376
     rng = np.random.default_rng(7)
     diag = rng.uniform(0.5, 2.0, size=(nband, ny, nx))
     dirty = rng.uniform(1.0, 5.0, size=(nband, ny, nx))
@@ -273,7 +280,7 @@ def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
     """L21 reweighting from one analysis of the band sum == summing the per-band coefficients."""
     from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
 
-    nx, ny, bases, nlevel = 32, 32, ("self", "db1", "db2"), 2
+    nx, ny, bases, nlevel = 32, 48, ("self", "db1", "db2"), 2  # non-square: #376
     rng = np.random.default_rng(11)
     update = rng.standard_normal((nband, ny, nx))
     model = np.abs(rng.standard_normal((nband, ny, nx)))
@@ -289,6 +296,51 @@ def test_band_sum_reweighting_matches_the_coefficient_cube(band_pool, nband):
         weights[name] = reg.l1weight
     assert not np.allclose(weights["sum"], 1.5)
     assert_allclose(weights["sum"], weights["cube"], rtol=1e-10)
+
+
+@pmp("nband", [1, 3])
+def test_deconv_psi_round_trips_a_non_square_image(band_pool, nband):
+    """Both deconv dictionaries fill a (nbasis, nymax, nxmax) buffer and invert on (ny, nx) (#376).
+
+    Independent of how either class names its axes: a square image cannot tell
+    a transposed buffer from a correct one, and an agreement test between the
+    two cannot tell both being wrong.
+    """
+    from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
+
+    nx, ny, bases, nlevel = 32, 48, ("self", "db1", "db2"), 2
+    x = np.random.default_rng(17).standard_normal((nband, ny, nx))
+    for psi in (
+        PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband)),
+        PsiNocopyt(nband, ny, nx, bases, nlevel, 1),
+    ):
+        assert psi.nymax > psi.nxmax  # the y axis is the longer one
+        alpha = np.zeros((nband, len(bases), psi.nymax, psi.nxmax))
+        psi.dot(x, alpha)
+        xo = np.zeros_like(x)
+        psi.hdot(alpha, xo)
+        assert_allclose(xo, len(bases) * x, rtol=1e-12, atol=1e-12)
+
+
+@pmp("nband", [1, 3])
+def test_forward_backward_on_a_non_square_image(band_pool, nband):
+    """ForwardBackward + L21 over the band workers runs on nx != ny and matches the in-process dictionary (#376)."""
+    from pfb_imaging.operators.psi import PsiNocopyt, PsiNocopytRay
+    from pfb_imaging.opt.forward_backward import ForwardBackward
+
+    nx, ny, bases, nlevel = 32, 48, ("self", "db1"), 2
+    dirty = np.random.default_rng(19).uniform(1.0, 5.0, size=(nband, ny, nx))
+    out = {}
+    for name, psi in (
+        ("held", PsiNocopytRay(nband, nx, ny, bases, nlevel, 1, workers=band_pool(nband))),
+        ("driver", PsiNocopyt(nband, ny, nx, bases, nlevel, 1)),
+    ):
+        fb = ForwardBackward(tol=0.0, maxit=5, verbosity=0)
+        fb.setup(L21(psi, bases, nu=len(bases)), 1.0)
+        fb.set_grad(lambda x: x - dirty)
+        out[name] = fb.solve(np.zeros((nband, ny, nx)), 0.05)
+    assert np.any(out["driver"])
+    assert _rdiff(out["driver"], out["held"]) < 1e-10
 
 
 def test_steps_use_nu_as_the_squared_frame_bound():

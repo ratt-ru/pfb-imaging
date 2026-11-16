@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-16T13:00:00Z
-last_verified_commit: 6a3fbc8
+timestamp: 2026-11-16T14:00:00Z
+last_verified_commit: 0b73ac5
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -356,10 +356,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   tests (WCS positions/fluxes, brute-force DFT oracle, per-Stokes fluxes, deconv recovery — all
   written order-agnostically via WCS and dims names *before* the switch) pass unchanged across
   it, and non-square shapes are pinned in `tests/test_imager_pass2.py` and
-  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's `nxmax`/`nymax`
-  buffer conventions are crossed between the solvers (`(..., nymax, nxmax)`) and the band
-  workers (`(..., nxmax, nymax)`) — masked by square images, pre-existing, unchanged by this
-  switch (#376: `sara` fails on non-square images).
+  `tests/test_hessian_tree.py`. The wavelet jitclasses keep their pre-switch naming: built
+  on the `(Y, X)` raster, a jitclass's `nxmax` is the **y** extent and it writes
+  `(nbasis, nxmax, nymax)`. A `PsiOperator`'s `nymax`/`nxmax` instead name the axes of the
+  `(nband, nbasis, nymax, nxmax)` buffer its `dot` fills, which is what `L21`, `PrimalDual`
+  and `ForwardBackward` allocate, so `PsiNocopytRay` and `PsiNocopyt` cross the names at
+  the facade. Square images hid the missing cross until #376 (`sara` failed on `nx != ny`
+  on both backends); `tests/test_primal_dual.py` now pins non-square shapes, including a
+  round trip that does not depend on the names.
 - **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py` (ground truth +
   DFT oracle), `tests/test_imager_pol.py`, `tests/test_deconv.py`; spec/plan of 2026-07-17
   (ephemeral).
@@ -2446,6 +2450,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   reads exactly like a fast pass. Quote it as "the skip-checks tag" in prose, or check
   `gh api .../actions/jobs/<id> --jq '[.steps[].conclusion]'` for a wall of `skipped`.
 - **A resumed deconv run continues from the tree's MODEL/UPDATE/niters.** After a
-  crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`UPDATE`
-  arrays and the `niters`/`rms`/`rmax`/`hess_norm` attrs from each band group (zarr),
-  then `zarr.consolidate_metadata`.
+  crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`BRESIDUAL`/`UPDATE`
+  arrays (and `MODEL_MOPPED`/`RESIDUAL_MOPPED`) and the
+  `niters`/`rms`/`rmax`/`best_rms`/`best_rmax`/`hess_norm` attrs from each band group (zarr),
+  then `zarr.consolidate_metadata`. A stored `BRESIDUAL` is read even without a `MODEL`,
+  so leaving it resumes from a stale gradient. `rms`/`rmax` are the written `MODEL`'s;
+  `best_rms`/`best_rmax` are `MODEL_BEST`'s and carry over a resume when `MODEL_BEST` is
+  there (#380). On a `.dt` written before #380, `rms`/`rmax` held the best of the *last* run
+  only, and a resume reads them as the best. That can be worse than a `MODEL_BEST` kept from an
+  earlier run, so such a store is better protected than before but not fully.

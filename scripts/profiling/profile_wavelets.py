@@ -229,7 +229,7 @@ def main():
     # ── PsiNocopyt ──────────────────────────────────────────────────
     sys_pre = get_system_used_mb()
     psi_nc = PsiNocopyt(nband, nx, ny, bases, nlev, nthreads=args.psi_nthreads)
-    alpha_nc = np.zeros((nband, nbasis, psi_nc.nxmax, psi_nc.nymax))
+    alpha_nc = np.zeros((nband, nbasis, psi_nc.nymax, psi_nc.nxmax))
     xrec_nc = np.zeros_like(data)
 
     print(f"Compiling PsiNocopyt ...")
@@ -252,12 +252,14 @@ def main():
             nthreads=args.psi_nthreads,
         )
 
-        alpha_ray = np.zeros((nband, nbasis, psi_ray.nxmax, psi_ray.nymax))
-        xrec_ray = np.zeros_like(data)
+        alpha_ray = np.zeros((nband, nbasis, psi_ray.nymax, psi_ray.nxmax))
+        # the deconv operator takes the (Y, X) raster; the two above take (nx, ny)
+        data_yx = np.ascontiguousarray(data.transpose(0, 2, 1))
+        xrec_ray = np.zeros_like(data_yx)
 
-        dt_ray, ht_ray, rss_d_ray = profile_psi(psi_ray, data, alpha_ray, xrec_ray, warmup, repeats)
+        dt_ray, ht_ray, rss_d_ray = profile_psi(psi_ray, data_yx, alpha_ray, xrec_ray, warmup, repeats)
         sys_post = get_system_used_mb()
-        err_ray = np.max(np.abs(nbasis * data - xrec_ray))
+        err_ray = np.max(np.abs(nbasis * data_yx - xrec_ray))
 
         actor_mem = query_actor_memory(psi_ray._pool.actors)
         total_uss = sum(m["uss"] for m in actor_mem)

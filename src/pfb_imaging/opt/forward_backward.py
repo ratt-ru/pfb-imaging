@@ -25,7 +25,7 @@ class ForwardBackward:
 
     Args:
         tol: Convergence tolerance on relative primal change.
-        maxit: Maximum iterations.
+        maxit: Maximum iterations, at least 1.
         report_freq: Log every this many iterations at verbosity > 1.
         verbosity: 0 silent, 1 convergence message, 2 per-iter logging.
         gamma: Step-size safety factor; ``step = 2 * gamma / hessnorm``.
@@ -34,6 +34,9 @@ class ForwardBackward:
             ``eps < tol``; return False to continue iterating.
         primal_prox: Optional in-place image-domain prox (e.g. positivity)
             applied after the tight-frame step.
+
+    Raises:
+        ValueError: If ``maxit < 1``.
     """
 
     def __init__(
@@ -47,6 +50,9 @@ class ForwardBackward:
         on_converge=None,
         primal_prox=None,
     ):
+        if maxit < 1:
+            # solve() reports on the last iteration, so it needs at least one (#377)
+            raise ValueError(f"ForwardBackward needs maxit >= 1, got {maxit}")
         self.tol = tol
         self.maxit = maxit
         self.report_freq = report_freq
@@ -68,7 +74,7 @@ class ForwardBackward:
         psi = prox.psi
         self._alpha = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
         self._alpha_buf = np.zeros_like(self._alpha)
-        self._xout = np.zeros((psi.nband, psi.nx, psi.ny))
+        self._xout = None  # sized from the first iterate: psi.nx/ny order is per-operator
 
     def set_grad(self, grad) -> None:
         """Set the gradient of the smooth data-fidelity term."""
@@ -89,6 +95,8 @@ class ForwardBackward:
         reg.prox(self._alpha, self._alpha_buf, self.step * lam, sigma=1.0)
         self._alpha_buf -= self._alpha
         tick("prox")
+        if self._xout is None or self._xout.shape != x.shape:
+            self._xout = np.zeros_like(x)
         reg.psi.hdot(self._alpha_buf, self._xout)
         tick("psi_hdot")
         x += self._xout / reg.nu
