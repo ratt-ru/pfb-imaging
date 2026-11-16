@@ -2213,7 +2213,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Consequences:** test fixtures standing in for third-party v2 writers must say so
   (`tests/test_gains.py` writes its fake QuartiCal tables with `zarr_format=2`, since QuartiCal
   writes v2). On python >= 3.12, numcodecs resolves to >= 0.16, whose aarch64 wheels end the
-  numcodecs source build on arm; on 3.11 it is still 0.15 and still compiles.
+  numcodecs source build on arm; on 3.11 it is still 0.15 and still compiles, which is why the
+  arm64 container image is built on python 3.12 (amd64 stays on 3.11).
 - **Source:** PR #395.
 
 ## Known debt
