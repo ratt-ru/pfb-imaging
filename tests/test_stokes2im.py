@@ -68,7 +68,7 @@ def test_read_item_shapes_and_dtypes(node):
     assert inp.flag.dtype == bool and inp.flag.shape == inp.data.shape
     assert inp.uvw.shape == (nt, nbl, 3)
     assert inp.ant1.shape == (nbl,) and inp.ant1.dtype == np.int32
-    assert inp.jones.shape == (1, 1, inp.antpos.shape[0], 2)
+    assert inp.jones.shape == (1, 1, inp.antpos.shape[0], 1, 2)
     assert np.isfinite(inp.data).all() and np.isfinite(inp.uvw).all()
     assert inp.time_mjd[0] > 4e9  # MJD seconds, not unix
 
@@ -141,7 +141,7 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
         nant = len(antenna_names)
         flags = np.zeros((1, freqs.size, nant), dtype=bool)
         flags[0, 1, 3] = True  # antenna 3, second channel of the region
-        return NodeGains(np.full((1, freqs.size, nant, 2), 2.0 + 0j), flags)
+        return NodeGains(np.full((1, freqs.size, nant, 1, 2), 2.0 + 0j), flags)
 
     region = {"time": slice(0, 2), "frequency": slice(4, 7)}
     base = read_item(tree, region, _cfg()).flag
@@ -155,7 +155,7 @@ def test_read_item_gain_flags_follow_antennas(node, monkeypatch):
         "nchan": 3,
         "ants": list(tree["antenna_xds"].antenna_name.values),
     }
-    assert inp.jones.shape == (1, 3, inp.antpos.shape[0], 2) and inp.jones.dtype == np.complex128
+    assert inp.jones.shape == (1, 3, inp.antpos.shape[0], 1, 2) and inp.jones.dtype == np.complex128
     on3 = (inp.ant1 == 3) | (inp.ant2 == 3)
     assert on3.any()
     assert not base[:, on3, 1].all() and inp.flag[:, on3, 1].all()

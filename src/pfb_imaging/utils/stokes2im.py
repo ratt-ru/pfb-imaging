@@ -34,7 +34,7 @@ from pfb_imaging.utils.weighting import (
     box_sum_counts,
     counts_to_weights,
     filter_extreme_counts,
-    weight_data_msv4,
+    weight_data,
 )
 
 
@@ -92,7 +92,7 @@ class ItemData:
     antpos: np.ndarray  # (nant, 3) ITRF
     radec: np.ndarray  # (2,) field phase centre, radians, RA wrapped to [0, 2pi)
     poltype: str  # "linear" | "circular"
-    jones: np.ndarray  # (gtime, gchan, nant, 2[, 2]) complex; ones((1, 1, nant, 2)) without gains
+    jones: np.ndarray  # (gtime, gchan, nant, 1, ncorr | 2, 2) complex; ones((1, 1, nant, 1, 2)) without gains
     field_name: str
     spw_name: str
     scan_name: str
@@ -201,7 +201,7 @@ def read_item(
         gf = gains.flags[:, :, ant1] | gains.flags[:, :, ant2]  # (gtime, gchan, baseline)
         flag |= np.transpose(gf, (0, 2, 1))[:, :, :, None]
     else:
-        jones = np.ones((1, 1, nant, 2), dtype=complex_type)
+        jones = np.ones((1, 1, nant, 1, 2), dtype=complex_type)
 
     return ItemData(
         data=data,
@@ -373,7 +373,7 @@ def image_item(
         x0 = 0.0
         y0 = 0.0
 
-    vis4, wgt4 = weight_data_msv4(
+    vis4, wgt4 = weight_data(
         as_contiguous_readonly_view(data.reshape(ntime_i, nbl, nchan, ncorr)),
         as_contiguous_readonly_view(weight.reshape(ntime_i, nbl, nchan, ncorr)),
         as_contiguous_readonly_view(flag.reshape(ntime_i, nbl, nchan, ncorr)),

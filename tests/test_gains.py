@@ -25,7 +25,7 @@ def _write_term(root, groups, term="NET", ncorr=2, ants=ANTS):
                 "gain_freq": freqs,
                 "antenna": ants,
                 "direction": [0],
-                "correlation": ["XX", "XY", "YX", "YY"][:ncorr] if ncorr == 4 else ["XX", "YY"],
+                "correlation": {4: ["XX", "XY", "YX", "YY"], 2: ["XX", "YY"], 1: ["XX"]}[ncorr],
             },
             attrs=attrs,
         )
@@ -60,7 +60,7 @@ def test_selects_by_scan_number_and_converts_mjd(tmp_path):
         ],
     )
     out = load_node_gains(spec, "2", times + 100, freqs, ANTS)
-    assert out.jones.shape == (3, 4, 3, 2)
+    assert out.jones.shape == (3, 4, 3, 1, 2)
     assert np.all(out.jones == 3.0)
     assert not out.flags.any()
 
@@ -127,8 +127,19 @@ def test_full_jones_layout(tmp_path):
     f = np.zeros(g.shape[:-1], np.int8)
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)], ncorr=4)
     out = load_node_gains(spec, "1", times, freqs, ANTS)
-    assert out.jones.shape == (3, 4, 3, 2, 2)
-    assert out.jones[0, 0, 0, 0, 1] == 0.5
+    assert out.jones.shape == (3, 4, 3, 1, 2, 2)
+    assert out.jones[0, 0, 0, 0, 0, 1] == 0.5
+
+
+def test_scalar_gains_keep_one_correlation(tmp_path):
+    """weight_data applies a one-correlation jones to both hands, so nothing is duplicated here."""
+    times, freqs = _grid()
+    g = np.full((3, 4, 3, 1, 1), 2.0 + 0j)
+    f = np.zeros(g.shape[:-1], np.int8)
+    spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)], ncorr=1)
+    out = load_node_gains(spec, "1", times, freqs, ANTS + ["m099"])
+    assert out.jones.shape == (3, 4, 4, 1, 1)
+    assert np.all(out.jones[:, :, :3] == 2.0) and np.all(out.jones[:, :, 3] == 1.0)
 
 
 def test_broadcast_axes(tmp_path):
@@ -136,7 +147,7 @@ def test_broadcast_axes(tmp_path):
     g, f = _diag(1, 1, 2.0)
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times[:1], freqs[:1], g, f)])
     out = load_node_gains(spec, "1", times, freqs, ANTS)
-    assert out.jones.shape == (1, 1, 3, 2)
+    assert out.jones.shape == (1, 1, 3, 1, 2)
 
 
 def test_off_grid_gains_are_refused(tmp_path):
@@ -168,8 +179,8 @@ def test_channel_and_time_subset_of_the_term(tmp_path):
     g, f = _ramp(4, 8)
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs, g, f)])
     out = load_node_gains(spec, "1", times[1:3], freqs[2:5], ANTS)
-    assert out.jones.shape == (2, 3, 3, 2)
-    assert_array_equal(out.jones[..., 0, 0], g[1:3, 2:5, 0, 0, 0])
+    assert out.jones.shape == (2, 3, 3, 1, 2)
+    assert_array_equal(out.jones[:, :, 0, 0, 0], g[1:3, 2:5, 0, 0, 0])
     check_node_grid(spec, "1", times[1:3], freqs[2:5])
 
 
@@ -179,7 +190,7 @@ def test_descending_gain_frequencies(tmp_path):
     # the term is written high-to-low; the data asks low-to-high, and for a subset
     spec = _write_term(tmp_path, [({"SCAN_NUMBER": 1}, times, freqs[::-1], g, f)])
     out = load_node_gains(spec, "1", times, freqs[1:4], ANTS)
-    assert_array_equal(out.jones[..., 0, 0], g[:, ::-1][:, 1:4, 0, 0, 0])
+    assert_array_equal(out.jones[:, :, 0, 0, 0], g[:, ::-1][:, 1:4, 0, 0, 0])
 
 
 def test_single_solution_interval_broadcasts_without_scan_attr(tmp_path):
@@ -195,7 +206,7 @@ def test_single_solution_interval_broadcasts_without_scan_attr(tmp_path):
         ],
     )
     out = load_node_gains(spec, "3", times, freqs[1:3] + 1e8, ANTS)
-    assert out.jones.shape == (1, 2, 3, 2)
+    assert out.jones.shape == (1, 2, 3, 1, 2)
     assert np.all(out.jones == 3.0)
 
 
@@ -262,7 +273,7 @@ def test_only_the_region_is_read_and_nothing_is_cached(tmp_path):
     # unsorted and repeated wanted points still come back in the order asked for
     want_t, want_f = times[[2, 0, 2]], freqs[[5, 1]]
     out = load_node_gains(spec, "1", want_t, want_f, ANTS)
-    assert_array_equal(out.jones[..., 0, 0], g[[2, 0, 2]][:, [5, 1], 0, 0, 0])
+    assert_array_equal(out.jones[:, :, 0, 0, 0], g[[2, 0, 2]][:, [5, 1], 0, 0, 0])
     (ds,) = Multiton(open_term, str(tmp_path / "NET")).instance
     assert not ds.gains.variable._in_memory
     assert not ds.gain_flags.variable._in_memory

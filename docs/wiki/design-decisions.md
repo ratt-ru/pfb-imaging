@@ -238,7 +238,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `radiomesh.generated._stokes_expr` (radiomesh ≥ 0.1.2; diag-jones/minvar variants
   included) and `register_jitable`'d; the overload closure holds **only plain
   module-level functions and ints**; the outer njit is `cache=True`; every front-end
-  call site (`stokes2im`, `stokes2vis`) feeds `weight_data`/`weight_data_msv4`
+  call site (`stokes2im`, `stokes2vis`) feeds `weight_data`
   C-contiguous readonly views via `utils/weighting.as_contiguous_readonly_view` so
   Ray's per-task readonly/writable mix doesn't multiply compiled signatures. The sympy
   derivation and its oracle test live in radiomesh
@@ -2218,13 +2218,37 @@ update it (and this page's `last_verified_commit`) in the same session.
   zarr 2 has no `config`, so the `sys.modules` fallback is skipped there.
 - **Source:** PR #395.
 
+### D63 — one `weight_data`, on the (time, baseline) grid
+
+- **Was:** two Stokes kernels in `utils/weighting`. `weight_data` took MSv2 rows
+  `(row, chan, corr)` plus a `tbin_idx`/`tbin_counts` row -> time mapping and a jones of
+  `(time, ant, chan, dir, corr)`; `weight_data_msv4` took `(time, baseline, chan, corr)`.
+  The imager's pass 1 reshaped its MSv4 arrays to rows, built the mapping and a full
+  `(ntime, nant, nchan, 1, 2)` identity jones just to call the row kernel.
+- **Decision:** one `weight_data(data, weight, flag, jones, ant1, ant2, pol, product, nc,
+  wgt_mode)`. Data, weights and flags are `(time, baseline, chan, corr)` as xarray-ms opens
+  them, `ant1`/`ant2` are per baseline, and the jones is QuartiCal's native
+  `(time, chan, ant, dir, corr)` with `corr` 1 or 2, or `(time, chan, ant, dir, 2, 2)`. Its
+  time and channel axes are the data's own, or length one. The output is
+  `(stokes, time, baseline, chan)`. `utils/gains.NodeGains.jones` has the same layout, so
+  the loader no longer duplicates a scalar gain into two hands.
+- **Consequences:** there is no row -> time mapping anywhere: `misc.chunkify_rows` and the
+  `time_chunks`/`gain_cholesky` fixtures went with it. Rows still exist downstream of the
+  kernel, where they have to: `stokes_vis` drops padded and flagged rows and africanus'
+  averaging and ducc take `(row, chan)`. The kernel refuses a jones with other than one
+  direction, a time or channel axis that is neither length one nor the data's, and
+  correlation axes that are not 1, 2 or 2x2, rather than misreading it. The antenna axis
+  is not checked against `ant1`/`ant2`.
+- **Source:** `utils/weighting.weight_data`; `tests/test_weight_data.py`, which simulates
+  `V_pq = J_p B J_q^H` and checks the kernel returns the Stokes parameters of `B`.
+
 ## Known debt
 
 - **`hci` has no antenna-dependent gain test.** Both end-to-end gain tests give every
   antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a
   mis-ordered Jones antenna axis or a dropped conjugate would all pass. The reader's antenna
-  mapping is unit-tested (`tests/test_gains.py`) and `weight_data_msv4` matches the legacy
-  kernel with random gains (`tests/test_weight_data_msv4.py`), but nothing checks the two
+  mapping is unit-tested (`tests/test_gains.py`) and `weight_data` recovers a known sky through random
+  per-antenna gains (`tests/test_weight_data.py`), but nothing checks the two
   joined through `read_item`. **Follow-up:** at `image_item` level, corrupt an item's data
   with random per-antenna complex gains (`g_p V g_q^H`), image it with those gains, and
   compare with imaging the uncorrupted data without gains. Raised in the review of PR #358.

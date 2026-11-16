@@ -1,6 +1,5 @@
 import logging
 
-import dask.array as da
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -572,22 +571,6 @@ def fitcleanbeam(
         gausspars.append([emaj * pixsize, emin * pixsize, pa])
 
     return np.array(gausspars)
-
-
-def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
-    utimes, time_bin_counts = np.unique(time, return_counts=True)
-    n_time = len(utimes)
-    if utimes_per_chunk == 0 or utimes_per_chunk == -1:
-        utimes_per_chunk = n_time
-    row_chunks = [np.sum(time_bin_counts[i : i + utimes_per_chunk]) for i in range(0, n_time, utimes_per_chunk)]
-    time_bin_indices = np.zeros(n_time, dtype=np.int32)
-    time_bin_indices[1::] = np.cumsum(time_bin_counts)[0:-1]
-    time_bin_indices = time_bin_indices.astype(np.int32)
-    time_bin_counts = time_bin_counts.astype(np.int32)
-    if daskify_idx:
-        time_bin_indices = da.from_array(time_bin_indices, chunks=utimes_per_chunk)
-        time_bin_counts = da.from_array(time_bin_counts, chunks=utimes_per_chunk)
-    return tuple(row_chunks), time_bin_indices, time_bin_counts
 
 
 def l1reweight_func(csum, rmsfactor=None, rms_comps=None, alpha=4):
