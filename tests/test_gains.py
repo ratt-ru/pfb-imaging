@@ -29,7 +29,8 @@ def _write_term(root, groups, term="NET", ncorr=2, ants=ANTS):
             },
             attrs=attrs,
         )
-        ds.to_zarr(f"{root}/{term}/{term}_{n}", mode="w")
+        # QuartiCal writes zarr v2 (dask-ms); zarr-python 3 would default to v3
+        ds.to_zarr(f"{root}/{term}/{term}_{n}", mode="w", zarr_format=2)
     return f"{root}/{term}"
 
 

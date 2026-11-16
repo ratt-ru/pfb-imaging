@@ -78,7 +78,7 @@ with that, each established by breaking it:
   `pytest-xdist`.
 * **Any test that writes to the session MS takes the `writable_ms` fixture** (a function-scoped
   copy) instead of `ms_name`, and uses it for *every* access in that test — including writes
-  through dask-ms `xds_to_table`, which a grep for `putcol` will not find. A forgotten writer
+  through casacore's write API (`pctable`), which a grep for `putcol` will not find. A forgotten writer
   passes in the fast loop and the slow loop separately and fails only under `-m ""`.
 
 `tests/test_band_pool.py` pins the reuse equivalence. Why each of these holds: **D44**.
@@ -95,7 +95,7 @@ uv sync --extra all --group dev    # + the scientific stack — tests, and local
 ```
 
 **Never put `pfb-imaging[full]` into the `dev` group.** `dev` is a uv default group, so
-doing so drags ray/ducc0/jax/dask-ms/africanus into `uv sync --group dev` — i.e. into the
+doing so drags ray/ducc0/jax/africanus into `uv sync --group dev` — i.e. into the
 Code Quality job, whose entire body is `ruff format --check .` and `ruff check .`, and into
 `update-cabs`, which only needs hip-cargo. Jobs that need the stack name `--extra all`
 explicitly.
@@ -120,7 +120,7 @@ counts, which `scripts/check_docs.py` measures and checks — pass/skip totals a
 because they depend on which extras are installed.)
 
 **Never run the slow set unless you changed a shared fixture.** `uv run pytest -m slow tests/`
-runs the 72 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
+runs the 74 deselected ones and costs ~465 s; `uv run pytest -m "" tests/` costs ~9.6 min. CI
 already runs the fast set on every PR push across four legs — x86_64 3.11 and 3.13 with
 `--extra all`, x86_64 3.12 and aarch64 3.12 with `--extra full` — and the slow set separately
 (see below).
@@ -155,7 +155,7 @@ since setup-uv prunes pre-built wheels before saving. The numba cache is not war
 because that means running the suite, so a PR's first run JIT-compiles cold and its later
 pushes restore their own cache.
 
-The slow set is 72 of the 1144 collected tests and ~80% of the suite's wall time, so running it
+The slow set is 74 of the 1146 collected tests and ~80% of the suite's wall time, so running it
 on every leg of every push was the bulk of the repo's CI bill. `ci.yml` still runs
 `pytest -m slow --collect-only` as a guard, so a broken marker or `-m` override cannot silently
 empty `acceptance.yml` (pytest exits 5 when a selection collects nothing) — that guard matters
@@ -229,9 +229,11 @@ This generates a changelog (git-cliff), updates version strings and `_container_
 ## 7. Contributing Workflow
 
 1. Create a feature branch: `git checkout -b your-feature-name`
-2. Update `CONTAINER_IMAGE` tag in `src/pfb_imaging/_container_image.py` to match your branch name.
-3. Make changes and ensure tests pass.
-4. Commit using conventional commit messages.
-5. Push and create a pull request.
+2. Make changes and ensure tests pass.
+3. Commit using conventional commit messages.
+4. Push and create a pull request.
 
-The `update-cabs` workflow resets the tag to `latest` automatically on merge to `main`.
+Leave `CONTAINER_IMAGE` in `src/pfb_imaging/_container_image.py` at `latest`. Setting it to the
+branch name is opt-in, done by hand by the maintainer only when a branch needs its own container
+image before merge (`.claude/rules/architecture.md` §4); the `update-cabs` workflow resets it to
+`latest` on merge to `main`.

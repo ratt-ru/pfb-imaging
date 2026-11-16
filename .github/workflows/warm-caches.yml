@@ -5,8 +5,8 @@ name: Warm Caches
 # PR's. With no CI run on main, every new PR would start cold. Only two of
 # those caches are worth keeping warm from here:
 #
-#   * the aarch64 source builds -- ducc0 (and numcodecs, while zarr<3 pins it)
-#     compile from sdist on arm, which is the slowest part of that leg;
+#   * the aarch64 source builds -- ducc0 compiles from sdist on arm, which is
+#     the slowest part of that leg;
 #   * the CASA measures, fetched from ftp.astron.nl, which is flaky.
 #
 # The x86_64 uv cache is not warmed: setup-uv prunes pre-built wheels before

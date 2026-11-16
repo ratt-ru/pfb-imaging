@@ -78,7 +78,7 @@ prefer deferring `africanus`/`daskms`/`casacore` imports into functions rather t
 
 Full container image URL (including tag) lives in `src/pfb_imaging/_container_image.py` as the `CONTAINER_IMAGE` variable. This is the single source of truth — cab generation and container fallback both read it via `importlib`. The tag is managed three ways:
 
-- **Feature branches:** developer manually rewrites the tag in `_container_image.py` to the branch name.
+- **Feature branches:** the tag stays `latest`. Only when a branch needs its own image before merge does the maintainer rewrite it to the branch name by hand (opt-in); do not suggest doing so otherwise.
 - **Main branch:** the `update-cabs.yml` GitHub Action rewrites it to `latest` on merge, regenerates cabs, and commits the changes.
 - **Releases:** `tbump` rewrites it to the semantic version via before-commit hooks.
 

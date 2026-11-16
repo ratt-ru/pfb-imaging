@@ -370,6 +370,9 @@ def test_write_partition_reads_back_identically(tmp_path, nrow):
     store = f"file://{tmp_path}/x.dt"  # an fsspec store, as uri_and_fs gives the imager
     # a slab smaller than one row's worth still writes every row exactly once
     _write_partition(ds, store, "band0000_time0000/part0000", slab_bytes=64 * 1024)
+    # zarr v2 on disk under zarr-python 3 too (pfb_imaging.ZARR_ENV)
+    node = tmp_path / "x.dt" / "band0000_time0000" / "part0000"
+    assert (node / ".zgroup").exists() and not (node / "zarr.json").exists()
     got = xr.open_datatree(store, engine="zarr", chunks=None, consolidated=False)["band0000_time0000/part0000"].ds
     for v in ds.data_vars:
         np.testing.assert_array_equal(got[v].values, ds[v].values)

@@ -1,8 +1,12 @@
-# python:3.11-slim is a multi-arch manifest (linux/amd64 + linux/arm64), so
-# this line is unchanged -- buildx selects the right base per --platform.
-FROM python:3.11-slim
+# One base per architecture, picked by buildx's TARGETARCH ("amd64" or
+# "arm64"). arm64 is on 3.12, the python ci.yml's aarch64 leg tests; amd64
+# stays on 3.11. Needs BuildKit (buildx, or docker >= 23): the legacy builder
+# rejects `FROM base-${TARGETARCH}`.
+FROM python:3.11-slim AS base-amd64
+FROM python:3.12-slim AS base-arm64
+FROM base-${TARGETARCH}
 
-# Set automatically by buildx: "amd64" or "arm64".
+# Set automatically by buildx; redeclared to use it inside this stage.
 ARG TARGETARCH
 
 # Which extras to install. Defaults to the full cross-platform stack plus the
@@ -27,9 +31,7 @@ COPY src/ src/
 #   python-casacore  scikit-build-core -> cmake, casacore-dev, boost-python,
 #                    cfitsio, wcslib, and BLAS+LAPACK -- casacore's
 #                    FindCasacore.cmake marks both REQUIRED ([casacore] extra)
-#   numcodecs        setuptools + Cython -> C compiler      ([casacore] extra,
-#                    via dask-ms's numcodecs<0.16 pin)
-#   python-lzf       tiny C extension -> C compiler         ([casacore] extra)
+#   python-lzf       tiny C extension -> C compiler         (via xarray-kat)
 # amd64 gets all of these as wheels and needs only git + gcc, so the heavy
 # toolchain is installed conditionally and the amd64 image is unchanged.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -67,9 +69,10 @@ RUN if python -c "import casacore" 2>/dev/null; then \
       && echo "measures.directory: /opt/measures" > /root/.casarc ; \
     fi
 
-# So that TBB is visible to numba. Only meaningful on amd64: the tbb package is
-# x86_64-only (no aarch64 wheel, no sdist), so on arm64 it is not installed and
-# pfb_imaging selects numba's OpenMP layer instead. Harmless either way.
+# So that TBB is visible to numba. Only meaningful on amd64 (python 3.11, see
+# the base stages): the tbb package is x86_64-only (no aarch64 wheel, no
+# sdist), so on arm64 it is not installed and pfb_imaging selects numba's
+# OpenMP layer instead. Harmless either way.
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages:$LD_LIBRARY_PATH
 
 # Build-time smoke test. Importing pfb_imaging is where the threading-layer

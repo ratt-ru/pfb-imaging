@@ -6,8 +6,8 @@ name: Publish Container
 #
 #   gh workflow run publish-container.yml --ref <branch>
 #
-# which tags the image with the branch name -- what `_container_image.py` is
-# set to on a feature branch. It used to build on every PR push (~11
+# which tags the image with the branch name -- what the maintainer sets
+# `_container_image.py` to, by hand, on a branch that needs it. It used to build on every PR push (~11
 # runner-minutes each) for images nobody pulled. Deliberately not a PR-comment
 # command like /test-acceptance: that would build the PR head's Dockerfile
 # with this repo's packages:write token, handing it to a fork's code. A
@@ -32,8 +32,8 @@ jobs:
   # Build each architecture on its own native runner and push by digest; the
   # `merge` job then stitches the digests into one multi-arch manifest.
   #
-  # Native arm64 rather than QEMU: the arm64 image compiles ducc0 (and, with
-  # the casacore extra, python-casacore and numcodecs) from source because no
+  # Native arm64 rather than QEMU: the arm64 image compiles ducc0 and, with
+  # the casacore extra, python-casacore from source because no
   # aarch64 wheels exist. Under docker/setup-qemu-action that runs roughly an
   # order of magnitude slower and reliably exceeds the job timeout. GitHub's
   # `ubuntu-24.04-arm` runners are free for public repositories.

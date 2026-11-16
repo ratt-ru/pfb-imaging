@@ -19,7 +19,7 @@ resolve.
 **Always place imports at the top of the file when possible.** Lazy (in-function) imports are only acceptable for:
 
 1. **CLI modules** (`src/pfb_imaging/cli/`): to keep them lightweight.
-2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods. (`dask-ms` lost its last importer with the dask `hci` (D61); `distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
+2. **Optional heavy runtimes** (`ray`, `dask`) in library modules that are also usable without that runtime. Examples: `import ray` deferred to `PsiNocopytRay` and `BandWorkerPool` methods. (`dask-ms` lost its last importer with the dask `hci` (D61) and left the `[casacore]` extra after it; `distributed` left the dependency set entirely in #330, with the MSv2 `degrid`.)
 3. **Import-cycle breakers** — name the cycle in the comment. Existing cycles: `opt/pcg` ↔ `operators/hessian`, `operators/band_worker` ↔ `operators/hessian`/`operators/psi`.
 4. **Serialisation/runtime constraints** — for example objects that break Ray/pickle serialisation of the enclosing function when captured at module scope (existing example: the ducc0 imports in `stokes2im.image_item`).
 5. **Heavy imports on rarely-taken paths** — when the common path shouldn't pay the import cost (existing example: the debug-only `pdb` imports in `opt/primal_dual.py`'s `primal_dual_numba`).
@@ -39,9 +39,11 @@ was avoiding.
 
 The single source of truth is `CONTAINER_IMAGE` in `src/pfb_imaging/_container_image.py`, loaded via `importlib` (no CWD dependency, no `uv sync` needed).
 
-1. **Feature branches (manual):** Edit `_container_image.py` tag to match your branch name. The
-   image itself is opt-in: `gh workflow run publish-container.yml --ref <branch>` builds and tags
-   it with the branch name, only when the branch needs testing through stimela before merge.
+1. **Feature branches (opt-in, by the maintainer):** the tag stays `latest`. **Agents never
+   change it** -- a branch tag merged into `main` conflicts with the `update-cabs` reset. Only
+   when a branch must be tested through stimela before merge does the maintainer set the tag to
+   the branch name by hand and build the image with
+   `gh workflow run publish-container.yml --ref <branch>`.
 2. **Merge to main (`update-cabs` workflow):** Resets tag to `latest`, regenerates cabs, commits with `[skip checks]`.
 3. **Releases (`tbump`):** Updates tag to semver via before-commit hooks.
 
