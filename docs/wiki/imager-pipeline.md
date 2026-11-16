@@ -125,7 +125,7 @@ All partitions in a band share one output grid: multi-field selections are repha
 pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`
 offsets are the `l0, m0` attrs, with `x0,y0`/`flip_*` derived on demand from
 `wgridder_conventions(l0, m0)` rather than stored. `time_out` is **unix seconds** (the
-legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
+MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 ## Two passes and the counts product
 
@@ -158,7 +158,7 @@ legacy `.dds` is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    intermediate. The driver streams per-piece counts into **one grid per applied
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
    time), `per-band` (sum over time), `per-time` (`counts_key` in
-   `core/imager.imager`; semantics in `utils/weighting.reduce_counts`).
+   `core/imager.imager` defines the groups).
    `utils/weighting.write_group_counts` does it one group at a time — one dense
    accumulator, into which each piece's occupied cells are added — applies
    `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result

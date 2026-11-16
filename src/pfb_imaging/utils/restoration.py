@@ -160,8 +160,8 @@ def restore_products(model, residual, beam, gaussparf, gausspari=None, products=
             restored image; it is the term the other three add to the model, and
             it is stored because nothing else in the tree records what the
             resolution change actually did to the residual.
-        pb_min: beam floor below which the intrinsic image is zeroed, matching
-            the cutoff convention in ``utils/spi.py``.
+        pb_min: beam floor; the intrinsic image is zeroed wherever
+            ``beam <= pb_min``.
         nthreads: threads for the convolution FFTs.
 
     Returns:

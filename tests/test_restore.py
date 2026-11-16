@@ -42,7 +42,7 @@ def test_restore_products_algebra():
 
 
 def test_restore_products_pb_min_zeroes_low_beam():
-    """The intrinsic image is zeroed below pb_min, following utils/spi.py:31."""
+    """The intrinsic image is zeroed wherever the beam is at or below pb_min."""
     from pfb_imaging.utils.restoration import restore_products
 
     nx = ny = 32

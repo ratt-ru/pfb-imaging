@@ -20,19 +20,6 @@ JIT_OPTIONS = {
 }
 
 
-@njit(**JIT_OPTIONS, inline="always")
-def _es_kernel(x, y, xkern, ykern, betak):
-    for i in range(x.size):
-        if x[i] * x[i] < 1:
-            xkern[i] = np.exp(betak * (np.sqrt(1 - x[i] * x[i]) - 1))
-        else:
-            xkern[i] = 0.0
-        if y[i] * y[i] < 1:
-            ykern[i] = np.exp(betak * (np.sqrt(1 - y[i] * y[i]) - 1))
-        else:
-            ykern[i] = 0.0
-
-
 @njit(nogil=True, cache=True)
 def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
     """Nearest-cell sum of the weights on the (folded, v >= 0) padded uv grid.
@@ -614,43 +601,6 @@ def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
     finally:
         dt.close()
     return out
-
-
-def reduce_counts(counts, grouping):
-    """Reduce per-output-image uv-counts grids according to a grouping strategy.
-
-    Pass 1 produces one counts grid per output image, keyed ``(bandid, timeid)``.
-    This combines them into the *applied* counts used to build imaging weights.
-
-    Args:
-        counts: Mapping ``(bandid, timeid) -> (ncorr, nx, ny)`` counts grid.
-        grouping: One of ``"per-band-time"``, ``"mfs"``, ``"per-band"``,
-            ``"per-time"``.
-            - ``per-band-time``: each output image keeps its own counts.
-            - ``mfs`` / ``per-time``: sum over bands within each time (uniform
-              weighting across the band axis; ``mfs`` feeds a single wideband
-              image, ``per-time`` pools bands per time slot).
-            - ``per-band``: sum over time within each band.
-
-    Returns:
-        Mapping with the same keys as ``counts``. Grids may be shared array
-        objects across keys that collapse together; callers must treat the
-        returned grids as read-only.
-
-    Raises:
-        ValueError: If ``grouping`` is not recognised.
-    """
-    valid = ("per-band-time", "mfs", "per-band", "per-time")
-    if grouping == "per-band-time":
-        return dict(counts)
-    if grouping in ("mfs", "per-time", "per-band"):
-        fix_band = grouping == "per-band"
-        sums = {}
-        for (b, t), grid in counts.items():
-            key = b if fix_band else t
-            sums[key] = grid.copy() if key not in sums else sums[key] + grid
-        return {(b, t): sums[b if fix_band else t] for (b, t) in counts}
-    raise ValueError(f"Unknown weight grouping {grouping!r}; expected one of {valid}")
 
 
 def as_contiguous_readonly_view(a):

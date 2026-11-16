@@ -1,5 +1,3 @@
-import string
-
 import numpy as np
 from numba.extending import register_jitable
 
@@ -11,54 +9,6 @@ except ImportError as e:  # pragma: no cover
         "The radiomesh-generated _stokes_expr module is not available. "
         "Ensure that the full extra is installed and use python 3.11+."
     ) from e
-
-
-def jones_to_mueller(gp, gq):
-    shape = gp.shape
-    rem_shape = shape[2:]
-    i0 = string.ascii_lowercase.index("m")
-    rem_idx = string.ascii_lowercase[i0 : i0 + len(rem_shape)]
-    idxp = "ij" + rem_idx
-    idxq = "kl" + rem_idx
-    idxo = "ikjl" + rem_idx
-    out_shape = (4, 4) + rem_shape
-    return np.einsum(f"{idxp},{idxq}->{idxo}", gp, np.conjugate(gq)).reshape(*out_shape)
-
-
-def mueller_to_stokes(mueller, poltype="linear"):
-    """
-    Convert a Mueller matrix into a diagonal Stokes matrix.
-    """
-    if poltype == "linear":
-        t_matrix = np.array([[1.0, 1.0, 0, 0], [0, 0, 1.0, 1.0j], [0, 0, 1.0, -1.0j], [1.0, -1.0, 0, 0]])
-    elif poltype == "circular":
-        t_matrix = np.array([[1.0, 0, 0, 1.0], [0, 1.0, 1.0j, 0], [0, 1.0, -1.0j, 0], [1.0, 0, 0, -1.0]])
-    else:
-        raise ValueError(f"Unknown poltype {poltype}")
-    shape = mueller.shape
-    rem_shape = shape[2:]
-    i0 = string.ascii_lowercase.index("m")
-    rem_idx = string.ascii_lowercase[i0 : i0 + len(rem_shape)]
-    idxl = "ij" + rem_idx
-    idxr = "ji"
-    idxo = "i" + rem_idx
-    return np.einsum(f"{idxl},{idxr}->{idxo}", mueller, t_matrix).real
-
-
-def corr_to_stokes(x, wsum=1.0, axis=0, poltype="linear"):
-    """
-    x = [I+Q, U+1jV, U-1jV, I-Q]
-    out = [I, Q, U, V]
-    """
-    if poltype.lower() != "linear":
-        raise NotImplementedError("Only linear polarisation is implemented")
-    if x.shape[axis] != 4:
-        raise ValueError(f"Expected 4 polarisation products, got {x.shape[axis]}")
-    dirty_i = (np.take(x, 0, axis=axis) + np.take(x, 3, axis=axis)).real / wsum
-    dirty_q = (np.take(x, 0, axis=axis) - np.take(x, 3, axis=axis)).real / wsum
-    dirty_u = (np.take(x, 1, axis=axis) + np.take(x, 2, axis=axis)).real / wsum
-    dirty_v = (np.take(x, 1, axis=axis) - np.take(x, 2, axis=axis)).imag / wsum
-    return np.stack((dirty_i, dirty_q, dirty_u, dirty_v), axis=axis)
 
 
 def stokes_to_corr(x, axis=0, poltype="linear"):

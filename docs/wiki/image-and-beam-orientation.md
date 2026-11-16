@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-11-14T16:00:00Z
-last_verified_commit: 53a2068
+timestamp: 2026-11-15T18:00:00Z
+last_verified_commit: ade04fb
 ---
 
 # Image and beam orientation conventions (hci)
@@ -29,8 +29,8 @@ data-moving transposes exist**: ducc's x-major world is confined to the
 `vis2dirty` call sites, which fill the `(ny, nx)` buffers through zero-copy
 transposed views (`dirty=buf.T` — ducc accepts strided output; verified to
 1e-12 against the C-ordered return path). The other x-major citizen is
-`fitcleanbeam` (shared with the legacy `.dds` path, PA convention defined by
-its input axes); `image_item` calls it with `yx_order=True`, which adapts via
+`fitcleanbeam` (shared with the imager and restore paths, PA convention defined
+by its input axes); `image_item` calls it with `yx_order=True`, which adapts via
 an internal zero-copy view and returns bitwise-identical parameters.
 
 ## 2. Measured ground truth for the wgridder image
@@ -83,8 +83,8 @@ runs East-to-West.
 
 `reproject_and_interp_beam` / `reproject_and_interp_scat_beam` (pre-fix state at
 `9a46876`) violated this three ways — `reproject_and_interp_scat_beam` has since
-been fixed (§6), and `reproject_and_interp_beam` is dead code, uncalled since the
-zarr-beam branch was deleted (§5):
+been fixed (§6), and `reproject_and_interp_beam` went uncalled when the zarr-beam
+branch was deleted (§5) and has since been removed:
 
 1. **Transposed feed** — they pass (X, Y)-ordered `(l, m)` maps, so reproject
    reads the l axis as Dec and the m axis as RA. Measured consequence: with
@@ -178,7 +178,7 @@ no-reprojection state (`a516530`, the jagged-gain sampling experiment for
 breifast#208 — which ruled out coarse sampling as the cause) is gone. So is the
 zarr-beam branch, along with its hack and the pre-D19 reproject bugs: `hci`'s
 `--beam-model` accepts only a meerkat-beams band name (design-decisions.md D25),
-leaving `utils/beam.reproject_and_interp_beam` uncalled.
+after which `utils/beam.reproject_and_interp_beam` was removed as dead code.
 
 The transient-injection beam is a separate, point-evaluated path with no
 orientation content: `beam_gain_for_source` asks the wizard for the power beam of

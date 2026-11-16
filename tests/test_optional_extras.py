@@ -5,12 +5,12 @@ on it unconditionally, so both sit behind the ``[casacore]`` extra; ``tbb`` is
 x86_64-only and sits behind ``[x86]``. These tests pin the two invariants that
 split depends on:
 
-1. the deconv/restore/CLI import graph never reaches an optional dependency at
-   module scope -- a stray top-level ``from daskms import ...`` in a shared
-   helper is the easy way to silently re-break an arm install;
-2. a missing optional dependency reports which extra to install.
+1. no command's import graph reaches an optional dependency at module scope --
+   a stray top-level ``from daskms import ...`` in a shared helper is the easy
+   way to silently re-break an arm install;
+2. the threading layer numba is handed matches what is installed.
 
-Neither test needs the optional packages installed, so both run everywhere.
+Neither needs the optional packages installed, so both run everywhere.
 """
 
 import ast
@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 import pfb_imaging
-from pfb_imaging.utils.optional import optional_dependency
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 # `pyrap` as well as `casacore`: python-casacore installs both top-level
@@ -67,7 +66,7 @@ def _module_scope_imports(path):
     relies on, so they must not count as violations.
 
     `With` is in the recursed set alongside `If`/`Try` because a module-scope
-    import wrapped in `with optional_dependency(...)` (the retired dask hci's
+    import wrapped in a `with` block (the retired dask hci's `optional_dependency`
     pattern) *does* execute on import, and without recursing into `With` the
     walker would report any module using that pattern as clean.
     """
@@ -112,42 +111,6 @@ def test_entry_point_does_not_import_optional_deps(entry):
         f"`uv sync --extra full` on linux-aarch64. Move the import into the "
         f"function that needs it:\n  " + "\n  ".join(violations)
     )
-
-
-def test_optional_dependency_names_the_extra():
-    with pytest.raises(ImportError) as excinfo:
-        with optional_dependency("The degrid command"):
-            import daskms  # noqa: F401
-
-            pytest.skip("dask-ms is installed; nothing to assert about its absence")
-    message = str(excinfo.value)
-    assert "The degrid command" in message
-    assert "casacore" in message
-    assert "pfb-imaging[casacore]" in message
-
-
-def test_optional_dependency_sees_through_a_reraised_import_error():
-    """A shim re-raises with exc.name unset; the cause still names the module.
-
-    dask-ms's own `requires_optional` does this for python-casacore
-    (`daskms/utils.py`: `raise ImportError(msg) from import_errors[0]`), so the
-    ImportError that reaches us carries a summary message and no `name` at all.
-    Giving up on the first frame would report a missing extra as a mystery.
-    """
-    original = ModuleNotFoundError("No module named 'casacore'", name="casacore")
-    with pytest.raises(ImportError) as excinfo:
-        with optional_dependency("The hci command"):
-            raise ImportError("Optional extras required by ... are missing") from original
-    message = str(excinfo.value)
-    assert "pfb-imaging[casacore]" in message
-
-
-def test_optional_dependency_passes_through_unknown_import_errors():
-    """A typo must not be reported as a missing extra."""
-    with pytest.raises(ImportError) as excinfo:
-        with optional_dependency("Something"):
-            import pfb_imaging_not_a_real_module  # noqa: F401
-    assert "extra" not in str(excinfo.value)
 
 
 @pytest.mark.parametrize(

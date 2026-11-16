@@ -485,7 +485,7 @@ Check before killing anything.
 ## Related conventions uncovered along the way
 
 - The MSv4 `time` coordinate (and the `.dt`'s `time_out` attrs) are **unix
-  seconds**; the legacy `.dds` carries MSv2 **MJD seconds**. Applying the
+  seconds**; MSv2 (and the retired `.dds`) carries **MJD seconds**. Applying the
   MJD→unix shift twice put FITS `DATE-OBS` in 1909 — ERFA "dubious year"
   warnings are the symptom, `utils/fits.set_wcs(time_is_unix=...)` is the
   switch.

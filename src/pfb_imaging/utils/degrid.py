@@ -33,8 +33,10 @@ from pfb_model_spec.utils.degrid import (
     pixel_lm,
 )
 from pfb_model_spec.utils.spec import upgrade
+from regions import Regions
 
 from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
+from pfb_imaging.utils.fits import set_wcs
 from pfb_imaging.utils.misc import to_mjd_time
 
 # Canonical MSv4 ordering for a correlated-data variable.
@@ -242,11 +244,6 @@ def build_region_masks(model_ds: xr.Dataset, region_file: str | None) -> list[Re
         # .shape and broadcast against it.
         # nothing to crop to: the "region" is the whole grid
         return [RegionMask(np.broadcast_to(np.float64(1.0), (ny, nx)), 0, 0)]
-
-    # deferred: import cycle with utils.fits (load_fits <-> utils.misc)
-    from regions import Regions
-
-    from pfb_imaging.utils.fits import set_wcs
 
     rfile = Regions.read(region_file)  # format auto-detected
     wcs = set_wcs(

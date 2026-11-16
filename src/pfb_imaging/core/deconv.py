@@ -599,7 +599,7 @@ def deconv(
                 # variables, which merge), so start from the band's original
                 # attrs (bandid, freq_out, cell_rad, ra, dec, ...) -- mirrors the
                 # legacy sara() convention of ds.assign_attrs(**attrs) onto a
-                # dataset read from the existing dds, which merges rather than
+                # dataset read from the existing store, which merges rather than
                 # replaces.
                 # to_zarr REPLACES attrs, so anything written later must start
                 # from these, not from band_attrs (the mop block below does)
