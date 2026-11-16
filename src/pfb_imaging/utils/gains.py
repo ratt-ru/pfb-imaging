@@ -73,6 +73,13 @@ def open_term(path: str) -> tuple[xr.Dataset, ...]:
             f"{path} is not readable as plain zarr ({e}); it was probably written by an older "
             "dask-ms. Rewrite it with a current QuartiCal."
         ) from e
+    except ValueError as e:
+        # zarr 3 cannot read dask-ms object-dtype (|O, json2 codec) columns; QuartiCal
+        # casts its string columns to fixed-width unicode, so only a foreign table hits this
+        raise ValueError(
+            f"{path} is not readable as plain zarr ({e}); it holds object-dtype columns, which "
+            "zarr 3 cannot read. Rewrite it with a current QuartiCal."
+        ) from e
 
 
 def load_node_gains(

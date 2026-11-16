@@ -1,7 +1,7 @@
 # One base per architecture, picked by buildx's TARGETARCH ("amd64" or
-# "arm64"). arm64 is on 3.12 because there numcodecs resolves to >= 0.16, the
-# first release with aarch64 wheels (on 3.11 zarr 3 resolves numcodecs 0.15,
-# which compiles from sdist); amd64 gets wheels either way and stays on 3.11.
+# "arm64"). arm64 is on 3.12, the python ci.yml's aarch64 leg tests; amd64
+# stays on 3.11. Needs BuildKit (buildx, or docker >= 23): the legacy builder
+# rejects `FROM base-${TARGETARCH}`.
 FROM python:3.11-slim AS base-amd64
 FROM python:3.12-slim AS base-arm64
 FROM base-${TARGETARCH}

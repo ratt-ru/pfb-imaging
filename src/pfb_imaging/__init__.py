@@ -1,5 +1,6 @@
 import ctypes
 import importlib
+import json
 import logging
 import os
 import platform
@@ -104,17 +105,22 @@ os.environ.setdefault("MBEAMS_CACHE_DIR", MBEAMS_CACHE_DEFAULT)
 # and fsspec's local filesystem does not create parent directories unless
 # asked, so nested groups (band####_time####/part####) fail to write.
 # Both libraries read these variables when they are first imported; if either
-# is already imported (an embedding script), apply them directly.
+# is already imported (an embedding script, or zarr 3's own pytest plugin),
+# apply them directly. zarr 2 (python 3.10) has no config and writes v2 anyway.
 # setdefault so an explicit env var always wins.
 ZARR_ENV = {"ZARR_DEFAULT_ZARR_FORMAT": "2", "FSSPEC_FILE_AUTO_MKDIR": "true"}
 for _key, _value in ZARR_ENV.items():
     os.environ.setdefault(_key, _value)
-if "zarr" in sys.modules:
+if hasattr(sys.modules.get("zarr"), "config"):
     sys.modules["zarr"].config.set({"default_zarr_format": int(os.environ["ZARR_DEFAULT_ZARR_FORMAT"])})
 if "fsspec" in sys.modules:
-    sys.modules["fsspec"].config.conf.setdefault("file", {}).setdefault(
-        "auto_mkdir", os.environ["FSSPEC_FILE_AUTO_MKDIR"].lower() == "true"
-    )
+    # parsed as fsspec parses FSSPEC_<protocol>_<kwarg>: JSON if it can be
+    _auto_mkdir = os.environ["FSSPEC_FILE_AUTO_MKDIR"]
+    try:
+        _auto_mkdir = json.loads(_auto_mkdir)
+    except json.JSONDecodeError:
+        pass
+    sys.modules["fsspec"].config.conf.setdefault("file", {}).setdefault("auto_mkdir", _auto_mkdir)
 
 
 def set_envs(nthreads, ncpu, log=None):

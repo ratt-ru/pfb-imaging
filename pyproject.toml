@@ -57,8 +57,8 @@ full = [
     "ducc0>=0.35.0",
     "jax[cpu]>=0.4.31",
     # fsspec resolves s3:// URLs (utils/naming, core/hci, core/degrid) through
-    # s3fs lazily. It used to arrive incidentally via dask-ms[s3]; now that
-    # dask-ms is behind [casacore] it has to be requested directly.
+    # s3fs lazily. It used to arrive incidentally via dask-ms[s3]; with dask-ms
+    # gone it has to be requested directly.
     # Pure-python, so it costs nothing on any arch.
     "s3fs",
     # regions 0.12 is the first release with a manylinux aarch64 wheel, but it
@@ -82,9 +82,12 @@ full = [
     "meerkat-beams>=0.3.0 ; python_version >= '3.11'",
     "xarray",
     # zarr-python 3 (python>=3.11), still writing the v2 format: see
-    # pfb_imaging.ZARR_ENV and D62. On 3.12+ it resolves numcodecs >= 0.16,
-    # which ships aarch64 wheels, so arm no longer compiles numcodecs there.
+    # pfb_imaging.ZARR_ENV and D62. It allows numcodecs >= 0.16, the first
+    # release with aarch64 wheels, so arm no longer compiles numcodecs.
+    # The <3 cap on 3.10 is load bearing: zarr 3 needs 3.11, and with
+    # prerelease="allow" an uncapped 3.10 resolves the 3.0.0a5 alpha.
     "zarr>=3 ; python_version >= '3.11'",
+    "zarr<3 ; python_version < '3.11'",
     "astropy",
     "scipy",
     # write support lives on the 0.4.0-alpha line, which is cut from commits
@@ -154,7 +157,7 @@ x86 = [
 # extra resolves to nothing off x86_64.
 all = [
     "pfb-imaging[full]",
-    # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
+    # restores meerkat-beams' own [full] extra (its CLI converters' deps)
     "meerkat-beams[full]>=0.3.0 ; python_version >= '3.11'",
     "pfb-imaging[casacore]",
     "pfb-imaging[x86]",
