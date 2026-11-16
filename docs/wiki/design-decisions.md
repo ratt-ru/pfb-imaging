@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-05T12:00:00Z
-last_verified_commit: 070222e
+timestamp: 2026-11-16T13:00:00Z
+last_verified_commit: 6a3fbc8
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -359,7 +359,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's `nxmax`/`nymax`
   buffer conventions are crossed between the solvers (`(..., nymax, nxmax)`) and the band
   workers (`(..., nxmax, nymax)`) — masked by square images, pre-existing, unchanged by this
-  switch.
+  switch (#376: `sara` fails on non-square images).
 - **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py` (ground truth +
   DFT oracle), `tests/test_imager_pol.py`, `tests/test_deconv.py`; spec/plan of 2026-07-17
   (ephemeral).
@@ -386,8 +386,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   SIN→SIN-reprojected onto the mosaic grid (tangent + target CRPIX shift, zero outside
   coverage) per piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as is (no
   beam interpolation in `grid_partition` any more); pieces of a partition share the field so
-  the first piece's beam stands in — replace with a weighted mean when time-dependent beams
-  arrive. Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
+  the first piece's beam stood in at the time (since replaced by the `wsum_nat`-weighted mean
+  in `_concat_pieces`, D28). Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
   pixel of its field's predicted position in the 5600² mosaic frame.
 - **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13): `synthesize_uvw` wants MJD
   seconds, MSv4 time is unix — `to_mjd_time` at the single call site. (2) **Frames about
@@ -447,8 +447,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   exact degrid/grid, D23), so it changes convergence rate and stability, never the fixed point.
   Measured (coplanar, isolating truncation; #287 has the table): the exact-Hessian solution is
   recovered to ~1e-13 for every `psf_oversize ∈ [1, 2]`; `κ(M⁻¹H)` grows ~5.5 (2×) → ~8 (1.4×
-  default) → ~50 (1×); and once `λmax(M⁻¹H) > 2/γ ≈ 2.1` the driver's **fixed** `gamma=0.95`
-  outer step diverges (measured at `psf_oversize ≲ 1.25`). The default is stable but ~1.5× slower
+  default) → ~50 (1×); and once `λmax(M⁻¹H) > 2/γ ≈ 2.1` the fixed `gamma=0.95` outer step (the
+  default at the time; `--gamma` now defaults to 1.0 on the CLI) diverges (measured at `psf_oversize ≲ 1.25`). The default is stable but ~1.5× slower
   than an exact 2× PSF. **Lowering `psf_oversize` for memory can silently cross into
   instability** — a step-size guard is proposed in #287.
 - **Source:** `tests/test_hessian_nterm.py` (operator identity + accuracy study);
@@ -585,7 +585,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   and the old `meerkat-beams` value included, raises `ValueError` before Ray starts. The
   wizard is built with `freq_extrapolation="scale"` like imager's and degrid's, so band-edge
   channels no longer raise. Validation and construction live in `hci_common.hci_beam_band`
-  and `hci_beam_wizard`, shared by both drivers. A recipe passing
+  and `hci_beam_wizard` (shared by both hci drivers while two existed, D61). A recipe passing
   `beam-model: meerkat-beams` with `primary-beam-band: L` must become `beam-model: L`.
 - **Source:** `src/pfb_imaging/core/hci.py`; `src/pfb_imaging/cli/hci.py`;
   `src/pfb_imaging/utils/hci_common.py` (`hci_beam_band`, `hci_beam_wizard`, `beam_for_band`,
@@ -597,7 +597,7 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 - **Context:** on a real MeerKAT mosaic (750², 4.6° field, 3 bands/3 fields, `psf_oversize=2`,
   beam on) `scripts/max_gamma.py` measured `lambda_max(M^-1 H_exact) >= 14.5` at the default
-  `--eta 1e-3`, so the major cycle diverges for any `gamma > 0.14` and the default `gamma=0.95`
+  `--eta 1e-3`, so the major cycle diverges for any `gamma > 0.14` and `gamma=0.95` (then the default)
   blows up after three descending cycles (issue #287). The dominant eigenvector is the
   near-Nyquist ripple seen in real images. Its cause is a curvature *mismatch*, not a small
   `eta`: along that mode `v'BCBv/wsum = 3.7e-3` against `v'H_exact v = 6.9e-2`, so **M
@@ -1329,7 +1329,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Consequences:** a deliberate, documented behaviour change from `degrid`. Revisit when
   pfb-model-spec#19/#20 add a Stokes axis to the spec.
 - **Source:** `src/pfb_imaging/core/degrid.py::check_model`,
-  `tests/test_degrid.py::test_check_model_refuses_a_multi_stokes_product`, issue #278.
+  `tests/test_degrid.py::test_check_model_refuses_a_multi_stokes_product` (removed with the
+  rule, D51), issue #278.
 
 ### D42 — no beams in `degrid` v1: upsampling and a per-band beam are in tension
 
@@ -1367,8 +1368,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   recipe fails at parse time rather than silently meaning something else.
 - **What fell out with it:** `distributed` left the dependency set entirely, `operators/gridder.py`
   became dask-free (the `comps2vis` stack had no other importer), and `core/degrid` joined the
-  casacore-free entry points. `[casacore]` still exists — `imager`, `hci` and the rephasing path
-  still need it.
+  casacore-free entry points. `[casacore]` still exists: rephasing and `--target`, in `imager`
+  and `hci`, need python-casacore's measures.
 - **Current option contract** (names not integer ids; `_per_chunk`; `--ray-address`):
   `.claude/rules/architecture.md` §6.
 - **Source:** issues #278, #330.
@@ -1402,7 +1403,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   DATA/FLAG into the test MS once per session instead of once per test, so it no longer re-heals
   the MS between modules. **Any test that writes to it must take the `writable_ms` fixture (a
   function-scoped copy) and use it for *every* access in that test.** This includes writes
-  through dask-ms `xds_to_table`, which a grep for `putcol` does not find — five such writers
+  a grep for `putcol` does not find (dask-ms `xds_to_table` then, casacore's write API through
+  the `pctable` fixture now) — five such writers
   existed (the dask hci's `test_hci.py`, and `test_imager_pol.py`; both now write through
   arcae) and the bug they caused predated the branch,
   activated only by making `sky_truth` session-scoped. A forgotten writer passes in the fast loop
@@ -2236,11 +2238,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   refused outright at the top of `imager()` -- an explicit `NotImplementedError`
   before `init_ray` -- which fixes the silence but not the gap. Implementing it
   means threading gains into `utils/stokes2vis.stokes_vis` the way
-  `utils/stokes2im` does for `hci`; note that reading QuartiCal output currently
-  goes through `daskms.experimental.zarr.xds_from_zarr`, which would put
-  python-casacore back on the `imager` path, so the MSv4-native route is to read
-  the gain store with xarray/zarr directly (#330 narrowed `[casacore]` to `hci`,
-  rephasing and `--target`).
+  `utils/stokes2im` does for `hci`. The reader exists and needs neither dask-ms nor
+  python-casacore: `utils/gains.load_node_gains` reads a QuartiCal term with plain
+  xarray/zarr onto a node's `(time, frequency)` grid (D60).
 
 - **`HessTreeRay.cg`'s two branches have opposite `x0` aliasing.** The uncoupled branch
   allocates a fresh `out` and leaves `x0` untouched; the coupled branch hands `x0` to
@@ -2322,9 +2322,10 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Creating a column poisons table handles already open on that MS** (ska-sa/arcae#241).
   Any read through one then raises `Table::lock cannot sync table …; another process changed
   the number of columns`; handles opened afterwards are fine, and `getcol` never recovers on
-  a poisoned one. `degrid` evicts the process-wide table cache once after column
-  creation. Without it an in-process `imager → degrid → imager` chain fails
-  deterministically on xarray-ms >= 0.4.0a8.
+  a poisoned one. Fixed in arcae 0.4.0a13, which resyncs open handles, so `degrid` no longer
+  evicts the table cache after creating columns (memory-and-ray.md, layer 3; pinned by
+  `tests/test_degrid.py::test_handles_open_before_a_column_is_added_still_read`). On an older
+  arcae an in-process `imager → degrid → imager` chain fails deterministically.
 - **`sync_msv2` silently drops a variable that is not on every correlated node.** It compares
   each variable's node count against the number of nodes it visited in `dt.subtree` and warns
   rather than raising. Declare new columns tree-wide — which is also correct, since a CASA

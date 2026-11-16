@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-10-20T15:00:00Z
-last_verified_commit: 743c4ad
+timestamp: 2026-11-16T12:30:00Z
+last_verified_commit: 6a3fbc8
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -33,7 +33,7 @@ for accumulation vs per-task footprint).
 
 **Fix:** `gc.collect()` at every Ray-task boundary — `try/finally` in
 `safe_stokes_vis` and `_BandWorkerImpl.load_band`; end-of-task in
-`_grid_image` (not exception-safe there; wrap it if you touch that code).
+`_grid_image_body` (not exception-safe there; wrap it if you touch that code).
 
 ### Layer 2 — Over-reading and pinned eager inputs
 
@@ -44,7 +44,8 @@ needed). And the eager Dataset local pins the raw c64/f32 inputs alongside
 all derived copies until the function returns; the legacy daskms path never
 had this problem because its datasets are dask-backed and hold nothing.
 
-**Fix:** load only the needed variables (`ds = node.ds[needed].load()`),
+**Fix:** load only the needed variables (`ds = load_detached(node.ds[needed])`;
+a bare `.load()` pins the read on the node, see #339 below),
 extract everything into plain numpy, then `del` + collect *before* the heavy
 conversions (`stokes_vis` is the template).
 

@@ -106,10 +106,9 @@ def ensure_model_columns(
        whose node count differs from the number of nodes it visits, warning
        rather than raising. This is also semantically right: a CASA column
        belongs to the whole MAIN table, not to a partition.
-    2. Creating a column leaves table handles that were already open on this MS
-       unable to resync (ska-sa/arcae#241), so the caller must drop any it holds
-       -- `core/degrid.degrid` evicts the process-wide table cache once
-       after this returns.
+    2. Before arcae 0.4.0a13, creating a column left table handles that were
+       already open on this MS unable to resync (ska-sa/arcae#241). The pinned
+       arcae refreshes them, so nothing is evicted after this returns.
 
     The caller must **close `dt` afterwards** before any other process reads
     the MS: new columns are invisible to other processes until close. It must
