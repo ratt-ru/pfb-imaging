@@ -2187,9 +2187,34 @@ update it (and this page's `last_verified_commit`) in the same session.
   pin correctness without a reference that could never be regenerated. Not ported, as
   legacy-only: the means-pass `psf2` rechunk regression and D36's ulp-hostile-centre test.
 - **What fell out with it:** `misc.construct_mappings`, the last dask-ms reader in `src/`;
-  conftest's dask-ms helpers and `collect_ignore`; `tests/test_hci.yml`. dask-ms itself is still
-  declared under `[casacore]`; removing it is the dependency follow-up.
+  conftest's dask-ms helpers and `collect_ignore`; `tests/test_hci.yml`. dask-ms itself stayed
+  declared under `[casacore]` until the dependency follow-up, #395, removed it (D62).
 - **Source:** PR #358 (the port and the MeerKLASS comparison), PR #393 (this retirement); D43.
+
+### D62 — zarr-python 3, still writing the v2 format
+
+- **Was:** `zarr<3`, kept only because dask-ms pinned it. Once #395 dropped dask-ms from
+  `[casacore]` (meerkat-beams 0.3.0's `[full]` no longer asks for it either), nothing in the
+  resolution pinned zarr below 3 except pfb itself.
+- **Decision:** require `zarr>=3` (python >= 3.11; the CLI-only install still resolves on 3.10)
+  and keep **writing v2** for now. `pfb_imaging/__init__.py` sets two env defaults, `ZARR_ENV`,
+  before zarr or fsspec is imported, and applies them directly if either already is:
+  `ZARR_DEFAULT_ZARR_FORMAT=2`, and `FSSPEC_FILE_AUTO_MKDIR=true`. `set_envs` forwards both to Ray
+  workers. An explicit env var wins (`setdefault`).
+- **Why the fsspec setting:** `uri_and_fs` hands out `file://` URIs, and zarr 3 writes those
+  through fsspec's local filesystem, which does not create parent directories unless
+  `auto_mkdir` is set. Every nested-group write (`to_zarr(group="band####_time####/part####")`)
+  then fails with `FileNotFoundError` on the group's metadata file, **in either format**. It
+  broke every imager test.
+- **Why v2:** both zarr 2 and 3 read it, as does every tool still on zarr 2. Existing stores are
+  v2, and appends to them stay v2 regardless. Moving the stores to v3 is its own change, with
+  its own reader audit. `tests/test_imager_pass2.py::test_write_partition_reads_back_identically`
+  asserts `.zgroup` (not `zarr.json`) on disk.
+- **Consequences:** test fixtures standing in for third-party v2 writers must say so
+  (`tests/test_gains.py` writes its fake QuartiCal tables with `zarr_format=2`, since QuartiCal
+  writes v2). On python >= 3.12, numcodecs resolves to >= 0.16, whose aarch64 wheels end the
+  numcodecs source build on arm; on 3.11 it is still 0.15 and still compiles.
+- **Source:** PR #395.
 
 ## Known debt
 

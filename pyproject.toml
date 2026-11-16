@@ -73,25 +73,18 @@ full = [
     # meerkat-beams WITHOUT its [full] extra, plus the deps its BeamWizard
     # actually needs. meerkat_beams.utils.BeamWizard -- the only thing pfb
     # imports from it -- uses astropy/numpy/scipy/xarray/numcodecs/zarr. The
-    # [full] extra additionally pulls dask-ms (and therefore python-casacore),
-    # which no module in the meerkat-beams source imports, and which would drag
-    # casacore straight back onto the cross-platform path. Revert to
-    # meerkat-beams[<extra>] once dask-ms is split out upstream.
-    #
-    # zarr<3 is kept because dask-ms still pins it. No pfb code imports dask-ms
-    # (D61) and no pfb extra asks for it, but it still comes in through
-    # meerkat-beams' [full] extra, which [all] pulls; pfb-model-spec and
-    # meerkat-beams' core dependencies do not pin zarr<3. Leave it until dask-ms is
-    # dropped from meerkat-beams[full], and lift it as its own change (a writer format change). It costs
-    # a numcodecs source build on aarch64 (numcodecs only gained aarch64 wheels
-    # at 0.16.0, and zarr 2.18 pins numcodecs<0.16); numcodecs compiles cleanly with a C compiler + Cython.
+    # [full] extra adds its CLI converters' dependencies (matplotlib,
+    # xarray-fits, ...), which pfb never imports; [all] still pulls it.
     # >=0.2.0: get_rotation_averaged_beam/partition_mueller take nthreads and
     # pa_tolerance (landmanbester/meerkat-beams#40), which pass 1 and degrid pass.
     # >=0.3.0: lambda/D frequency extrapolation for band-edge beams
     # (landmanbester/meerkat-beams#42, D59).
     "meerkat-beams>=0.3.0 ; python_version >= '3.11'",
     "xarray",
-    "zarr<3",
+    # zarr-python 3 (python>=3.11), still writing the v2 format: see
+    # pfb_imaging.ZARR_ENV and D62. On 3.12+ it resolves numcodecs >= 0.16,
+    # which ships aarch64 wheels, so arm no longer compiles numcodecs there.
+    "zarr>=3 ; python_version >= '3.11'",
     "astropy",
     "scipy",
     # write support lives on the 0.4.0-alpha line, which is cut from commits

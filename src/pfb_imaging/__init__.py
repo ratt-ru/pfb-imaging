@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import resource
+import sys
 from importlib.metadata import PackageNotFoundError, version
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -97,6 +98,23 @@ os.environ.setdefault(
 )
 MBEAMS_CACHE_DEFAULT = f"/tmp/mbeams-cache-{os.getuid()}"
 os.environ.setdefault("MBEAMS_CACHE_DIR", MBEAMS_CACHE_DEFAULT)
+# zarr-python 3 writes the v3 format by default. pfb keeps writing v2, which
+# both zarr 2 and 3 read, until moving the stores to v3 is its own change.
+# zarr 3 also writes through fsspec for the file:// URIs uri_and_fs hands out,
+# and fsspec's local filesystem does not create parent directories unless
+# asked, so nested groups (band####_time####/part####) fail to write.
+# Both libraries read these variables when they are first imported; if either
+# is already imported (an embedding script), apply them directly.
+# setdefault so an explicit env var always wins.
+ZARR_ENV = {"ZARR_DEFAULT_ZARR_FORMAT": "2", "FSSPEC_FILE_AUTO_MKDIR": "true"}
+for _key, _value in ZARR_ENV.items():
+    os.environ.setdefault(_key, _value)
+if "zarr" in sys.modules:
+    sys.modules["zarr"].config.set({"default_zarr_format": int(os.environ["ZARR_DEFAULT_ZARR_FORMAT"])})
+if "fsspec" in sys.modules:
+    sys.modules["fsspec"].config.conf.setdefault("file", {}).setdefault(
+        "auto_mkdir", os.environ["FSSPEC_FILE_AUTO_MKDIR"].lower() == "true"
+    )
 
 
 def set_envs(nthreads, ncpu, log=None):
@@ -141,6 +159,7 @@ def set_envs(nthreads, ncpu, log=None):
         "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
         "MBEAMS_CACHE_DIR": os.environ["MBEAMS_CACHE_DIR"],
         "RAY_worker_num_grpc_internal_threads": "1",
+        **{k: os.environ[k] for k in ZARR_ENV},
     }
     return env_vars
 

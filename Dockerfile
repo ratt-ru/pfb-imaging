@@ -27,8 +27,8 @@ COPY src/ src/
 #   python-casacore  scikit-build-core -> cmake, casacore-dev, boost-python,
 #                    cfitsio, wcslib, and BLAS+LAPACK -- casacore's
 #                    FindCasacore.cmake marks both REQUIRED ([casacore] extra)
-#   numcodecs        setuptools + Cython -> C compiler      ([casacore] extra,
-#                    via dask-ms's numcodecs<0.16 pin)
+#   numcodecs        setuptools + Cython -> C compiler      (zarr 3 on python
+#                    3.11 resolves numcodecs 0.15, before its first arm wheel)
 #   python-lzf       tiny C extension -> C compiler         ([casacore] extra)
 # amd64 gets all of these as wheels and needs only git + gcc, so the heavy
 # toolchain is installed conditionally and the amd64 image is unchanged.

@@ -32,8 +32,8 @@ jobs:
   # Build each architecture on its own native runner and push by digest; the
   # `merge` job then stitches the digests into one multi-arch manifest.
   #
-  # Native arm64 rather than QEMU: the arm64 image compiles ducc0 (and, with
-  # the casacore extra, python-casacore and numcodecs) from source because no
+  # Native arm64 rather than QEMU: the arm64 image compiles ducc0, numcodecs
+  # and, with the casacore extra, python-casacore from source because no
   # aarch64 wheels exist. Under docker/setup-qemu-action that runs roughly an
   # order of magnitude slower and reliably exceeds the job timeout. GitHub's
   # `ubuntu-24.04-arm` runners are free for public repositories.

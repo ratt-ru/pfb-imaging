@@ -212,7 +212,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       # Source-build cache. Without it every arm run repays the full ducc0
-      # (and numcodecs, while zarr<3 pins it below its first arm wheel) compile.
+      # compile.
       # Keyed on uv.lock so it invalidates exactly when a pinned version moves.
       - name: Cache source builds (aarch64)
         if: env.SKIP_CHECKS != 'true' && matrix.arch == 'aarch64'
