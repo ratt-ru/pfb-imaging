@@ -914,7 +914,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_preconditioner_consistency.py`,
   `tests/test_deconv.py::test_deconv_driver_runs_with_the_frequency_prior`;
   `scripts/max_gamma.py --gp-length-scale/--gp-cap`;
-  `scripts/profile_freq_correlated_hessian.py`; `src/pfb_imaging/operators/gauss.py`
+  `scripts/profiling/profile_freq_correlated_hessian.py`; `src/pfb_imaging/operators/gauss.py`
   (`eta_freq_mul`), `tests/test_eta_freq_mul.py`.
 
 ### D31 — Resolution changes use the closed-form Gaussian transform ratio, never a sampled division

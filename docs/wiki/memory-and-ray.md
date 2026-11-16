@@ -131,7 +131,7 @@ Reading it:
 - **OOMs late in a run** → accumulation across tasks, not per-task size.
 
 To see *what* is allocated, set `PFB_MEMRAY_DIR` (memray capture per Ray
-task) and summarise with `scripts/memray_report.py`, whose docstring also
+task) and summarise with `scripts/profiling/memray_report.py`, whose docstring also
 covers profiling the driver with `memray run`. Attribute with memray, but
 take timings and peaks from a run without it: native tracking slows
 everything, and one local run under it hit 26.7 GiB RSS in a pass-1 task with
@@ -141,7 +141,7 @@ likely) -- where the same code without memray peaked at 3.5 GB.
 ## Where the time goes
 
 Stimela's stats give one wall time per step. Three finer sources, all read by
-`scripts/profile_report.py` (its docstring is the how-to):
+`scripts/profiling/profile_report.py` (its docstring is the how-to):
 
 - **Driver phases, always on.** `memprof.PhaseClock` ends the imager,
   `degrid` and `deconv` logs with a `Time by phase:` line (a phase that recurs,
@@ -262,7 +262,7 @@ A different axis from the table above: memory that scales with the *image*
 data. Local, `tests/data/test_ascii_1h60.0s.MS`, 3840² (PSF 5376², padded grid
 6528²), 4 bands, Stokes I, double, robust -0.5, `--nworkers 1`, `nthreads=4`.
 Worker figures are the post-gc progress-line telemetry and `ru_maxrss`; heap
-peaks are memray (`PFB_MEMRAY_DIR`, `scripts/memray_report.py`).
+peaks are memray (`PFB_MEMRAY_DIR`, `scripts/profiling/memray_report.py`).
 
 | change | worker post-gc rss, bands 1->4 | worker peak after 4 bands | pass-2 heap peak | pass-1 heap peak | driver peak |
 |---|---|---|---|---|---|

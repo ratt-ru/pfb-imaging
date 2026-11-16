@@ -7,7 +7,7 @@ Compares:
   - NEW: unrolled for filter sizes 2,4,6,8,10 + fastmath
 
 Usage:
-    python scripts/profile_dwt_convolutions.py [--size 4096] [--warmup 5] [--repeats 50]
+    uv run python scripts/profiling/profile_dwt_convolutions.py [--size 4096] [--warmup 5] [--repeats 50]
 """
 
 import argparse

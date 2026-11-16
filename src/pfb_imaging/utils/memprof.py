@@ -8,12 +8,12 @@ being a leak in the worker (docs/wiki/memory-and-ray.md).
 
 ``memray_task`` wraps a task body in a ``memray.Tracker`` when
 ``PFB_MEMRAY_DIR`` is set (one capture file per task), and is a no-op otherwise.
-``scripts/memray_report.py`` turns the captures into a text report.
+``scripts/profiling/memray_report.py`` turns the captures into a text report.
 
 ``profile_task`` is what the task bodies use. It adds a cProfile capture per
 task when ``PFB_CPROFILE_DIR`` is set, and always measures the task's wall and
 CPU time. ``dump_timeline`` writes Ray's task timeline to ``PFB_RAY_TIMELINE``
-from the driver. ``scripts/profile_report.py`` reads both.
+from the driver. ``scripts/profiling/profile_report.py`` reads both.
 """
 
 import contextlib
@@ -279,7 +279,7 @@ class ActorCapture:
     (when ``PFB_CPROFILE_DIR`` is set), so the actor's idle time between calls
     is not profiled and, on Python 3.11, the thread that runs each call is the
     one profiled. Files are named as ``profile_task``'s are, so
-    ``scripts/profile_report.py`` and ``scripts/memray_report.py`` read them
+    ``scripts/profiling/profile_report.py`` and ``scripts/profiling/memray_report.py`` read them
     unchanged.
 
     ``stop`` must run before the actor's process ends: memray writes its
@@ -361,7 +361,7 @@ def dump_timeline(log=None) -> None:
 
     Call from the driver while Ray is still up. The file is Chrome trace JSON:
     open it in https://ui.perfetto.dev or summarise it with
-    ``scripts/profile_report.py``. It covers every task the cluster still
+    ``scripts/profiling/profile_report.py``. It covers every task the cluster still
     remembers, so on a shared ``--ray-address`` cluster it includes other jobs.
 
     A failure to write it is reported, not raised: the run's work is done by

@@ -12,26 +12,10 @@ For lower-level profiling see:
   - profile_dwt2d.py             (dwt2d copyt vs nocopyt)
 
 Usage:
-    python scripts/profile_wavelets.py [--nx 512] [--ny 512] [--nband 4] [--warmup 3] [--repeats 10]
+    uv run python scripts/profiling/profile_wavelets.py [--nx 512] [--ny 512] [--nband 4] [--warmup 3] [--repeats 10]
 """
 
-import ctypes
-import importlib.metadata
-import os
-
-# set NUMBA_NUM_THREADS before importing numba
-_nthreads = os.cpu_count() or 1
-os.environ["NUMBA_THREADING_LAYER"] = "tbb"
-os.environ["NUMBA_NUM_THREADS"] = str(_nthreads)
-dist = importlib.metadata.distribution("tbb")
-tbb_path = None
-for f in dist.files:
-    if str(f).endswith("/libtbb.so"):
-        tbb_path = str(dist.locate_file(f).resolve())
-        ctypes.CDLL(tbb_path)
-        break
-if tbb_path is None:
-    raise RuntimeError("Could not initialse TBB threading layer for numba.")
+from _common import setup_threads
 
 import argparse
 import gc
@@ -197,7 +181,9 @@ def main():
     parser.add_argument("--nlevel", type=int, default=3, help="Wavelet decomposition levels")
     parser.add_argument("--psi-nthreads", type=int, default=1, help="Threads for Psi operators")
     parser.add_argument("--no-ray", action="store_true", help="Skip PsiNocopytRay benchmark")
+    parser.add_argument("--nthreads", type=int, default=None, help="numba threads (default: all cores)")
     args = parser.parse_args()
+    setup_threads(args.nthreads)
 
     nx, ny = args.nx, args.ny
     nlevel = args.nlevel
@@ -214,7 +200,7 @@ def main():
         ray.init(ignore_reinit_error=True)
 
     sys_mem_start = get_system_used_mb()
-    print(f"Numba threads: {numba.config.NUMBA_NUM_THREADS}")
+    print(f"Numba threads: {numba.get_num_threads()}")
     print(f"Image shape: ({nx}, {ny})")
     print(f"Decomposition levels: {nlev}")
     print(f"Bases: {bases}")

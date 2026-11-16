@@ -121,7 +121,7 @@ spec library and `.mds` writer are imported from `pfb_model_spec.utils`.
   `--nworkers` sizes Ray Serve replicas, not a dask pool (#330 removed the last `distributed`
   consumer).
 * Ray actors for process-level parallelism in wavelet operators.
-* See `scripts/profiling.md` for profiling guides.
+* See `scripts/profiling/README.md` for profiling guides.
 
 ## 8. MSv4 DataTree Imager (`pfb imager`)
 

@@ -7,27 +7,10 @@ Profile dwt2d + idwt2d: old (copyt) vs new (nocopyt) implementations.
           no transpose, fewer buffers
 
 Usage:
-    python scripts/profile_dwt2d.py [--nx 2048] [--ny 2048] [--nlevel 3] [--warmup 5] [--repeats 30]
+    uv run python scripts/profiling/profile_dwt2d.py [--nx 2048] [--ny 2048] [--nlevel 3] [--warmup 5] [--repeats 30]
 """
 
-import ctypes
-import importlib.metadata
-import os
-
-# parse --psi-nthreads early so we can set NUMBA_NUM_THREADS before import
-# _nthreads = os.cpu_count() or 1
-_nthreads = 8
-os.environ["NUMBA_THREADING_LAYER"] = "tbb"
-os.environ["NUMBA_NUM_THREADS"] = str(_nthreads)
-dist = importlib.metadata.distribution("tbb")
-tbb_path = None
-for f in dist.files:
-    if str(f).endswith("/libtbb.so"):
-        tbb_path = str(dist.locate_file(f).resolve())
-        ctypes.CDLL(tbb_path)
-        break
-if tbb_path is None:
-    raise RuntimeError("Could not initialse TBB threading layer for numba.")
+from _common import setup_threads
 
 import argparse
 import gc
@@ -36,24 +19,9 @@ from time import time
 import numba
 import numpy as np
 import pywt
-from pathlib import Path
-import shutil
 
 from pfb_imaging.wavelets import coeff_size, signal_size
 from pfb_imaging.wavelets.wavelets import dwt2d, dwt2d_nocopyt, idwt2d, idwt2d_nocopyt
-
-# ── Clear stale Numba caches ────────────────────────────────────────
-# Numba's file cache (`cache=True`) is keyed per-function by source hash.
-# Functions decorated with `inline="always"` get compiled into their callers,
-# but Numba does NOT track this cross-function dependency.  If an inlined
-# function changes while the caller's source stays the same, the caller's
-# cached machine code is stale and loading it can segfault.
-#
-# Clearing __pycache__ dirs on every session start is cheap (~ms) and
-# eliminates the problem entirely during development.
-_src_root = Path(__file__).resolve().parent.parent / "src" / "pfb_imaging"
-for _cache_dir in _src_root.rglob("__pycache__"):
-    shutil.rmtree(_cache_dir, ignore_errors=True)
 
 
 def build_bookkeeping(nxi, nyi, wavelet, nlevel):
@@ -242,14 +210,16 @@ def main():
     parser.add_argument("--nlevel", type=int, default=3, help="Decomposition levels")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup iterations")
     parser.add_argument("--repeats", type=int, default=30, help="Timed iterations")
+    parser.add_argument("--nthreads", type=int, default=None, help="numba threads (default: all cores)")
     args = parser.parse_args()
+    setup_threads(args.nthreads)
 
     nx, ny = args.nx, args.ny
     nlevel = args.nlevel
     warmup = args.warmup
     repeats = args.repeats
 
-    print(f"Numba {numba.__version__},  threads={numba.config.NUMBA_NUM_THREADS}")
+    print(f"Numba {numba.__version__},  threads={numba.get_num_threads()}")
     print(f"Image: ({nx}, {ny}),  levels={nlevel},  warmup={warmup},  repeats={repeats}")
     print()
     print("OLD = dwt2d / idwt2d (copyt transposition at every level)")
