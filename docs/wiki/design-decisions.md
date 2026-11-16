@@ -2450,6 +2450,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   reads exactly like a fast pass. Quote it as "the skip-checks tag" in prose, or check
   `gh api .../actions/jobs/<id> --jq '[.steps[].conclusion]'` for a wall of `skipped`.
 - **A resumed deconv run continues from the tree's MODEL/UPDATE/niters.** After a
-  crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`UPDATE`
-  arrays and the `niters`/`rms`/`rmax`/`hess_norm` attrs from each band group (zarr),
-  then `zarr.consolidate_metadata`.
+  crashed or diverged run, reset by deleting `MODEL`/`MODEL_BEST`/`RESIDUAL`/`BRESIDUAL`/`UPDATE`
+  arrays (and `MODEL_MOPPED`/`RESIDUAL_MOPPED`) and the
+  `niters`/`rms`/`rmax`/`best_rms`/`best_rmax`/`hess_norm` attrs from each band group (zarr),
+  then `zarr.consolidate_metadata`. A stored `BRESIDUAL` is read even without a `MODEL`,
+  so leaving it resumes from a stale gradient. `rms`/`rmax` are the written `MODEL`'s;
+  `best_rms`/`best_rmax` are `MODEL_BEST`'s and carry over a resume (#380). On a `.dt`
+  written before #380, `rms`/`rmax` held the best values, and a resume reads them as such.

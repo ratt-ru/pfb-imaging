@@ -403,6 +403,78 @@ def test_deconv_requires_bdirty(tmp_path):
         )
 
 
+@pytest.mark.timeout(180)
+@pytest.mark.slow
+def test_resume_keeps_the_best_rms_and_model_best(tmp_path):
+    """A resume measures against the stored MODEL_BEST, not the resumed model (#380).
+
+    Every run stores best_rms/best_rmax next to rms/rmax, which are the written
+    MODEL's. A resume handed an unbeatable earlier best may not overwrite
+    MODEL_BEST, whether that best is in best_rms or, on a .dt written before
+    best_rms existed, in the rms/rmax attrs.
+    """
+    import zarr
+
+    from pfb_imaging.core.deconv import deconv as deconv_core
+
+    rng = np.random.default_rng(3)
+    output_filename = str(tmp_path / "resume")
+    dt_name = f"{output_filename}_I.dt"
+    _write_synthetic_dt(dt_name, 16, 16, 32, 1, rng)
+    kw = dict(
+        product="I",
+        minor_cycle="sara",
+        niter=1,
+        hess_norm=1.0,
+        pd_maxit=10,
+        cg_maxit=10,
+        bases=["self"],
+        nlevels=1,
+        l1_reweight_from=100,
+        nthreads=1,
+        nworkers=1,
+        mop=False,
+        fits_mfs=False,
+        fits_cubes=False,
+        verbosity=0,
+        log_directory=str(tmp_path),
+    )
+
+    def bands():
+        dt = xr.open_datatree(dt_name, engine="zarr", chunks=None)
+        return {n: dt[n].ds for n in dt.children if n.startswith("band")}
+
+    def plant_best(**attrs):
+        """A sentinel MODEL_BEST with the given attrs, as an earlier run would leave it."""
+        for n, ds in bands().items():
+            sentinel = np.full_like(ds.DIRTY.values, 7.0)
+            # to_zarr(mode="a") replaces the group's attrs, so carry them
+            xr.Dataset({"MODEL_BEST": (("corr", "y", "x"), sentinel)}, attrs=ds.attrs).to_zarr(
+                dt_name, group=n, mode="a"
+            )
+        root = zarr.open_group(dt_name, mode="a")
+        for _, grp in root.groups():
+            for key in ("best_rms", "best_rmax"):
+                grp.attrs.pop(key, None)
+            grp.attrs.update(**attrs)
+        zarr.consolidate_metadata(dt_name)
+
+    def assert_best_kept(niters):
+        for ds in bands().values():
+            assert ds.attrs["niters"] == niters
+            assert ds.attrs["best_rms"] == 0.0 and ds.attrs["best_rmax"] == 0.0
+            assert ds.attrs["rms"] > 0.0  # the written MODEL's, not the best
+            assert np.all(ds.MODEL_BEST.values == 7.0)
+
+    plant_best(best_rms=0.0, best_rmax=0.0)
+    deconv_core(output_filename, **kw)
+    assert_best_kept(1)
+
+    plant_best(rms=0.0, rmax=0.0)  # pre-#380 layout: rms/rmax held the best values
+    deconv_core(output_filename, **kw)
+    assert_best_kept(2)
+
+
 def test_deconv_refuses_an_unknown_fit_mode(tmp_path):
     """--fit-mode is checked before any work, not when the first .mds fit fails and is logged."""
     from pfb_imaging.core.deconv import deconv as deconv_core

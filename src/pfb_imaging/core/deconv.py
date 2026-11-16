@@ -434,10 +434,13 @@ def deconv(
             rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
         # MODEL_BEST is written when a cycle improves on best_rms, so the best
-        # model never needs to be held in memory
+        # model never needs to be held in memory. A resume carries best_rms over
+        # from the run that wrote MODEL_BEST (#380); before best_rms was stored,
+        # the rms/rmax attrs held the best values, so an older .dt falls back to them.
         if "best_rms" in first.attrs:
-            best_rms = first.attrs["best_rms"]
-            best_rmax = first.attrs["best_rmax"]
+            best_rms, best_rmax = first.attrs["best_rms"], first.attrs["best_rmax"]
+        elif "MODEL_BEST" in first and "rms" in first.attrs:
+            best_rms, best_rmax = first.attrs["rms"], first.attrs["rmax"]
         else:
             best_rms, best_rmax = rms, rmax
         diverge_count_curr = 0
@@ -605,8 +608,11 @@ def deconv(
                 # from these, not from band_attrs (the mop block below does)
                 final_attrs[b] = {
                     **band_attrs[b],
-                    "rms": best_rms,
-                    "rmax": best_rmax,
+                    # rms/rmax are the written MODEL's; best_* are MODEL_BEST's
+                    "rms": rms,
+                    "rmax": rmax,
+                    "best_rms": best_rms,
+                    "best_rmax": best_rmax,
                     "niters": k + 1,
                     "hess_norm": hess_norm,
                     "hess_norm_opts": _m_signature(opts_dict),
