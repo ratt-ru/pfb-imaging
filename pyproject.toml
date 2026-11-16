@@ -7,15 +7,15 @@ authors = [
 ]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.11, <3.14"
+requires-python = ">=3.10, <3.14"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Astronomy"
 ]
 
@@ -48,9 +48,9 @@ full = [
     "codex-africanus[dask,scipy,astropy] >= 0.4.4",
     "reproject",
     "ray[default,serve]>=2.55.0",
-    "radiomesh>=0.1.2",
+    "radiomesh>=0.1.2 ; python_version >= '3.11'",
     "rarg-numba-patterns>=0.0.1",
-    "rarg-python-patterns>=0.0.4",
+    "rarg-python-patterns>=0.0.4 ; python_version >= '3.11'",
     "scikit-image>=0.24.0",
     "PyWavelets>=1.7.0",
     "numexpr>=2.10.1",
@@ -61,8 +61,11 @@ full = [
     # dask-ms is behind [casacore] it has to be requested directly.
     # Pure-python, so it costs nothing on any arch.
     "s3fs",
-    # regions 0.12 is the first release with a manylinux aarch64 wheel.
-    "regions>=0.12",
+    # regions 0.12 is the first release with a manylinux aarch64 wheel, but it
+    # requires python>=3.11. Keep the floor low on 3.10, which is x86-only in
+    # practice anyway (arcae publishes no cp310 aarch64 wheel either).
+    "regions>=0.9 ; python_version < '3.11'",
+    "regions>=0.12 ; python_version >= '3.11'",
     "psutil>=5.9.8",
     # Not imported by pfb: a security floor on a transitive dependency
     # (scikit-image, reproject, imageio), raised by dependabot in #230.
@@ -86,7 +89,7 @@ full = [
     # pa_tolerance (landmanbester/meerkat-beams#40), which pass 1 and degrid pass.
     # >=0.3.0: lambda/D frequency extrapolation for band-edge beams
     # (landmanbester/meerkat-beams#42, D59).
-    "meerkat-beams>=0.3.0",
+    "meerkat-beams>=0.3.0 ; python_version >= '3.11'",
     "xarray",
     "zarr<3",
     "astropy",
@@ -103,10 +106,10 @@ full = [
     # Multiton.clear_cache. Both are aarch64-clean: xarray-ms is pure python, and
     # arcae 0.4.0a14 has manylinux_2_28_aarch64 wheels for cp311-cp314 (it
     # vendors casacore).
-    "xarray-ms>=0.4.0a12,<0.5.0",
-    "arcae>=0.4.0a14,<0.5.0",
-    "msv4-utils>=0.0.3",
-    "xarray-kat>=0.0.6",
+    "xarray-ms>=0.4.0a12,<0.5.0 ; python_version >= '3.11'",
+    "arcae>=0.4.0a14,<0.5.0 ; python_version >= '3.11'",
+    "msv4-utils>=0.0.3 ; python_version >= '3.11'",
+    "xarray-kat>=0.0.6 ; python_version >= '3.11'",
 ]
 
 # python-casacore (via africanus).
@@ -159,7 +162,7 @@ x86 = [
 all = [
     "pfb-imaging[full]",
     # restores meerkat-beams' own [full] extra (its CLI converters, dask-ms)
-    "meerkat-beams[full]>=0.3.0",
+    "meerkat-beams[full]>=0.3.0 ; python_version >= '3.11'",
     "pfb-imaging[casacore]",
     "pfb-imaging[x86]",
 ]
