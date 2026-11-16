@@ -257,7 +257,7 @@ class PrimalDual:
 
     Args:
         tol: Convergence tolerance on relative primal change.
-        maxit: Maximum iterations.
+        maxit: Maximum iterations, at least 1.
         report_freq: Log every this many iterations at verbosity > 1.
         verbosity: 0 silent, 1 convergence message, 2 per-iter logging.
         gamma: Step-size safety factor.
@@ -265,6 +265,9 @@ class PrimalDual:
         on_converge: Optional ``cb(x, k, eps) -> bool`` fired when
             ``eps < tol``; return False to continue iterating.
         primal_prox: Optional in-place image-domain prox (e.g. positivity).
+
+    Raises:
+        ValueError: If ``maxit < 1``.
     """
 
     def __init__(
@@ -278,6 +281,9 @@ class PrimalDual:
         on_converge=None,
         primal_prox=None,
     ):
+        if maxit < 1:
+            # solve() reports on the last iteration, so it needs at least one (#377)
+            raise ValueError(f"PrimalDual needs maxit >= 1, got {maxit}")
         self.tol = tol
         self.maxit = maxit
         self.report_freq = report_freq

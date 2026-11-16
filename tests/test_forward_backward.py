@@ -94,6 +94,13 @@ def test_primal_prox_applied():
     assert (x >= 0).all()
 
 
+@pmp("maxit", [0, -1])
+def test_maxit_below_one_is_refused(maxit):
+    """A zero-iteration solve used to raise UnboundLocalError (#377)."""
+    with pytest.raises(ValueError, match="maxit >= 1"):
+        ForwardBackward(maxit=maxit, verbosity=0)
+
+
 def test_solve_raises_without_setup_or_grad():
     fb = ForwardBackward(verbosity=0)
     with pytest.raises(RuntimeError, match="setup"):

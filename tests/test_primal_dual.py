@@ -143,6 +143,13 @@ def test_dual_warm_start_and_reset():
     assert not np.any(pd._v)
 
 
+@pmp("maxit", [0, -1])
+def test_maxit_below_one_is_refused(maxit):
+    """A zero-iteration solve used to raise UnboundLocalError (#377)."""
+    with pytest.raises(ValueError, match="maxit >= 1"):
+        PrimalDual(maxit=maxit, verbosity=0)
+
+
 def test_solve_raises_without_setup_or_grad():
     pd = PrimalDual(verbosity=0)
     with pytest.raises(RuntimeError, match="setup"):
