@@ -68,7 +68,7 @@ class ForwardBackward:
         psi = prox.psi
         self._alpha = np.zeros((psi.nband, psi.nbasis, psi.nymax, psi.nxmax))
         self._alpha_buf = np.zeros_like(self._alpha)
-        self._xout = np.zeros((psi.nband, psi.nx, psi.ny))
+        self._xout = None  # sized from the first iterate: psi.nx/ny order is per-operator
 
     def set_grad(self, grad) -> None:
         """Set the gradient of the smooth data-fidelity term."""
@@ -89,6 +89,8 @@ class ForwardBackward:
         reg.prox(self._alpha, self._alpha_buf, self.step * lam, sigma=1.0)
         self._alpha_buf -= self._alpha
         tick("prox")
+        if self._xout is None or self._xout.shape != x.shape:
+            self._xout = np.zeros_like(x)
         reg.psi.hdot(self._alpha_buf, self._xout)
         tick("psi_hdot")
         x += self._xout / reg.nu

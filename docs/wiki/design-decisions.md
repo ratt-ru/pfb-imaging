@@ -356,10 +356,14 @@ update it (and this page's `last_verified_commit`) in the same session.
   tests (WCS positions/fluxes, brute-force DFT oracle, per-Stokes fluxes, deconv recovery — all
   written order-agnostically via WCS and dims names *before* the switch) pass unchanged across
   it, and non-square shapes are pinned in `tests/test_imager_pass2.py` and
-  `tests/test_hessian_tree.py`. Known latent debt: the wavelet/psi stack's `nxmax`/`nymax`
-  buffer conventions are crossed between the solvers (`(..., nymax, nxmax)`) and the band
-  workers (`(..., nxmax, nymax)`) — masked by square images, pre-existing, unchanged by this
-  switch (#376: `sara` fails on non-square images).
+  `tests/test_hessian_tree.py`. The wavelet jitclasses keep their pre-switch naming: built
+  on the `(Y, X)` raster, a jitclass's `nxmax` is the **y** extent and it writes
+  `(nbasis, nxmax, nymax)`. A `PsiOperator`'s `nymax`/`nxmax` instead name the axes of the
+  `(nband, nbasis, nymax, nxmax)` buffer its `dot` fills, which is what `L21`, `PrimalDual`
+  and `ForwardBackward` allocate, so `PsiNocopytRay` and `PsiNocopyt` cross the names at
+  the facade. Square images hid the missing cross until #376 (`sara` failed on `nx != ny`
+  on both backends); `tests/test_primal_dual.py` now pins non-square shapes, including a
+  round trip that does not depend on the names.
 - **Source:** commits `1a99dfb`, `0aac1d0`, `4b571e9`; `tests/test_imager.py` (ground truth +
   DFT oracle), `tests/test_imager_pol.py`, `tests/test_deconv.py`; spec/plan of 2026-07-17
   (ephemeral).
