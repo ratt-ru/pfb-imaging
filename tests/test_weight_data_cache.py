@@ -22,17 +22,14 @@ import pfb_imaging  # noqa: F401  (forces NUMBA_THREADING_LAYER=tbb)
 os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 from pfb_imaging.utils.weighting import weight_data
 
-nrow, nchan, ncorr = 6, 4, 2
-data = np.zeros((nrow, nchan, ncorr), np.complex64)
-weight = np.ones((nrow, nchan, ncorr), np.float32)
-flag = np.zeros((nrow, nchan, ncorr), bool)
-jones = np.ones((1, 3, nchan, 1, 2), np.complex64)
-tbin_idx = np.array([0], np.int32)
-tbin_counts = np.array([nrow], np.int32)
-ant1 = np.array([0, 0, 0, 1, 1, 2], np.int32)
-ant2 = np.array([1, 2, 2, 2, 0, 0], np.int32)
-weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-            ant1, ant2, "linear", "I", "2", "minvar")
+ntime, nbl, nchan, ncorr = 2, 3, 4, 2
+data = np.zeros((ntime, nbl, nchan, ncorr), np.complex64)
+weight = np.ones((ntime, nbl, nchan, ncorr), np.float32)
+flag = np.zeros((ntime, nbl, nchan, ncorr), bool)
+jones = np.ones((1, 1, 3, 1, 2), np.complex64)
+ant1 = np.array([0, 0, 1], np.int32)
+ant2 = np.array([1, 2, 2], np.int32)
+weight_data(data, weight, flag, jones, ant1, ant2, "linear", "I", "2", "minvar")
 """
 
 

@@ -210,236 +210,64 @@ def _corr4_passthrough(x):
 
 
 @njit(nogil=True, cache=True, parallel=False)
-def weight_data(
-    data,
-    weight,
-    flag,
-    jones,
-    tbin_idx,
-    tbin_counts,
-    ant1,
-    ant2,
-    pol,
-    product,
-    nc,
-    wgt_mode,
-):
-    vis, wgt = _weight_data_impl(
-        data,
-        weight,
-        flag,
-        jones,
-        tbin_idx,
-        tbin_counts,
-        ant1,
-        ant2,
-        literally(pol),
-        literally(product),
-        literally(nc),
-        literally(wgt_mode),
-    )
+def weight_data(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
+    """Stokes visibilities and weights from correlations, on the MSv4 (time, baseline) grid.
 
-    return vis, wgt
+    Everything is indexed the way xarray-ms opens a measurement set, so there is
+    no row axis and no row -> time mapping: gain time ``t`` and channel ``c`` are
+    the data's own.
 
+    Args:
+        data: ``(time, baseline, chan, corr)`` complex visibilities.
+        weight: ``(time, baseline, chan, corr)`` weights.
+        flag: ``(time, baseline, chan, corr)`` bool; a sample flagged in any
+            correlation is skipped.
+        jones: gains in QuartiCal's native order,
+            ``(time, chan, ant, dir, corr)`` with ``corr`` 1 (scalar) or 2
+            (diagonal), or ``(time, chan, ant, dir, 2, 2)`` full Jones. The time
+            and channel axes are the data's, or length one (broadcast). There
+            is exactly one direction.
+        ant1: ``(baseline,)`` antenna indices into the jones antenna axis.
+        ant2: as ``ant1``.
+        pol: ``"linear"`` or ``"circular"``.
+        product: Stokes product, a subset of ``"IQUV"``.
+        nc: number of correlations as a string, ``"2"`` or ``"4"``.
+        wgt_mode: ``"l2"`` or ``"minvar"``.
 
-def _weight_data_impl(
-    data,
-    weight,
-    flag,
-    jones,
-    tbin_idx,
-    tbin_counts,
-    ant1,
-    ant2,
-    pol,
-    product,
-    nc,
-    wgt_mode,
-):
-    raise NotImplementedError
-
-
-@overload(_weight_data_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_weight_data_impl(
-    data,
-    weight,
-    flag,
-    jones,
-    tbin_idx,
-    tbin_counts,
-    ant1,
-    ant2,
-    pol,
-    product,
-    nc,
-    wgt_mode,
-):
-    try:
-        vis_fns, wgt_fns = stokes_expr_funcs(
-            product.literal_value,
-            pol.literal_value,
-            nc.literal_value,
-            wgt_mode.literal_value,
-            jones.ndim,
-        )
-    except Exception as e:
-        raise numba.core.errors.TypingError(f"Failed in overload resolution: {e}") from e
-
-    ns = len(vis_fns)
-    ncorr = int(nc.literal_value)
-    if ncorr == 2:
-        vext, wext = _corr2_to_full_vis, _corr2_to_full_wgt
-    else:
-        vext = _corr4_passthrough
-        wext = _corr4_passthrough
-    vf0, wf0 = vis_fns[0], wgt_fns[0]
-    vf1, wf1 = (vis_fns[1], wgt_fns[1]) if ns > 1 else (vis_fns[0], wgt_fns[0])
-    vf2, wf2 = (vis_fns[2], wgt_fns[2]) if ns > 2 else (vis_fns[0], wgt_fns[0])
-    vf3, wf3 = (vis_fns[3], wgt_fns[3]) if ns > 3 else (vis_fns[0], wgt_fns[0])
-
-    if jones.ndim == 5:  # DIAG mode
-
-        def _impl(
-            data,
-            weight,
-            flag,
-            jones,
-            tbin_idx,
-            tbin_counts,
-            ant1,
-            ant2,
-            pol,
-            product,
-            nc,
-            wgt_mode,
-        ):
-            # for dask arrays we need to adjust the chunks to
-            # start counting from zero
-            tbin_idx = tbin_idx - tbin_idx.min()
-            nt = np.shape(tbin_idx)[0]
-            nrow, nchan, _ = data.shape
-            vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
-            wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
-
-            for t in prange(nt):
-                for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
-                    p = int(ant1[row])
-                    q = int(ant2[row])
-                    for chan in range(nchan):
-                        if flag[row, chan].any():
-                            continue
-                        jp00 = jones[t, p, chan, 0, 0]
-                        jp11 = jones[t, p, chan, 0, 1]
-                        jq00 = jones[t, q, chan, 0, 0]
-                        jq11 = jones[t, q, chan, 0, 1]
-                        v00, v01, v10, v11 = vext(load_data(data, (row, chan), ncorr, -1))
-                        w00, w01, w10, w11 = wext(load_data(weight, (row, chan), ncorr, -1))
-                        vis[row, chan, 0] = vf0(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
-                        wgt[row, chan, 0] = wf0(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
-                        if ns > 1:
-                            vis[row, chan, 1] = vf1(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
-                            wgt[row, chan, 1] = wf1(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
-                        if ns > 2:
-                            vis[row, chan, 2] = vf2(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
-                            wgt[row, chan, 2] = wf2(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
-                        if ns > 3:
-                            vis[row, chan, 3] = vf3(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
-                            wgt[row, chan, 3] = wf3(w00, w01, w10, w11, jp00, jp11, jq00, jq11)
-
-            return (vis, wgt)
-
-    else:  # full 2x2 jones mode
-
-        def _impl(
-            data,
-            weight,
-            flag,
-            jones,
-            tbin_idx,
-            tbin_counts,
-            ant1,
-            ant2,
-            pol,
-            product,
-            nc,
-            wgt_mode,
-        ):
-            # for dask arrays we need to adjust the chunks to
-            # start counting from zero
-            tbin_idx = tbin_idx - tbin_idx.min()
-            nt = np.shape(tbin_idx)[0]
-            nrow, nchan, _ = data.shape
-            vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
-            wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
-
-            for t in prange(nt):
-                for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
-                    p = int(ant1[row])
-                    q = int(ant2[row])
-                    for chan in range(nchan):
-                        if flag[row, chan].any():
-                            continue
-                        jp00 = jones[t, p, chan, 0, 0, 0]
-                        jp01 = jones[t, p, chan, 0, 0, 1]
-                        jp10 = jones[t, p, chan, 0, 1, 0]
-                        jp11 = jones[t, p, chan, 0, 1, 1]
-                        jq00 = jones[t, q, chan, 0, 0, 0]
-                        jq01 = jones[t, q, chan, 0, 0, 1]
-                        jq10 = jones[t, q, chan, 0, 1, 0]
-                        jq11 = jones[t, q, chan, 0, 1, 1]
-                        v00, v01, v10, v11 = vext(load_data(data, (row, chan), ncorr, -1))
-                        w00, w01, w10, w11 = wext(load_data(weight, (row, chan), ncorr, -1))
-                        vis[row, chan, 0] = vf0(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                        wgt[row, chan, 0] = wf0(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                        if ns > 1:
-                            vis[row, chan, 1] = vf1(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                            wgt[row, chan, 1] = wf1(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                        if ns > 2:
-                            vis[row, chan, 2] = vf2(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                            wgt[row, chan, 2] = wf2(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                        if ns > 3:
-                            vis[row, chan, 3] = vf3(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-                            wgt[row, chan, 3] = wf3(w00, w01, w10, w11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)
-
-            return (vis, wgt)
-
-    return _impl
-
-
-@njit(nogil=True, cache=True, parallel=False)
-def weight_data_msv4(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
-    """Stokes visibilities and weights in MSv4 (time, baseline, chan, corr) order.
-
-    The MSv4 twin of ``weight_data``: jones is QuartiCal's native
-    ``(gtime, gchan, ant, 2[, 2])`` (length-1 gtime/gchan broadcast) and the
-    output is ``(stokes, time, baseline, chan)`` so ``(stokes, row, chan)`` is a
-    free reshape for ducc. Flagged (any-correlation) samples are zero.
+    Returns:
+        ``(vis, wgt)``, each ``(stokes, time, baseline, chan)`` so that
+        ``(stokes, row, chan)`` is a free reshape for ducc. Flagged samples are zero.
 
     Raises:
-        ValueError: if a gain axis is neither length one nor the data's length.
+        ValueError: if a gain time/channel axis is neither length one nor the
+            data's length, the jones has other than one direction, or its
+            correlation axes are not 1, 2 or 2x2.
     """
     # the kernel indexes gain time/channel as 0 or the data's own index: guard its bounds
     if jones.shape[0] not in (1, data.shape[0]) or jones.shape[1] not in (1, data.shape[2]):
-        raise ValueError(
-            f"jones (gtime, gchan) = {jones.shape[:2]} must each be 1 or the data's (ntime, nchan) = "
-            f"{(data.shape[0], data.shape[2])}"
-        )
-    return _weight_data_msv4_impl(
+        raise ValueError("jones (time, chan) axes must each be length 1 or match the data's (time, chan)")
+    # also catches a (time, chan, ant, 2, 2) full Jones with no direction axis,
+    # which would otherwise be read as a two-direction diagonal one
+    if jones.shape[3] != 1:
+        raise ValueError("jones must have exactly one direction: (time, chan, ant, 1, corr) or (..., 1, 2, 2)")
+    if jones.ndim == 5 and jones.shape[4] not in (1, 2):
+        raise ValueError("a diagonal jones must have 1 or 2 correlations")
+    if jones.ndim == 6 and (jones.shape[4] != 2 or jones.shape[5] != 2):
+        raise ValueError("a full jones must be 2x2 in its last two axes")
+    return _weight_data_impl(
         data, weight, flag, jones, ant1, ant2, literally(pol), literally(product), literally(nc), literally(wgt_mode)
     )
 
 
-def _weight_data_msv4_impl(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
+def _weight_data_impl(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
     raise NotImplementedError
 
 
-@overload(_weight_data_msv4_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_weight_data_msv4_impl(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
+@overload(_weight_data_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel": True})
+def nb_weight_data_impl(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
     try:
-        # stokes_expr_funcs speaks the legacy jones rank (5 diag, 6 full), which
-        # carries an extra direction axis
         vis_fns, wgt_fns = stokes_expr_funcs(
-            product.literal_value, pol.literal_value, nc.literal_value, wgt_mode.literal_value, jones.ndim + 1
+            product.literal_value, pol.literal_value, nc.literal_value, wgt_mode.literal_value, jones.ndim
         )
     except Exception as e:
         raise numba.core.errors.TypingError(f"Failed in overload resolution: {e}") from e
@@ -456,12 +284,14 @@ def nb_weight_data_msv4_impl(data, weight, flag, jones, ant1, ant2, pol, product
     vf2, wf2 = (vis_fns[2], wgt_fns[2]) if ns > 2 else (vis_fns[0], wgt_fns[0])
     vf3, wf3 = (vis_fns[3], wgt_fns[3]) if ns > 3 else (vis_fns[0], wgt_fns[0])
 
-    if jones.ndim == 4:  # diagonal
+    if jones.ndim == 5:  # scalar or diagonal
 
         def _impl(data, weight, flag, jones, ant1, ant2, pol, product, nc, wgt_mode):
             nt, nbl, nchan, _ = data.shape
             ngt = jones.shape[0]
             ngc = jones.shape[1]
+            # a scalar gain is the same in both hands
+            c1 = jones.shape[4] - 1
             vis = np.zeros((ns, nt, nbl, nchan), dtype=data.dtype)
             wgt = np.zeros((ns, nt, nbl, nchan), dtype=data.real.dtype)
             for t in prange(nt):
@@ -473,10 +303,10 @@ def nb_weight_data_msv4_impl(data, weight, flag, jones, ant1, ant2, pol, product
                         if flag[t, b, c].any():
                             continue
                         cg = c if ngc > 1 else 0
-                        jp00 = jones[tg, cg, p, 0]
-                        jp11 = jones[tg, cg, p, 1]
-                        jq00 = jones[tg, cg, q, 0]
-                        jq11 = jones[tg, cg, q, 1]
+                        jp00 = jones[tg, cg, p, 0, 0]
+                        jp11 = jones[tg, cg, p, 0, c1]
+                        jq00 = jones[tg, cg, q, 0, 0]
+                        jq11 = jones[tg, cg, q, 0, c1]
                         v00, v01, v10, v11 = vext(load_data(data, (t, b, c), ncorr, 3))
                         w00, w01, w10, w11 = wext(load_data(weight, (t, b, c), ncorr, 3))
                         vis[0, t, b, c] = vf0(v00, v01, v10, v11, jp00, jp11, jq00, jq11)
@@ -509,14 +339,14 @@ def nb_weight_data_msv4_impl(data, weight, flag, jones, ant1, ant2, pol, product
                         if flag[t, b, c].any():
                             continue
                         cg = c if ngc > 1 else 0
-                        jp00 = jones[tg, cg, p, 0, 0]
-                        jp01 = jones[tg, cg, p, 0, 1]
-                        jp10 = jones[tg, cg, p, 1, 0]
-                        jp11 = jones[tg, cg, p, 1, 1]
-                        jq00 = jones[tg, cg, q, 0, 0]
-                        jq01 = jones[tg, cg, q, 0, 1]
-                        jq10 = jones[tg, cg, q, 1, 0]
-                        jq11 = jones[tg, cg, q, 1, 1]
+                        jp00 = jones[tg, cg, p, 0, 0, 0]
+                        jp01 = jones[tg, cg, p, 0, 0, 1]
+                        jp10 = jones[tg, cg, p, 0, 1, 0]
+                        jp11 = jones[tg, cg, p, 0, 1, 1]
+                        jq00 = jones[tg, cg, q, 0, 0, 0]
+                        jq01 = jones[tg, cg, q, 0, 0, 1]
+                        jq10 = jones[tg, cg, q, 0, 1, 0]
+                        jq11 = jones[tg, cg, q, 0, 1, 1]
                         v00, v01, v10, v11 = vext(load_data(data, (t, b, c), ncorr, 3))
                         w00, w01, w10, w11 = wext(load_data(weight, (t, b, c), ncorr, 3))
                         vis[0, t, b, c] = vf0(v00, v01, v10, v11, jp00, jp01, jp10, jp11, jq00, jq01, jq10, jq11)

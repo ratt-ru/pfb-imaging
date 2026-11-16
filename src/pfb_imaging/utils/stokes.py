@@ -44,7 +44,7 @@ def stokes_expr_funcs(product, pol, nc, wgt_mode, jones_ndim):
         pol: Polarisation type, "linear" or "circular".
         nc: Number of correlations as a string, "2" or "4".
         wgt_mode: Weighting mode, "l2" or "minvar".
-        jones_ndim: 5 for diagonal jones, 6 for full 2x2 jones.
+        jones_ndim: 5 for scalar or diagonal jones, 6 for full 2x2 jones (weight_data's layout).
 
     Returns:
         Tuple of (vis_fns, wgt_fns): equal-length tuples of plain functions

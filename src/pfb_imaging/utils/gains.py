@@ -36,8 +36,9 @@ class NodeGains:
     """Gains for one node, on its (time, frequency) grid.
 
     Attributes:
-        jones: ``(gtime, gchan, nant, 2)`` diagonal or ``(gtime, gchan, nant, 2, 2)``
-            full Jones; length-1 ``gtime``/``gchan`` broadcast.
+        jones: QuartiCal's native order, as ``weighting.weight_data`` takes it:
+            ``(gtime, gchan, nant, 1, ncorr)`` with ``ncorr`` 1 (scalar) or 2 (diagonal), or
+            ``(gtime, gchan, nant, 1, 2, 2)`` full Jones; length-1 ``gtime``/``gchan`` broadcast.
         flags: ``(gtime, gchan, nant)`` bool.
     """
 
@@ -118,13 +119,11 @@ def load_node_gains(
     flags = (gflags != 0) | ~np.isfinite(gflags) | ~np.isfinite(jones).all(axis=-1)
 
     ncorr = jones.shape[-1]
-    if ncorr == 1:
-        jones = np.repeat(jones, 2, axis=-1)
-    elif ncorr not in (2, 4):
+    if ncorr not in (1, 2, 4):
         raise ValueError(f"{spec} has {ncorr} gain correlations; expected 1, 2 or 4")
-    full = jones.shape[-1] == 4
+    full = ncorr == 4
 
-    identity = np.array([1, 0, 0, 1] if full else [1, 1], dtype=np.complex128)
+    identity = np.array([1, 0, 0, 1] if full else [1] * ncorr, dtype=np.complex128)
     nt, nf = jones.shape[:2]
     out_j = np.broadcast_to(identity, (nt, nf, len(antenna_names), identity.size)).copy()
     out_f = np.ones((nt, nf, len(antenna_names)), dtype=bool)
@@ -133,8 +132,8 @@ def load_node_gains(
         if k is not None:
             out_j[:, :, a] = jones[:, :, k]
             out_f[:, :, a] = flags[:, :, k]
-    if full:
-        out_j = out_j.reshape(nt, nf, len(antenna_names), 2, 2)
+    # the single direction axis weight_data expects, and 2x2 for a full Jones
+    out_j = out_j.reshape((nt, nf, len(antenna_names), 1) + ((2, 2) if full else (ncorr,)))
     return NodeGains(jones=out_j, flags=out_f)
 
 

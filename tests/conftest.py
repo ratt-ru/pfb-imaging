@@ -281,34 +281,6 @@ def image_geometry(ms_meta):
     )
 
 
-@pytest.fixture(scope="session")
-def gain_cholesky(ms_meta):
-    """Cholesky factors of the gain covariance used for corrupted-vis simulation."""
-    from africanus.gps.utils import abs_diff
-
-    t = (ms_meta.utime - ms_meta.utime.min()) / (ms_meta.utime.max() - ms_meta.utime.min())
-    nu = 2.5 * (ms_meta.freq / ms_meta.freq0 - 1.0)
-
-    tt = abs_diff(t, t)
-    cov_t = 0.1 * np.exp(-(tt**2) / (2 * 0.25**2))
-    chol_t = np.linalg.cholesky(cov_t + 1e-10 * np.eye(ms_meta.ntime))
-
-    vv = abs_diff(nu, nu)
-    cov_nu = 0.1 * np.exp(-(vv**2) / (2 * 0.1**2))
-    chol_nu = np.linalg.cholesky(cov_nu + 1e-10 * np.eye(ms_meta.nchan))
-
-    return SimpleNamespace(chol_t=chol_t, chol_nu=chol_nu, nu=nu)
-
-
-@pytest.fixture(scope="session")
-def time_chunks(ms_meta):
-    """Row-to-time-bin mapping used when applying gain corruptions via corrupt_vis."""
-    from pfb_imaging.utils.misc import chunkify_rows
-
-    row_chunks, tbin_idx, tbin_counts = chunkify_rows(ms_meta.time, ms_meta.ntime)
-    return SimpleNamespace(row_chunks=row_chunks, tbin_idx=tbin_idx, tbin_counts=tbin_counts)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def manage_ray():
     # Define the environment once

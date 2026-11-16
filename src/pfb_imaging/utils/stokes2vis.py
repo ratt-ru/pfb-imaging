@@ -389,15 +389,10 @@ def stokes_vis(
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
 
-    # Fake jones for now
-    jones = np.ones((ntime, nant, nchan, 1, 2), dtype=complex_type)
+    # identity gains: a length-one (time, chan) jones broadcasts in weight_data
+    jones = np.ones((1, 1, nant, 1, 2), dtype=complex_type)
 
-    # need to rewrite weight_data for MSv4, this is temporary
-    tbin_idx = np.arange(ntime) * nbl
-    tbin_counts = np.full(ntime, nbl)
-
-    # Convert to Stokes. No gains are applied on this path -- the MSv2 stokes2vis
-    # did, and `imager --gain-table` is refused rather than silently ignored (#333).
+    # rows for the per-row rephasing below
     data = data.reshape(nrow, nchan, ncorr)
 
     # rephase to the common phase centre (mosaic tangent point) BEFORE
@@ -438,28 +433,34 @@ def stokes_vis(
         # would otherwise re-enter through the coordinates)
         uvw = uvw + (uvw_new - uvw_old)
 
-    data, weight = weight_data(
-        as_contiguous_readonly_view(data),
-        as_contiguous_readonly_view(weight),
-        as_contiguous_readonly_view(flag),
+    # Convert to Stokes. No gains are applied on this path -- the MSv2 stokes2vis
+    # did, and `imager --gain-table` is refused rather than silently ignored (#333).
+    # weight_data works on the MSv4 (time, baseline) grid; ant1_bl/ant2_bl are per baseline
+    vis4, wgt4 = weight_data(
+        as_contiguous_readonly_view(data.reshape(ntime, nbl, nchan, ncorr)),
+        as_contiguous_readonly_view(weight.reshape(ntime, nbl, nchan, ncorr)),
+        as_contiguous_readonly_view(flag.reshape(ntime, nbl, nchan, ncorr)),
         as_contiguous_readonly_view(jones),
-        as_contiguous_readonly_view(tbin_idx),
-        as_contiguous_readonly_view(tbin_counts),
-        as_contiguous_readonly_view(ant1),
-        as_contiguous_readonly_view(ant2),
+        as_contiguous_readonly_view(ant1_bl.astype(np.int32)),
+        as_contiguous_readonly_view(ant2_bl.astype(np.int32)),
         poltype,
         product,
         str(ncorr),
         wgt_mode,
     )
+    # (stokes, time, baseline, chan) -> (row, chan, stokes) views for the
+    # averaging routines; the row selection below makes the contiguous copy
+    ns = vis4.shape[0]
+    data = np.moveaxis(vis4.reshape(ns, nrow, nchan), 0, -1)
+    weight = np.moveaxis(wgt4.reshape(ns, nrow, nchan), 0, -1)
+    del vis4, wgt4
 
     # TODO - check if wsum for any of the correlations is zero
     # This happens e.g. if selecting out diagonal correlations
     # with QC and making CORRECTED_WEIGHTS
 
-    # do after weight_data otherwise mappings need to be recomputed (the
-    # tbin_idx/tbin_counts mappings above assume the regular (time, baseline)
-    # grid, so every row selection has to happen below them)
+    # Row selection happens after weight_data, which needs the regular
+    # (time, baseline) grid.
     #
     # Drop auto-correlations, fully flagged rows, and rows xarray-ms padded to
     # square off the (time, baseline) grid. The padding carries NaN UVW (see
