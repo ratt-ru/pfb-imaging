@@ -6,8 +6,8 @@ name: Publish Container
 #
 #   gh workflow run publish-container.yml --ref <branch>
 #
-# which tags the image with the branch name -- what `_container_image.py` is
-# set to on a feature branch. It used to build on every PR push (~11
+# which tags the image with the branch name -- what the maintainer sets
+# `_container_image.py` to, by hand, on a branch that needs it. It used to build on every PR push (~11
 # runner-minutes each) for images nobody pulled. Deliberately not a PR-comment
 # command like /test-acceptance: that would build the PR head's Dockerfile
 # with this repo's packages:write token, handing it to a fork's code. A

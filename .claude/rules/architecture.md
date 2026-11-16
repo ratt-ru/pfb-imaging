@@ -39,9 +39,11 @@ was avoiding.
 
 The single source of truth is `CONTAINER_IMAGE` in `src/pfb_imaging/_container_image.py`, loaded via `importlib` (no CWD dependency, no `uv sync` needed).
 
-1. **Feature branches (manual):** Edit `_container_image.py` tag to match your branch name. The
-   image itself is opt-in: `gh workflow run publish-container.yml --ref <branch>` builds and tags
-   it with the branch name, only when the branch needs testing through stimela before merge.
+1. **Feature branches (opt-in, by the maintainer):** the tag stays `latest`. **Agents never
+   change it** -- a branch tag merged into `main` conflicts with the `update-cabs` reset. Only
+   when a branch must be tested through stimela before merge does the maintainer set the tag to
+   the branch name by hand and build the image with
+   `gh workflow run publish-container.yml --ref <branch>`.
 2. **Merge to main (`update-cabs` workflow):** Resets tag to `latest`, regenerates cabs, commits with `[skip checks]`.
 3. **Releases (`tbump`):** Updates tag to semver via before-commit hooks.
 

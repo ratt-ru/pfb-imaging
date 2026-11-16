@@ -229,9 +229,11 @@ This generates a changelog (git-cliff), updates version strings and `_container_
 ## 7. Contributing Workflow
 
 1. Create a feature branch: `git checkout -b your-feature-name`
-2. Update `CONTAINER_IMAGE` tag in `src/pfb_imaging/_container_image.py` to match your branch name.
-3. Make changes and ensure tests pass.
-4. Commit using conventional commit messages.
-5. Push and create a pull request.
+2. Make changes and ensure tests pass.
+3. Commit using conventional commit messages.
+4. Push and create a pull request.
 
-The `update-cabs` workflow resets the tag to `latest` automatically on merge to `main`.
+Leave `CONTAINER_IMAGE` in `src/pfb_imaging/_container_image.py` at `latest`. Setting it to the
+branch name is opt-in, done by hand by the maintainer only when a branch needs its own container
+image before merge (`.claude/rules/architecture.md` §4); the `update-cabs` workflow resets it to
+`latest` on merge to `main`.
