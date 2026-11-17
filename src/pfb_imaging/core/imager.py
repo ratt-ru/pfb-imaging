@@ -24,7 +24,7 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
-from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
+from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, BEAM_FREQ_EXTRAPOLATION, beam_grid
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
@@ -708,6 +708,55 @@ def _grid_image_body(
     }
 
 
+def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq):
+    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365).
+
+    It reaches the farthest image pixel from any pointing, at the cell
+    ``utils.beam.beam_grid`` sets for the bilinear placement tolerance. An image
+    reaching past the beam cube is refused: the rotation average turns the field
+    with parallactic angle, so only the cube's largest centred disk is covered at
+    every angle, and beyond it the placement error does not converge with the
+    cell (docs/experiments/beam_time_gradient.md).
+
+    Args:
+        wizards: Baseline group (None when ungrouped) -> BeamWizard.
+        field_centres: ``(nfield, 2)`` pointing centres (rad).
+        grid_radec: The image tangent point (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        cell_rad: Image cell (rad).
+        max_freq: Highest frequency gridded (Hz).
+
+    Returns:
+        ``(beam_lm, radius_deg, cover_deg)``: the axis (deg), the distance it
+        must reach, and the cube's covered radius.
+
+    Raises:
+        ValueError: If the image reaches beyond the cube's covered radius.
+    """
+    cover_deg = np.inf
+    for wizard in wizards.values():
+        xy = np.concatenate([wizard.bds.X.values, wizard.bds.Y.values])
+        cover_deg = min(cover_deg, float(np.abs([xy.min(), xy.max()]).min()))
+    half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
+    radius = 0.0
+    for fc in field_centres:
+        lf, mf = radec_to_lm(np.asarray(fc), grid_radec)
+        for l0, m0 in offsets:
+            radius = max(radius, float(np.hypot(l0 - lf, m0 - mf)) + half_diag)
+    radius_deg = float(np.rad2deg(radius))
+    if radius_deg > cover_deg:
+        raise ValueError(
+            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {cover_deg:.2f} deg "
+            f"the beam cube covers at every parallactic angle. Reduce --field-of-view or the pointing offset, "
+            f"or image without --beam-model."
+        )
+    # the largest dish any of these beams describes bounds the error for all of them
+    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
+    return beam_grid(max_freq, dish, radius_deg), radius_deg, cover_deg
+
+
 @pfb_logging.log_exceptions
 def imager(
     ms: list[Path],
@@ -1106,6 +1155,8 @@ def imager(
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
     beam_refs = None
+    beam_lm = None
+    wizards = {}
     if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
         # Each wizard is built once here, single process and before Ray, so a
         # staging error or a beam that cannot cover the data stops the run
@@ -1125,17 +1176,37 @@ def imager(
             g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
             for g in groups
         }
+        wizards = {}
         for g, kw in kwargs.items():
+            wizards[g] = BeamWizard(**kw)
             # a piece's beam frequency is a weighted mean of its own channels,
             # so every selected channel bounds what a worker can ask for (D59)
             try:
-                BeamWizard(**kw).check_freqs(all_freqs)
+                wizards[g].check_freqs(all_freqs)
             except ValueError as e:
                 log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
         if baseline_groups:
             beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
         else:
             beam_model = Multiton(BeamWizard, **kwargs[None])
+    elif isinstance(beam_model, BeamWizard):
+        wizards = {getattr(beam_model, "group", None): beam_model}
+    if wizards:
+        # a --target is resolved at the ends and middle of the track: a named body moves
+        times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
+        times = times[np.isfinite(times)]
+        offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
+        try:
+            beam_lm, radius_deg, cover_deg = field_beam_axis(
+                wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq
+            )
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+        log.info(
+            f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
+            f"out to {radius_deg:.2f} deg (the beam cube covers {cover_deg:.2f} deg)"
+        )
+        del wizards
 
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
@@ -1234,6 +1305,7 @@ def imager(
                         data_group=data_group,
                         radec_new=radec_new,
                         target=target,
+                        beam_lm=beam_lm,
                         nthreads=nthreads,
                         # only robust weighting reads the counts (see counts_sources)
                         compute_counts=robustness is not None,

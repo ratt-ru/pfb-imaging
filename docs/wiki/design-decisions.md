@@ -2256,6 +2256,41 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** `utils/weighting.weight_data`; `tests/test_weight_data.py`, which simulates
   `V_pq = J_p B J_q^H` and checks the kernel returns the Stokes parameters of `B`.
 
+### D64 — The pass-1 beam grid is sized per run, and images past the beam cube are refused
+
+- **Context:** pass 1 evaluated every piece's wizard beam on a fixed 1024² grid over the whole
+  ±2° L cube, whatever the image, and placed it on the image grid per piece (#365). Moving the
+  placement to pass 2 (D21) left the grid's size and cell as the remaining cost, and the beam
+  cube's extent as an unchecked limit.
+- **Decision:** the driver sizes one field-centred axis per run
+  (`core/imager.field_beam_axis`): it reaches the image pixel farthest from any pointing,
+  `--target` offsets included, at the cell `utils/beam.beam_grid` gives,
+  `h = sqrt(BEAM_CELL_TOL) · λ_min / D_max` with `BEAM_CELL_TOL = 1e-4` and `D_max` the
+  largest dish any of the run's beams describes (`BEAM_DISH_DIAMETER`: 13.5 m for `MM` and
+  ungrouped, 15 m for `MPM`/`MPMP`). An image reaching past the cube's largest centred disk
+  is refused before Ray starts. katbeam keeps its own Nyquist grid, because its
+  `ndimage.rotate` makes the beam depend on the grid.
+- **Rationale:** the bilinear placement error in the main lobe was measured at
+  `(h / (λ_min/D))²` with prefactors 0.92–1.03 per group (`scripts/profiling/beam_cell_study.py`,
+  `docs/experiments/beam_time_gradient.md`), and meerkat-beams' own study against its exact
+  path finds the same law (landmanbester/meerkat-beams#60). The cross group needs `D = 15 m`:
+  with 13.5 m its prefactor is 1.13, because its beam is narrower than `MM`'s. Coverage is a
+  different failure: the rotation average turns the field with parallactic angle, so only the
+  cube's inscribed disk (1.94° for L) is covered at every angle, and beyond it the error does
+  not converge with the cell (up to 9e-3 measured). A finer cell cannot fix that, so the run
+  refuses instead of silently using an edge-extrapolated beam.
+- **Consequences:** measured on ESO137-006 (MeerKAT+ L band, 1.8° field): a 385–387² grid at
+  24.1″ reaching 1.28°. Against the fixed 1024², the stored `BEAM` moved by 2.5e-5 (lowest
+  band) to 8.3e-5 (highest), rising with frequency because the cell is set by the top one;
+  DIRTY and PSF did not move. Together with D21's pass-2 placement, the production command
+  went from 9445 s to 4992 s, pass 1 from 5811 s to 1846 s, and per-task peak memory roughly
+  halved in both passes (11.0 → 5.3 GB in pass 1, 59 → 27 GB in pass 2). A field wider than
+  ~3.9° in diameter about its pointing cannot use `--beam-model L` until a wider cube exists.
+- **Source:** #365; `src/pfb_imaging/utils/beam.py` (`beam_grid`, `BEAM_CELL_TOL`,
+  `BEAM_DISH_DIAMETER`); `src/pfb_imaging/core/imager.py` (`field_beam_axis`);
+  `tests/test_beam.py::test_beam_grid_cell_bounds_the_placement_error`,
+  `::test_field_beam_axis_reaches_the_farthest_pixel_and_refuses_past_the_cube`.
+
 ## Known debt
 
 - **`hci` has no antenna-dependent gain test.** Both end-to-end gain tests give every

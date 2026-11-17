@@ -257,6 +257,7 @@ def stokes_vis(
     data_group="base",
     radec_new=None,
     target=None,
+    beam_lm=None,
     nthreads=1,
     compute_counts=True,
 ):
@@ -291,6 +292,8 @@ def stokes_vis(
             phase centre / tangent point). None means image about the field centre.
         target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
             body); resolved to an in-plane (l0, m0) at this piece's own time.
+        beam_lm: 1D field-centred beam axis (deg) for a BeamWizard beam, used for
+            both l and m; the driver sizes it once per run (``utils.beam.beam_grid``).
         nthreads: threads available to the task (parallelises the COUNTS gridding
             and meerkat-beams' rotation average).
         compute_counts: grid and store the piece's uv counts. Only robust
@@ -660,12 +663,11 @@ def stokes_vis(
             # need the FIELD's pointing centre, set per piece here
             rvec = np.asarray(radec).squeeze()
             beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
-            bds = beam_model.bds
-            l_beam = bds.X.values  # deg, East positive
-            m_beam = bds.Y.values  # deg, North positive
-            # test over-sampling beam pixels to avoid aliasing in the reprojection step
-            l_beam = np.linspace(l_beam.min(), l_beam.max(), 1024)
-            m_beam = np.linspace(m_beam.min(), m_beam.max(), 1024)
+            if beam_lm is None:
+                raise ValueError("a BeamWizard beam needs the driver's beam_lm axis (utils.beam.beam_grid)")
+            # deg, East/North positive: sized by the driver to the image and to a
+            # bilinear-placement tolerance, shared by every piece of the run (#365)
+            l_beam = m_beam = np.asarray(beam_lm, dtype=np.float64)
             # D13: MSv4 time is unix seconds; astropy Time wants MJD days
             t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
             raw_maps = []
