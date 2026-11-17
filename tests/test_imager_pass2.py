@@ -6,13 +6,14 @@ import xarray as xr
 
 from pfb_imaging.core.imager import _concat_pieces
 from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions
+from pfb_imaging.utils.stokes2vis import partition_beam
 from pfb_imaging.utils.weighting import _compute_counts, sparse_counts
 
 
 def _synth_partition(nrow=200, seed=0, nx=16, ny=16):
     """A synthetic single-correlation partition with spread-out uvw.
 
-    BEAM is on the output image grid (pass-1 placement, #281), so callers
+    BEAM is on the output image grid (placed in pass 2, #365), so callers
     must pass the same nx/ny to grid_partition.
     """
     rng = np.random.default_rng(seed)
@@ -199,9 +200,15 @@ def test_residual_gradient_beam_applied_twice():
     np.testing.assert_allclose(r_only, r12, rtol=0, atol=0)
 
 
-def _synth_piece(freq_out, wsum_nat, beam_val, nrow=10, nx=4, ny=4, seed=0):
-    """A minimal scratch piece carrying only what _concat_pieces touches."""
+def _synth_piece(freq_out, wsum_nat, beam_val, nrow=10, nbeam=6, seed=0, beam=None):
+    """A minimal scratch piece carrying only what _concat_pieces touches.
+
+    The beam is field-centred (BEAM_SMALL on its own l/m grid, deg), as pass 1
+    stores it; pass 2 places it on the image grid (partition_beam).
+    """
     rng = np.random.default_rng(seed)
+    lm = np.linspace(-1.0, 1.0, nbeam)
+    small = np.full((1, nbeam, nbeam), float(beam_val)) if beam is None else beam
     return xr.Dataset(
         {
             "VIS": (("corr", "row", "chan"), rng.standard_normal((1, nrow, 1)) + 0j),
@@ -209,10 +216,10 @@ def _synth_piece(freq_out, wsum_nat, beam_val, nrow=10, nx=4, ny=4, seed=0):
             "MASK": (("row", "chan"), np.ones((nrow, 1), dtype=np.uint8)),
             "UVW": (("row", "three"), rng.standard_normal((nrow, 3))),
             "FREQ": (("chan",), np.array([1.0e9])),
-            "BEAM": (("corr", "y", "x"), np.full((1, ny, nx), float(beam_val))),
+            "BEAM_SMALL": (("corr", "m_beam", "l_beam"), small),
         },
-        coords={"corr": ["I"]},
-        attrs={"freq_out": float(freq_out), "wsum_nat": float(wsum_nat)},
+        coords={"corr": ["I"], "l_beam": lm, "m_beam": lm},
+        attrs={"freq_out": float(freq_out), "wsum_nat": float(wsum_nat), "ra0": 1.0, "dec0": -0.5},
     )
 
 
@@ -234,7 +241,44 @@ def test_concat_pieces_weighted_beam_and_freq():
     assert out.sizes["row"] == 16
     np.testing.assert_allclose(out.attrs["freq_out"], (3.0 * 1.0e9 + 1.0 * 1.4e9) / 4.0)
     np.testing.assert_allclose(out.attrs["wsum_nat"], 4.0)
-    np.testing.assert_allclose(out.BEAM.values, (3.0 * 1.0 + 1.0 * 5.0) / 4.0)
+    np.testing.assert_allclose(out.BEAM_SMALL.values, (3.0 * 1.0 + 1.0 * 5.0) / 4.0)
+
+
+def test_concat_pieces_rejects_mismatched_beam_grids():
+    a = _synth_piece(1.0e9, 1.0, 1.0)
+    b = _synth_piece(1.0e9, 1.0, 1.0).assign_coords(l_beam=np.linspace(-2.0, 2.0, 6))
+    with pytest.raises(AssertionError):
+        _concat_pieces([a, b])
+
+
+@pytest.mark.parametrize("offset", [False, True], ids=["single-field", "reprojected"])
+def test_placing_the_mean_small_beam_equals_the_mean_of_placed_beams(offset):
+    """Pass 2 averages a partition's small beams, then places the mean once (#365).
+
+    Both placements -- bilinear for a single field and SIN->SIN reprojection
+    for a pointing off the tangent point -- are linear in the beam on a shared
+    grid, so this equals placing each piece and averaging, which is what pass 1
+    used to store. Pinned on distinct, asymmetric beams so the weights matter.
+    """
+    rng = np.random.default_rng(42)
+    nb = 33
+    lm = np.linspace(-1.0, 1.0, nb)
+    mm, ll = np.meshgrid(lm, lm, indexing="ij")
+    beams = [
+        np.exp(-((ll - 0.1 * k) ** 2 + (mm + 0.05 * k) ** 2) / 0.3)[None] + 0.01 * rng.random((1, nb, nb))
+        for k in range(3)
+    ]
+    w = [3.0, 1.0, 2.0]
+    pieces = [_synth_piece(1.0e9, wi, 0.0, nbeam=nb, seed=k, beam=b) for k, (wi, b) in enumerate(zip(w, beams))]
+    radec_grid = np.array([1.0, -0.5 + (np.deg2rad(0.2) if offset else 0.0)])
+    cell, nx, ny = np.deg2rad(0.02), 48, 40
+
+    placed = partition_beam(_concat_pieces(pieces), radec_grid, cell, nx, ny)
+    expected = sum(wi * partition_beam(p, radec_grid, cell, nx, ny) for wi, p in zip(w, pieces)) / sum(w)
+
+    assert placed.shape == (1, ny, nx)
+    assert np.abs(expected).max() > 0.5  # the beam lands on the grid
+    np.testing.assert_allclose(placed, expected, rtol=1e-12, atol=1e-14)
 
 
 def test_concat_pieces_rejects_mismatched_freq():

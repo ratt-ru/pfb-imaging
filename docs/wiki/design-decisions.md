@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-16T15:00:00Z
-last_verified_commit: be52163
+timestamp: 2026-11-17T15:30:00Z
+last_verified_commit: 3e454cb
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -334,8 +334,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   and the FITS layer axis-swapped at write time.
 - **Decision:** All image-space arrays on the imager+deconv path are `(..., ny, nx)` with `.dt`
   dims `("corr", "y", "x")` / `("corr", "y_psf", "x_psf")` / `("corr", "y_psf", "xo2")`, and
-  the scratch `BEAM` is `("corr", "y", "x")` on the output image grid (placed there in pass 1;
-  see D21). `nx`/`ny` keep meaning the X/RA and Y/Dec pixel counts everywhere — only array-axis
+  the scratch `BEAM_SMALL` is `("corr", "m_beam", "l_beam")`, field-centred, and pass 2 places
+  each partition's mean on the `("corr", "y", "x")` output image grid (see D21). `nx`/`ny` keep meaning the X/RA and Y/Dec pixel counts everywhere — only array-axis
   order changed. ducc's x-major world exists only behind zero-copy `.T` views at the
   `vis2dirty`/`dirty2vis` call sites (input and output; both accept strided arrays),
   `fitcleanbeam` is called with `yx_order=True`, and `save_fits(yx_order=True)` writes without
@@ -383,15 +383,16 @@ update it (and this page's `last_verified_commit`) in the same session.
   image centre within the tangent plane via the existing `center_x/center_y` machinery; the
   off-centre PSF ramp is predicted adjoint-by-construction (dirty2vis of a unit delta), and
   `set_wcs` carries the offset as a CRPIX shift (CRVAL stays the tangent point — facet
-  convention). **Beams are computed and placed on the output image grid in pass 1** (#281): the
+  convention). **Beams are computed in pass 1 and placed on the output image grid in pass 2**
+  (#281; placement moved to pass 2, once per partition, in #365): the
   rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam` for MeerKAT band
   names U/L/S0/S4 — signature kept stable so meerkat-beams can grow weighted time/freq
   averaging underneath) is evaluated about the FIELD's own pointing on a small grid, then
   SIN→SIN-reprojected onto the mosaic grid (tangent + target CRPIX shift, zero outside
-  coverage) per piece, in parallel. Pass 2 consumes the stored `(corr, ny, nx)` BEAM as is (no
-  beam interpolation in `grid_partition` any more); pieces of a partition share the field so
-  the first piece's beam stood in at the time (since replaced by the `wsum_nat`-weighted mean
-  in `_concat_pieces`, D28). Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
+  coverage). Pass 2 averages a partition's small beams (`wsum_nat`-weighted, `_concat_pieces`,
+  D28) and places the mean once (`stokes2vis.partition_beam`); `grid_partition` does no beam
+  interpolation. A moving `--target` is placed at the partition's gridding offset, where pass
+  1 used each piece's own. Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
   pixel of its field's predicted position in the 5600² mosaic frame.
 - **Rationale/pitfalls (hard-won):** (1) The epoch trap (D13): `synthesize_uvw` wants MJD
   seconds, MSv4 time is unix — `to_mjd_time` at the single call site. (2) **Frames about
@@ -420,10 +421,13 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`divide_by_n=False` everywhere), biasing the deconvolved model by `n` (~0.2% at a 5° fov edge,
   ~1.5% at 10°) — relevant for wide UHF mosaics. Post-D21 rephasing all partitions share one
   phase centre, so `n` is a single well-defined function on the common grid.
-- **Decision:** pass 1 stores the **effective image-plane response `BEAM = B/n`** (including the
-  `1/n` when no aperture beam model is set), computed on exactly ducc's pixel coordinates
-  (absolute w.r.t. the phase centre, `--target` offset included). **Every ducc call on the
-  imager+deconv path keeps `divide_by_n=False`.** Pieces/partitions carry `beam_includes_n: True`.
+- **Decision:** every `.dt` partition stores the **effective image-plane response `BEAM = B/n`**
+  (including the `1/n` when no aperture beam model is set), computed on exactly ducc's pixel
+  coordinates (absolute w.r.t. the phase centre, `--target` offset included). Pass 2 folds the
+  `1/n` in when it places the partition's beam (`stokes2vis.partition_beam`, #365; pass 1 did
+  this per piece before). **Every ducc call on the imager+deconv path keeps
+  `divide_by_n=False`.** Partitions carry `beam_includes_n: True`; scratch pieces hold only the
+  bare field-centred `BEAM_SMALL`.
 - **Rationale** (measured; pinned by `tests/test_hessian_nterm.py`):
   1. **Exact, not an approximation:** under `do_wgridding=True`, ducc's `divide_by_n=True` is
      precisely `diag(1/n)` on either side (verified 2e-14), so `diag(B/n)·GᵀWG·diag(B/n)` with
@@ -713,7 +717,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   1. **piece** (`stokes_vis`, pass 1) — `Σ w·mask·ν / Σ w·mask` over the post-averaging
      channel axis, using **natural** weights. This value evaluates the beam *and* is stored.
   2. **partition** (`_concat_pieces`, pass 2) — `wsum_nat`-weighted mean of the pieces'
-     frequencies, and of their `BEAM`s.
+     frequencies, and of their field-centred `BEAM_SMALL`s, which pass 2 then places once
+     (#365; placement is linear, so this equals the mean of the placed beams).
   3. **band** (`_grid_image`, pass 2) — weighted by the **imaging** `prod["WSUM"]`.
   The band-edge midpoints keep their sole remaining role, band *assignment*, renamed
   `band_centres` (driver) / `freq_nominal` (parameters and attrs) so one name no longer
@@ -723,10 +728,12 @@ update it (and this page's `last_verified_commit`) in the same session.
   performs, which is *why* level 3 must use the imaging weights: `BEAM` and `freq_out` must
   not be weighted by different quantities at the same level. Level 2 uses natural weights
   because it runs before gridding, where robust weights do not exist; obtaining them would
-  mean holding every piece's `BEAM` resident through gridding instead of freeing it
-  (~67 MB per piece at 4096² f4), against `memory-and-ray.md`, to correct a beam that varies
-  slowly with frequency. **The mixed basis is deliberate — do not "fix" it into a
-  regression.** `freq_out` stays scalar, reduced with corr-summed weights, matching what
+  mean passing per-piece row offsets into `grid_partition` and reducing the beams after
+  gridding, to correct a beam that varies slowly with frequency. Until #365 it also meant
+  holding every piece's image-sized `BEAM` resident through gridding (~67 MB per piece at
+  4096² f4); pieces now hold only a small field-centred beam, so that cost is gone and
+  the rest is plumbing. **The mixed basis is deliberate — do not "fix" it into a
+  regression;** revisit it with #401's time blocks, which change what a partition sums. `freq_out` stays scalar, reduced with corr-summed weights, matching what
   `dt2fits` already does for `freq_mfs`; per-correlation flagging differences are
   second-order for continuum and a per-Stokes frequency axis has no home in FITS.
 - **Consequences:** Band frequencies **change value** for uneven splits — measured on
@@ -738,9 +745,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   `freq_out`, because data-dependent frequencies could otherwise invert and silently
   reorder planes. `_concat_pieces` also fixes a latent bug independent of #296: the
   partition used to inherit piece 0's `BEAM` wholesale, which was already wrong for
-  `BeamWizard` (evaluated with the piece's own timestamps). That path is not exercised by
-  current data — `timeid` is keyed on `(scan_name, block)`, so a `(band, time)` node holds
-  one scan — but is deliberate future-proofing for MeerKAT+ baseline groups.
+  `BeamWizard` (evaluated with the piece's own timestamps). It is exercised whenever a
+  partition spans several scans: with `--integrations-per-image -1` on ESO137-006 every
+  partition reduces 24 per-scan pieces, whose beams differ by up to ~0.05 in the main lobe
+  (`docs/experiments/beam_time_gradient.md`).
   **Still open (#302):** FITS cubes keep a linear `CRVAL3`/`CDELT3` and so cannot represent
   a non-uniform frequency axis; per-plane `FREQ%04d` cards (or `--fits-split-bands`) are a
   separate follow-up.
@@ -1478,6 +1486,9 @@ update it (and this page's `last_verified_commit`) in the same session.
   wrote `beam_imre_ratio` 0.0 / 2.1287e-02 / 0.0 for `MM` / `MPM` / `MPMP`, and
   the band `BEAM` stayed finite and within [0.738, 1]. So the approximation is
   now quantified rather than assumed, and 2% is the number to argue about.
+- **Since #365 (D64)** the ratio is measured over the run's field-centred beam grid, which
+  reaches only the image's farthest pixel, not the whole cube; values from earlier runs are
+  not comparable.
 - **Scope:** imager gridding only. The argument needs a sum over conjugate baseline orderings,
   which an image has and a single visibility row does not, so `degrid` predicts the cross group
   exactly as `Re + i·Im` (D55).
@@ -2247,6 +2258,53 @@ update it (and this page's `last_verified_commit`) in the same session.
   is not checked against `ant1`/`ant2`.
 - **Source:** `utils/weighting.weight_data`; `tests/test_weight_data.py`, which simulates
   `V_pq = J_p B J_q^H` and checks the kernel returns the Stokes parameters of `B`.
+
+### D64 — The pass-1 beam grid is sized per run, and images past the beam cube are refused
+
+- **Context:** pass 1 evaluated every piece's wizard beam on a fixed 1024² grid over the whole
+  beam cube, whatever the image, and placed it on the image grid per piece (#365). Moving the
+  placement to pass 2 (D21) left the grid's size and cell as the remaining cost, and the beam
+  cube's extent as an unchecked limit.
+- **Decision:** the driver sizes one field-centred axis per run
+  (`core/imager.field_beam_axis`): it reaches the image pixel farthest from any pointing,
+  `--target` offsets included, at the cell `utils/beam.beam_grid` gives,
+  `h = sqrt(BEAM_CELL_TOL) · λ_min / D_max` with `BEAM_CELL_TOL = 1e-4` and `D_max` the
+  largest dish any of the run's beams describes (`BEAM_DISH_DIAMETER`: 13.5 m for `MM` and
+  ungrouped, 15 m for `MPM`/`MPMP`). An image whose bilinear nodes reach past the cube's
+  largest centred disk, less two cube pixels, is refused before Ray starts. The disk is read
+  from each wizard's `bds.X`/`bds.Y`, and the smallest over the run's cubes binds. katbeam
+  keeps its own Nyquist grid over `--max-field-of-view`, because its `ndimage.rotate` makes
+  the beam depend on the grid, so katbeam pieces still carry an image-scale beam.
+- **Rationale:** the bilinear placement error in the main lobe was measured at
+  `(h / (λ_min/D))²` with prefactors 0.92–1.03 per group (`scripts/profiling/beam_cell_study.py`,
+  `docs/experiments/beam_time_gradient.md`), and meerkat-beams' own study against its exact
+  path finds the same law (landmanbester/meerkat-beams#60). The cross group needs `D = 15 m`:
+  with 13.5 m its prefactor is 1.13, because its beam is narrower than `MM`'s. Coverage is a
+  different failure: the rotation average turns the field with parallactic angle, so only the
+  cube's inscribed disk is covered at every angle, and beyond it the error does not converge
+  with the cell (up to 9e-3 measured). A finer cell cannot fix that, so the run refuses
+  instead of silently using an edge-extrapolated beam. The margin is there because the
+  farthest pixel interpolates from nodes up to one diagonal cell further out, and the cube's
+  cubic spline is pulled towards its zero fill within about two cube pixels of its edge. The
+  inscribed radius is 1.94° for the MdV-2026 group cubes (`MM`/`MPM`/`MPMP`, ±2° at 0.0625°)
+  and 3.94° for the ungrouped L cube (−4..3.94°), so the limits are 1.81° and 3.81°.
+- **Consequences:** measured on ESO137-006 (MeerKAT+ L band, 1.8° field, group cubes): a 387²
+  grid on the coarse command and 385² on the production one, both at 24.1″ and reaching
+  1.28°. Against the fixed 1024², the stored `BEAM` moved by 2.5e-5 (lowest
+  band) to 8.3e-5 (highest), rising with frequency because the cell is set by the top one;
+  DIRTY and PSF did not move. Together with D21's pass-2 placement, the production command
+  went from 9445 s to 4992 s, pass 1 from 5811 s to 1846 s, and per-task peak memory roughly
+  halved in both passes (11.0 → 5.3 GB in pass 1, 59 → 27 GB in pass 2). Under
+  `--baseline-groups` an image reaching more than 1.81° from its pointing (the farthest
+  corner, not the field-of-view radius) cannot use `--beam-model L` until wider group cubes
+  exist. The `MPM` group's `beam_imre_ratio` (D46) is now measured over this grid rather than
+  the whole cube, so it is not comparable with values from earlier runs.
+- **Source:** #365; `src/pfb_imaging/utils/beam.py` (`beam_grid`, `BEAM_CELL_TOL`,
+  `BEAM_DISH_DIAMETER`); `src/pfb_imaging/core/imager.py` (`field_beam_axis`);
+  `tests/test_beam.py::test_beam_grid_cell_bounds_the_placement_error`,
+  `::test_field_beam_axis_reaches_the_farthest_pixel_and_refuses_past_the_cube`,
+  `::test_field_beam_axis_measures_from_each_pointing_in_a_mosaic`;
+  `tests/test_imager.py::test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels`.
 
 ## Known debt
 

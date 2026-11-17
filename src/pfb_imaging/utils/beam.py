@@ -5,6 +5,7 @@ from astropy.wcs import WCS
 from katbeam import JimBeam
 from reproject.array_utils import map_coordinates
 from reproject.wcs_utils import pixel_to_pixel_with_roundtrip
+from scipy.constants import c as lightspeed
 from scipy.interpolate import RegularGridInterpolator
 
 # meerkat-beams merges parallactic angles that agree to within this many degrees
@@ -18,6 +19,39 @@ BEAM_PA_TOLERANCE_DEG = 0.1
 # D19). The MdV-2026 products stop one channel short of each receiver band
 # edge, so band-edge chunks and pieces would otherwise raise (D55, D59).
 BEAM_FREQ_EXTRAPOLATION = "scale"
+
+# Pass 1 evaluates the beam on a small field-centred grid and pass 2 places it on
+# the image grid bilinearly (#365). The placement's worst error, in the main lobe,
+# measured (h / (lambda_min / D))^2 for a cell h on the meerkat-beams L cube, so
+# a tolerance tol gives h = sqrt(tol) * lambda_min / D
+# (docs/experiments/beam_time_gradient.md). 1e-4 is ~10x below the smallest
+# beam effect measured there.
+BEAM_CELL_TOL = 1e-4
+# dish diameter (m) behind each meerkat-beams product: the largest dish in the
+# group, which bounds the error from above for every group
+BEAM_DISH_DIAMETER = {None: 13.5, "MM": 13.5, "MPM": 15.0, "MPMP": 15.0}
+
+
+def beam_grid(max_freq: float, dish_diameter: float, radius_deg: float, tol: float = BEAM_CELL_TOL) -> np.ndarray:
+    """The field-centred beam axis (deg) for bilinear placement onto an image.
+
+    The cell is ``sqrt(tol) * lambda_min / D``, so bilinear interpolation errs by
+    at most ~``tol`` of the peak in the main lobe. The axis is symmetric about the
+    pointing, with a node on it, and reaches at least ``radius_deg`` plus one
+    cell; pass 1 uses it for both l and m.
+
+    Args:
+        max_freq: Highest frequency gridded (Hz).
+        dish_diameter: Largest dish diameter the beam describes (m).
+        radius_deg: Distance from the pointing to the farthest image pixel (deg).
+        tol: Maximum main-lobe placement error, as a fraction of the peak.
+
+    Returns:
+        1D axis in degrees.
+    """
+    cell = np.rad2deg(np.sqrt(tol) * lightspeed / max_freq / dish_diameter)
+    half = int(np.ceil(radius_deg / cell)) + 1
+    return np.arange(-half, half + 1) * cell
 
 
 def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_dir=None):

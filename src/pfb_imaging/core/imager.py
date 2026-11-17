@@ -24,7 +24,7 @@ from pfb_imaging.utils.baselines import (
     preflight_baseline_groups,
     resolve_group_beam_cache,
 )
-from pfb_imaging.utils.beam import BEAM_FREQ_EXTRAPOLATION
+from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, BEAM_FREQ_EXTRAPOLATION, beam_grid
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
@@ -45,7 +45,7 @@ from pfb_imaging.utils.msv4 import (
     wrapped_angle_diff,
 )
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
-from pfb_imaging.utils.stokes2vis import safe_stokes_vis
+from pfb_imaging.utils.stokes2vis import partition_beam, safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
 
 ignore_xarray_ms_warnings()
@@ -314,20 +314,21 @@ def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) ->
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
-    Rows are concatenated; BEAM and the effective frequency are combined as
-    ``wsum_nat``-weighted means. Pieces of a partition can differ in both --
-    BeamWizard evaluates the beam at the piece's own timestamps, and post-#296
-    at its own effective frequency -- so taking piece 0's beam, as this used
-    to, silently discarded every other piece (wiki D28).
+    Rows are concatenated; the field-centred BEAM_SMALL and the effective
+    frequency are combined as ``wsum_nat``-weighted means. Pieces of a
+    partition can differ in both -- BeamWizard evaluates the beam at the
+    piece's own timestamps, and post-#296 at its own effective frequency -- so
+    taking piece 0's beam, as this used to, silently discarded every other
+    piece (wiki D28). The caller places the mean on the image grid once
+    (``partition_beam``); placement is linear, so that equals averaging the
+    placed beams (#365).
 
     The weights are the *natural* wsum because this runs before gridding, where
     the robust imaging weights do not yet exist. Getting them would mean
-    passing row offsets into grid_partition and holding every piece's BEAM
-    resident through gridding instead of freeing it at the caller's ``del
-    plist`` -- ~67 MB per piece at 4096 squared float32 -- against the memory
-    discipline in docs/wiki/memory-and-ray.md, for a correction to a beam that
-    varies slowly with frequency. The band-level reduction in _grid_image does
-    use the imaging weights; see wiki D28 for why the mixed basis is correct.
+    passing per-piece row offsets into grid_partition and reducing the beams
+    after gridding, for a correction to a beam that varies slowly with
+    frequency. The band-level reduction in _grid_image does use the imaging
+    weights; see wiki D28 for why the mixed basis is acceptable.
 
     Args:
         plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
@@ -346,19 +347,33 @@ def _concat_pieces(plist):
     for p in plist[1:]:
         assert np.array_equal(p.FREQ.values, f0), "concat group has mismatched FREQ; cannot concatenate rows"
 
+    # the small beams share one field-centred grid by construction (the wizard's
+    # cube axes, or katbeam's run-wide Nyquist grid); averaging them before the
+    # one placement in pass 2 is exact only on a shared grid
+    has_beam = "BEAM_SMALL" in plist[0]
+    if has_beam:
+        lb, mb = plist[0].l_beam.values, plist[0].m_beam.values
+        for p in plist[1:]:
+            assert np.array_equal(p.l_beam.values, lb) and np.array_equal(p.m_beam.values, mb), (
+                "concat group has mismatched beam grids; cannot average BEAM_SMALL"
+            )
+
     w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
     wsum_nat = float(w.sum())
+    beam = None
     if wsum_nat > 0:
         freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
         freq_out = float((w * freqs).sum() / wsum_nat)
-        # accumulate rather than stack: one buffer, not npiece of them
-        beam = np.zeros(plist[0].BEAM.shape, dtype=np.float64)
-        for wi, p in zip(w, plist):
-            beam += wi * p.BEAM.values
-        beam /= wsum_nat
+        if has_beam:
+            # accumulate rather than stack: one buffer, not npiece of them
+            beam = np.zeros(plist[0].BEAM_SMALL.shape, dtype=np.float64)
+            for wi, p in zip(w, plist):
+                beam += wi * p.BEAM_SMALL.values
+            beam /= wsum_nat
     else:
         freq_out = float(plist[0].attrs["freq_out"])
-        beam = plist[0].BEAM.values
+        if has_beam:
+            beam = plist[0].BEAM_SMALL.values
 
     rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
     cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
@@ -366,7 +381,8 @@ def _concat_pieces(plist):
     for v in rowvars:
         part[v] = cat[v]
     del cat
-    part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
+    if has_beam:
+        part["BEAM_SMALL"] = (part.BEAM_SMALL.dims, beam.astype(part.BEAM_SMALL.dtype))
     part.attrs["freq_out"] = freq_out
     part.attrs["wsum_nat"] = wsum_nat
     # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
@@ -471,6 +487,22 @@ def _grid_image_body(
         part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
+        # place the partition's (mean) field-centred beam on the image grid once,
+        # at the offset the partition is gridded with, and fold in 1/n (D22, #365)
+        beam = partition_beam(
+            part,
+            np.array([meta["ra"], meta["dec"]]),
+            cell_rad,
+            nx,
+            ny,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
+            dtype=real_type,
+        )
+        part = part.drop_vars(["BEAM_SMALL", "l_beam", "m_beam"], errors="ignore").assign(
+            BEAM=(("corr", "y", "x"), beam)
+        )
+        del beam
 
         prod = grid_partition(
             part,
@@ -525,7 +557,7 @@ def _grid_image_body(
                 "l0": meta.get("l0", 0.0),
                 "m0": meta.get("m0", 0.0),
                 # stored BEAM = effective image-plane response B/n (D22)
-                "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
+                "beam_includes_n": True,
                 # max|Im|/max|Re| of the evaluated beam; non-zero only for the
                 # MPM cross group, where the stored BEAM is Re(B) (wiki D46)
                 "beam_imre_ratio": float(part.attrs.get("beam_imre_ratio", 0.0)),
@@ -674,6 +706,62 @@ def _grid_image_body(
         "mem": mem,
         "beam_imre_ratio": beam_imre_max,
     }
+
+
+def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq):
+    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365).
+
+    It reaches the farthest image pixel from any pointing, at the cell
+    ``utils.beam.beam_grid`` sets for the bilinear placement tolerance. An image
+    reaching past the beam cube is refused: the rotation average turns the field
+    with parallactic angle, so only the cube's largest centred disk is covered at
+    every angle, and beyond it the placement error does not converge with the
+    cell (wiki D64). The check counts the bilinear nodes the farthest pixel
+    reads (up to one diagonal cell further out) and keeps two cube pixels clear
+    of the edge, where the cube's cubic spline is pulled towards its zero fill.
+
+    Args:
+        wizards: Baseline group (None when ungrouped) -> BeamWizard.
+        field_centres: ``(nfield, 2)`` pointing centres (rad).
+        grid_radec: The image tangent point (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        cell_rad: Image cell (rad).
+        max_freq: Highest frequency gridded (Hz).
+
+    Returns:
+        ``(beam_lm, radius_deg, limit_deg)``: the axis (deg), the distance it
+        must reach, and the radius the cube covers less the edge margin.
+
+    Raises:
+        ValueError: If the image reaches beyond that radius.
+    """
+    limit_deg = np.inf
+    for wizard in wizards.values():
+        x, y = wizard.bds.X.values, wizard.bds.Y.values
+        xy = np.concatenate([x, y])
+        cover = float(np.abs([xy.min(), xy.max()]).min())
+        dx = float(max(np.abs(np.diff(x)).max(), np.abs(np.diff(y)).max()))
+        limit_deg = min(limit_deg, cover - 2.0 * dx)
+    half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
+    radius = 0.0
+    for fc in field_centres:
+        lf, mf = radec_to_lm(np.asarray(fc), grid_radec)
+        for l0, m0 in offsets:
+            radius = max(radius, float(np.hypot(l0 - lf, m0 - mf)) + half_diag)
+    radius_deg = float(np.rad2deg(radius))
+    # the largest dish any of these beams describes bounds the error for all of them
+    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
+    beam_lm = beam_grid(max_freq, dish, radius_deg)
+    reach_deg = radius_deg + np.sqrt(2.0) * float(beam_lm[1] - beam_lm[0])
+    if reach_deg > limit_deg:
+        raise ValueError(
+            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {limit_deg:.2f} deg "
+            f"the beam cube covers at every parallactic angle (less a two-pixel margin at its edge). "
+            f"Reduce --field-of-view or the pointing offset, or image without --beam-model."
+        )
+    return beam_lm, radius_deg, limit_deg
 
 
 @pfb_logging.log_exceptions
@@ -1074,6 +1162,8 @@ def imager(
     # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
     # same convention as hci); "katbeam"/None pass through to stokes_vis as is
     beam_refs = None
+    beam_lm = None
+    wizards = {}
     if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
         # Each wizard is built once here, single process and before Ray, so a
         # staging error or a beam that cannot cover the data stops the run
@@ -1093,17 +1183,37 @@ def imager(
             g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
             for g in groups
         }
+        wizards = {}
         for g, kw in kwargs.items():
+            wizards[g] = BeamWizard(**kw)
             # a piece's beam frequency is a weighted mean of its own channels,
             # so every selected channel bounds what a worker can ask for (D59)
             try:
-                BeamWizard(**kw).check_freqs(all_freqs)
+                wizards[g].check_freqs(all_freqs)
             except ValueError as e:
                 log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
         if baseline_groups:
             beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
         else:
             beam_model = Multiton(BeamWizard, **kwargs[None])
+    elif isinstance(beam_model, BeamWizard):
+        wizards = {getattr(beam_model, "group", None): beam_model}
+    if wizards:
+        # a --target is resolved at the ends and middle of the track: a named body moves
+        times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
+        times = times[np.isfinite(times)]
+        offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
+        try:
+            beam_lm, radius_deg, limit_deg = field_beam_axis(
+                wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq
+            )
+        except ValueError as e:
+            log.error_and_raise(str(e), ValueError)
+        log.info(
+            f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
+            f"out to {radius_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
+        )
+        del wizards
 
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
@@ -1202,8 +1312,7 @@ def imager(
                         data_group=data_group,
                         radec_new=radec_new,
                         target=target,
-                        nx=nx,
-                        ny=ny,
+                        beam_lm=beam_lm,
                         nthreads=nthreads,
                         # only robust weighting reads the counts (see counts_sources)
                         compute_counts=robustness is not None,

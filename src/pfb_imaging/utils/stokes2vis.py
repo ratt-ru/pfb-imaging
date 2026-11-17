@@ -166,6 +166,69 @@ def beam_on_image_grid(
     return beam
 
 
+def partition_beam(
+    ds: xr.Dataset,
+    radec_grid: np.ndarray,
+    cell_rad: float,
+    nx: int,
+    ny: int,
+    l0: float = 0.0,
+    m0: float = 0.0,
+    dtype=np.float64,
+) -> np.ndarray:
+    """The stored image-plane response ``B/n`` of a piece or reduced partition.
+
+    Places the field-centred ``BEAM_SMALL`` on the image grid
+    (:func:`beam_on_image_grid`) and folds in the wgridder's ``1/n``; without a
+    ``BEAM_SMALL`` (no aperture beam) the response is ``1/n`` alone. ``n`` is
+    computed on exactly ducc's pixel coordinates, absolute w.r.t. the tangent
+    point with the ``--target`` offset included, which is why every ducc call on
+    the imager+deconv path keeps ``divide_by_n=False`` (wiki D22). Placement is
+    linear in the beam, so placing a partition's mean small beam equals the mean
+    of its pieces' placed beams (#365).
+
+    Args:
+        ds: Piece or partition with ``corr`` and, given a beam model,
+            ``BEAM_SMALL`` ``(corr, m_beam, l_beam)`` plus the ``ra0``/``dec0``
+            pointing attrs.
+        radec_grid: The image tangent point (rad).
+        cell_rad: Image cell size (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        l0: Image-centre offset from the tangent point (rad); the value the
+            partition is gridded with.
+        m0: As ``l0``, for m.
+        dtype: Output dtype, the tree's ``--precision`` (D27).
+
+    Returns:
+        ``(ncorr, ny, nx)`` ``B/n``, (Y, X)-ordered.
+    """
+    _, _, _, x0, y0 = wgridder_conventions(l0, m0)
+    x_abs = (-(nx / 2) + np.arange(nx)) * cell_rad + x0
+    y_abs = (-(ny / 2) + np.arange(ny)) * cell_rad + y0
+    yy_abs, xx_abs = np.meshgrid(y_abs, x_abs, indexing="ij")
+    nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
+    ncorr = ds.corr.size
+    if "BEAM_SMALL" not in ds:
+        # no aperture beam: 1/n alone (compresses well in zarr)
+        return (1.0 / nlm)[None, :, :].astype(dtype) * np.ones((ncorr, 1, 1), dtype=dtype)
+    radec = np.array([ds.attrs["ra0"], ds.attrs["dec0"]])
+    beam = beam_on_image_grid(
+        ds.BEAM_SMALL.values.astype(np.float64),
+        ds.l_beam.values,
+        ds.m_beam.values,
+        radec,
+        np.asarray(radec_grid),
+        cell_rad,
+        nx,
+        ny,
+        [str(c) for c in ds.corr.values],
+        l0=l0,
+        m0=m0,
+    ).astype(dtype)
+    return (beam / nlm[None, :, :]).astype(dtype)
+
+
 def stokes_vis(
     dc1=None,
     dc2=None,
@@ -194,8 +257,7 @@ def stokes_vis(
     data_group="base",
     radec_new=None,
     target=None,
-    nx=None,
-    ny=None,
+    beam_lm=None,
     nthreads=1,
     compute_counts=True,
 ):
@@ -230,8 +292,8 @@ def stokes_vis(
             phase centre / tangent point). None means image about the field centre.
         target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
             body); resolved to an in-plane (l0, m0) at this piece's own time.
-        nx, ny: output image size; the piece's BEAM is placed on this grid here
-            in pass 1 (#281) so pass 2 consumes it as is.
+        beam_lm: 1D field-centred beam axis (deg) for a BeamWizard beam, used for
+            both l and m; the driver sizes it once per run (``utils.beam.beam_grid``).
         nthreads: threads available to the task (parallelises the COUNTS gridding
             and meerkat-beams' rotation average).
         compute_counts: grid and store the piece's uv counts. Only robust
@@ -560,15 +622,15 @@ def stokes_vis(
         # rows survived the mrow filter above but carry zero weight
         freq_eff = float(freq_nominal)
 
-    # ---- primary beam on the output image grid (pass-1 beam, #281) ----
+    # ---- primary beam, field-centred (pass-1 beam, #281, #365) ----
     # The (rotation-averaged) beam is evaluated about the FIELD's own pointing
-    # -- where the antennas point regardless of rephasing -- on a small grid,
-    # then placed onto the output image grid HERE in pass 1 (parallel over
-    # pieces); pass 2 consumes the stored (corr, ny, nx) BEAM as is.
+    # -- where the antennas point regardless of rephasing -- on a small grid and
+    # stored as is. Pass 2 averages a partition's small beams and places the
+    # mean on the image grid once (partition_beam): placement is linear in the
+    # beam, so that equals placing each piece and averaging, without writing an
+    # image-sized beam per piece (#365).
     if max_blength is None or max_freq is None:
         raise ValueError("max_blength and max_freq must be provided to size the beam grid")
-    if nx is None or ny is None:
-        raise ValueError("nx and ny must be provided to place the beam on the image grid")
     radec_grid = np.asarray(radec_new) if radec_new is not None else radec  # image tangent point
 
     # --target: in-plane image-centre offset, resolved at this piece's own time
@@ -585,33 +647,15 @@ def stokes_vis(
     else:
         l0, m0 = 0.0, 0.0
 
-    # the wgridder's geometric n-term is folded into the stored beam: the
-    # effective image-plane response is B(l,m)/n(l,m), computed on exactly
-    # the coordinates ducc uses (absolute w.r.t. the phase centre, target
-    # offset included). Rationale (wiki design-decisions D22, pinned by
-    # tests/test_hessian_nterm.py): diag(B/n) GtWG diag(B/n) is IDENTICAL to
-    # gridding with divide_by_n=True, but the diagonal rides in HessianTree's
-    # beam slots where the PSF-convolution approximation captures it exactly,
-    # whereas divide_by_n=True buries an image-plane envelope inside the
-    # gridded PSF that a convolution cannot represent (4-25% worse Hessian
-    # accuracy, growing with fov). It also sidesteps ducc's divide_by_n
-    # silently no-oping when do_wgridding=False. Every ducc call in the
-    # imager+deconv path therefore stays divide_by_n=False, and the
-    # deconvolved MODEL comes out in intrinsic flux.
-    _, _, _, x0_, y0_ = wgridder_conventions(l0, m0)
-    x_abs = (-(nx / 2) + np.arange(nx)) * cell_rad + x0_
-    y_abs = (-(ny / 2) + np.arange(ny)) * cell_rad + y0_
-    yy_abs, xx_abs = np.meshgrid(y_abs, x_abs, indexing="ij")  # (ny, nx)
-    nlm = np.sqrt(1.0 - xx_abs**2 - yy_abs**2)
-
     beam_imre_ratio = 0.0
     if isinstance(beam_model, Multiton):
         # the driver ships a recipe; this worker's wizard, prefilters and all,
         # persists across its tasks
         beam_model = beam_model.instance
+    beam_small = None
     if beam_model is None:
-        # no aperture beam: the stored response is 1/n (compresses well in zarr)
-        beam = (1.0 / nlm)[None, :, :].astype(real_type) * np.ones((ncorr, 1, 1), dtype=real_type)
+        # no aperture beam: pass 2 stores the bare 1/n (partition_beam)
+        pass
     else:
         # field-centred evaluation on a small grid first
         if isinstance(beam_model, BeamWizard):
@@ -619,12 +663,11 @@ def stokes_vis(
             # need the FIELD's pointing centre, set per piece here
             rvec = np.asarray(radec).squeeze()
             beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
-            bds = beam_model.bds
-            l_beam = bds.X.values  # deg, East positive
-            m_beam = bds.Y.values  # deg, North positive
-            # test over-sampling beam pixels to avoid aliasing in the reprojection step
-            l_beam = np.linspace(l_beam.min(), l_beam.max(), 1024)
-            m_beam = np.linspace(m_beam.min(), m_beam.max(), 1024)
+            if beam_lm is None:
+                raise ValueError("a BeamWizard beam needs the driver's beam_lm axis (utils.beam.beam_grid)")
+            # deg, East/North positive: sized by the driver to the image and to a
+            # bilinear-placement tolerance, shared by every piece of the run (#365)
+            l_beam = m_beam = np.asarray(beam_lm, dtype=np.float64)
             # D13: MSv4 time is unix seconds; astropy Time wants MJD days
             t_beam = Time(to_mjd_time(utime) / 86400.0, format="mjd")
             raw_maps = []
@@ -680,12 +723,6 @@ def stokes_vis(
         else:
             raise ValueError(f"Unknown beam model {beam_model}")
 
-        beam = beam_on_image_grid(
-            beam_small, l_beam, m_beam, radec, radec_grid, cell_rad, nx, ny, corr, l0=l0, m0=m0
-        ).astype(real_type)
-        # fold the n-term (see the D22 comment above)
-        beam = (beam / nlm[None, :, :]).astype(real_type)
-
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
     vis_cf = data.transpose(2, 0, 1)
@@ -714,7 +751,8 @@ def stokes_vis(
     data_vars["MASK"] = (("row", "chan"), mask)
     data_vars["UVW"] = (("row", "three"), uvw)
     data_vars["FREQ"] = (("chan",), freq)
-    data_vars["BEAM"] = (("corr", "y", "x"), beam)
+    if beam_small is not None:
+        data_vars["BEAM_SMALL"] = (("corr", "m_beam", "l_beam"), beam_small.astype(real_type))
     if compute_counts:
         data_vars.update(sparse_counts(counts))
         del counts  # the dense grid is not needed through the zarr write
@@ -723,6 +761,10 @@ def stokes_vis(
         "chan": (("chan",), freq),
         "corr": (("corr",), corr),
     }
+    if beam_small is not None:
+        # deg, East/North positive; shared by every piece of a run (pass 2 asserts it)
+        coords["l_beam"] = (("l_beam",), np.asarray(l_beam, dtype=np.float64))
+        coords["m_beam"] = (("m_beam",), np.asarray(m_beam, dtype=np.float64))
 
     # the MSv4 time coordinate is already unix seconds (xarray-ms converts
     # MSv2 MJD seconds); no epoch shift needed here
@@ -765,9 +807,6 @@ def stokes_vis(
         else str(getattr(beam_model, "band", type(beam_model).__name__)),
         "l0": l0,
         "m0": m0,
-        # the stored BEAM is the effective image-plane response B/n, NOT the
-        # bare primary beam (wiki design-decisions D22)
-        "beam_includes_n": True,
         # max|Im|/max|Re| of the evaluated beam. Non-zero only for the MPM
         # cross group, where the stored BEAM is Re(B) (wiki D46). Watch it on
         # real data: this is the evidence that Re(B) is a safe approximation.
