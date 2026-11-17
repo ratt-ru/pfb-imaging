@@ -241,3 +241,11 @@ dev = [
 
 [tool.uv]
 prerelease="allow"
+
+# meerkat-beams main, pinned by commit, until 0.4.0 is released: it carries
+# beam_on_grid (landmanbester/meerkat-beams#60) and the set_pointing_centre /
+# partition_mueller(pointing_centre=...) renames (#58). Only uv reads this
+# table, so a wheel built with it in place still says >=0.3.0 and breaks on
+# the renames: do not release pfb-imaging until it is replaced by >=0.4.0.
+[tool.uv.sources]
+meerkat-beams = { git = "https://github.com/landmanbester/meerkat-beams", rev = "78fdeb27886ff03596d9adef6264631ff2b194d2" }

@@ -6,9 +6,11 @@ the conventions documented in docs/wiki/image-and-beam-orientation.md:
 1. the wgridder dirty image is (X, Y)-ordered with ix <-> l/RA descending and
    iy <-> m/Dec ascending under pfb's fixed flip conventions and the effective
    +2pi*i visibility phase convention of real MS data;
-2. reproject_and_interp_scat_beam maps a (Y, X)-ordered beam around the
-   pointing centre onto the (Y, X)-ordered output image grid exactly (up to
-   interpolation error), including under rephasing and for non-square images.
+2. both beam placers -- hci's BeamReprojection and the imager's
+   beam_on_image_grid (meerkat-beams beam_on_grid) -- map a (Y, X)-ordered beam
+   around the pointing centre onto the (Y, X)-ordered output image grid exactly
+   (up to interpolation error), including under rephasing and for non-square
+   images.
 
 An elliptical test beam is used because every historical alignment bug
 (transpose/flip/rotation) is invisible for a circularly symmetric beam.
@@ -21,8 +23,9 @@ from ducc0.wgridder import vis2dirty
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BeamReprojection
 from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.stokes2vis import beam_on_image_grid
 
 pmp = pytest.mark.parametrize
 
@@ -89,12 +92,15 @@ def _elliptical_beam(ll, mm):
     return np.exp(-(u**2 / (2 * a**2) + v**2 / (2 * b**2)))
 
 
+@pmp("placer", ["hci", "imager"])
 @pmp("offset_lm", [(0.0, 0.0), (0.12, 0.0), (0.0, 0.08), (-0.1, 0.06)])
-def test_reproject_scat_beam_matches_analytic(offset_lm):
-    """reproject_and_interp_scat_beam must reproduce the analytically
-    evaluated beam on the output grid: (Y, X) in and out, signed cdelt from
-    the beam coords, target WCS identical to the hci output header, correct
-    handling of the pointing -> phase-centre offset, non-square output."""
+def test_beam_placement_matches_analytic(offset_lm, placer):
+    """Both placers must reproduce the analytically evaluated beam on the
+    output grid: (Y, X) in and out, signed cdelt from the beam coords, target
+    WCS identical to the hci output header (and so to the wgridder image's
+    pixel_lm), correct handling of the pointing -> phase-centre offset,
+    non-square output. hci reprojects (BeamReprojection); the imager places
+    with meerkat-beams beam_on_grid (beam_on_image_grid)."""
     ra0, dec0 = 45.0, -30.0
     radec0 = np.deg2rad([ra0, dec0])
     # rephased output centre offset by (dl, dm) on the sky
@@ -114,17 +120,10 @@ def test_reproject_scat_beam_matches_analytic(offset_lm):
     nxo, nyo = 128, 96
     cell_out = 0.01
 
-    pbeam = reproject_and_interp_scat_beam(
-        beam,
-        l_beam,
-        m_beam,
-        radec0,
-        radecf,
-        cell_out,
-        nxo,
-        nyo,
-        "I",
-    )
+    if placer == "hci":
+        pbeam = BeamReprojection(l_beam, m_beam, radec0, radecf, cell_out, nxo, nyo)(beam)
+    else:
+        pbeam = beam_on_image_grid(beam, l_beam, m_beam, radec0, radecf, np.deg2rad(cell_out), nxo, nyo)
     assert pbeam.shape == (1, nyo, nxo)
     # the beam grid fully covers the output fov, so no pixel may be masked
     assert np.all(pbeam[0] > 0)

@@ -498,6 +498,7 @@ def _grid_image_body(
             l0=meta.get("l0", 0.0),
             m0=meta.get("m0", 0.0),
             dtype=real_type,
+            nthreads=nthreads,
         )
         part = part.drop_vars(["BEAM_SMALL", "l_beam", "m_beam"], errors="ignore").assign(
             BEAM=(("corr", "y", "x"), beam)

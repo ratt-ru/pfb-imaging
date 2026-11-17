@@ -57,7 +57,7 @@ def main():
     results = []
     for bg in groups:
         wiz = BeamWizard(band=args.beam_band, group=bg, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
-        wiz.set_field_centre(centre)
+        wiz.set_pointing_centre(centre)
         dx = float(wiz.bds.attrs["dx"])
         href = dx / max(STRIDES)
         # odd point count divisible by every stride: each candidate is an exact subsample

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-11-16T12:30:00Z
-last_verified_commit: 6a3fbc8
+timestamp: 2026-11-17T13:06:00Z
+last_verified_commit: cbc4c68
 ---
 
 # Image and beam orientation conventions (hci)
@@ -82,9 +82,9 @@ beam map whose columns run l-ascending is correctly described by a *positive*
 runs East-to-West.
 
 `reproject_and_interp_beam` / `reproject_and_interp_scat_beam` (pre-fix state at
-`9a46876`) violated this three ways — `reproject_and_interp_scat_beam` has since
-been fixed (§6), and `reproject_and_interp_beam` went uncalled when the zarr-beam
-branch was deleted (§5) and has since been removed:
+`9a46876`) violated this three ways — `reproject_and_interp_scat_beam` was
+fixed (§6) and survives as hci's `BeamReprojection`, and `reproject_and_interp_beam`
+went uncalled when the zarr-beam branch was deleted (§5) and has since been removed:
 
 1. **Transposed feed** — they pass (X, Y)-ordered `(l, m)` maps, so reproject
    reads the l axis as Dec and the m axis as RA. Measured consequence: with
@@ -146,8 +146,9 @@ cross-check).
 
 ## 7. Status
 
-The §6 construction is implemented: `reproject_and_interp_scat_beam` takes the
-1D `l_beam`/`m_beam` coordinates (signed cdelt, coord-derived crpix, target WCS
+The §6 construction is implemented in `utils/beam.BeamReprojection`, which hci's
+`beam_for_band` builds once per grid and pointing (`hci_common._beam_reprojection`,
+#358). It takes the 1D `l_beam`/`m_beam` coordinates (signed cdelt, coord-derived crpix, target WCS
 = the hci header) and returns cube-ordered `(nstokes, ny, nx)` maps;
 `beam_for_band` — wizard-only since the zarr branch was deleted — evaluates the
 beam on the coarse `bds` grid around the pointing and reprojects
@@ -164,13 +165,17 @@ are `("corr", "y", "x")`, the scratch beam is `(m_beam, l_beam)`-ordered, and
 its x-major seams are the same two (ducc `.T` views, `fitcleanbeam
 yx_order=True`) plus `save_fits(yx_order=True)`.
 On the `.dt` path the stored `BEAM` is placed by
-`utils/stokes2vis.beam_on_image_grid`: offset partitions through
-`reproject_and_interp_scat_beam`, single-field ones by bilinear interpolation at
-pfb-model-spec's `pixel_lm` — East at low x, the map degrid also uses. Before #355
-the single-field branch used ascending x as l and stored the beam mirrored
+`utils/stokes2vis.beam_on_image_grid`, one path for every partition: pfb-model-spec's
+`pixel_lm` (East at low x, the map degrid also uses), with the partition's `--target`
+offset, handed to meerkat-beams `beam_on_grid` (landmanbester/meerkat-beams#60), which
+rotates each pixel to the field's pointing and interpolates bilinearly, 0 outside the
+small grid. It replaced a reproject branch for offset partitions and a scipy
+interpolator for single-field ones, and agrees with both to 4e-13 of the peak. Before
+#355 the single-field branch used ascending x as l and stored the beam mirrored
 east-west (design-decisions.md D55).
 Pinned by `tests/test_beam_orientation.py` (point-source wgridder orientation,
-elliptical-beam reproject vs analytic with rephasing and non-square output,
+elliptical-beam placement vs analytic for both hci's reprojection and the imager's
+`beam_on_grid`, with rephasing and non-square output,
 `fitcleanbeam` order-invariance), and the refactor was verified bitwise-
 equivalent in output against the pre-refactor code on the test MS (cube/psf to
 single-precision threading noise ~1e-7; `psf_pa` exactly). The interim
@@ -189,7 +194,8 @@ no maps, no reprojection, no transposes.
 Sources: `src/pfb_imaging/utils/hci_common.py` (`beam_for_band`,
 `beam_gain_for_source`, `build_scaffold` -- the scaffold header),
 `src/pfb_imaging/utils/stokes2im.py` (`image_item`), `src/pfb_imaging/utils/beam.py`,
-`src/pfb_imaging/utils/stokes2vis.py` (`beam_on_image_grid`),
+`src/pfb_imaging/utils/stokes2vis.py` (`beam_on_image_grid`), meerkat-beams
+`utils.beam_on_grid`,
 `utils/fits.py` (`save_fits`/`set_wcs`), commits `547458f`, `330bc5d`,
 `a516530`; meerkat-beams `616906b` + PR landmanbester/meerkat-beams#8;
 ratt-ru/pfb-imaging#263, ratt-ru/breifast#208.

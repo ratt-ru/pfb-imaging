@@ -1,12 +1,8 @@
 import numpy as np
-from africanus.rime import parallactic_angles
-from africanus.rime.fast_beam_cubes import beam_cube_dde
 from astropy.wcs import WCS
-from katbeam import JimBeam
 from reproject.array_utils import map_coordinates
 from reproject.wcs_utils import pixel_to_pixel_with_roundtrip
 from scipy.constants import c as lightspeed
-from scipy.interpolate import RegularGridInterpolator
 
 # meerkat-beams merges parallactic angles that agree to within this many degrees
 # before rotation-averaging (landmanbester/meerkat-beams#39). Within 1 deg of the
@@ -52,135 +48,6 @@ def beam_grid(max_freq: float, dish_diameter: float, radius_deg: float, tol: flo
     cell = np.rad2deg(np.sqrt(tol) * lightspeed / max_freq / dish_diameter)
     half = int(np.ceil(radius_deg / cell)) + 1
     return np.arange(-half, half + 1) * cell
-
-
-def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_dir=None):
-    """
-    A function that returns an object array containing a function
-    returning beam values given (l,m) coordinates at a single frequency.
-    Frequency mapped to imaging band extenally. Result is meant to be
-    passed into eval_beam below.
-    """
-    if isinstance(freq, np.ndarray):
-        assert freq.size == 1, "Only single frequency interpolation currently supported"
-        freq = freq[0]
-    if btype is None:
-        l_coord = (-(nx // 2) + np.arange(nx)) * cell_deg
-        m_coord = (-(ny // 2) + np.arange(ny)) * cell_deg
-        return np.ones((nx, ny), dtype=float), l_coord, m_coord
-    elif btype.endswith(".npz"):
-        # these are expected to be in the format given here
-        # https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
-        dct = np.load(btype)
-        beam = dct["abeam"]
-        l_coord = np.deg2rad(dct["ldeg"])
-        m_coord = np.deg2rad(dct["mdeg"])
-        ll, mm = np.meshgrid(l_coord, m_coord, indexing="ij")
-        bfreqs = dct["freq"]
-        beam_amp = (beam[0, :, :, :] * beam[0, :, :, :].conj() + beam[-1, :, :, :] * beam[-1, :, :, :].conj()) / 2.0
-        beam_amp = np.transpose(beam_amp, (1, 2, 0))[:, :, :, None, None].real
-    else:
-        btype = btype.lower()
-        btype = btype.replace("-", "_")
-        l_coord = (-(nx // 2) + np.arange(nx)) * cell_deg
-        m_coord = (-(ny // 2) + np.arange(ny)) * cell_deg
-        ll, mm = np.meshgrid(l_coord, m_coord, indexing="ij")
-        if btype in ["kbl", "kb_l", "katbeam_l"]:
-            # katbeam L band
-            beam_amp = JimBeam("MKAT-AA-L-JIM-2020").I(ll.flatten(), mm.flatten(), freqMHz=freq / 1e6)
-        elif btype in ["kbuhf", "kb_uhf", "katbeam_uhf"]:
-            # katbeam L band
-            beam_amp = JimBeam("MKAT-AA-UHF-JIM-2020").I(ll.flatten(), mm.flatten(), freqMHz=freq / 1e6)
-        else:
-            raise ValueError(f"Unknown beam model {btype}")
-        beam_amp = beam_amp.reshape(nx, ny)[:, :, None, None, None]
-        bfreqs = np.array((freq,))
-
-    if utime is None:
-        return beam_amp.squeeze(), l_coord, m_coord
-
-    parangles = parallactic_angles(utime, ant_pos, phase_dir, backend="astropy")
-    # mean over antanna nant -> 1
-    parangles = np.mean(parangles, axis=1, keepdims=True)
-    nant = 1
-    # beam_cube_dde requirements
-    nband = 1
-    ntimes = utime.size
-    ant_scale = np.ones((nant, nband, 2), dtype=np.float64)
-    point_errs = np.zeros((ntimes, nant, nband, 2), dtype=np.float64)
-    beam_extents = np.array([[l_coord.min(), l_coord.max()], [m_coord.min(), m_coord.max()]])
-    lm = np.vstack((ll.flatten(), mm.flatten())).T
-    beam_image = beam_cube_dde(
-        np.ascontiguousarray(beam_amp), beam_extents, bfreqs, lm, parangles, point_errs, ant_scale, np.array((freq,))
-    ).squeeze()
-
-    return beam_image.squeeze(), l_coord, m_coord
-
-
-def eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    if l_out.ndim == 2:
-        ll = l_out
-        mm = m_out
-    elif l_out.ndim == 1:
-        ll, mm = np.meshgrid(l_out, m_out, indexing="ij")
-    else:
-        msg = "Only 1 or 2D coordinates supported for beam evaluation"
-        raise ValueError(msg)
-
-    if (beam_image == 1.0).all():
-        return np.ones_like(ll)
-    else:  # this gets expensive
-        beamo = RegularGridInterpolator((l_in, m_in), beam_image, bounds_error=False, method="linear", fill_value=1.0)
-        return beamo((ll, mm))
-
-
-def reproject_and_interp_scat_beam(
-    beam,
-    l_beam,
-    m_beam,
-    radec0,
-    radecf,
-    cell_deg_out,
-    nxo,
-    nyo,
-    product,
-    l0=0.0,
-    m0=0.0,
-):
-    """Reproject rotation-averaged beam maps onto the output image grid.
-
-    Axis conventions (measured; see docs/wiki/image-and-beam-orientation.md):
-    reproject binds a numpy array to a celestial WCS as (row, col) =
-    (Dec-like, RA-like), so both the input maps and the returned maps are
-    (Y, X)-ordered. For RA---SIN the intermediate coordinate
-    (pixel - crpix) * cdelt is l itself, so signed cdelt taken from the actual
-    l/m coordinates describes either grid direction; the target WCS is the hci
-    output header verbatim (CDELT1 = -cell, CRPIX = 1 + n//2).
-
-    Args:
-        beam: (nstokes, m_beam.size, l_beam.size) beam maps in (Y, X) order,
-            as returned by BeamWizard.get_rotation_averaged_beam, centred on
-            the pointing direction radec0.
-        l_beam: 1D l coordinates of the beam columns (deg, East positive).
-        m_beam: 1D m coordinates of the beam rows (deg, North positive).
-        radec0: original pointing direction (rad).
-        radecf: output image phase centre to project to (rad).
-        cell_deg_out: output cell size (deg).
-        nxo: number of output X pixels.
-        nyo: number of output Y pixels.
-        product: Stokes product string.
-        l0/m0: image-centre offset from the tangent point in radians
-            (--target). Same facet convention as ``utils.fits.set_wcs``:
-            CRVAL stays the tangent point and CRPIX shifts so the centre
-            pixel lands on the target direction.
-
-    Returns:
-        (nstokes, nyo, nxo) beam maps in cube (Y, X) order, zeroed where the
-        input maps have no coverage.
-    """
-    nstokes = beam.shape[0]
-    assert nstokes == len(product), "Number of Stokes products in beam does not match length of product string"
-    return BeamReprojection(l_beam, m_beam, radec0, radecf, cell_deg_out, nxo, nyo, l0=l0, m0=m0)(beam)
 
 
 class BeamReprojection:

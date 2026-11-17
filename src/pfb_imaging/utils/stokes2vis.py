@@ -10,7 +10,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from katbeam import JimBeam
-from meerkat_beams.utils import BeamWizard
+from meerkat_beams.utils import BeamWizard, beam_on_grid
 from pfb_model_spec.utils.degrid import pixel_lm
 from rarg_python_patterns.multiton import Multiton
 from scipy import ndimage
@@ -18,7 +18,7 @@ from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG, eval_beam, reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
@@ -110,60 +110,49 @@ def beam_on_image_grid(
     cell_rad: float,
     nx: int,
     ny: int,
-    corr: list[str],
     l0: float = 0.0,
     m0: float = 0.0,
+    nthreads: int = 1,
 ) -> np.ndarray:
     """Place a field-centred beam onto the (Y, X) output image grid.
 
-    A mosaic or facet partition (pointing off the image tangent point, or a
-    `--target` offset) is reprojected SIN->SIN and is 0 outside the beam's
-    coverage. A single-field partition is interpolated bilinearly and is 1
-    outside the small grid.
+    One path for every partition: each pixel's sky ``(l, m)`` under the
+    wgridder conventions (East at low x, North at high y; the same ``pixel_lm``
+    degrid evaluates its beam on, #355) is rotated from the image tangent point
+    to the field's pointing and bilinearly interpolated in ``beam_small``
+    (meerkat-beams ``beam_on_grid``). A pixel outside the small grid is 0; the
+    driver sizes a wizard's grid to cover the image (``field_beam_axis``).
 
     Args:
         beam_small: `(ncorr, m_beam.size, l_beam.size)` (Y, X)-ordered maps
             centred on the field's pointing.
-        l_beam: 1D l of the beam columns (deg, East positive).
-        m_beam: 1D m of the beam rows (deg, North positive).
+        l_beam: 1D l of the beam columns (deg, East positive), uniform.
+        m_beam: 1D m of the beam rows (deg, North positive), uniform.
         radec: The field's pointing centre (rad).
         radec_grid: The image tangent point (rad).
         cell_rad: Image cell size (rad).
         nx: Image pixels along x.
         ny: Image pixels along y.
-        corr: Correlation/Stokes labels, one per map.
         l0: Image-centre offset from the tangent point (rad).
         m0: Image-centre offset from the tangent point (rad).
+        nthreads: Threads over output rows.
 
     Returns:
         `(ncorr, ny, nx)` float64 beam on the image grid, without the n-term.
     """
-    offset_centre = (not np.allclose(radec_grid, radec, rtol=0, atol=1e-9)) or l0 != 0.0 or m0 != 0.0
-    if offset_centre:
-        return reproject_and_interp_scat_beam(
-            beam_small,
-            l_beam,
-            m_beam,
-            radec,
-            radec_grid,
-            np.rad2deg(cell_rad),
-            nx,
-            ny,
-            "".join(corr),
-            l0=l0,
-            m0=m0,
-        ).astype(np.float64)
-    # sky (l, m) of each pixel under the wgridder conventions: East is at LOW x
-    # (flip_u=False), North at high y. degrid evaluates its beam on the same
-    # pixel_lm, so the two cannot disagree on orientation (#355).
-    flip_u, flip_v, _, x0, y0 = wgridder_conventions(0.0, 0.0)
+    flip_u, flip_v, _, x0, y0 = wgridder_conventions(l0, m0)
     geom = {"nx": nx, "ny": ny, "cell_rad": cell_rad, "x0": x0, "y0": y0, "flip_u": flip_u, "flip_v": flip_v}
     l_px, m_px = pixel_lm(geom)
-    yy, xx = np.meshgrid(np.rad2deg(m_px), np.rad2deg(l_px), indexing="ij")
-    beam = np.zeros((len(corr), ny, nx), dtype=np.float64)
-    for c in range(len(corr)):
-        beam[c] = eval_beam(beam_small[c], m_beam, l_beam, yy, xx)
-    return beam
+    return beam_on_grid(
+        np.asarray(beam_small, dtype=np.float64),
+        l_beam,
+        m_beam,
+        SkyCoord(ra=radec[0] * u.rad, dec=radec[1] * u.rad),
+        SkyCoord(ra=radec_grid[0] * u.rad, dec=radec_grid[1] * u.rad),
+        np.rad2deg(l_px),
+        np.rad2deg(m_px),
+        nthreads=nthreads,
+    )
 
 
 def partition_beam(
@@ -175,6 +164,7 @@ def partition_beam(
     l0: float = 0.0,
     m0: float = 0.0,
     dtype=np.float64,
+    nthreads: int = 1,
 ) -> np.ndarray:
     """The stored image-plane response ``B/n`` of a piece or reduced partition.
 
@@ -199,6 +189,7 @@ def partition_beam(
             partition is gridded with.
         m0: As ``l0``, for m.
         dtype: Output dtype, the tree's ``--precision`` (D27).
+        nthreads: Threads for the placement.
 
     Returns:
         ``(ncorr, ny, nx)`` ``B/n``, (Y, X)-ordered.
@@ -222,9 +213,9 @@ def partition_beam(
         cell_rad,
         nx,
         ny,
-        [str(c) for c in ds.corr.values],
         l0=l0,
         m0=m0,
+        nthreads=nthreads,
     ).astype(dtype)
     return (beam / nlm[None, :, :]).astype(dtype)
 
@@ -662,7 +653,7 @@ def stokes_vis(
             # the wizard ships detached (BDS-only); the parallactic angles
             # need the FIELD's pointing centre, set per piece here
             rvec = np.asarray(radec).squeeze()
-            beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
+            beam_model.set_pointing_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
             if beam_lm is None:
                 raise ValueError("a BeamWizard beam needs the driver's beam_lm axis (utils.beam.beam_grid)")
             # deg, East/North positive: sized by the driver to the image and to a

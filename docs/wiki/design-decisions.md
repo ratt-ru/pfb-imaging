@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-17T15:30:00Z
-last_verified_commit: 3e454cb
+timestamp: 2026-11-17T13:06:00Z
+last_verified_commit: cbc4c68
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -388,8 +388,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   rotation-averaged beam (katbeam, or `BeamWizard.get_rotation_averaged_beam` for MeerKAT band
   names U/L/S0/S4 — signature kept stable so meerkat-beams can grow weighted time/freq
   averaging underneath) is evaluated about the FIELD's own pointing on a small grid, then
-  SIN→SIN-reprojected onto the mosaic grid (tangent + target CRPIX shift, zero outside
-  coverage). Pass 2 averages a partition's small beams (`wsum_nat`-weighted, `_concat_pieces`,
+  placed on the image grid by meerkat-beams `beam_on_grid` (each `pixel_lm` pixel, target
+  offset included, rotated to the pointing and interpolated bilinearly, zero outside the
+  small grid; landmanbester/meerkat-beams#60). It replaced a SIN→SIN reprojection, which
+  it matches to 4e-13 of the peak and beats by ~30× on one thread. Pass 2 averages a partition's small beams (`wsum_nat`-weighted, `_concat_pieces`,
   D28) and places the mean once (`stokes2vis.partition_beam`); `grid_partition` does no beam
   interpolation. A moving `--target` is placed at the partition's gridding offset, where pass
   1 used each piece's own. Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
@@ -1797,7 +1799,9 @@ update it (and this page's `last_verified_commit`) in the same session.
     (`beam_on_image_grid`) now evaluates on `pixel_lm`, the same pixel->(l, m) map degrid uses,
     so `imager --transfer-model-from` and `degrid --beam-model` agree. Pinned by
     `test_single_field_beam_orientation_matches_pixel_lm_and_reproject`, which compares it with
-    `pixel_lm` and the reproject branch on an asymmetric beam. **Single-field `.dt` stores
+    `pixel_lm` and the reproject path on an asymmetric beam (since meerkat-beams
+    `beam_on_grid` there is one placement path, and the reproject side is hci's
+    `BeamReprojection`). **Single-field `.dt` stores
     written before the fix carry a mirrored `BEAM`; re-image them.** Circular beams hide the
     difference, but the rotation-averaged MeerKAT beam and the `MPM` cross group (D46) do not.
   - **Multi-node runs need a shared `MBEAMS_CACHE_DIR`.** The driver warms only its own node's

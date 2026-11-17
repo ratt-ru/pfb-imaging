@@ -366,7 +366,7 @@ def chunk_beam_terms(
             with no wizard.
     """
     l_px, m_px = pixel_lm(geom)
-    field_centre = SkyCoord(ra=radec[0] * u.rad, dec=radec[1] * u.rad)
+    pointing_centre = SkyCoord(ra=radec[0] * u.rad, dec=radec[1] * u.rad)
     # D13: MSv4 time is unix seconds; astropy Time wants MJD days
     t = Time(to_mjd_time(np.unique(times)) / 86400.0, format="mjd")
     if groups is None:
@@ -387,7 +387,7 @@ def chunk_beam_terms(
         wizard = wizards[label]
         l_axis, m_axis = _coarse_axes(wizard, l_px, m_px)
         block = wizard.partition_mueller(
-            field_centre=field_centre,
+            pointing_centre=pointing_centre,
             times=t,
             freq=float(freq_out),
             l=np.rad2deg(l_axis),
