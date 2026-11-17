@@ -75,7 +75,7 @@ def test_single_field_beam_orientation_matches_pixel_lm_and_reproject(nx, ny):
     beam_small = _tilted_beam(ll, mm)[None]
     radec = np.deg2rad([45.0, -30.0])
 
-    beam = beam_on_image_grid(beam_small, l_beam, m_beam, radec, radec, cell_rad, nx, ny, ["I"])
+    beam = beam_on_image_grid(beam_small, l_beam, m_beam, radec, radec, cell_rad, nx, ny)
 
     flip_u, flip_v, _, x0, y0 = wgridder_conventions(0.0, 0.0)
     geom = {"nx": nx, "ny": ny, "cell_rad": cell_rad, "x0": x0, "y0": y0, "flip_u": flip_u, "flip_v": flip_v}
