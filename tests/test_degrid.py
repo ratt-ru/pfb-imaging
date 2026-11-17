@@ -1784,7 +1784,7 @@ class _FakeWizard:
     def partition_mueller(
         self,
         *,
-        field_centre,
+        pointing_centre,
         times,
         freq,
         l,  # noqa: E741

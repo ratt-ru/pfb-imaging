@@ -2536,13 +2536,9 @@ wheels = [
 [[package]]
 name = "meerkat-beams"
 version = "0.3.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2#78fdeb27886ff03596d9adef6264631ff2b194d2" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/39/a4e7bf2d3f44bc47ed58a1139720c03de48919a1c83dc8ac2783a63563bd/meerkat_beams-0.3.0.tar.gz", hash = "sha256:3b46ed168a036caa945ea4b7b24edd06b4618129f14e187e1483e0be11ac876a", size = 50459, upload-time = "2026-10-25T08:09:31.481Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/32/12315a158aea2150e3921624c5b73ba08985bca2676f57221e120bd0657c/meerkat_beams-0.3.0-py3-none-any.whl", hash = "sha256:0b310c6f8d8343e31a5abbe8e39fffae4f844e3585eef40909bc821e8602eec9", size = 59099, upload-time = "2026-10-25T08:09:30.144Z" },
 ]
 
 [package.optional-dependencies]
@@ -2553,14 +2549,13 @@ full = [
     { name = "hip-cargo", extra = ["s3"], marker = "python_full_version >= '3.11'" },
     { name = "katbeam", marker = "python_full_version >= '3.11'" },
     { name = "matplotlib", marker = "python_full_version >= '3.11'" },
+    { name = "numba", marker = "python_full_version >= '3.11'" },
     { name = "numcodecs", version = "0.16.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numcodecs", version = "0.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "requests", marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "wget", marker = "python_full_version >= '3.11'" },
     { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "xarray-fits", marker = "python_full_version >= '3.11'" },
     { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "zarr", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -3758,8 +3753,8 @@ requires-dist = [
     { name = "hip-cargo", specifier = ">=0.4.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
-    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.3.0" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", specifier = ">=0.3.0" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
@@ -6343,12 +6338,6 @@ wheels = [
 ]
 
 [[package]]
-name = "wget"
-version = "3.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/6a/62e288da7bcda82b935ff0c6cfe542970f04e29c756b0e147251b2fb251f/wget-3.2.zip", hash = "sha256:35e630eca2aa50ce998b9b1a127bb26b30dfee573702782aa982f875e3f16061", size = 10857, upload-time = "2015-10-22T15:26:37.51Z" }
-
-[[package]]
 name = "widgetsnbextension"
 version = "4.0.16"
 source = { registry = "https://pypi.org/simple" }
@@ -6461,21 +6450,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4b/a6/6fe936a798a3a38a79c7422d1a31afd2e9a14690fcb0ccff96bc01f04bf2/xarray-2026.4.0.tar.gz", hash = "sha256:c4ac9a01a945d90d5b1628e2af045099a9d4943536d4f2ee3ae963c3b222d15b", size = 3132311, upload-time = "2026-04-13T19:45:36.688Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/83/6d810a8a9ebc9c307989b418840c20e46907c74d707beb67ab566773e6fc/xarray-2026.4.0-py3-none-any.whl", hash = "sha256:d43751d9fb4a90f9249c30431684f00c41bc874f1edccd862631a40cbc0edf08", size = 1414326, upload-time = "2026-04-13T19:45:34.659Z" },
-]
-
-[[package]]
-name = "xarray-fits"
-version = "0.2.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "dask", extra = ["array"], marker = "python_full_version >= '3.11'" },
-    { name = "fsspec", marker = "python_full_version >= '3.11'" },
-    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/53/10/d51c64b219e034348d5d15dc0232179392c2501a181b5525a452487b9624/xarray_fits-0.2.6.tar.gz", hash = "sha256:f5291b0677c1aa831018ff3de78720197c69beeb8a43cf335fea43f4dbed9827", size = 16480, upload-time = "2026-02-26T13:40:11.605Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/0c/15b29823e23e96627023b191e24109668cd51ce9d3c95a891221a0d37ead/xarray_fits-0.2.6-py3-none-any.whl", hash = "sha256:964837d3a2f6ec98b008120b2ff9910871992a0e7d54f244e2d622a321e7216d", size = 8814, upload-time = "2026-02-26T13:40:10.598Z" },
 ]
 
 [[package]]

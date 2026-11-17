@@ -638,8 +638,8 @@ class _AffineWizard(BeamWizard):
     def beam(l_deg, m_deg):
         return 1.0 - 0.2 * l_deg - 0.05 * m_deg
 
-    def set_field_centre(self, centre):
-        self.pointing = centre
+    def set_pointing_centre(self, pointing_centre, times=None):
+        self.pointing = pointing_centre
 
     def get_rotation_averaged_beam(self, **kwargs):
         lax, max_ = np.asarray(kwargs["l"]), np.asarray(kwargs["m"])
@@ -1444,7 +1444,7 @@ def test_real_group_beams_are_complex_only_for_the_cross_group():
     ratios = {}
     for group in ("MM", "MPM", "MPMP"):
         bw = BeamWizard(band="L", group=group)
-        bw.set_field_centre(SkyCoord(ra=0.0 * u.rad, dec=-0.5 * u.rad))
+        bw.set_pointing_centre(SkyCoord(ra=0.0 * u.rad, dec=-0.5 * u.rad))
         bmap, _ = bw.get_rotation_averaged_beam(
             l=lm,
             m=lm,

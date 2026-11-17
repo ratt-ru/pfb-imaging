@@ -234,7 +234,7 @@ def beams(args):
         attrs = [scratch[p].ds.attrs for p in paths]
         wiz = BeamWizard(band=args.beam_band, group=bg, freq_extrapolation=BEAM_FREQ_EXTRAPOLATION)
         a0 = attrs[0]
-        wiz.set_field_centre(SkyCoord(ra=a0["ra0"] * u.rad, dec=a0["dec0"] * u.rad))
+        wiz.set_pointing_centre(SkyCoord(ra=a0["ra0"] * u.rad, dec=a0["dec0"] * u.rad))
         half = args.half_width_deg
         lm = np.linspace(-half, half, args.npix)
 

@@ -662,7 +662,7 @@ def stokes_vis(
             # the wizard ships detached (BDS-only); the parallactic angles
             # need the FIELD's pointing centre, set per piece here
             rvec = np.asarray(radec).squeeze()
-            beam_model.set_field_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
+            beam_model.set_pointing_centre(SkyCoord(ra=rvec[0] * u.rad, dec=rvec[1] * u.rad))
             if beam_lm is None:
                 raise ValueError("a BeamWizard beam needs the driver's beam_lm axis (utils.beam.beam_grid)")
             # deg, East/North positive: sized by the driver to the image and to a
