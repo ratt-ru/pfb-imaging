@@ -40,6 +40,7 @@ from pfb_imaging import set_envs
 from pfb_imaging.core.imager import _load_piece
 from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions
 from pfb_imaging.utils.fits import save_fits, set_wcs
+from pfb_imaging.utils.stokes2vis import partition_beam
 
 
 def rms_mad(x):
@@ -95,10 +96,13 @@ def gradient(args):
     counts = scratch[counts_path(scratch, args.band)].ds.COUNTS.values if robustness is not None else None
     nx_pad, ny_pad = (counts.shape[1], counts.shape[2]) if counts is not None else (None, None)
     groups = band_pieces(scratch, args.band)
+    grid = np.array([bds.attrs["ra"], bds.attrs["dec"]])
 
     def placed(ds):
-        """A piece's image-grid B/n, as pass 1 stores it."""
-        return ds.BEAM.values
+        """A piece's image-grid B/n: stored by older scratches, else placed as pass 2 does."""
+        if "BEAM" in ds:
+            return ds.BEAM.values
+        return partition_beam(ds, grid, cell_rad, nx, ny, dtype=model.dtype)
 
     g_exact = np.zeros_like(model)
     g_avg = np.zeros_like(model)
@@ -118,6 +122,10 @@ def gradient(args):
         spread = []
         for p in paths:
             piece = _load_piece(scratch[p])
+            if "BEAM" not in piece:
+                piece = piece.drop_vars(["BEAM_SMALL", "l_beam", "m_beam"], errors="ignore").assign(
+                    BEAM=(("corr", "y", "x"), placed(piece))
+                )
             prod = grid_partition(
                 piece,
                 counts,

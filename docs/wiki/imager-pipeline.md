@@ -71,7 +71,7 @@ child with its own `BEAM`.
                   ra, dec, l0, m0, wsum
           vis-space:   VIS, WEIGHT (corr, row, chan), MASK (row, chan),
                        UVW (row, three), FREQ (chan,)
-          image-space: BEAM (corr, y, x; image grid, placed in pass 1);
+          image-space: BEAM (corr, y, x; image grid, placed in pass 2);
                        PSF, PSFHAT (corr, y_psf, xo2), PSFPARSN only with --psf
 ```
 
@@ -133,9 +133,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
    over surviving channels — this is what the beam is evaluated at, D28), the beam
-   evaluated on a small field-centred grid and placed on the output image grid
-   (`beam_on_image_grid`, #281; the full-resolution beam per piece is most of the scratch
-   and of both passes' I/O on large images, #365), and write the piece keyed
+   evaluated on a small field-centred grid and stored there as `BEAM_SMALL`
+   `(corr, m_beam, l_beam)` (no beam model: none at all), and write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
    counts under robust weighting (natural weighting skips gridding them,
    `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
@@ -156,6 +155,7 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    scans/SPWs can carry different antenna subsets, so `baseline_id` indices are
    only valid for the node they came from. Groups with no baselines are omitted
    rather than written as empty partitions.
+
 2. **Counts reduction** (driver, between passes): `COUNTS` is a first-class reducible
    intermediate. The driver streams per-piece counts into **one grid per applied
    `weight_grouping` group** — `per-band-time` (default), `mfs` (sum over bands per
@@ -184,9 +184,13 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    which agrees to within the wgridder's own `epsilon=1e-7`).
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
    pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
-   along `row`; `BEAM` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
-   differ in both, so piece 0's beam is *not* representative, D28), read the image's
-   `counts/group####` grid and apply `counts_to_weights` per partition, grid each partition with
+   along `row`; `BEAM_SMALL` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
+   differ in both, so piece 0's beam is *not* representative, D28), place each partition's
+   mean `BEAM_SMALL` on the image grid once at the offset it is gridded with and fold in `1/n`
+   (`stokes2vis.partition_beam`, #365; `1/n` alone without a beam model — placement is linear,
+   so this equals averaging placed beams, and it never writes an image-sized beam per piece),
+   read the image's `counts/group####` grid and apply `counts_to_weights` per partition, grid
+   each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
    (including the band's `freq_out` as the imaging-wsum-weighted mean of the partition
    frequencies), write the `.dt`. Each `(band, part)` is an independent zarr group path,
@@ -203,7 +207,7 @@ pays one full DIRTY+PSF gridding per scan even at `integrations_per_image=-1`.
 - Rows are only concatenatable when they share phase centre and `FREQ` axis; this holds
   by construction within a partition key and is guarded by an assert. Different
   fields/spws are separate partitions: **summed, never concatenated**.
-- Pieces within a concat group may still differ in `BEAM` and effective frequency
+- Pieces within a concat group may still differ in `BEAM_SMALL` and effective frequency
   (different times ⇒ different `BeamWizard` beams; different flagging ⇒ different
   effective frequency), so `_concat_pieces` reduces both as `wsum_nat`-weighted means
   rather than taking the first piece's (D28).
@@ -254,8 +258,9 @@ linear in rows, so the two must agree to gridder precision).
   Rows are partitioned rather than duplicated, so total vis-space storage and
   total gridding work stay roughly constant; what triples is the per-partition
   `PSF`/`PSFHAT`/`BEAM` set, the FFTs over them (including `HessianTree`'s, per
-  minor cycle) and beam evaluation, which is image-sized and independent of row
-  count. The driver also opens each node once per group; whether strided
+  minor cycle), and the beam evaluation and placement, which are independent of row
+  count (one small grid per piece in pass 1, one image-sized placement per partition
+  in pass 2). The driver also opens each node once per group; whether strided
   baseline reads cost more than one contiguous read is unmeasured.
 - **Groups are very uneven.** On real MeerKAT+ data (37 antennas, 3 extension
   dishes) the split is `MM` 561 / `MPM` 102 / `MPMP` 3 baselines, so one pass-1

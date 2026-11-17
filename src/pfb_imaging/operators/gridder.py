@@ -55,7 +55,7 @@ def grid_partition(
         part: Partition dataset with corr-first ``VIS``/``WEIGHT`` ``(corr,row,chan)``,
             ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
             ``BEAM`` ``(corr, ny, nx)`` already on the output image grid
-            (placed there in pass 1; see stokes_vis).
+            (placed by ``stokes2vis.partition_beam`` in pass 2).
         counts: Reduced counts grid ``(ncorr, nx_pad, ny_pad)`` (already passed
             through ``filter_extreme_counts``/``box_sum_counts`` by the caller).
             Ignored when ``robustness`` is ``None``; copied before in-place use.
@@ -110,10 +110,10 @@ def grid_partition(
 
     wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
 
-    # the piece BEAM is already on the output image grid, placed there in
-    # pass 1 (stokes_vis, #281): (corr, ny, nx), tangent point + target offset
-    # included. A partition's pieces are reduced to one BEAM upstream in
-    # core.imager._concat_pieces (wsum_nat-weighted mean, wiki D28); here it is
+    # the partition BEAM is already on the output image grid: core.imager
+    # reduces the pieces' field-centred beams (_concat_pieces, wsum_nat-weighted
+    # mean, wiki D28) and places the mean once (stokes2vis.partition_beam, #365):
+    # (corr, ny, nx), tangent point + target offset and 1/n included. Here it is
     # pure pass-through -- cast to the vis dtype and returned, never used in
     # the gridding itself.
     # ducc templates every real-valued array on the vis dtype: complex64 vis

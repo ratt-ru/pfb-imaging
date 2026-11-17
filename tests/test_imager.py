@@ -396,8 +396,6 @@ def _run_stokes_vis(
         nx_pad=64,
         ny_pad=64,
         cell_rad=cell_rad,
-        nx=64,
-        ny=64,
         radec_new=radec_new,
         nthreads=1,
         compute_counts=compute_counts,
@@ -420,7 +418,7 @@ def test_stokes_vis_resolves_a_multiton_beam(ms_name, tmp_path):
     cell = 2e-5
     direct = _run_stokes_vis(ms_name, str(tmp_path / "d.scratch"), beam_model="katbeam", cell_rad=cell)
     recipe = _run_stokes_vis(ms_name, str(tmp_path / "m.scratch"), beam_model=Multiton(str, "katbeam"), cell_rad=cell)
-    np.testing.assert_array_equal(recipe.BEAM.values, direct.BEAM.values)
+    np.testing.assert_array_equal(recipe.BEAM_SMALL.values, direct.BEAM_SMALL.values)
     assert recipe.attrs["beam_model"] == "katbeam"
 
 
@@ -431,7 +429,7 @@ def test_stokes_vis_skips_counts_when_asked(ms_name, tmp_path):
     assert {"COUNTS_INDEX", "COUNTS_VALUE"} <= set(with_counts.data_vars)
     assert with_counts.COUNTS_INDEX.size > 0
     assert not {"COUNTS_INDEX", "COUNTS_VALUE"} & set(without.data_vars)
-    for var in ("VIS", "WEIGHT", "MASK", "UVW", "BEAM"):
+    for var in ("VIS", "WEIGHT", "MASK", "UVW"):
         np.testing.assert_array_equal(without[var].values, with_counts[var].values)
 
 
@@ -567,9 +565,18 @@ def test_imager_rephase_roundtrip(sky_truth, ms_name, tmp_path, needs_rephasing)
         assert abs(val - expected) < 0.15 * expected, f"source {src}: {val} vs {expected}"
 
 
+def _placed(ds, cell, radec_grid=None):
+    """A piece's B/n on a 64^2 image grid, as pass 2 places it (partition_beam)."""
+    from pfb_imaging.utils.stokes2vis import partition_beam
+
+    grid = np.array([ds.attrs["ra"], ds.attrs["dec"]]) if radec_grid is None else radec_grid
+    return partition_beam(ds, grid, cell, 64, 64)
+
+
 def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
-    """Pass-1 places the BEAM on the image grid; under rephasing its peak
-    stays at the FIELD pointing (where the antennas point), not the tangent.
+    """The pass-1 piece carries the field-centred beam, and pass 2's placement
+    keeps its peak at the FIELD pointing (where the antennas point) under
+    rephasing, not at the tangent point.
 
     cell is enlarged so 10 px is a measurable fraction of the katbeam width
     (at the default 1e-5 rad cell the beam is flat to ~1e-6 over the fov and
@@ -577,17 +584,20 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     """
     cell = 5.0e-4  # rad; 64 px fov ~ 1.8 deg
     ref = _run_stokes_vis(ms_name, str(tmp_path / "b0.scratch"), beam_model="katbeam", cell_rad=cell)
-    assert ref.BEAM.dims == ("corr", "y", "x")
-    assert ref.BEAM.shape == (1, 64, 64)
-    assert ref.attrs["beam_includes_n"] is True
+    assert ref.BEAM_SMALL.dims == ("corr", "m_beam", "l_beam")
+    assert "BEAM" not in ref
+    beam = _placed(ref, cell)
+    assert beam.shape == (1, 64, 64)
 
-    # beam_model=None stores exactly the folded 1/n (D22), not ones
+    # beam_model=None stores no small beam; the placed response is exactly the
+    # folded 1/n (D22), not ones
     none_ds = _run_stokes_vis(ms_name, str(tmp_path / "bn.scratch"), cell_rad=cell)
+    assert "BEAM_SMALL" not in none_ds
     coords = (-(64 / 2) + np.arange(64)) * cell
     yy_n, xx_n = np.meshgrid(coords, coords, indexing="ij")
     nlm = np.sqrt(1.0 - xx_n**2 - yy_n**2)
-    np.testing.assert_allclose(none_ds.BEAM.values[0], 1.0 / nlm, rtol=1e-6)
-    iy, ix = np.unravel_index(int(np.argmax(ref.BEAM.values[0])), (64, 64))
+    np.testing.assert_allclose(_placed(none_ds, cell)[0], 1.0 / nlm, rtol=1e-6)
+    iy, ix = np.unravel_index(int(np.argmax(beam[0])), (64, 64))
     assert (iy, ix) == (32, 32), "unrephased beam must peak at the image centre"
 
     # tangent 10 px north of the field pointing: the beam peak moves 10 px
@@ -596,11 +606,12 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     new = _run_stokes_vis(
         ms_name, str(tmp_path / "b1.scratch"), radec_new=radec_new, beam_model="katbeam", cell_rad=cell
     )
-    assert new.BEAM.shape == (1, 64, 64)
-    iy, ix = np.unravel_index(int(np.argmax(new.BEAM.values[0])), (64, 64))
+    moved = _placed(new, cell)
+    assert moved.shape == (1, 64, 64)
+    iy, ix = np.unravel_index(int(np.argmax(moved[0])), (64, 64))
     assert (iy, ix) == (22, 32), f"rephased beam peak at ({iy},{ix}), expected (22,32)"
     # reprojection fills 0 outside the small-grid coverage; interior peak ~1
-    assert new.BEAM.values[0, 22, 32] > 0.99
+    assert moved[0, 22, 32] > 0.99
 
 
 def test_freq_bounds_span_the_bands_own_channels(ms_name, ms_meta, tmp_path):
@@ -757,10 +768,10 @@ def test_stokes_vis_beam_follows_effective_freq(ms_name, tmp_path):
         ms_name, str(tmp_path / "hi.scratch"), beam_model="katbeam", cell_rad=cell, flag_chans=slice(0, 4)
     )
     assert lo.attrs["freq_out"] < hi.attrs["freq_out"]
-    assert not np.allclose(lo.BEAM.values, hi.BEAM.values, rtol=1e-3)
+    assert not np.allclose(lo.BEAM_SMALL.values, hi.BEAM_SMALL.values, rtol=1e-3)
     # katbeam narrows with frequency, so the higher-frequency beam encloses
     # less total response over the same fov
-    assert hi.BEAM.values.sum() < lo.BEAM.values.sum()
+    assert hi.BEAM_SMALL.values.sum() < lo.BEAM_SMALL.values.sum()
 
 
 @pytest.mark.slow
@@ -1144,6 +1155,9 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
         def __init__(self, band=None, group=None, freq_extrapolation="raise"):
             assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
+            # the driver sizes the field-centred beam grid against the cube's axes (#365)
+            ax = np.arange(-2.0, 2.0, 0.0625)
+            self.bds = xr.Dataset(coords={"X": ax, "Y": ax})
 
         def check_freqs(self, freq):
             return freq
@@ -1292,6 +1306,9 @@ def test_only_the_groups_present_in_the_data_get_a_wizard(ms_name, tmp_path, mon
         def __init__(self, band=None, group=None, freq_extrapolation="raise"):
             assert freq_extrapolation == "scale", "band-edge pieces need lambda/D extrapolation (D59)"
             built.append((band, group))
+            # the driver sizes the field-centred beam grid against the cube's axes (#365)
+            ax = np.arange(-2.0, 2.0, 0.0625)
+            self.bds = xr.Dataset(coords={"X": ax, "Y": ax})
 
         def check_freqs(self, freq):
             return freq

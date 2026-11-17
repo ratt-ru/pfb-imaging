@@ -45,7 +45,7 @@ from pfb_imaging.utils.msv4 import (
     wrapped_angle_diff,
 )
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
-from pfb_imaging.utils.stokes2vis import safe_stokes_vis
+from pfb_imaging.utils.stokes2vis import partition_beam, safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
 
 ignore_xarray_ms_warnings()
@@ -314,20 +314,21 @@ def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) ->
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
-    Rows are concatenated; BEAM and the effective frequency are combined as
-    ``wsum_nat``-weighted means. Pieces of a partition can differ in both --
-    BeamWizard evaluates the beam at the piece's own timestamps, and post-#296
-    at its own effective frequency -- so taking piece 0's beam, as this used
-    to, silently discarded every other piece (wiki D28).
+    Rows are concatenated; the field-centred BEAM_SMALL and the effective
+    frequency are combined as ``wsum_nat``-weighted means. Pieces of a
+    partition can differ in both -- BeamWizard evaluates the beam at the
+    piece's own timestamps, and post-#296 at its own effective frequency -- so
+    taking piece 0's beam, as this used to, silently discarded every other
+    piece (wiki D28). The caller places the mean on the image grid once
+    (``partition_beam``); placement is linear, so that equals averaging the
+    placed beams (#365).
 
     The weights are the *natural* wsum because this runs before gridding, where
     the robust imaging weights do not yet exist. Getting them would mean
-    passing row offsets into grid_partition and holding every piece's BEAM
-    resident through gridding instead of freeing it at the caller's ``del
-    plist`` -- ~67 MB per piece at 4096 squared float32 -- against the memory
-    discipline in docs/wiki/memory-and-ray.md, for a correction to a beam that
-    varies slowly with frequency. The band-level reduction in _grid_image does
-    use the imaging weights; see wiki D28 for why the mixed basis is correct.
+    passing per-piece row offsets into grid_partition and reducing the beams
+    after gridding, for a correction to a beam that varies slowly with
+    frequency. The band-level reduction in _grid_image does use the imaging
+    weights; see wiki D28 for why the mixed basis is acceptable.
 
     Args:
         plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
@@ -346,19 +347,33 @@ def _concat_pieces(plist):
     for p in plist[1:]:
         assert np.array_equal(p.FREQ.values, f0), "concat group has mismatched FREQ; cannot concatenate rows"
 
+    # the small beams share one field-centred grid by construction (the wizard's
+    # cube axes, or katbeam's run-wide Nyquist grid); averaging them before the
+    # one placement in pass 2 is exact only on a shared grid
+    has_beam = "BEAM_SMALL" in plist[0]
+    if has_beam:
+        lb, mb = plist[0].l_beam.values, plist[0].m_beam.values
+        for p in plist[1:]:
+            assert np.array_equal(p.l_beam.values, lb) and np.array_equal(p.m_beam.values, mb), (
+                "concat group has mismatched beam grids; cannot average BEAM_SMALL"
+            )
+
     w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
     wsum_nat = float(w.sum())
+    beam = None
     if wsum_nat > 0:
         freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
         freq_out = float((w * freqs).sum() / wsum_nat)
-        # accumulate rather than stack: one buffer, not npiece of them
-        beam = np.zeros(plist[0].BEAM.shape, dtype=np.float64)
-        for wi, p in zip(w, plist):
-            beam += wi * p.BEAM.values
-        beam /= wsum_nat
+        if has_beam:
+            # accumulate rather than stack: one buffer, not npiece of them
+            beam = np.zeros(plist[0].BEAM_SMALL.shape, dtype=np.float64)
+            for wi, p in zip(w, plist):
+                beam += wi * p.BEAM_SMALL.values
+            beam /= wsum_nat
     else:
         freq_out = float(plist[0].attrs["freq_out"])
-        beam = plist[0].BEAM.values
+        if has_beam:
+            beam = plist[0].BEAM_SMALL.values
 
     rowvars = ["VIS", "WEIGHT", "MASK", "UVW"]
     cat = xr.concat([p[rowvars] for p in plist], dim="row", coords="minimal", compat="override")
@@ -366,7 +381,8 @@ def _concat_pieces(plist):
     for v in rowvars:
         part[v] = cat[v]
     del cat
-    part["BEAM"] = (part.BEAM.dims, beam.astype(part.BEAM.dtype))
+    if has_beam:
+        part["BEAM_SMALL"] = (part.BEAM_SMALL.dims, beam.astype(part.BEAM_SMALL.dtype))
     part.attrs["freq_out"] = freq_out
     part.attrs["wsum_nat"] = wsum_nat
     # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
@@ -471,6 +487,22 @@ def _grid_image_body(
         part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
+        # place the partition's (mean) field-centred beam on the image grid once,
+        # at the offset the partition is gridded with, and fold in 1/n (D22, #365)
+        beam = partition_beam(
+            part,
+            np.array([meta["ra"], meta["dec"]]),
+            cell_rad,
+            nx,
+            ny,
+            l0=meta.get("l0", 0.0),
+            m0=meta.get("m0", 0.0),
+            dtype=real_type,
+        )
+        part = part.drop_vars(["BEAM_SMALL", "l_beam", "m_beam"], errors="ignore").assign(
+            BEAM=(("corr", "y", "x"), beam)
+        )
+        del beam
 
         prod = grid_partition(
             part,
@@ -525,7 +557,7 @@ def _grid_image_body(
                 "l0": meta.get("l0", 0.0),
                 "m0": meta.get("m0", 0.0),
                 # stored BEAM = effective image-plane response B/n (D22)
-                "beam_includes_n": bool(part.attrs.get("beam_includes_n", False)),
+                "beam_includes_n": True,
                 # max|Im|/max|Re| of the evaluated beam; non-zero only for the
                 # MPM cross group, where the stored BEAM is Re(B) (wiki D46)
                 "beam_imre_ratio": float(part.attrs.get("beam_imre_ratio", 0.0)),
@@ -1202,8 +1234,6 @@ def imager(
                         data_group=data_group,
                         radec_new=radec_new,
                         target=target,
-                        nx=nx,
-                        ny=ny,
                         nthreads=nthreads,
                         # only robust weighting reads the counts (see counts_sources)
                         compute_counts=robustness is not None,
