@@ -97,12 +97,15 @@ def gradient(args):
     nx_pad, ny_pad = (counts.shape[1], counts.shape[2]) if counts is not None else (None, None)
     groups = band_pieces(scratch, args.band)
     grid = np.array([bds.attrs["ra"], bds.attrs["dec"]])
+    # the offset pass 2 placed and gridded at (--target); a moving target is not supported here
+    pattrs = dt[bnode][sorted(dt[bnode].children)[0]].ds.attrs
+    l0, m0 = float(pattrs.get("l0", 0.0)), float(pattrs.get("m0", 0.0))
 
     def placed(ds):
         """A piece's image-grid B/n: stored by older scratches, else placed as pass 2 does."""
         if "BEAM" in ds:
             return ds.BEAM.values
-        return partition_beam(ds, grid, cell_rad, nx, ny, dtype=model.dtype)
+        return partition_beam(ds, grid, cell_rad, nx, ny, l0=l0, m0=m0, dtype=model.dtype)
 
     g_exact = np.zeros_like(model)
     g_avg = np.zeros_like(model)
@@ -137,6 +140,8 @@ def gradient(args):
                 robustness=robustness,
                 nx_pad=nx_pad,
                 ny_pad=ny_pad,
+                l0=l0,
+                m0=m0,
                 nthreads=args.nthreads,
                 epsilon=args.epsilon,
                 do_psf=False,

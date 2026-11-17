@@ -716,7 +716,9 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
     reaching past the beam cube is refused: the rotation average turns the field
     with parallactic angle, so only the cube's largest centred disk is covered at
     every angle, and beyond it the placement error does not converge with the
-    cell (docs/experiments/beam_time_gradient.md).
+    cell (wiki D64). The check counts the bilinear nodes the farthest pixel
+    reads (up to one diagonal cell further out) and keeps two cube pixels clear
+    of the edge, where the cube's cubic spline is pulled towards its zero fill.
 
     Args:
         wizards: Baseline group (None when ungrouped) -> BeamWizard.
@@ -729,16 +731,19 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         max_freq: Highest frequency gridded (Hz).
 
     Returns:
-        ``(beam_lm, radius_deg, cover_deg)``: the axis (deg), the distance it
-        must reach, and the cube's covered radius.
+        ``(beam_lm, radius_deg, limit_deg)``: the axis (deg), the distance it
+        must reach, and the radius the cube covers less the edge margin.
 
     Raises:
-        ValueError: If the image reaches beyond the cube's covered radius.
+        ValueError: If the image reaches beyond that radius.
     """
-    cover_deg = np.inf
+    limit_deg = np.inf
     for wizard in wizards.values():
-        xy = np.concatenate([wizard.bds.X.values, wizard.bds.Y.values])
-        cover_deg = min(cover_deg, float(np.abs([xy.min(), xy.max()]).min()))
+        x, y = wizard.bds.X.values, wizard.bds.Y.values
+        xy = np.concatenate([x, y])
+        cover = float(np.abs([xy.min(), xy.max()]).min())
+        dx = float(max(np.abs(np.diff(x)).max(), np.abs(np.diff(y)).max()))
+        limit_deg = min(limit_deg, cover - 2.0 * dx)
     half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
     radius = 0.0
     for fc in field_centres:
@@ -746,15 +751,17 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         for l0, m0 in offsets:
             radius = max(radius, float(np.hypot(l0 - lf, m0 - mf)) + half_diag)
     radius_deg = float(np.rad2deg(radius))
-    if radius_deg > cover_deg:
-        raise ValueError(
-            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {cover_deg:.2f} deg "
-            f"the beam cube covers at every parallactic angle. Reduce --field-of-view or the pointing offset, "
-            f"or image without --beam-model."
-        )
     # the largest dish any of these beams describes bounds the error for all of them
     dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
-    return beam_grid(max_freq, dish, radius_deg), radius_deg, cover_deg
+    beam_lm = beam_grid(max_freq, dish, radius_deg)
+    reach_deg = radius_deg + np.sqrt(2.0) * float(beam_lm[1] - beam_lm[0])
+    if reach_deg > limit_deg:
+        raise ValueError(
+            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {limit_deg:.2f} deg "
+            f"the beam cube covers at every parallactic angle (less a two-pixel margin at its edge). "
+            f"Reduce --field-of-view or the pointing offset, or image without --beam-model."
+        )
+    return beam_lm, radius_deg, limit_deg
 
 
 @pfb_logging.log_exceptions
@@ -1197,14 +1204,14 @@ def imager(
         times = times[np.isfinite(times)]
         offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
         try:
-            beam_lm, radius_deg, cover_deg = field_beam_axis(
+            beam_lm, radius_deg, limit_deg = field_beam_axis(
                 wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq
             )
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
         log.info(
             f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
-            f"out to {radius_deg:.2f} deg (the beam cube covers {cover_deg:.2f} deg)"
+            f"out to {radius_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
         )
         del wizards
 

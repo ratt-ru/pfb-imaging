@@ -153,8 +153,8 @@ The main-lobe maximum is **(h / (λ_min/D))²**, with D the largest dish in the 
 A tolerance `tol` therefore gives **h = √tol · λ_min/D_max**. Taking D_max as the array's
 largest dish is conservative for every group.
 
-The corners of the ±1.5° square reach 2.1°. Rotated with parallactic angle, they leave the cube
-(±2°), and there the error does not converge with the cell at all (up to 9e-3). That is a
+The corners of the ±1.5° square reach 2.1°. Rotated with parallactic angle, they leave the
+group cubes (±2°; the ungrouped L cube reaches ±4°), and there the error does not converge with the cell at all (up to 9e-3). That is a
 coverage limit, not a sampling one.
 
 Scope: Stokes I, the L cube, r ≤ 1.5°. The study subsampled one fine evaluation; evaluating

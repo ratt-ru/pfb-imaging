@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
+from meerkat_beams.utils import BeamWizard
 from numpy.testing import assert_allclose
 
 from pfb_imaging.core.imager import imager as imager_core
@@ -354,7 +355,14 @@ def _open_first_vis_node(ms_name):
 
 
 def _run_stokes_vis(
-    ms_name, scratch, radec_new=None, beam_model=None, cell_rad=1e-5, flag_chans=None, compute_counts=True
+    ms_name,
+    scratch,
+    radec_new=None,
+    beam_model=None,
+    cell_rad=1e-5,
+    flag_chans=None,
+    compute_counts=True,
+    beam_lm=None,
 ):
     """Drive stokes_vis directly (no Ray) on the test MS's first node.
 
@@ -399,6 +407,7 @@ def _run_stokes_vis(
         radec_new=radec_new,
         nthreads=1,
         compute_counts=compute_counts,
+        beam_lm=beam_lm,
     )
     ds = xr.open_datatree(scratch, engine="zarr", chunks=None)[f"band{bandid:04d}_time{timeid:04d}/{piece}"].ds
     return ds.load()
@@ -612,6 +621,71 @@ def test_stokes_vis_beam_on_image_grid(ms_name, tmp_path, needs_rephasing):
     assert (iy, ix) == (22, 32), f"rephased beam peak at ({iy},{ix}), expected (22,32)"
     # reprojection fills 0 outside the small-grid coverage; interior peak ~1
     assert moved[0, 22, 32] > 0.99
+
+
+class _AffineWizard(BeamWizard):
+    """A BeamWizard whose rotation-averaged beam is affine in (l, m), East and North asymmetric.
+
+    Bilinear placement reproduces an affine beam exactly, so the placed beam must
+    equal it evaluated at each image pixel's own (l, m), which pins the axes and
+    orientation from the wizard call through pass 2.
+    """
+
+    def __init__(self):  # no BDS: stokes_vis only sets the centre and evaluates
+        self.calls = []
+
+    @staticmethod
+    def beam(l_deg, m_deg):
+        return 1.0 - 0.2 * l_deg - 0.05 * m_deg
+
+    def set_field_centre(self, centre):
+        self.pointing = centre
+
+    def get_rotation_averaged_beam(self, **kwargs):
+        lax, max_ = np.asarray(kwargs["l"]), np.asarray(kwargs["m"])
+        self.calls.append((lax.copy(), max_.copy()))
+        mm, ll = np.meshgrid(max_, lax, indexing="ij")
+        return self.beam(ll, mm).astype(np.float32), None
+
+
+def test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels(ms_name, tmp_path):
+    """Pass 1 evaluates a wizard on the driver's beam_lm; pass 2 places the mean on the image (#365).
+
+    Through stokes_vis, _concat_pieces and partition_beam: the small grid is the
+    axis the driver chose, two pieces share it bit for bit (the concat requires
+    it), and the placed B/n equals the beam at each pixel's (l, m) with East at
+    low x (D22, #355).
+    """
+    from pfb_model_spec.utils.degrid import pixel_lm
+
+    from pfb_imaging.core.imager import _concat_pieces
+    from pfb_imaging.operators.gridder import wgridder_conventions
+    from pfb_imaging.utils.beam import beam_grid
+    from pfb_imaging.utils.stokes2vis import partition_beam
+
+    cell, npix = 5.0e-4, 64  # ~1.8 deg field: the affine slope is far from flat across it
+    beam_lm = beam_grid(1.4e9, 13.5, np.rad2deg(0.5 * np.hypot(npix, npix) * cell))
+    wiz = _AffineWizard()
+    a = _run_stokes_vis(ms_name, str(tmp_path / "a.scratch"), beam_model=wiz, cell_rad=cell, beam_lm=beam_lm)
+    b = _run_stokes_vis(ms_name, str(tmp_path / "b.scratch"), beam_model=wiz, cell_rad=cell, beam_lm=beam_lm)
+    assert len(wiz.calls) == 2
+    np.testing.assert_array_equal(wiz.calls[0][0], beam_lm)
+    np.testing.assert_array_equal(wiz.calls[0][1], beam_lm)
+    assert a.BEAM_SMALL.dims == ("corr", "m_beam", "l_beam")
+    np.testing.assert_array_equal(a.l_beam.values, beam_lm)
+    np.testing.assert_array_equal(a.l_beam.values, b.l_beam.values)
+
+    part = _concat_pieces([a, b])
+    grid = np.array([a.attrs["ra"], a.attrs["dec"]])
+    placed = partition_beam(part, grid, cell, npix, npix)
+
+    flip_u, flip_v, _, x0, y0 = wgridder_conventions(0.0, 0.0)
+    geom = {"nx": npix, "ny": npix, "cell_rad": cell, "x0": x0, "y0": y0, "flip_u": flip_u, "flip_v": flip_v}
+    l_px, m_px = pixel_lm(geom)
+    mm, ll = np.meshgrid(m_px, l_px, indexing="ij")
+    expected = _AffineWizard.beam(np.rad2deg(ll), np.rad2deg(mm)) / np.sqrt(1.0 - ll**2 - mm**2)
+    assert np.ptp(expected) > 0.1  # a mirrored or transposed beam could not pass
+    np.testing.assert_allclose(placed[0], expected, rtol=1e-6)
 
 
 def test_freq_bounds_span_the_bands_own_channels(ms_name, ms_meta, tmp_path):

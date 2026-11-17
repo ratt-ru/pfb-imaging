@@ -163,10 +163,11 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `h = sqrt(tol) * lambda_min / D_max`. Here `D_max` is the largest dish any of the run's
    beams describes, and `BEAM_CELL_TOL = 1e-4`. Pass 2 places the beam bilinearly, and its
    worst error in the main lobe was measured at `(h / (lambda_min/D))^2`
-   (`docs/experiments/beam_time_gradient.md`). It replaced a fixed 1024² over the whole ±2°
-   cube, whatever the image (#365). **An image reaching
-   past the cube's largest centred disk is refused.** The rotation average turns the field
-   with parallactic angle, so only that disk is covered at every angle, and beyond it the
+   (`docs/experiments/beam_time_gradient.md`). It replaced a fixed 1024² over the whole
+   cube, whatever the image (#365). **An image reaching past the cube's largest centred
+   disk, less two cube pixels, is refused** (1.81° from the pointing for the MdV-2026 group
+   cubes, 3.81° for the ungrouped L cube). The rotation average turns the field with
+   parallactic angle, so only that disk is covered at every angle, and beyond it the
    placement error does not converge with the cell. D64 has the measurements.
 2. **Counts reduction** (driver, between passes): `COUNTS` is a first-class reducible
    intermediate. The driver streams per-piece counts into **one grid per applied
@@ -200,7 +201,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    differ in both, so piece 0's beam is *not* representative, D28), place each partition's
    mean `BEAM_SMALL` on the image grid once at the offset it is gridded with and fold in `1/n`
    (`stokes2vis.partition_beam`, #365; `1/n` alone without a beam model — placement is linear,
-   so this equals averaging placed beams, and it never writes an image-sized beam per piece),
+   so this equals averaging placed beams, and a wizard piece never writes an image-sized
+   beam; katbeam pieces keep their own Nyquist grid over `--max-field-of-view`),
    read the image's `counts/group####` grid and apply `counts_to_weights` per partition, grid
    each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
