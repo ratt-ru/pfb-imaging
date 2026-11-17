@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-17T15:30:00Z
-last_verified_commit: 3e454cb
+timestamp: 2026-11-17T13:06:00Z
+last_verified_commit: cbc4c68
 ---
 
 # Design decisions, known debt and recurring gotchas

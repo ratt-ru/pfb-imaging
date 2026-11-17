@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-17T15:30:00Z
-last_verified_commit: 3e454cb
+timestamp: 2026-11-17T13:06:00Z
+last_verified_commit: cbc4c68
 ---
 
 # MSv4 DataTree imager pipeline
