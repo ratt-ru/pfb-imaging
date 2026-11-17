@@ -161,7 +161,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    in `core/imager.field_beam_axis`. It reaches the image pixel farthest from any pointing,
    `--target` offsets included, at the cell `utils/beam.beam_grid` sets:
    `h = sqrt(tol) * lambda_min / D_max`. Here `D_max` is the largest dish any of the run's
-   beams describes, and `BEAM_CELL_TOL = 1e-4`. Pass 2 places the beam bilinearly, and its
+   beams describes, and `BEAM_CELL_TOL = 1e-4`. Pass 2 places the beam bilinearly (meerkat-beams `beam_on_grid`,
+   0 outside the grid), and its
    worst error in the main lobe was measured at `(h / (lambda_min/D))^2`
    (`docs/experiments/beam_time_gradient.md`). It replaced a fixed 1024² over the whole
    cube, whatever the image (#365). **An image reaching past the cube's largest centred

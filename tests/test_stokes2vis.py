@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 from pfb_model_spec.utils.degrid import pixel_lm
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import reproject_and_interp_scat_beam
+from pfb_imaging.utils.beam import BeamReprojection
 from pfb_imaging.utils.stokes2vis import beam_on_image_grid, integration_edges, real_beam_maps
 
 
@@ -66,7 +66,7 @@ def test_single_field_beam_orientation_matches_pixel_lm_and_reproject(nx, ny):
     """The single-field BEAM is East at low x, like the wgridder image and degrid (#355).
 
     It must agree with the sky (l, m) of each pixel under pfb's wgridder conventions
-    (`pixel_lm`, which degrid evaluates its beam on) and with the mosaic reproject branch.
+    (`pixel_lm`, which degrid evaluates its beam on) and with hci's reprojection.
     """
     cell_rad = 1e-5
     l_beam = np.linspace(-0.05, 0.05, 1025)
@@ -84,7 +84,5 @@ def test_single_field_beam_orientation_matches_pixel_lm_and_reproject(nx, ny):
     assert beam[0, ny // 2, 4] > 1.0  # x = 4 is East of centre
     assert_allclose(beam[0], expected, rtol=0, atol=1e-9)
 
-    reprojected = reproject_and_interp_scat_beam(
-        beam_small, l_beam, m_beam, radec, radec, np.rad2deg(cell_rad), nx, ny, "I"
-    )
+    reprojected = BeamReprojection(l_beam, m_beam, radec, radec, np.rad2deg(cell_rad), nx, ny)(beam_small)
     assert_allclose(beam, reprojected, rtol=0, atol=1e-9)
