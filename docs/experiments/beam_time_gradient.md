@@ -1,8 +1,8 @@
 # Time-averaged beam in the deconv gradient (#401, step 0)
 
-**Status:** first results, from a coarse run on com08, November 2026.
-- The gradient numbers below are at a transferred, unconverged model. The rerun at a
-  deconvolved model is pending, and it is the number of record.
+**Status:** complete for step 0, from a coarse run on com08, November 2026. **Time
+partitions are justified:** at a deconvolved model the bias from the time-averaged beam is
+2.4–3.0× the residual rms in three of four bands, including quiet regions.
 - The frequency effect is measured on the beams only. No frequency Δg has been computed.
 - The averaged Hessian (#401 step 3) is not measured here.
 - `--super-resolution-factor 1.0` sits on the edge of #182: points at the edge of the uv grid
@@ -33,11 +33,35 @@ Script: `scripts/profiling/beam_time_gradient.py`.
 Summing the per-scan products reproduces what pass 2 stored: `DIRTY` to ≤ 5e-7 relative, and
 `BRESIDUAL` (= `g_avg`) to ≤ 8e-6, the gridder's `epsilon`. So `g_avg` is deconv's gradient.
 
-## Gradient, at the transferred model
+## Gradient
 
 All values are wsum-normalised, with `Δg = g_exact − g_avg`. `rms` is the MAD rms of `g_avg`
 inside the main lobe (band beam > 0.5 of its peak). `g_avg` is beam-attenuated, so an rms over
-the whole image understates the noise.
+the whole image understates the noise. The script's JSON reports `max_abs_dg_over_rms` against
+a whole-image rms; the tables below are recomputed from its FITS with the main-lobe rms.
+
+### At the deconvolved model (the number of record)
+
+The `.dt` deconvolved with the 11-02 production settings (`sara`, primal-dual, 7 major
+cycles, `--eta 0.05 --eta-in-grad`), then `gradient` mode rerun on the same scratch:
+
+| band | ν (MHz) | ‖Δg‖/‖g‖ | max\|Δg\| / rms | where (r, B̄) | Δg/g there | max\|Δg\| / rms, where \|g\| < 5 rms | data / model term |
+|---|---|---|---|---|---|---|---|
+| 0 | 1003 | 0.9% | 2.6 | 0.25°, 0.92 | +3.6% | 2.5 | 3.2 / 5.8 |
+| 1 | 1175 | 0.7% | 0.8 | 0.37°, 0.75 | +8.5% | 0.7 | 1.6 / 2.3 |
+| 2 | 1404 | 1.9% | 3.0 | 0.37°, 0.65 | +88% | 3.0 | 4.2 / 7.0 |
+| 3 | 1599 | 1.4% | 2.4 | 0.11°, 0.95 | +27% | 2.4 | 3.1 / 5.2 |
+
+- Against the transferred model below, Δg fell by 30–60%, and the worst pixels moved into the
+  main lobe (0.1–0.4°, B̄ 0.65–0.95).
+- **The decision rule max |Δg| ≥ rms holds in bands 0, 2 and 3**, in quiet regions as much as
+  at bright residuals. Band 1 is at 0.8.
+- The deconvolution had not converged near bright emission: its final peak residual was
+  ~400× the rms and the last backward step hit its iteration cap. So this is still an upper
+  bound on Δg at convergence. The data term, which does not depend on the model, is
+  1.6–4.2× rms on its own, and the two terms cancel only where the model fits the data.
+
+### At the transferred model
 
 | band | ν (MHz) | ‖Δg‖/‖g‖ | max\|Δg\| / rms | where (r, B̄) | Δg/g there | max\|Δg\| / rms, where \|g\| < 5 rms |
 |---|---|---|---|---|---|---|
@@ -48,12 +72,11 @@ the whole image understates the noise.
 
 - `Δg` is affine in the model. Where the model fits the data, its data and model terms cancel
   to first order, so this table is an upper bound on the bias at convergence. The model here is
-  a 16-band model rendered onto 4 bands, and it leaves `max|g_avg|` at thousands × rms. The rerun
-  at a deconvolved model settles it.
+  a 16-band model rendered onto 4 bands, and it leaves `max|g_avg|` at about 700–1500 × rms.
 - Even so, `max|Δg|` is 2–4 × rms in the quiet parts of the residual, not only at bright
   residuals. The worst pixels are in the main lobe or on its shoulder, at 0.25–0.83°.
 
-The step-0 decision rule is max |Δg| ≥ rms. It holds at this model.
+The step-0 decision rule is max |Δg| ≥ rms. It holds at this model too.
 
 ## Beams
 
@@ -134,9 +157,14 @@ The corners of the ±1.5° square reach 2.1°. Rotated with parallactic angle, t
 (±2°), and there the error does not converge with the cell at all (up to 9e-3). That is a
 coverage limit, not a sampling one.
 
-Scope: Stokes I, the L cube, r ≤ 1.5°. The study subsampled one fine evaluation, so it still
-has to be confirmed that evaluating the wizard directly at the coarse cell gives the same
-values.
+Scope: Stokes I, the L cube, r ≤ 1.5°. The study subsampled one fine evaluation; evaluating
+the wizard directly at the coarse cell gives exactly the subsampled values, so the rule
+describes what pass 1 stores. meerkat-beams measured the same law against its exact
+`phase_centre=` path (landmanbester/meerkat-beams#60), with prefactors 0.96–1.05.
+
+The imager uses this rule since #365 (wiki D64). On the production command it chose a 385²
+grid at 24.1″, the stored `BEAM` moved by 2.5e-5 to 8.3e-5 against main's fixed 1024², and,
+with the placement moved to pass 2, the run took 4992 s against 9445 s.
 
 ## Cost
 
@@ -148,6 +176,7 @@ per band per major cycle. Today it pays one per baseline group.
 ## Raw output
 
 On com08, `/data7/lbester/MKPLUS/ESO137MKP/s0/`:
-- `results/band####_{gradient,beams,beams_53.5MHz}.json`;
-- FITS of `g_avg`, `dg`, `dg_data` and `dg_model` per band;
+- `results/band####_{gradient,beams,beams_53.5MHz}.json` (transferred model);
+- `results_deconv/band####_gradient.json` (deconvolved model);
+- FITS of `g_avg`, `dg`, `dg_data` and `dg_model` per band in both;
 - the kept `s0_coarse_I.scratch` and `.dt`.
