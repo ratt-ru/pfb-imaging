@@ -234,6 +234,110 @@ def test_iter_parts_keeps_the_phase_centre_attrs(tmp_path):
     assert "VIS" not in got and got.WEIGHT.shape == (1, 2, 1)
 
 
+def test_iter_parts_reads_vis_only_when_asked(tmp_path):
+    import xarray as xr
+
+    from pfb_imaging.core.imager import _iter_parts
+
+    store = str(tmp_path / "x.dt")
+    xr.Dataset(
+        {
+            "UVW": (("row", "three"), np.zeros((2, 3))),
+            "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1))),
+            "MASK": (("row", "chan"), np.ones((2, 1), np.uint8)),
+            "FREQ": (("chan",), np.array([1e9])),
+            "BEAM": (("corr", "y", "x"), np.ones((1, 4, 4))),
+            "VIS": (("corr", "row", "chan"), np.ones((1, 2, 1), np.complex64)),
+        }
+    ).to_zarr(store, group="band0000_time0000/part0000", mode="w", consolidated=False)
+    (got,) = list(_iter_parts(store, "band0000_time0000", 1, with_vis=True))
+    assert got.VIS.shape == (1, 2, 1)
+
+
+@pytest.mark.parametrize("l0, m0", [(0.0, 0.0), (3e-4, -2e-4)])
+def test_partition_residuals_sum_to_the_band_residual(l0, m0):
+    """Each partition's own G^T W (V - G(B x)) sums to residual_from_partitions' band residual.
+
+    The band path subtracts in image space from the summed dirty; the
+    per-partition path subtracts in visibility space, so this pins that the two
+    agree, beams and a --target offset included.
+    """
+    import xarray as xr
+    from ducc0.wgridder.experimental import vis2dirty
+
+    from pfb_imaging.operators.gridder import partition_residual, residual_from_partitions, wgridder_conventions
+
+    rng = np.random.default_rng(7)
+    nx = ny = 32
+    cell = 2e-5
+    freq = np.array([1.0e9, 1.2e9])
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+    parts, dirty = [], np.zeros((1, ny, nx))
+    for k in range(3):
+        nrow = 200
+        uvw = rng.uniform(-2e3, 2e3, (nrow, 3))
+        uvw[:, 2] = rng.uniform(-30, 30, nrow)
+        mask = np.ones((nrow, 2), np.uint8)
+        mask[0] = 0
+        uvw[0] = np.nan  # an absent row, as xarray-ms lays it out
+        vis = (rng.standard_normal((1, nrow, 2)) + 1j * rng.standard_normal((1, nrow, 2))).astype(np.complex128)
+        vis[:, 0] = np.nan
+        wgt = rng.uniform(0.5, 2.0, (1, nrow, 2))
+        yy, xx = np.mgrid[:ny, :nx]
+        beam = (1.0 - 0.01 * (k + 1) * np.hypot(yy - ny / 2, xx - nx / 2))[None]
+        part = xr.Dataset(
+            {
+                "UVW": (("row", "three"), uvw),
+                "WEIGHT": (("corr", "row", "chan"), wgt),
+                "MASK": (("row", "chan"), mask),
+                "FREQ": (("chan",), freq),
+                "BEAM": (("corr", "y", "x"), beam),
+                "VIS": (("corr", "row", "chan"), vis),
+            },
+            attrs={"l0": l0, "m0": m0},
+        )
+        d = np.zeros((ny, nx))
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis[0],
+            wgt=wgt[0],
+            mask=mask,
+            npix_x=nx,
+            npix_y=ny,
+            pixsize_x=cell,
+            pixsize_y=cell,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=1e-10,
+            do_wgridding=True,
+            divide_by_n=False,
+            dirty=d.T,
+        )
+        dirty[0] += d
+        parts.append(part)
+    model = np.zeros((1, ny, nx))
+    model[0, 10, 20] = 1.0
+    model[0, 25, 6] = 0.5
+    band = residual_from_partitions(dirty, parts, model, cell, epsilon=1e-10)
+    outs = [partition_residual(p, model, cell, epsilon=1e-10) for p in parts]
+    total = sum(r for r, _, _ in outs)
+    assert np.isfinite(total).all()
+    for (_, chi2, ndata), p in zip(outs, parts):
+        # the absent row is excluded from both
+        assert ndata == 2 * (p.sizes["row"] - 1)
+        assert np.isfinite(chi2).all() and chi2[0] > 0
+        # with no model the misfit is the data's own weighted power
+        _, chi2_0, _ = partition_residual(p, np.zeros_like(model), cell, epsilon=1e-10)
+        live = p.MASK.values.astype(bool)
+        np.testing.assert_allclose(chi2_0[0], np.sum(p.WEIGHT.values[0][live] * np.abs(p.VIS.values[0][live]) ** 2))
+    assert np.abs(band).max() > 0
+    np.testing.assert_allclose(total, band, rtol=0, atol=1e-8 * np.abs(band).max())
+
+
 def test_residual_sweep_holds_one_streamed_partition():
     """Partition N is freed before the iterator loads N+1, so pass 2 holds one at a time."""
     import weakref
@@ -343,7 +447,7 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
         [Path(ms_name)],
         second,
         transfer_model_from=mds_path,
-        **{**common, "fits_mfs": True},
+        **{**common, "fits_mfs": True, "fits_per_partition": True},
         fits_output_folder=str(fits_dir),
     )
     # the transferred residual reaches FITS beside the dirty image
@@ -358,6 +462,19 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
             assert band.MODEL.dtype == band.DIRTY.dtype
         residual = sum(dt[n].ds.RESIDUAL[0] for n in nodes).values
         peak = float(np.abs(residual).max() / wsum)
+        # --fits-per-partition: each partition's residual, wsum-normalised, sums back to its band's
+        from astropy.io import fits
+
+        for n in nodes:
+            files = sorted(fits_dir.glob(f"*_partitions/residual_{n}_part*.fits"))
+            parts = sorted(dt[n].children)
+            assert len(files) == len(parts) > 0
+            band_sum = sum(
+                float(dt[n][p].ds.attrs["wsum"][0]) * fits.getdata(f).squeeze() for f, p in zip(files, parts)
+            )
+            assert {"CHI2", "NDATA", "RCHI2", "WSUMP"} <= set(fits.getheader(files[0]))
+            ref = dt[n].ds.RESIDUAL.values[0]
+            np.testing.assert_allclose(band_sum, ref, rtol=0, atol=1e-5 * np.abs(ref).max())
         bresidual = sum(dt[n].ds.BRESIDUAL[0] for n in nodes).values
         bpeak = float(np.abs(bresidual).max() / wsum)
     finally:

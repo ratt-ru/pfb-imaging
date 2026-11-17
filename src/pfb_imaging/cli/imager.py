@@ -469,7 +469,8 @@ def imager(
         bool,
         typer.Option(
             help="Write FITS images for each data partition into a partitions subdirectory. "
-            "Useful to sanity check field and beam orientations.",
+            "Useful to sanity check field and beam orientations. "
+            "With a transferred model each partition's residual is written too.",
             rich_help_panel="Output",
         ),
     ] = False,

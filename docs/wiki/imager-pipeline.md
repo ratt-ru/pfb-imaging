@@ -3,7 +3,7 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-17T13:06:00Z
+timestamp: 2026-11-17T14:58:00Z
 last_verified_commit: cbc4c68
 ---
 
@@ -119,7 +119,15 @@ sanity FITS while the products are in memory (per-partition DIRTY is never store
 tree): `<var>_band####_time####_part####_<field>.fits` under
 `<fits_output_folder>/<oname>_partitions/`, dirty/psf wsum-normalised per partition,
 beam as stored — the field name in the filename is what makes multi-pointing
-orientation checks usable.
+orientation checks usable. With `--transfer-model-from` each partition's own residual
+`G_pᵀ W_p (V_p − G_p(B_p·model))` at the band model is written too (`residual_…`,
+wsum-normalised), with deconv's `--fits-per-partition` header cards
+`CHI2`/`NDATA`/`RCHI2`/`WSUMP`, so a partition that fits the model worse than its siblings
+stands out. It is formed from the stored `VIS` (`gridder.partition_residual`) after the
+band product, one partition at a time, because the band model is only known once every
+partition is gridded. The band `RESIDUAL` is unchanged, and the partition residuals sum to it
+up to gridder rounding (`test_partition_residuals_sum_to_the_band_residual`). The cost is one
+extra degrid and grid per partition.
 
 All partitions in a band share one output grid: multi-field selections are rephased in
 pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`

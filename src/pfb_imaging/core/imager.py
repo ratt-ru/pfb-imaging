@@ -16,7 +16,12 @@ from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
-from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions, wgridder_conventions
+from pfb_imaging.operators.gridder import (
+    grid_partition,
+    partition_residual,
+    residual_from_partitions,
+    wgridder_conventions,
+)
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
@@ -54,6 +59,34 @@ ignore_xarray_ms_warnings()
 log = pfb_logging.get_logger("IMAGER")
 
 
+def _partition_fits_stem(fits_dir, out_name, pid, field_name, baseline_group):
+    """The per-partition FITS path, with ``{var}`` left to fill in."""
+    field = str(field_name).replace(" ", "_").replace("/", "-")
+    # the group suffix is conditional: with grouping off there is one partition
+    # per field and today's filenames must not change
+    bg = "" if str(baseline_group) == "all" else f"_{baseline_group}"
+    return f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}{bg}.fits"
+
+
+def _partition_fits_header(meta, freq_out, cell_rad, nx, ny, ncorr, unit):
+    """The WCS header every per-partition FITS image carries."""
+    cell_deg = np.rad2deg(cell_rad)
+    return set_wcs(
+        cell_deg,
+        cell_deg,
+        nx,
+        ny,
+        (meta["ra"], meta["dec"]),
+        np.atleast_1d(freq_out),
+        unit=unit,
+        ms_time=meta["time_out"],
+        time_is_unix=True,
+        l0=meta.get("l0", 0.0),
+        m0=meta.get("m0", 0.0),
+        ncorr=ncorr,
+    )
+
+
 def _partition_fits(
     fits_dir, out_name, pid, field_name, baseline_group, prod, meta, freq_out, cell_rad, do_psf, do_beam
 ):
@@ -61,32 +94,15 @@ def _partition_fits(
 
     Runs inside the pass-2 worker while the partition products are in memory;
     per-partition DIRTY/PSF are wsum-normalised, the beam is written as stored
-    (effective response B/n, wiki D22).
+    (effective response B/n, wiki D22). The residual, which needs the band
+    model, is written later by ``_partition_residual_fits``.
     """
-    field = str(field_name).replace(" ", "_").replace("/", "-")
-    cell_deg = np.rad2deg(cell_rad)
     ncorr = prod["DIRTY"].shape[0]
 
     def mk_hdr(nx_, ny_, unit):
-        return set_wcs(
-            cell_deg,
-            cell_deg,
-            nx_,
-            ny_,
-            (meta["ra"], meta["dec"]),
-            np.atleast_1d(freq_out),
-            unit=unit,
-            ms_time=meta["time_out"],
-            time_is_unix=True,
-            l0=meta.get("l0", 0.0),
-            m0=meta.get("m0", 0.0),
-            ncorr=ncorr,
-        )
+        return _partition_fits_header(meta, freq_out, cell_rad, nx_, ny_, ncorr, unit)
 
-    # the group suffix is conditional: with grouping off there is one partition
-    # per field and today's filenames must not change
-    bg = "" if str(baseline_group) == "all" else f"_{baseline_group}"
-    stem = f"{fits_dir}/{{var}}_{out_name}_part{pid:04d}_{field}{bg}.fits"
+    stem = _partition_fits_stem(fits_dir, out_name, pid, field_name, baseline_group)
     wsum = prod["WSUM"][:, None, None]
     with np.errstate(invalid="ignore", divide="ignore"):
         dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
@@ -101,6 +117,40 @@ def _partition_fits(
         hdr = mk_hdr(nx_im, ny_im, "")
         hdr["BEAMINCN"] = (True, "beam includes the wgridder n-term (D22)")
         save_fits(prod["BEAM"], stem.format(var="beam"), hdr, yx_order=True)
+
+
+def _partition_residual_fits(fits_dir, out_name, pid, part, model, meta, cell_rad, **grid_kw):
+    """Write one partition's own residual at the band model, wsum-normalised.
+
+    Each partition's residual ``G_pᵀ W_p (V_p − G_p(beam_p · model))``
+    (``gridder.partition_residual``), on the same normalisation as its dirty
+    FITS, so a partition that fits the model worse than its siblings stands out.
+    The header carries its vis-space ``CHI2``, ``NDATA`` and ``RCHI2``, with the
+    same cards as deconv's ``--fits-per-partition``.
+
+    Args:
+        fits_dir: The per-partition FITS directory.
+        out_name: The band node name.
+        pid: Partition index within the band.
+        part: The partition read back from the ``.dt`` with ``VIS``.
+        model: The band model ``(corr, ny, nx)``.
+        meta: The image's metadata (``ra``, ``dec``, ``time_out``, ``l0``, ``m0``).
+        cell_rad: Image cell size (rad).
+        **grid_kw: ``partition_residual`` gridder controls.
+    """
+    residual, chi2, ndata = partition_residual(part, model, cell_rad, **grid_kw)
+    wsum = np.asarray(part.attrs["wsum"], dtype=np.float64)[:, None, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        residual = np.where(wsum > 0, residual / wsum, 0.0)
+    ncorr, ny, nx = residual.shape
+    hdr = _partition_fits_header(meta, part.attrs["freq_out"], cell_rad, nx, ny, ncorr, "Jy/beam")
+    # the same cards as deconv's per-partition FITS, so the two can be compared
+    hdr["WSUMP"] = (float(wsum[0, 0, 0]), "partition weight sum")
+    hdr["CHI2"] = (float(chi2[0]), "sum w|V - G(B m)|^2 over unflagged")
+    hdr["NDATA"] = (ndata, "unflagged vis samples")
+    hdr["RCHI2"] = (float(chi2[0]) / max(ndata, 1.0), "CHI2 / NDATA")
+    stem = _partition_fits_stem(fits_dir, out_name, pid, part.attrs["field_name"], part.attrs["baseline_group"])
+    save_fits(residual, stem.format(var="residual"), hdr, yx_order=True)
 
 
 def _write_partition(ds, store, group, slab_bytes=256 * 2**20):
@@ -189,7 +239,7 @@ def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
     return [list(model_stokes).index(str(c)) for c in corr]
 
 
-def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset]:
+def _iter_parts(dt_store: str, out_name: str, npart: int, with_vis: bool = False) -> Iterator[xr.Dataset]:
     """Stream one image's partitions back from the `.dt`, one at a time (#309).
 
     Only the variables `residual_from_partitions` reads, plus the attrs (its
@@ -200,14 +250,16 @@ def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset
         dt_store: The `.dt` store URL.
         out_name: The band node the partitions live under.
         npart: Number of `part####` children.
+        with_vis: Also read `VIS`, for `gridder.partition_residual`.
 
     Yields:
-        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM, loaded, with its attrs.
+        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM (and VIS), loaded, with its attrs.
     """
+    names = ["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"] + (["VIS"] if with_vis else [])
     for pid in range(npart):
         ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
         try:
-            sub = ds[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
+            sub = ds[names].load()
             sub.attrs = dict(ds.attrs)
         finally:
             ds.close()
@@ -679,6 +731,24 @@ def _grid_image_body(
             double_accum=double_accum,
             bdirty=bdirty_sum,
         )
+        if part_fits_dir is not None:
+            # each partition's own residual at the band model, after the band
+            # product so that product is unchanged by asking for these FITS
+            for pid, part in enumerate(_iter_parts(dt_store, out_name, npart, with_vis=True)):
+                _partition_residual_fits(
+                    part_fits_dir,
+                    out_name,
+                    pid,
+                    part,
+                    model,
+                    meta,
+                    cell_rad,
+                    nthreads=nthreads,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    double_accum=double_accum,
+                )
+                del part
         band_vars["MODEL"] = (("corr", "y", "x"), model)
         band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
         band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))

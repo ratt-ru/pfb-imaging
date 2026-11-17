@@ -414,6 +414,7 @@ cabs:
         info:
           Write FITS images for each data partition into a partitions subdirectory.
           Useful to sanity check field and beam orientations.
+          With a transferred model each partition's residual is written too.
         dtype: bool
         default: false
         metadata:

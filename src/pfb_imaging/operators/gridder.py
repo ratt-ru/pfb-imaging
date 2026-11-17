@@ -346,3 +346,76 @@ def residual_from_partitions(
     if bdirty is not None:
         return dirty - convim, bdirty - bconvim
     return dirty - convim
+
+
+def partition_residual(
+    part,
+    model,
+    cell_rad,
+    nthreads=1,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+):
+    """One partition's own residual image, ``G_pᵀ W_p (V_p − G_p(beam_p · model))``, and its chi2.
+
+    The per-partition term of :func:`residual_from_partitions`, formed from the
+    partition's stored visibilities rather than its dirty image, which pass 2
+    no longer holds once the band model is known. Summed over a band's
+    partitions it equals the band ``RESIDUAL`` up to gridder rounding. The
+    vis-space misfit is the same as deconv's ``--fits-per-partition``
+    (``BandWorkerPool.partition_debug``).
+
+    Args:
+        part: Partition dataset with corr-first ``VIS`` and ``WEIGHT``, ``MASK``
+            ``(row, chan)``, ``UVW`` ``(row, 3)``, ``FREQ`` ``(chan,)``,
+            image-grid ``BEAM`` ``(corr, ny, nx)`` and ``l0``/``m0`` attrs.
+        model: Band model image ``(corr, ny, nx)``.
+        cell_rad: Image cell size (rad).
+        nthreads, epsilon, do_wgridding, double_accum: gridder controls.
+
+    Returns:
+        ``(residual, chi2, ndata)``: the ``(corr, ny, nx)`` residual,
+        un-normalised by the partition's wsum; ``chi2[c] = Σ w |V − G(B m)|²``
+        over unflagged samples; and the number of unflagged samples.
+    """
+    resize_thread_pool(nthreads)
+    ncorr, ny, nx = model.shape
+    uvw = part.UVW.values
+    mask = part.MASK.values
+    freq = part.FREQ.values
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(part.attrs.get("l0", 0.0), part.attrs.get("m0", 0.0))
+    geom = {
+        "pixsize_x": cell_rad,
+        "pixsize_y": cell_rad,
+        "center_x": x0,
+        "center_y": y0,
+        "flip_u": flip_u,
+        "flip_v": flip_v,
+        "flip_w": flip_w,
+        "epsilon": epsilon,
+        "do_wgridding": do_wgridding,
+        "nthreads": nthreads,
+        "divide_by_n": False,
+    }
+    residual = np.zeros_like(model)
+    chi2 = np.zeros(ncorr)
+    for c in range(ncorr):
+        # masked, as in residual_from_partitions: absent rows carry NaN UVW
+        model_vis = dirty2vis(uvw=uvw, freq=freq, mask=mask, dirty=(part.BEAM.values[c] * model[c]).T, **geom)
+        rvis = part.VIS.values[c] - model_vis
+        # masked samples are skipped, so a NaN VIS in an absent row cannot leak in
+        chi2[c] = float(np.sum(part.WEIGHT.values[c] * np.abs(np.where(mask, rvis, 0.0)) ** 2))
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=rvis,
+            wgt=part.WEIGHT.values[c],
+            mask=mask,
+            npix_x=nx,
+            npix_y=ny,
+            double_precision_accumulation=double_accum,
+            dirty=residual[c].T,
+            **geom,
+        )
+    return residual, chi2, float(mask.sum())
