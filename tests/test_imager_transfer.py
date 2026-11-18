@@ -278,8 +278,10 @@ def test_partition_residuals_sum_to_the_band_residual(l0, m0):
         uvw = rng.uniform(-2e3, 2e3, (nrow, 3))
         uvw[:, 2] = rng.uniform(-30, 30, nrow)
         mask = np.ones((nrow, 2), np.uint8)
+        # a flagged row whose VIS is NaN; UVW stays finite because stokes2vis
+        # drops NaN-UVW rows before they are stored (and NaN UVW segfaults
+        # ducc's vis2dirty on aarch64 even when masked)
         mask[0] = 0
-        uvw[0] = np.nan  # an absent row, as xarray-ms lays it out
         vis = (rng.standard_normal((1, nrow, 2)) + 1j * rng.standard_normal((1, nrow, 2))).astype(np.complex128)
         vis[:, 0] = np.nan
         wgt = rng.uniform(0.5, 2.0, (1, nrow, 2))
