@@ -2536,7 +2536,7 @@ wheels = [
 [[package]]
 name = "meerkat-beams"
 version = "0.3.0"
-source = { git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2#78fdeb27886ff03596d9adef6264631ff2b194d2" }
+source = { git = "https://github.com/landmanbester/meerkat-beams?branch=flip_y#16b1a60f610f6b09e6084d39f1c7006c5e9c79a7" }
 dependencies = [
     { name = "hip-cargo", marker = "python_full_version >= '3.11'" },
 ]
@@ -3753,8 +3753,8 @@ requires-dist = [
     { name = "hip-cargo", specifier = ">=0.4.0" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
-    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2" },
-    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", git = "https://github.com/landmanbester/meerkat-beams?rev=78fdeb27886ff03596d9adef6264631ff2b194d2" },
+    { name = "meerkat-beams", marker = "python_full_version >= '3.11' and extra == 'full'", git = "https://github.com/landmanbester/meerkat-beams?branch=flip_y" },
+    { name = "meerkat-beams", extras = ["full"], marker = "python_full_version >= '3.11' and extra == 'all'", git = "https://github.com/landmanbester/meerkat-beams?branch=flip_y" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=0.0.3" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
     { name = "pfb-imaging", extras = ["casacore"], marker = "extra == 'all'" },
