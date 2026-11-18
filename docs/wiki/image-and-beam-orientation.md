@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Image and beam orientation conventions (hci)
 description: The measured axis conventions of the wgridder image, the hci cube/FITS header, BeamWizard beam maps and reproject_interp; the post-mortem of the transpose+flip beam hack; and the corrected reprojection construction.
 tags: [hci, beam, orientation, wcs, reproject, wgridder, conventions]
-timestamp: 2026-11-17T13:06:00Z
-last_verified_commit: cbc4c68
+timestamp: 2026-11-18T08:00:41Z
+last_verified_commit: b81e96e
 ---
 
 # Image and beam orientation conventions (hci)
@@ -118,6 +118,16 @@ distinguish an orientation bug from correctness.** Validate orientation with an 
 The `[:, ::-1, :]` flip was *not* the physical feed-plane→sky flip. Only the wizard path
 survives, so that parity question is owned entirely by meerkat-beams (PR #8 M1 validation) and
 would have to be re-answered from scratch if raw MdV zarr beams ever came back.
+
+**Interim answer: flip vertically.** pfb now depends on meerkat-beams' `flip_y` branch
+(`pyproject.toml`'s `[tool.uv.sources]`), whose `BeamWizard.flip_y` (default `True`) negates
+the beam-frame `m` after the parallactic rotation, as meerkat-beams'
+`docs/beam_orientation_diagram.pdf` says the supplied patterns need. Every pfb beam (imager
+`BEAM`/`BEAM_SMALL`, degrid's Mueller beams, hci) goes through the renders that take it. The
+evidence is an ESO137-006 MeerKAT+ residual diagnostic: with a fixed model the flipped per-scan beams
+lowered the residual near the brightest sources by up to 14-19% while `flip_x` was neutral.
+It stays a stop-gap until the reference beams are regenerated; the parity is still
+meerkat-beams' to settle (its issues #9-#12).
 
 ## 6. The corrected construction (validated)
 
