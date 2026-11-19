@@ -29,10 +29,12 @@ def _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_siz
     on a 6528^2 grid, were no faster -- zeroing and summing whole grids costs
     more than the scatter they parallelise (#339).
 
-    With a non-empty ``seen`` (``nx * ny`` u1, zeroed) it also returns the flat
-    ``u * ny + v`` cells it touched, in first-touch order, so a caller can read
-    the occupied cells without scanning the grid (#365). With an empty one it
-    returns an empty array.
+    Returns ``(cells, offgrid)``. With a non-empty ``seen`` (``nx * ny`` u1,
+    zeroed) ``cells`` holds the flat ``u * ny + v`` cells it touched, in
+    first-touch order, so a caller can read the occupied cells without scanning
+    the grid (#365); with an empty one it is empty. ``offgrid`` is the float64
+    per-correlation weight of the unflagged samples beyond the grid, which keep
+    their natural weight in ``counts_to_weights`` (``piece_imaging_wsum``).
     """
     # factor of 2 because -umax/2 <= u < umax
     nx, ny = counts.shape[1], counts.shape[2]
@@ -44,6 +46,8 @@ def _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_siz
     track = seen.size > 0
     cells = np.empty(1024 if track else 0, dtype=np.int64)
     ncell = 0
+    ncorr = wgt.shape[0]
+    offgrid = np.zeros(ncorr, dtype=np.float64)
     nrow, nchan = mask.shape
     for r in range(nrow):
         uvw_row = uvw[r]
@@ -69,6 +73,8 @@ def _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_siz
             if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
                 # out of bounds so continue.
                 # raising an error means we can't grid at sub-Nyquist
+                for c in range(ncorr):
+                    offgrid[c] += wgt_row[c, f]
                 continue
 
             if track:
@@ -85,7 +91,7 @@ def _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_siz
             # nearest neighbour
             counts[:, u_idx, v_idx] += wgt_row[:, f]
 
-    return cells[:ncell]
+    return cells[:ncell], offgrid
 
 
 @njit(nogil=True, cache=True)
@@ -98,33 +104,47 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtyp
     return counts
 
 
-def compute_sparse_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
+def compute_sparse_counts(
+    uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0, accum_dtype=None
+):
     """A piece's counts as its occupied cells, without scanning the dense grid (#365).
 
-    Equal to ``sparse_counts(_compute_counts(...))``. The grid and the touched
-    mask are allocated by numpy, whose zeroed allocations are lazily mapped, so
-    only the pages the piece's samples land on are ever touched; the occupied
-    cells come from the scatter itself rather than ``np.flatnonzero`` over the
-    whole padded grid, which #365 measured at 6% of pass 1.
+    Equal to ``sparse_counts(_compute_counts(...))`` when ``accum_dtype`` is
+    ``dtype``. The grid and the touched mask are allocated by numpy, whose
+    zeroed allocations are lazily mapped, so only the pages the piece's samples
+    land on are ever touched; the occupied cells come from the scatter itself
+    rather than ``np.flatnonzero`` over the whole padded grid, which #365
+    measured at 6% of pass 1.
+
+    Args:
+        uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, usign, vsign:
+            as ``_compute_counts``.
+        dtype: dtype of the stored ``COUNTS_VALUE`` (the data precision, D27).
+        accum_dtype: dtype the cells are accumulated in (``--double-accum``
+            gives float64); defaults to ``dtype``. Values are rounded to
+            ``dtype`` once, after accumulation.
 
     Returns:
-        Data variables ``COUNTS_INDEX``/``COUNTS_VALUE``, as ``sparse_counts``.
+        ``(data_vars, wsum_offgrid)``: ``COUNTS_INDEX``/``COUNTS_VALUE`` as
+        ``sparse_counts`` gives them, and the corr-summed natural weight of the
+        unflagged samples beyond the grid (float).
     """
     ncorr = wgt.shape[0]
-    counts = np.zeros((ncorr, nx, ny), dtype=dtype)
+    counts = np.zeros((ncorr, nx, ny), dtype=dtype if accum_dtype is None else accum_dtype)
     seen = np.zeros(nx * ny, dtype=np.uint8)
-    cells = _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_size_y, usign, vsign)
+    cells, offgrid = _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_size_y, usign, vsign)
     del seen
     cells.sort()
-    values = counts.reshape(ncorr, -1)[:, cells]
+    values = counts.reshape(ncorr, -1)[:, cells].astype(dtype, copy=False)
     del counts
     index = np.arange(ncorr, dtype=np.int64)[:, None] * (nx * ny) + cells[None, :]
     # a cell touched only by zero weights is empty, as flatnonzero would have it
     keep = values != 0
-    return {
+    data_vars = {
         "COUNTS_INDEX": (("counts_cell",), index[keep], {"shape": [ncorr, nx, ny]}),
         "COUNTS_VALUE": (("counts_cell",), values[keep]),
     }
+    return data_vars, float(offgrid.sum())
 
 
 @njit(**JIT_OPTIONS)
@@ -457,32 +477,34 @@ def sparse_counts(counts):
     }
 
 
-def piece_imaging_wsum(index, value, denom, wsum_nat):
+def piece_imaging_wsum(index, value, denom, wsum_offgrid):
     """A piece's imaging-weight sum, from its sparse counts and the group's Briggs divisor.
 
     The imaging weight is ``w_nat / D[cell]`` (``briggs_denominator``), so the
     samples a piece put in a cell sum to ``N[cell] / D[cell]``, where ``N`` is
     the piece's own counts. Samples beyond the padded uv grid are in neither
     ``N`` nor the divisor and keep their natural weight in
-    ``counts_to_weights``; they are ``wsum_nat - sum(N)``. Exact up to rounding,
-    so pass 2's per-partition ``WSUM`` is known before any gridding.
+    ``counts_to_weights``; the scatter records their sum directly
+    (``wsum_offgrid``). Deriving it as ``wsum_nat - sum(N)`` instead cancelled
+    catastrophically with float32 counts: 1.3e-3 relative error at 2e8
+    samples on a 256^2 grid at robust -2, against 2e-9 recorded directly.
 
     Args:
         index: The piece's ``COUNTS_INDEX`` (flat cell indices).
         value: The piece's ``COUNTS_VALUE``.
         denom: The group's divisor ``D`` ``(corr, u, v)``, or ``None`` for an
             all-zero group grid (natural weights throughout).
-        wsum_nat: The piece's corr-summed natural weight sum.
+        wsum_offgrid: The piece's corr-summed natural weight beyond the grid.
 
     Returns:
         The piece's corr-summed imaging-weight sum.
     """
-    if denom is None:
-        return float(wsum_nat)
     value = value.astype(np.float64)
+    if denom is None:
+        return float(value.sum()) + float(wsum_offgrid)
     d = denom.reshape(-1)[index].astype(np.float64)
     inside = float(np.sum(np.divide(value, d, out=value.copy(), where=d > 0)))
-    return inside + (float(wsum_nat) - float(value.sum()))
+    return inside + float(wsum_offgrid)
 
 
 def write_group_counts(store, sources, robust, filter_level=5.0, npix_super=0):
@@ -538,7 +560,7 @@ def write_group_counts(store, sources, robust, filter_level=5.0, npix_super=0):
             for path in sources[key]:
                 ds = dt[path].ds
                 wsum_img[path] = piece_imaging_wsum(
-                    ds.COUNTS_INDEX.values, ds.COUNTS_VALUE.values, denom, ds.attrs["wsum_nat"]
+                    ds.COUNTS_INDEX.values, ds.COUNTS_VALUE.values, denom, ds.attrs["wsum_offgrid"]
                 )
             del denom
     finally:

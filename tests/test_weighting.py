@@ -188,9 +188,10 @@ def test_as_contiguous_readonly_view_flags():
     assert not np.shares_memory(b, w)
 
 
-def _write_piece(store, path, grid, wsum_nat=None):
-    attrs = {"wsum_nat": float(grid.sum() if wsum_nat is None else wsum_nat)}
-    xr.Dataset(sparse_counts(grid), attrs=attrs).to_zarr(store, group=path, mode="a", consolidated=False)
+def _write_piece(store, path, grid, wsum_offgrid=0.0, data_vars=None):
+    data_vars = sparse_counts(grid) if data_vars is None else data_vars
+    attrs = {"wsum_offgrid": float(wsum_offgrid)}
+    xr.Dataset(data_vars, attrs=attrs).to_zarr(store, group=path, mode="a", consolidated=False)
 
 
 def _sparse_grid(rng, n, fill):
@@ -350,10 +351,13 @@ def test_predicted_imaging_wsum_matches_the_applied_weights(tmp_path, robust, np
         uvw = rng.uniform(-6000, 6000, (nrow, 3))
         mask = (rng.random((nrow, nchan)) > 0.2).astype(np.uint8)
         wgt = rng.random((2, nrow, nchan))
-        counts = _compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, np.float64, **signs)
+        cv, offgrid = compute_sparse_counts(uvw, freq, mask, wgt, n, n, cell, cell, np.float64, **signs)
         path = f"band0000_time0000/p{i}"
-        _write_piece(store, path, counts, wsum_nat=float((wgt * mask[None]).sum()))
+        _write_piece(store, path, None, wsum_offgrid=offgrid, data_vars=cv)
         pieces[path] = (uvw, mask, wgt)
+        # the scatter's off-grid term is exactly the natural weight it did not grid
+        ref = _counts_reference(uvw, freq, mask, wgt, n, n, cell, **signs).sum()
+        np.testing.assert_allclose(offgrid, (wgt * mask[None]).sum() - ref, rtol=1e-12)
     assert any(
         _counts_reference(u, freq, m, w, n, n, cell, **signs).sum() < (w * m[None]).sum() - 1e-9
         for u, m, w in pieces.values()
@@ -385,8 +389,53 @@ def test_compute_sparse_counts_equals_the_dense_grid_made_sparse(dtype):
     wgt[:, :20] = 0
     kw = dict(usign=-1.0, vsign=1.0)
     want = sparse_counts(_compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, dtype, **kw))
-    got = compute_sparse_counts(uvw, freq, mask, wgt, n, n, cell, cell, dtype, **kw)
+    got, _ = compute_sparse_counts(uvw, freq, mask, wgt, n, n, cell, cell, dtype, **kw)
     assert want["COUNTS_INDEX"][2] == got["COUNTS_INDEX"][2]
     np.testing.assert_array_equal(got["COUNTS_INDEX"][1], want["COUNTS_INDEX"][1])
     np.testing.assert_array_equal(got["COUNTS_VALUE"][1], want["COUNTS_VALUE"][1])
     assert got["COUNTS_VALUE"][1].dtype == dtype
+
+
+@pmp("accum_dtype", [np.float32, np.float64])
+def test_float32_prediction_holds_with_many_samples_per_cell(tmp_path, accum_dtype):
+    """Single-precision counts with thousands of samples per cell still predict the wsum.
+
+    Deriving the off-grid weight as wsum_nat - sum(N) cancelled catastrophically
+    in float32: on this case it was off by ~1e-4 relative, the pass-2 check's
+    whole tolerance (2e8 samples gave 1.3e-3). The scatter now records the
+    off-grid weight directly; --double-accum accumulates the cells in float64
+    and stores them in float32 (D27).
+    """
+    rng = np.random.default_rng(0)
+    nchan, n, nbl, ntime = 32, 128, 500, 400
+    cell = np.deg2rad(2 / 3600)
+    freq = np.linspace(0.9e9, 1.7e9, nchan)
+    # tracked baselines: short ones pile thousands of samples into a few cells
+    # (the longest reach past the 51.6 k-lambda grid edge)
+    length = rng.uniform(20, 12000, nbl)
+    ang = rng.uniform(0, 2 * np.pi, nbl)[None, :] + np.linspace(0, 0.3, ntime)[:, None]
+    uvw = np.stack([length * np.cos(ang), 0.5 * length * np.sin(ang), np.zeros_like(ang)], -1).reshape(-1, 3)
+    mask = np.ones((uvw.shape[0], nchan), np.uint8)
+    wgt = rng.uniform(0.5, 1.5, (1, uvw.shape[0], nchan)).astype(np.float32)
+    flip_u, flip_v, _, _, _ = wgridder_conventions(0.0, 0.0)
+    signs = {"usign": 1.0 if flip_u else -1.0, "vsign": 1.0 if flip_v else -1.0}
+    cv, offgrid = compute_sparse_counts(
+        uvw, freq, mask, wgt, n, n, cell, cell, np.float32, accum_dtype=accum_dtype, **signs
+    )
+    assert cv["COUNTS_VALUE"][1].dtype == np.float32
+    assert offgrid > 0, "nothing fell off the grid; the off-grid term is untested"
+    store = str(tmp_path / "s.scratch")
+    _write_piece(store, "band0000_time0000/p0", None, wsum_offgrid=offgrid, data_vars=cv)
+
+    groups, wsum_img = write_group_counts(store, {(0,): ["band0000_time0000/p0"]}, -2.0)
+
+    applied = xr.open_zarr(store, group=groups[(0,)], consolidated=False).COUNTS.values
+    img = counts_to_weights(applied.copy(), uvw, freq, wgt.copy(), mask, n, n, cell, cell, -2.0, **signs)
+    want = float(img[:, mask.astype(bool)].astype(np.float64).sum())
+    np.testing.assert_allclose(wsum_img["band0000_time0000/p0"], want, rtol=1e-7)
+    if accum_dtype is np.float32:
+        # the case is hard enough: the old derivation of the off-grid term fails it
+        wsum_nat = float(wgt.astype(np.float64).sum())
+        value = cv["COUNTS_VALUE"][1].astype(np.float64)
+        old = wsum_img["band0000_time0000/p0"] - offgrid + (wsum_nat - value.sum())
+        assert abs(old - want) > 10 * 1e-7 * want
