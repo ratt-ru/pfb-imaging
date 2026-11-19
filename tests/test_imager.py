@@ -1251,6 +1251,17 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
     # BEFORE it and would stop too early to observe the wizards.
     monkeypatch.setattr(imager_mod, "init_ray", _stop)
 
+    # the driver opens the MS once: the telescope check reads the same tree (#365)
+    opened = []
+    real_open = xr.open_datatree
+
+    def _counting_open(path, *a, **kw):
+        if str(path).rstrip("/") == str(ms_name).rstrip("/"):
+            opened.append(path)
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(xr, "open_datatree", _counting_open)
+
     with pytest.raises(RuntimeError, match="stop after beam construction"):
         imager_core(
             [Path(ms_name)],
@@ -1265,6 +1276,7 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
 
     assert sorted(g for _, g in built) == ["MM", "MPM", "MPMP"]
     assert {b for b, _ in built} == {"L"}
+    assert len(opened) == 1, f"the driver opened the MS {len(opened)} times"
 
 
 def test_partition_fits_names_carry_the_group_when_split(tmp_path):

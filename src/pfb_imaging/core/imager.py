@@ -19,6 +19,7 @@ from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
+    check_group_telescope,
     node_baseline_groups,
     preflight_baseline_groups,
     resolve_group_beam_cache,
@@ -891,7 +892,7 @@ def imager(
 
     antenna_group_override = None
     if baseline_groups:
-        antenna_group_override = preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
+        antenna_group_override = preflight_baseline_groups(beam_model, antenna_groups)
     elif antenna_groups is not None:
         # Refuse rather than ignore: an ungrouped run with --antenna-groups set
         # is indistinguishable in its output from the grouped run the user asked
@@ -1003,10 +1004,14 @@ def imager(
         dt_kwargs = get_engine(ms_name, partition_columns)
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
+        # the only open of this MS in the driver: the --baseline-groups telescope
+        # check reads the same tree (#365)
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
         )
+        if baseline_groups and beam_model is not None:
+            check_group_telescope(dt, ms_name)
         # Name-based selection, the frequency window and the chan0 offset all
         # come from utils/msv4.select_vis_nodes, shared with degrid so the
         # two front ends cannot drift. It selects channels by matching index

@@ -37,6 +37,7 @@ from pfb_imaging import init_ray, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
+    check_group_telescope,
     node_baseline_groups,
     parse_antenna_groups,
     preflight_baseline_groups,
@@ -585,9 +586,7 @@ def degrid(
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
     use_groups = beam_model is not None and baseline_groups
-    group_override = (
-        preflight_baseline_groups(msnames, partition_columns, beam_model, antenna_groups) if use_groups else None
-    )
+    group_override = preflight_baseline_groups(beam_model, antenna_groups) if use_groups else None
 
     freq_min, freq_max = -np.inf, np.inf
     if freq_range:
@@ -613,6 +612,8 @@ def degrid(
         dt_kwargs = get_engine(ms_name, partition_columns, auto_corrs=auto_corrs, main_ninstances=1)
         dt = xr.open_datatree(ms_name, **dt_kwargs)
         try:
+            if use_groups:
+                check_group_telescope(dt, ms_name)
             nodes = select_vis_nodes(
                 dt,
                 data_group=data_group,
