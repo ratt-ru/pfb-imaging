@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-19T12:25:00Z
-last_verified_commit: 2c2db1b
+timestamp: 2026-11-19T14:39:00Z
+last_verified_commit: 66054ce
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -2329,14 +2329,19 @@ update it (and this page's `last_verified_commit`) in the same session.
   (`weighting.piece_imaging_wsum`): the imaging weight is `w_nat / D[cell]`
   (`briggs_denominator`, shared with `counts_to_weights`), so a piece's samples in a cell
   sum to `N[cell] / D[cell]`, plus the natural weight of samples beyond the padded grid,
-  which are in neither (`wsum_nat − Σ N`). The driver reduces every image's `freq_out`
+  which are in neither. The pass-1 scatter sums that off-grid weight directly in float64
+  (`wsum_offgrid`) and, under `--double-accum`, accumulates the cells in float64 before
+  storing them at `--precision`. Deriving the off-grid term as `wsum_nat − Σ N` instead
+  cancelled catastrophically with float32 counts: 1.3e-3 relative error at 2e8 samples on a
+  256² grid at robust −2, against 2e-9 recorded directly. The driver reduces every image's `freq_out`
   from these before pass 2, also using them to weight `_concat_pieces` (D28). Pass 2
   renders the model first and `grid_partition(model=…)` grids each partition's residual
-  visibilities. Pass 2 recomputes the partition `WSUM` (rtol 1e-4) and the image
-  `freq_out` (rtol 1e-6) from its gridded products and raises on a disagreement.
-- **Rationale:** the prediction needs no new pass-1 output: `COUNTS_INDEX`/`COUNTS_VALUE`
-  and `wsum_nat` were already stored, and the extra sparse read is cheap beside the dense
-  grid. Gridding `V − G(B·x)` rather than subtracting `GᵀWG(B·x)` from the dirty image is
+  visibilities. Pass 2 recomputes the partition `WSUM` (rtol 1e-4, checked before the
+  partition is written) and the image `freq_out` (rtol 1e-6, from a float64 accumulator)
+  from its gridded products and raises on a disagreement.
+- **Rationale:** the prediction needs one new pass-1 scalar, `wsum_offgrid`, beside the
+  `COUNTS_INDEX`/`COUNTS_VALUE` already stored, and the extra sparse read is cheap beside the
+  dense grid. Gridding `V − G(B·x)` rather than subtracting `GᵀWG(B·x)` from the dirty image is
   the same number of degrids and grids, minus the read-back, and puts ducc's relative
   `epsilon` on the residual. It also forms the per-visibility residual that per-partition
   diagnostics (`--fits-per-partition`) and robust reweighting (#304) need, and is where a
@@ -2345,14 +2350,17 @@ update it (and this page's `last_verified_commit`) in the same session.
   reading VIS every cycle; both share `gridder.degrid_apparent`.
 - **Consequences:** the frequency-coverage warning for a transferred model fires before
   pass 2. A logic error in the prediction cannot silently move a model's frequency: the
-  pass-2 check raises. `freq_out` and `BEAM` follow the imaging basis (D28), so they
+  pass-2 check raises. A pass-2 task with a transferred model holds three extra images
+  (the model, `RESIDUAL` and `BRESIDUAL` sums) through its gridding loop rather than after it.
+  `freq_out` and `BEAM` follow the imaging basis (D28), so they
   differ slightly from earlier `.dt`s wherever a partition's pieces differ in flagging or
   beam.
 - **Source:** #365; `src/pfb_imaging/utils/weighting.py` (`briggs_denominator`,
   `piece_imaging_wsum`, `write_group_counts`); `src/pfb_imaging/core/imager.py`
   (`effective_frequency`, `_check_prediction`, `_grid_image`);
   `src/pfb_imaging/operators/gridder.py` (`grid_partition`, `degrid_apparent`);
-  `tests/test_weighting.py::test_predicted_imaging_wsum_matches_the_applied_weights`;
+  `tests/test_weighting.py::test_predicted_imaging_wsum_matches_the_applied_weights`,
+  `::test_float32_prediction_holds_with_many_samples_per_cell`;
   `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_residual`;
   `tests/test_imager_transfer.py::test_transferred_truth_nulls_the_residual`.
 

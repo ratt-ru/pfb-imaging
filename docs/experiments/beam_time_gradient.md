@@ -25,7 +25,9 @@ was 3350 s: setup 750, pass 1 1832, pass 2 690.
 Script: `scripts/profiling/beam_time_gradient.py`.
 - `gradient` mode re-grids every scan with pass 2's robust weights. It computes the
   beam-attenuated residual twice: once with each scan's own beam (`g_exact`) and once with the
-  partition's `wsum_nat`-mean beam, which is what deconv uses today (`g_avg`).
+  partition's `wsum_nat`-mean beam, which is what deconv used at the time (`g_avg`). Since
+  D65 the partition beam is the imaging-wsum-weighted mean; the results below were measured
+  with the natural-weighted one.
 - `beams` mode compares beams on a coarse 128² field-centred grid, with no gridding.
 
 ## Checks

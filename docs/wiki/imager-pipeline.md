@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-19T12:25:00Z
-last_verified_commit: 2c2db1b
+timestamp: 2026-11-19T14:39:00Z
+last_verified_commit: 66054ce
 ---
 
 # MSv4 DataTree imager pipeline
@@ -107,8 +107,10 @@ peak, `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_r
 gridding the residual puts ducc's relative `epsilon` on the residual rather than the dirty
 image, and no partition is read back from the `.dt` (until D65 a second sweep after the loop
 re-read every partition's UVW/WEIGHT/MASK). Masked samples are zeroed in `r` outright: ducc's
-mask does not stop a NaN on aarch64. The task holds the rendered model for its lifetime,
-and one partition's residual visibilities per correlation at a time. The `.mds` is loaded once per worker through a `Multiton` and stays resident there
+mask does not stop a NaN on aarch64. The task holds three extra images through its
+gridding loop (the rendered model and the `RESIDUAL`/`BRESIDUAL` sums: 1.1 GB at 6720² in
+float64), and one vis-sized residual array per correlation, formed in the degridded
+buffer. The `.mds` is loaded once per worker through a `Multiton` and stays resident there
 (default 300 s inactivity TTL, swept lazily on cache access, as for the xarray-ms tables in
 [memory-and-ray.md](memory-and-ray.md)). That residency is bounded by the model's size, which
 is not negligible: `.mds` stores have reached 633 MB at 6720², so budget one per pass-2
@@ -188,7 +190,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
    in the object store (#339). With the applied grid in hand, a second sparse read of
    the group's pieces gives each piece's exact imaging-weight sum
-   (`weighting.piece_imaging_wsum`), from which the driver reduces every image's
+   (`weighting.piece_imaging_wsum`, with the off-grid natural weight pass 1 recorded as
+   `wsum_offgrid`), from which the driver reduces every image's
    `freq_out` before pass 2 (D65). Before the pieces went sparse this step read every
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
