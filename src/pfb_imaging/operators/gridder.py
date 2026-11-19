@@ -24,6 +24,55 @@ def wgridder_conventions(l0, m0):
     return False, True, False, -l0, -m0
 
 
+def _ducc_geom(cell_rad, flip_u, flip_v, flip_w, x0, y0, epsilon, do_wgridding, nthreads):
+    """The ducc geometry/accuracy keywords shared by a partition's degrid and grid calls."""
+    return {
+        "pixsize_x": cell_rad,
+        "pixsize_y": cell_rad,
+        "center_x": x0,
+        "center_y": y0,
+        "flip_u": flip_u,
+        "flip_v": flip_v,
+        "flip_w": flip_w,
+        "epsilon": epsilon,
+        "do_wgridding": do_wgridding,
+        "nthreads": nthreads,
+    }
+
+
+def degrid_apparent(uvw, freq, mask, beam, model, geom):
+    """Model visibilities ``G(beam * model)`` of one correlation, masked.
+
+    The forward half of every residual on the imager/deconv path: pass 2
+    (``grid_partition`` with a model) and ``residual_from_partitions`` both
+    call it, so the two compute the same model visibilities.
+
+    Args:
+        uvw, freq, mask: The partition's ``(row, 3)``, ``(chan,)`` and ``(row, chan)``.
+        beam, model: ``(ny, nx)`` image-grid beam (``B/n``, D22) and model.
+        geom: ducc geometry and accuracy keywords (``pixsize_*``, ``center_*``,
+            ``flip_*``, ``epsilon``, ``do_wgridding``, ``nthreads``).
+
+    Returns:
+        ``(row, chan)`` complex model visibilities.
+    """
+    return dirty2vis(
+        uvw=uvw,
+        freq=freq,
+        # MUST be masked: xarray-ms lays the data out on a regular
+        # (time, baseline) grid and fills absent rows with NaN UVW
+        # (see core/imager.py's uvw_mask). Those rows are fully
+        # flagged and zero-weighted, so every vis2dirty ignores them --
+        # but an unmasked dirty2vis still derives its w range from
+        # them, giving a NaN w extent and ducc's "too many w planes".
+        mask=mask,
+        # (Y, X) product adapted to ducc's x-major input by a zero-copy strided view
+        dirty=(beam * model).T,
+        divide_by_n=False,
+        **geom,
+    )
+
+
 def grid_partition(
     part,
     counts,
@@ -43,6 +92,7 @@ def grid_partition(
     double_accum=True,
     do_psf=True,
     overwrite_weight=False,
+    model=None,
 ):
     """Grid one data partition's image-space products with ducc0 (casacore-free).
 
@@ -70,12 +120,18 @@ def grid_partition(
         overwrite_weight: compute the imaging weights in ``part.WEIGHT``'s own
             buffer instead of a copy -- for callers that own ``part`` and do
             not need its natural weights afterwards. Saves a vis-sized array.
+        model: Optional band model ``(corr, ny, nx)``. When given, the
+            residual visibilities ``r = V - G(BEAM * model)`` are formed while
+            ``VIS`` is in memory and gridded into ``RESIDUAL``: the same
+            quantity as ``DIRTY - G^T W G(BEAM * model)``, but gridded from the
+            small residual, so ducc's relative ``epsilon`` applies to it.
 
     Returns:
         dict with ``DIRTY`` ``(corr,ny,nx)``, ``BEAM`` ``(corr,ny,nx)``,
         ``WSUM`` ``(corr,)`` and the imaging ``WEIGHT`` ``(corr,row,chan)``.
         ``PSF`` ``(corr,ny_psf,nx_psf)``, ``PSFHAT`` ``(corr,ny_psf,nx_psf//2+1)``
-        and ``PSFPARSN`` ``(corr,3)`` are present only when ``do_psf``.
+        and ``PSFPARSN`` ``(corr,3)`` are present only when ``do_psf``, and
+        ``RESIDUAL`` ``(corr,ny,nx)`` only when ``model`` is given.
         Image-space arrays are (Y, X)-ordered (wiki D19); ducc's x-major
         layout exists only behind transposed views.
     """
@@ -149,6 +205,32 @@ def grid_partition(
             double_precision_accumulation=double_accum,
             dirty=dirty[c].T,
         )
+
+    residual = None
+    if model is not None:
+        geom = _ducc_geom(cell_rad, flip_u, flip_v, flip_w, x0, y0, epsilon, do_wgridding, nthreads)
+        model = np.require(model, dtype=real_type)
+        residual = np.zeros((ncorr, ny, nx), dtype=real_type)
+        for c in range(ncorr):
+            model_vis = degrid_apparent(uvw, freq, mask, beam[c], model[c], geom)
+            # zero the masked samples outright: a NaN VIS under the mask leaks
+            # through vis2dirty on aarch64, so the mask alone is not enough
+            rvis = np.where(mask, vis[c] - model_vis, 0)
+            del model_vis
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=rvis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx,
+                npix_y=ny,
+                divide_by_n=False,
+                double_precision_accumulation=double_accum,
+                dirty=residual[c].T,
+                **geom,
+            )
+            del rvis
 
     if do_psf:
         # PSF visibilities carry a phase ramp when the field is off image centre:
@@ -224,6 +306,8 @@ def grid_partition(
         out["PSF"] = psf
         out["PSFHAT"] = psfhat
         out["PSFPARSN"] = psfparsn
+    if residual is not None:
+        out["RESIDUAL"] = residual
     return out
 
 
@@ -287,32 +371,9 @@ def residual_from_partitions(
         l0 = part.attrs.get("l0", 0.0)
         m0 = part.attrs.get("m0", 0.0)
         flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+        geom = _ducc_geom(cell_rad, flip_u, flip_v, flip_w, x0, y0, epsilon, do_wgridding, nthreads)
         for c in range(ncorr):
-            model_vis = dirty2vis(
-                uvw=uvw,
-                freq=freq,
-                # MUST be masked: xarray-ms lays the data out on a regular
-                # (time, baseline) grid and fills absent rows with NaN UVW
-                # (see core/imager.py's uvw_mask). Those rows are fully
-                # flagged and zero-weighted, so every vis2dirty ignores them --
-                # but an unmasked dirty2vis still derives its w range from
-                # them, giving a NaN w extent and ducc's "too many w planes".
-                mask=mask,
-                # (Y, X) product adapted to ducc's x-major input by a
-                # zero-copy strided view
-                dirty=(beam[c] * model[c]).T,
-                pixsize_x=cell_rad,
-                pixsize_y=cell_rad,
-                center_x=x0,
-                center_y=y0,
-                flip_u=flip_u,
-                flip_v=flip_v,
-                flip_w=flip_w,
-                epsilon=epsilon,
-                do_wgridding=do_wgridding,
-                nthreads=nthreads,
-                divide_by_n=False,
-            )
+            model_vis = degrid_apparent(uvw, freq, mask, beam[c], model[c], geom)
             vis2dirty(
                 uvw=uvw,
                 freq=freq,
@@ -321,19 +382,10 @@ def residual_from_partitions(
                 mask=mask,
                 npix_x=nx,
                 npix_y=ny,
-                pixsize_x=cell_rad,
-                pixsize_y=cell_rad,
-                center_x=x0,
-                center_y=y0,
-                flip_u=flip_u,
-                flip_v=flip_v,
-                flip_w=flip_w,
-                epsilon=epsilon,
-                do_wgridding=do_wgridding,
                 divide_by_n=False,
-                nthreads=nthreads,
                 double_precision_accumulation=double_accum,
                 dirty=tmp.T,
+                **geom,
             )
             convim[c] += tmp
             if bconvim is not None:

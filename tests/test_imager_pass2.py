@@ -441,3 +441,72 @@ def test_write_partition_bounds_the_encode_transient(tmp_path):
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < data / 4, f"write peak {peak / data:.2f} x the row data"
+
+
+@pytest.mark.parametrize("l0, m0", [(0.0, 0.0), (3e-4, -2e-4)])
+def test_pass2_residual_matches_the_image_space_residual(l0, m0):
+    """grid_partition's vis-space RESIDUAL equals deconv's DIRTY - G^T W G(B x) (#365).
+
+    Pass 2 forms r = V - G(B x) while VIS is in memory; deconv's major cycles
+    subtract in image space from the stored DIRTY (residual_from_partitions).
+    The two must agree, beams, robust weights and a --target offset included.
+    A flagged row carries NaN VIS, which must not reach either image.
+    """
+    rng = np.random.default_rng(7)
+    nx = ny = 32
+    cell = 2e-5
+    nrow = 300
+    uvw = rng.uniform(-2e3, 2e3, (nrow, 3))
+    uvw[:, 2] = rng.uniform(-30, 30, nrow)
+    freq = np.array([1.0e9, 1.2e9])
+    mask = np.ones((nrow, 2), np.uint8)
+    mask[0] = 0
+    vis = rng.standard_normal((1, nrow, 2)) + 1j * rng.standard_normal((1, nrow, 2))
+    vis[:, 0] = np.nan
+    wgt = rng.uniform(0.5, 2.0, (1, nrow, 2))
+    yy, xx = np.mgrid[:ny, :nx]
+    beam = (1.0 - 0.02 * np.hypot(yy - ny / 2, xx - nx / 2))[None]
+    part = xr.Dataset(
+        {
+            "VIS": (("corr", "row", "chan"), vis),
+            "WEIGHT": (("corr", "row", "chan"), wgt),
+            "MASK": (("row", "chan"), mask),
+            "UVW": (("row", "three"), uvw),
+            "FREQ": (("chan",), freq),
+            "BEAM": (("corr", "y", "x"), beam),
+        },
+        coords={"corr": ["I"]},
+        attrs={"l0": l0, "m0": m0},
+    )
+    nx_pad = ny_pad = 64
+    counts = _compute_counts(uvw, freq, mask, wgt, nx_pad, ny_pad, cell, cell, wgt.dtype, usign=-1.0, vsign=1.0)
+    model = np.zeros((1, ny, nx))
+    model[0, 10, 20] = 1.0
+    model[0, 25, 6] = 0.5
+    kw = dict(
+        nx=nx,
+        ny=ny,
+        nx_psf=2 * nx,
+        ny_psf=2 * ny,
+        cell_rad=cell,
+        robustness=0.0,
+        nx_pad=nx_pad,
+        ny_pad=ny_pad,
+        l0=l0,
+        m0=m0,
+        epsilon=1e-10,
+        do_psf=False,
+    )
+    out = grid_partition(part, counts, model=model, **kw)
+    assert np.isfinite(out["RESIDUAL"]).all()
+    # the reference DIRTY comes from the same data with zeros under the mask, as
+    # pass 1 stores it (weight_data skips flagged samples): ducc's mask does not
+    # stop a NaN on aarch64, which is what the residual path guards against
+    clean = part.assign(VIS=(("corr", "row", "chan"), np.where(mask, vis, 0)))
+    plain = grid_partition(clean, counts, **kw)
+    assert "RESIDUAL" not in plain
+
+    stored = part.assign(WEIGHT=(("corr", "row", "chan"), out["WEIGHT"]))
+    ref = residual_from_partitions(plain["DIRTY"], [stored], model, cell, epsilon=1e-10)
+    assert np.abs(ref).max() > 0 and np.abs(plain["DIRTY"] - ref).max() > 1e-3 * np.abs(ref).max()
+    np.testing.assert_allclose(out["RESIDUAL"], ref, rtol=0, atol=1e-8 * np.abs(ref).max())

@@ -210,30 +210,6 @@ def test_transfer_planes_follow_the_band_corr():
     assert _transfer_planes(["I", "V"], ["V", "I"]) == [1, 0]
 
 
-def test_iter_parts_keeps_the_phase_centre_attrs(tmp_path):
-    """A --target run's residual needs each part's l0/m0 (residual_from_partitions reads them)."""
-    import xarray as xr
-
-    from pfb_imaging.core.imager import _iter_parts
-
-    store = str(tmp_path / "x.dt")
-    part = xr.Dataset(
-        {
-            "UVW": (("row", "three"), np.zeros((2, 3))),
-            "WEIGHT": (("corr", "row", "chan"), np.ones((1, 2, 1))),
-            "MASK": (("row", "chan"), np.ones((2, 1), np.uint8)),
-            "FREQ": (("chan",), np.array([1e9])),
-            "BEAM": (("corr", "y", "x"), np.ones((1, 4, 4))),
-            "VIS": (("corr", "row", "chan"), np.zeros((1, 2, 1), np.complex64)),
-        },
-        attrs={"l0": 1.5e-4, "m0": -2.5e-4},
-    )
-    part.to_zarr(store, group="band0000_time0000/part0000", mode="w", consolidated=False)
-    (got,) = list(_iter_parts(store, "band0000_time0000", 1))
-    assert got.attrs["l0"] == 1.5e-4 and got.attrs["m0"] == -2.5e-4
-    assert "VIS" not in got and got.WEIGHT.shape == (1, 2, 1)
-
-
 def test_residual_sweep_holds_one_streamed_partition():
     """Partition N is freed before the iterator loads N+1, so pass 2 holds one at a time."""
     import weakref

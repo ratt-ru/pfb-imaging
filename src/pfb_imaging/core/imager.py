@@ -1,7 +1,6 @@
 import gc
 import os
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +15,7 @@ from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
-from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions, wgridder_conventions
+from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
@@ -187,34 +186,6 @@ def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
             refuses this upfront).
     """
     return [list(model_stokes).index(str(c)) for c in corr]
-
-
-def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset]:
-    """Stream one image's partitions back from the `.dt`, one at a time (#309).
-
-    Only the variables `residual_from_partitions` reads, plus the attrs (its
-    l0/m0 set the phase centre). Reading back rather than holding the
-    partitions keeps the pass-2 task at one partition's vis data at a time.
-
-    Args:
-        dt_store: The `.dt` store URL.
-        out_name: The band node the partitions live under.
-        npart: Number of `part####` children.
-
-    Yields:
-        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM, loaded, with its attrs.
-    """
-    for pid in range(npart):
-        ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
-        try:
-            sub = ds[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
-            sub.attrs = dict(ds.attrs)
-        finally:
-            ds.close()
-        del ds
-        yield sub
-        # drop the generator's own reference before loading the next partition
-        del sub
 
 
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
@@ -507,7 +478,31 @@ def _grid_image_body(
     # sweep; `ds` is the loop's last piece. `first` existing means the loop
     # bound `ds` (next() raises on an empty `groups`).
     del first, ds
+    model = None
+    if transfer_model is not None:
+        # Render at the image's effective frequency, which the driver predicted
+        # from the counts before pass 2 (D28): the residual is then formed per
+        # partition while its visibilities are in memory (#309, #365).
+        model_ds = transfer_model.instance  # one load per worker process
+        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
+        rendered = render_model_region(
+            model_ds,
+            time=meta["time_out"],
+            freq_out=float(meta["freq_out"]),
+            nx=nx,
+            ny=ny,
+            cell_rad=cell_rad,
+            x0=x0,
+            y0=y0,
+            # flux-conserving remap onto this grid, refining or coarsening (D52)
+            kernel="box",
+        )
+        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
+        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
+        del rendered, model_ds
     dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    residual_sum = np.zeros((ncorr, ny, nx), dtype=real_type) if model is not None else None
+    bresidual_sum = np.zeros((ncorr, ny, nx), dtype=real_type) if model is not None else None
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
@@ -518,7 +513,6 @@ def _grid_image_body(
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
 
-    npart = len(groups)
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
         part = _concat_pieces(plist)
@@ -563,6 +557,7 @@ def _grid_image_body(
             # part is this task's own concat (or loaded piece), and only the
             # imaging weights are stored: reuse its WEIGHT buffer (#339)
             overwrite_weight=True,
+            model=model,
         )
 
         part_vars = {
@@ -626,14 +621,17 @@ def _grid_image_body(
         # of the deconv gradient (D23), not derivable from the summed DIRTY
         # when partitions carry distinct beams
         bdirty_sum += prod["BEAM"] * prod["DIRTY"]
+        if model is not None:
+            residual_sum += prod["RESIDUAL"]
+            # the outer per-partition beam of the gradient residual (D23)
+            bresidual_sum += prod["BEAM"] * prod["RESIDUAL"]
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
         _check_prediction("imaging wsum", key, float(prod["WSUM"].astype(np.float64).sum()), wsum_pred[key], 1e-4)
-    # release the last partition's vis-space data now: the transfer residual
-    # below re-reads each partition from the store (#339). part_vars holds the
-    # same VIS/WEIGHT/MASK/UVW buffers as part, so it must go too.
+    # release the last partition's vis-space data before the band products are
+    # assembled (#339); part_vars holds the same VIS/WEIGHT/MASK/UVW buffers
     del part, part_vars, part_out, prod
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
@@ -687,41 +685,10 @@ def _grid_image_body(
             np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
         )
         band_coords["bpar"] = bpar
-    if transfer_model is not None:
-        # Render at the band's effective frequency, known only now that the
-        # partitions are gridded (D28), then take the exact residual over the
-        # partitions just written -- the same path deconv uses (#309).
-        model_ds = transfer_model.instance  # one load per worker process
-        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
-        rendered = render_model_region(
-            model_ds,
-            time=meta["time_out"],
-            freq_out=freq_eff,
-            nx=nx,
-            ny=ny,
-            cell_rad=cell_rad,
-            x0=x0,
-            y0=y0,
-            # flux-conserving remap onto this grid, refining or coarsening (D52)
-            kernel="box",
-        )
-        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
-        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
-        del rendered
-        residual, bresidual = residual_from_partitions(
-            dirty_sum,
-            _iter_parts(dt_store, out_name, npart),
-            model,
-            cell_rad,
-            nthreads=nthreads,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-            bdirty=bdirty_sum,
-        )
+    if model is not None:
         band_vars["MODEL"] = (("corr", "y", "x"), model)
-        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
-        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))
+        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual_sum)
+        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual_sum)
         band_attrs_extra = {"transferred_from": transfer_path}
     else:
         band_attrs_extra = {}
