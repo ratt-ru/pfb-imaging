@@ -212,11 +212,13 @@ def grid_partition(
         model = np.require(model, dtype=real_type)
         residual = np.zeros((ncorr, ny, nx), dtype=real_type)
         for c in range(ncorr):
-            model_vis = degrid_apparent(uvw, freq, mask, beam[c], model[c], geom)
+            # r = V - G(B x) formed in the model visibilities' own buffer, so the
+            # residual costs one vis-sized array per correlation
+            rvis = degrid_apparent(uvw, freq, mask, beam[c], model[c], geom)
+            np.subtract(vis[c], rvis, out=rvis)
             # zero the masked samples outright: a NaN VIS under the mask leaks
             # through vis2dirty on aarch64, so the mask alone is not enough
-            rvis = np.where(mask, vis[c] - model_vis, 0)
-            del model_vis
+            rvis[mask == 0] = 0
             vis2dirty(
                 uvw=uvw,
                 freq=freq,
