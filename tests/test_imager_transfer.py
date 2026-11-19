@@ -302,7 +302,9 @@ def test_partition_residuals_sum_to_the_band_residual(l0, m0):
         vis2dirty(
             uvw=uvw,
             freq=freq,
-            vis=vis[0],
+            # the reference grids zeros there: ducc's mask does not stop a NaN
+            # on aarch64, which is the leak partition_residual guards against
+            vis=np.where(mask, vis[0], 0.0),
             wgt=wgt[0],
             mask=mask,
             npix_x=nx,
