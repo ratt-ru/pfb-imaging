@@ -311,6 +311,36 @@ def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) ->
     )
 
 
+def effective_frequency(pieces, freq_nominal):
+    """An output image's effective frequency, from its pieces, before pass 2 (wiki D28).
+
+    The band's ``freq_out`` is the imaging-wsum-weighted mean of its partitions'
+    frequencies, each partition's frequency being the ``wsum_nat``-weighted mean
+    of its pieces' (``_concat_pieces``). Each partition's imaging wsum is the sum
+    of its pieces' (``weighting.piece_imaging_wsum``), so the whole reduction is
+    known from pass 1 and the counts. Pass 2 recomputes it from its gridded
+    ``WSUM`` and refuses a disagreement.
+
+    Args:
+        pieces: ``(partition key, wsum_nat, freq_out, wsum_img)`` per piece.
+        freq_nominal: Fallback when the image carries no weight.
+
+    Returns:
+        The effective frequency in Hz.
+    """
+    parts = {}
+    for key, wnat, freq, wimg in pieces:
+        acc = parts.setdefault(key, [0.0, 0.0, 0.0, freq])
+        acc[0] += wnat
+        acc[1] += wnat * freq
+        acc[2] += wimg
+    num = den = 0.0
+    for wnat, wf, wimg, f0 in parts.values():
+        num += wimg * (wf / wnat if wnat > 0 else f0)
+        den += wimg
+    return float(num / den) if den > 0 else float(freq_nominal)
+
+
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
@@ -391,6 +421,19 @@ def _concat_pieces(plist):
     return part
 
 
+def _check_prediction(what, where, got, predicted, rtol):
+    """Refuse a pass-2 product that disagrees with the driver's pre-pass-2 reduction.
+
+    Raises:
+        RuntimeError: If ``got`` and ``predicted`` differ by more than ``rtol``.
+    """
+    if not np.isclose(got, predicted, rtol=rtol, atol=0.0):
+        raise RuntimeError(
+            f"{what} of {where}: gridded {got!r} but predicted {predicted!r} before pass 2 "
+            f"(wiki D28: the counts reduction and pass 2 must agree)"
+        )
+
+
 @ray.remote
 def _grid_image(*args, **kwargs):
     """Ray entry point for :func:`_grid_image_body` (opt-in profiling, see memprof)."""
@@ -445,11 +488,14 @@ def _grid_image_body(
     # Pieces are detached from the tree by _load_piece for the same reason.
     dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
     groups = {}
+    # each partition's imaging wsum as the driver predicted it (write_group_counts)
+    wsum_pred = {}
     for sn in src_names:
-        for _, child in dt[sn].children.items():
+        for cname, child in dt[sn].children.items():
             ds = _load_piece(child)
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
+            wsum_pred[key] = wsum_pred.get(key, 0.0) + meta["wsum_img"][f"{sn}/{cname}"]
 
     # the applied (filtered, box-summed) group counts, written once by the driver
     # (write_group_counts); grid_partition copies before use
@@ -593,6 +639,7 @@ def _grid_image_body(
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
+        _check_prediction("imaging wsum", key, float(prod["WSUM"].astype(np.float64).sum()), wsum_pred[key], 1e-4)
     # release the last partition's vis-space data now: the transfer residual
     # below re-reads each partition from the store (#339). part_vars holds the
     # same VIS/WEIGHT/MASK/UVW buffers as part, so it must go too.
@@ -608,7 +655,11 @@ def _grid_image_body(
     # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
     # dt2fits already does for freq_mfs.
     wsum_tot = float(wsum_sum.astype(np.float64).sum())
-    freq_eff = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
+    freq_gridded = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
+    # the driver's value is the one the model was rendered at; this pins that it
+    # is the same reduction (to the --precision rounding of WSUM)
+    freq_eff = float(meta["freq_out"])
+    _check_prediction("effective frequency", out_name, freq_gridded, freq_eff, 1e-6)
     band_attrs = {
         "bandid": meta["bandid"],
         "timeid": meta["timeid"],
@@ -1386,6 +1437,9 @@ def imager(
     # applied-weighting group -> its pieces' node paths; the counts themselves
     # are streamed by write_group_counts below, never held per piece
     counts_sources = {}
+    # piece node path -> (partition key, wsum_nat, freq_out), for the effective
+    # frequency computed below before pass 2
+    piece_info = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
@@ -1398,6 +1452,13 @@ def imager(
         # natural weighting (robustness None) never touches counts
         if robustness is not None:
             counts_sources.setdefault(counts_key(bandid, timeid), []).extend(f"{name}/{c}" for c in children)
+        for c, ds in zip(children, pieces):
+            a = ds.attrs
+            piece_info[f"{name}/{c}"] = (
+                (a["msid"], a["field_name"], a["spw_name"], a["baseline_group"]),
+                float(a["wsum_nat"]),
+                float(a["freq_out"]),
+            )
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1455,13 +1516,28 @@ def imager(
     # one applied counts grid per weighting group, streamed into the scratch
     # store; pass-2 workers read their group's grid from there (#339)
     counts_groups = {}
+    # natural weighting: the imaging weights are the natural ones
+    wsum_img = {path: info[1] for path, info in piece_info.items()}
     if robustness is not None:
-        counts_groups = write_group_counts(
-            scratch_url, counts_sources, filter_level=filter_counts_level, npix_super=npix_super
+        counts_groups, wsum_img = write_group_counts(
+            scratch_url, counts_sources, robustness, filter_level=filter_counts_level, npix_super=npix_super
         )
         # the counts groups were written after pass 1's consolidation
         zarr.consolidate_metadata(scratch_url)
     log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(counts_groups)} group(s)")
+
+    # every image's effective frequency, before pass 2 (wiki D28): the model is
+    # rendered at it, so pass 2 can form residuals while the vis are in memory
+    for _, src_names, meta in work:
+        pieces = {p: wsum_img[p] for p in piece_info if p.split("/")[0] in src_names}
+        meta["wsum_img"] = pieces
+        meta["freq_out"] = effective_frequency(
+            [(*piece_info[p], w) for p, w in pieces.items()], band_centres[meta["bandid"]]
+        )
+    if transfer_model_from is not None:
+        msg = transfer_coverage_warning([meta["freq_out"] for _, _, meta in work], transfer_coverage)
+        if msg is not None:
+            log.warning(msg)
 
     # ---- initialise the .dt store root ----
     dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
@@ -1536,22 +1612,15 @@ def imager(
     ncomplete = 0
     remaining_tasks = tasks.copy()
     beam_imre_max = 0.0
-    freqs_out = []
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
-            freqs_out.append(res["freq_out"])
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
                 log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
-
-    if transfer_model_from is not None:
-        msg = transfer_coverage_warning(freqs_out, transfer_coverage)
-        if msg is not None:
-            log.warning(msg)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).

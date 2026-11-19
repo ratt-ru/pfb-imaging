@@ -79,24 +79,24 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtyp
 
 
 @njit(**JIT_OPTIONS)
-def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell_size_y, robust, usign=1.0, vsign=-1.0):
-    # when does this happen?
-    if not counts.any():
-        return weight
+def briggs_denominator(counts, robust):
+    """Turn an applied counts grid into the per-cell Briggs divisor, in place.
 
-    real_type = weight.dtype
+    The imaging weight of a sample in cell ``k`` is ``w_nat / D[k]`` wherever
+    ``D[k] > 0``. For ``robust > -2`` that is ``D = 1 + ssq * counts``; at
+    ``robust <= -2`` (uniform) it is the counts themselves. The single source
+    of the divisor for both ``counts_to_weights`` and the pre-pass-2 imaging
+    wsum (``piece_imaging_wsum``), so the two cannot drift.
 
-    # ufreq
-    u_cell = 1 / (nx * cell_size_x)
-    umax = np.abs(1 / cell_size_x / 2)
+    Args:
+        counts: Applied ``(corr, u, v)`` counts grid; overwritten.
+        robust: Briggs robustness.
 
-    # vfreq
-    v_cell = 1 / (ny * cell_size_y)
-    vmax = np.abs(1 / cell_size_y / 2)
-
-    ncorr, nrow, nchan = weight.shape
-
-    # Briggs weighting factor
+    Returns:
+        ``counts``, now holding ``D``.
+    """
+    real_type = counts.dtype
+    ncorr, nx, ny = counts.shape
     if robust > -2:
         numsqrt = 5 * 10 ** (-robust)
         avgwnum = np.zeros(ncorr, dtype=real_type)
@@ -110,6 +110,26 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell
         ssq = numsqrt * numsqrt * avgwden / avgwnum
         counts *= ssq[:, None, None]
         counts += 1
+    return counts
+
+
+@njit(**JIT_OPTIONS)
+def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell_size_y, robust, usign=1.0, vsign=-1.0):
+    # an all-zero grid (nothing gridded) leaves the natural weights
+    if not counts.any():
+        return weight
+
+    # ufreq
+    u_cell = 1 / (nx * cell_size_x)
+    umax = np.abs(1 / cell_size_x / 2)
+
+    # vfreq
+    v_cell = 1 / (ny * cell_size_y)
+    vmax = np.abs(1 / cell_size_y / 2)
+
+    ncorr, nrow, nchan = weight.shape
+
+    counts = briggs_denominator(counts, robust)
 
     for r in prange(nrow):
         uvw_row = uvw[r]
@@ -388,7 +408,35 @@ def sparse_counts(counts):
     }
 
 
-def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
+def piece_imaging_wsum(index, value, denom, wsum_nat):
+    """A piece's imaging-weight sum, from its sparse counts and the group's Briggs divisor.
+
+    The imaging weight is ``w_nat / D[cell]`` (``briggs_denominator``), so the
+    samples a piece put in a cell sum to ``N[cell] / D[cell]``, where ``N`` is
+    the piece's own counts. Samples beyond the padded uv grid are in neither
+    ``N`` nor the divisor and keep their natural weight in
+    ``counts_to_weights``; they are ``wsum_nat - sum(N)``. Exact up to rounding,
+    so pass 2's per-partition ``WSUM`` is known before any gridding.
+
+    Args:
+        index: The piece's ``COUNTS_INDEX`` (flat cell indices).
+        value: The piece's ``COUNTS_VALUE``.
+        denom: The group's divisor ``D`` ``(corr, u, v)``, or ``None`` for an
+            all-zero group grid (natural weights throughout).
+        wsum_nat: The piece's corr-summed natural weight sum.
+
+    Returns:
+        The piece's corr-summed imaging-weight sum.
+    """
+    if denom is None:
+        return float(wsum_nat)
+    value = value.astype(np.float64)
+    d = denom.reshape(-1)[index].astype(np.float64)
+    inside = float(np.sum(np.divide(value, d, out=value.copy(), where=d > 0)))
+    return inside + (float(wsum_nat) - float(value.sum()))
+
+
+def write_group_counts(store, sources, robust, filter_level=5.0, npix_super=0):
     """Reduce pass-1 piece COUNTS into one applied grid per weighting group, on disk.
 
     Streams: each piece's occupied cells (``sparse_counts``) are read and added
@@ -400,18 +448,26 @@ def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
     ``box_sum_counts``) is written once per group, so pass-2 workers read it from
     the store instead of receiving a copy per task through the Ray object store.
 
+    With the applied grid in hand, a second (sparse) read of the group's pieces
+    gives each piece's imaging-weight sum (``piece_imaging_wsum``). That is the
+    reduction that needs a full scan of the data, done here so the driver knows
+    every image's effective frequency before pass 2 (wiki D28).
+
     Args:
         store: scratch store URL holding the pass-1 pieces.
         sources: weighting-group key -> scratch node paths of the group's pieces.
+        robust: Briggs robustness the grids will be applied with.
         filter_level: ``filter_extreme_counts`` level.
         npix_super: ``box_sum_counts`` half-width (0 = standard uniform).
 
     Returns:
-        weighting-group key -> node path (``counts/group####``) of its applied
-        ``COUNTS`` grid in ``store``.
+        ``(groups, wsum_img)``: weighting-group key -> node path
+        (``counts/group####``) of its applied ``COUNTS`` grid in ``store``, and
+        piece node path -> corr-summed imaging-weight sum.
     """
     dt = xr.open_datatree(store, engine="zarr", chunks=None, cache=False)
     out = {}
+    wsum_img = {}
     try:
         for gi, key in enumerate(sorted(sources)):
             acc = None
@@ -427,10 +483,18 @@ def write_group_counts(store, sources, filter_level=5.0, npix_super=0):
             group = f"counts/group{gi:04d}"
             xr.Dataset({"COUNTS": (("corr", "u", "v"), acc)}).to_zarr(store, group=group, mode="w", consolidated=False)
             out[key] = group
+            # counts_to_weights leaves an all-zero grid's weights natural
+            denom = briggs_denominator(acc, robust) if acc.any() else None
             del acc
+            for path in sources[key]:
+                ds = dt[path].ds
+                wsum_img[path] = piece_imaging_wsum(
+                    ds.COUNTS_INDEX.values, ds.COUNTS_VALUE.values, denom, ds.attrs["wsum_nat"]
+                )
+            del denom
     finally:
         dt.close()
-    return out
+    return out, wsum_img
 
 
 def as_contiguous_readonly_view(a):

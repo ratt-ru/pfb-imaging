@@ -187,8 +187,9 @@ def test_as_contiguous_readonly_view_flags():
     assert not np.shares_memory(b, w)
 
 
-def _write_piece(store, path, grid):
-    xr.Dataset(sparse_counts(grid)).to_zarr(store, group=path, mode="a", consolidated=False)
+def _write_piece(store, path, grid, wsum_nat=None):
+    attrs = {"wsum_nat": float(grid.sum() if wsum_nat is None else wsum_nat)}
+    xr.Dataset(sparse_counts(grid), attrs=attrs).to_zarr(store, group=path, mode="a", consolidated=False)
 
 
 def _sparse_grid(rng, n, fill):
@@ -208,7 +209,7 @@ def test_write_group_counts_matches_in_memory_reduction(tmp_path, npix_super):
         _write_piece(store, path, g)
     sources = {(b,): [p for p in grids if p.startswith(f"band{b:04d}")] for b in range(2)}
 
-    out = write_group_counts(store, sources, filter_level=5.0, npix_super=npix_super)
+    out, _ = write_group_counts(store, sources, 0.0, filter_level=5.0, npix_super=npix_super)
 
     assert set(out) == set(sources)
     dt = xr.open_datatree(store, engine="zarr", chunks=None, consolidated=False)
@@ -242,7 +243,7 @@ def test_write_group_counts_streams(tmp_path):
     grid_bytes = n * n * 8
 
     tracemalloc.start()
-    write_group_counts(store, {(0,): paths}, filter_level=5.0, npix_super=0)
+    write_group_counts(store, {(0,): paths}, 0.0, filter_level=5.0, npix_super=0)
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < 4 * grid_bytes, f"peak {peak / grid_bytes:.1f} grids for {npiece} pieces"
@@ -323,3 +324,44 @@ def test_compute_counts_holds_one_grid():
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True, env=env)
     grids = float(out.stdout.strip().splitlines()[-1])
     assert grids < 1.5, f"peak {grids:.2f} grids"
+
+
+@pmp("robust", [-2.0, 0.0, 1.5])
+@pmp("npix_super", [0, 1])
+def test_predicted_imaging_wsum_matches_the_applied_weights(tmp_path, robust, npix_super):
+    """Each piece's imaging wsum is known from its sparse counts before pass 2 (wiki D28).
+
+    It must equal what counts_to_weights then gives that piece's samples,
+    including the samples that fall off the padded uv grid: those keep their
+    natural weight and are in neither the counts nor the divisor.
+    """
+    rng = np.random.default_rng(11)
+    nchan, n = 4, 64
+    cell = np.deg2rad(20 / 3600)
+    freq = np.linspace(1.0e9, 1.4e9, nchan)
+    flip_u, flip_v, _, _, _ = wgridder_conventions(0.0, 0.0)
+    signs = {"usign": 1.0 if flip_u else -1.0, "vsign": 1.0 if flip_v else -1.0}
+    store = str(tmp_path / "s.scratch")
+    pieces = {}
+    for i in range(3):
+        nrow = 200 + 50 * i
+        # a few baselines reach past the grid on purpose
+        uvw = rng.uniform(-6000, 6000, (nrow, 3))
+        mask = (rng.random((nrow, nchan)) > 0.2).astype(np.uint8)
+        wgt = rng.random((2, nrow, nchan))
+        counts = _compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, np.float64, **signs)
+        path = f"band0000_time0000/p{i}"
+        _write_piece(store, path, counts, wsum_nat=float((wgt * mask[None]).sum()))
+        pieces[path] = (uvw, mask, wgt)
+    assert any(
+        _counts_reference(u, freq, m, w, n, n, cell, **signs).sum() < (w * m[None]).sum() - 1e-9
+        for u, m, w in pieces.values()
+    ), "no sample fell off the grid; the out-of-grid term is untested"
+
+    groups, wsum_img = write_group_counts(store, {(0,): list(pieces)}, robust, filter_level=5.0, npix_super=npix_super)
+
+    applied = xr.open_zarr(store, group=groups[(0,)], consolidated=False).COUNTS.values
+    for path, (uvw, mask, wgt) in pieces.items():
+        img = counts_to_weights(applied.copy(), uvw, freq, wgt.copy(), mask, n, n, cell, cell, robust, **signs)
+        want = float(img[:, mask.astype(bool)].sum())
+        np.testing.assert_allclose(wsum_img[path], want, rtol=1e-12)
