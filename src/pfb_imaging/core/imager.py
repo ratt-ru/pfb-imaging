@@ -514,6 +514,9 @@ def _grid_image_body(
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # float64 copy for the frequency check alone: summed over hundreds of
+    # partitions in float32 it drifts to within a factor of 2 of the 1e-6 rtol
+    wsum_check = np.zeros(ncorr, dtype=np.float64)
     # worst Re(B) approximation error over this image's partitions (wiki D46)
     beam_imre_max = 0.0
     # float64 regardless of --precision: the tree may be single-precision
@@ -566,6 +569,8 @@ def _grid_image_body(
             overwrite_weight=True,
             model=model,
         )
+        # before anything is written, so a failed prediction leaves no partial node
+        _check_prediction("imaging wsum", key, float(prod["WSUM"].astype(np.float64).sum()), wsum_pred[key], 1e-4)
 
         part_vars = {
             "VIS": (("corr", "row", "chan"), part.VIS.values),
@@ -635,8 +640,8 @@ def _grid_image_body(
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
+        wsum_check += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
-        _check_prediction("imaging wsum", key, float(prod["WSUM"].astype(np.float64).sum()), wsum_pred[key], 1e-4)
     # release the last partition's vis-space data before the band products are
     # assembled (#339); part_vars holds the same VIS/WEIGHT/MASK/UVW buffers
     del part, part_vars, part_out, prod
@@ -648,7 +653,7 @@ def _grid_image_body(
     # one level down, so the whole reduction is the imaging-weighted mean over
     # pieces (wiki D28). Reduced with corr-summed weights and stored scalar, as
     # dt2fits already does for freq_mfs.
-    wsum_tot = float(wsum_sum.astype(np.float64).sum())
+    wsum_tot = float(wsum_check.sum())
     freq_gridded = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
     # the driver's value is the one the model was rendered at; this pins that it
     # is the same reduction (to the --precision rounding of WSUM)
@@ -1406,8 +1411,9 @@ def imager(
     # are streamed by write_group_counts below, never held per piece
     counts_sources = {}
     # piece node path -> (wsum_nat, freq_out), for the effective frequency
-    # computed below before pass 2
+    # computed below before pass 2; scratch node -> its piece paths
     piece_info = {}
+    node_pieces = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
@@ -1423,6 +1429,7 @@ def imager(
         for c, ds in zip(children, pieces):
             a = ds.attrs
             piece_info[f"{name}/{c}"] = (float(a["wsum_nat"]), float(a["freq_out"]))
+            node_pieces.setdefault(name, []).append(f"{name}/{c}")
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1493,7 +1500,7 @@ def imager(
     # every image's effective frequency, before pass 2 (wiki D28): the model is
     # rendered at it, so pass 2 can form residuals while the vis are in memory
     for _, src_names, meta in work:
-        pieces = {p: wsum_img[p] for p in piece_info if p.split("/")[0] in src_names}
+        pieces = {p: wsum_img[p] for sn in src_names for p in node_pieces[sn]}
         meta["wsum_img"] = pieces
         meta["freq_out"] = effective_frequency(
             [(w, piece_info[p][1]) for p, w in pieces.items()], band_centres[meta["bandid"]]
