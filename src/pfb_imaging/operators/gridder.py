@@ -403,9 +403,10 @@ def partition_residual(
     for c in range(ncorr):
         # masked, as in residual_from_partitions: absent rows carry NaN UVW
         model_vis = dirty2vis(uvw=uvw, freq=freq, mask=mask, dirty=(part.BEAM.values[c] * model[c]).T, **geom)
-        rvis = part.VIS.values[c] - model_vis
-        # masked samples are skipped, so a NaN VIS in an absent row cannot leak in
-        chi2[c] = float(np.sum(part.WEIGHT.values[c] * np.abs(np.where(mask, rvis, 0.0)) ** 2))
+        # zero masked samples explicitly: a NaN VIS in an absent row leaks through
+        # vis2dirty's mask on aarch64, so the mask alone is not enough
+        rvis = np.where(mask, part.VIS.values[c] - model_vis, 0.0)
+        chi2[c] = float(np.sum(part.WEIGHT.values[c] * np.abs(rvis) ** 2))
         vis2dirty(
             uvw=uvw,
             freq=freq,
