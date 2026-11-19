@@ -219,7 +219,7 @@ def _synth_piece(freq_out, wsum_nat, beam_val, nrow=10, nbeam=6, seed=0, beam=No
             "BEAM_SMALL": (("corr", "m_beam", "l_beam"), small),
         },
         coords={"corr": ["I"], "l_beam": lm, "m_beam": lm},
-        attrs={"freq_out": float(freq_out), "wsum_nat": float(wsum_nat), "ra0": 1.0, "dec0": -0.5},
+        attrs={"freq_out": float(freq_out), "wsum_img": float(wsum_nat), "ra0": 1.0, "dec0": -0.5},
     )
 
 
@@ -230,7 +230,7 @@ def test_concat_pieces_single_is_identity():
 
 def test_concat_pieces_weighted_beam_and_freq():
     """Pieces of a partition may differ in beam and effective frequency; both
-    reduce as wsum_nat-weighted means. Taking piece 0's beam (the old
+    reduce as wsum_img-weighted means. Taking piece 0's beam (the old
     behaviour) silently discarded the rest -- issue #296, wiki D28.
     """
     a = _synth_piece(1.0e9, 3.0, 1.0, nrow=10, seed=1)
@@ -240,7 +240,7 @@ def test_concat_pieces_weighted_beam_and_freq():
 
     assert out.sizes["row"] == 16
     np.testing.assert_allclose(out.attrs["freq_out"], (3.0 * 1.0e9 + 1.0 * 1.4e9) / 4.0)
-    np.testing.assert_allclose(out.attrs["wsum_nat"], 4.0)
+    np.testing.assert_allclose(out.attrs["wsum_img"], 4.0)
     np.testing.assert_allclose(out.BEAM_SMALL.values, (3.0 * 1.0 + 1.0 * 5.0) / 4.0)
 
 

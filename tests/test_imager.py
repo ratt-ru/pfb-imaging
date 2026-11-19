@@ -675,6 +675,9 @@ def test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels(ms_name, tmp_path)
     np.testing.assert_array_equal(a.l_beam.values, beam_lm)
     np.testing.assert_array_equal(a.l_beam.values, b.l_beam.values)
 
+    # pass 2 stamps each piece's predicted imaging wsum (natural weighting here)
+    for p in (a, b):
+        p.attrs["wsum_img"] = p.attrs["wsum_nat"]
     part = _concat_pieces([a, b])
     grid = np.array([a.attrs["ra"], a.attrs["dec"]])
     placed = partition_beam(part, grid, cell, npix, npix)
@@ -1338,7 +1341,7 @@ def test_concat_pieces_reports_the_worst_beam_imre_ratio():
                 "FREQ": (("chan",), np.array([1.4e9])),
                 "BEAM": (("corr", "y", "x"), np.ones((1, 2, 2), dtype=np.float32)),
             },
-            attrs={"wsum_nat": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
+            attrs={"wsum_img": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
         )
 
     part = _concat_pieces([_piece(0.01, 1.0), _piece(0.25, 1.0), _piece(0.05, 1.0)])

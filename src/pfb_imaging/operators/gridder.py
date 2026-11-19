@@ -111,7 +111,7 @@ def grid_partition(
     wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
 
     # the partition BEAM is already on the output image grid: core.imager
-    # reduces the pieces' field-centred beams (_concat_pieces, wsum_nat-weighted
+    # reduces the pieces' field-centred beams (_concat_pieces, wsum_img-weighted
     # mean, wiki D28) and places the mean once (stokes2vis.partition_beam, #365):
     # (corr, ny, nx), tangent point + target offset and 1/n included. Here it is
     # pure pass-through -- cast to the vis dtype and returned, never used in

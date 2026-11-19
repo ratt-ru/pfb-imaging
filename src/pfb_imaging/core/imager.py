@@ -314,58 +314,48 @@ def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) ->
 def effective_frequency(pieces, freq_nominal):
     """An output image's effective frequency, from its pieces, before pass 2 (wiki D28).
 
-    The band's ``freq_out`` is the imaging-wsum-weighted mean of its partitions'
-    frequencies, each partition's frequency being the ``wsum_nat``-weighted mean
-    of its pieces' (``_concat_pieces``). Each partition's imaging wsum is the sum
-    of its pieces' (``weighting.piece_imaging_wsum``), so the whole reduction is
-    known from pass 1 and the counts. Pass 2 recomputes it from its gridded
-    ``WSUM`` and refuses a disagreement.
+    The imaging-wsum-weighted mean of the pieces' own effective frequencies:
+    the image is a sum of imaging-weighted visibilities, so to first order in
+    the spectrum a source appears at this frequency, and it is the one the
+    transferred model is rendered at. Partition frequencies and beams are
+    reduced on the same weights (``_concat_pieces``), and so is the band level
+    in pass 2, which recomputes this from its gridded ``WSUM`` and refuses a
+    disagreement.
 
     Args:
-        pieces: ``(partition key, wsum_nat, freq_out, wsum_img)`` per piece.
+        pieces: ``(wsum_img, freq_out)`` per piece of the image.
         freq_nominal: Fallback when the image carries no weight.
 
     Returns:
         The effective frequency in Hz.
     """
-    parts = {}
-    for key, wnat, freq, wimg in pieces:
-        acc = parts.setdefault(key, [0.0, 0.0, 0.0, freq])
-        acc[0] += wnat
-        acc[1] += wnat * freq
-        acc[2] += wimg
-    num = den = 0.0
-    for wnat, wf, wimg, f0 in parts.values():
-        num += wimg * (wf / wnat if wnat > 0 else f0)
-        den += wimg
-    return float(num / den) if den > 0 else float(freq_nominal)
+    w = np.array([p[0] for p in pieces], dtype=np.float64)
+    f = np.array([p[1] for p in pieces], dtype=np.float64)
+    den = float(w.sum())
+    return float((w * f).sum() / den) if den > 0 else float(freq_nominal)
 
 
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
     Rows are concatenated; the field-centred BEAM_SMALL and the effective
-    frequency are combined as ``wsum_nat``-weighted means. Pieces of a
-    partition can differ in both -- BeamWizard evaluates the beam at the
-    piece's own timestamps, and post-#296 at its own effective frequency -- so
-    taking piece 0's beam, as this used to, silently discarded every other
-    piece (wiki D28). The caller places the mean on the image grid once
-    (``partition_beam``); placement is linear, so that equals averaging the
-    placed beams (#365).
-
-    The weights are the *natural* wsum because this runs before gridding, where
-    the robust imaging weights do not yet exist. Getting them would mean
-    passing per-piece row offsets into grid_partition and reducing the beams
-    after gridding, for a correction to a beam that varies slowly with
-    frequency. The band-level reduction in _grid_image does use the imaging
-    weights; see wiki D28 for why the mixed basis is acceptable.
+    frequency are combined as ``wsum_img``-weighted means, the pieces'
+    imaging-weight sums the driver predicted before pass 2
+    (``weighting.piece_imaging_wsum``). Pieces of a partition can differ in
+    both -- BeamWizard evaluates the beam at the piece's own timestamps, and
+    post-#296 at its own effective frequency -- so taking piece 0's beam, as
+    this used to, silently discarded every other piece (wiki D28). The caller
+    places the mean on the image grid once (``partition_beam``); placement is
+    linear, so that equals averaging the placed beams (#365). The weights are
+    the imaging ones, the same basis as the band-level reduction in pass 2,
+    because those are what each piece contributes to the gridded image.
 
     Args:
         plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
 
     Returns:
         The merged partition Dataset, carrying the weighted ``freq_out`` and
-        the summed ``wsum_nat`` in its attrs. A single-piece list is returned
+        the summed ``wsum_img`` in its attrs. A single-piece list is returned
         unchanged.
     """
     if len(plist) == 1:
@@ -388,18 +378,18 @@ def _concat_pieces(plist):
                 "concat group has mismatched beam grids; cannot average BEAM_SMALL"
             )
 
-    w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
-    wsum_nat = float(w.sum())
+    w = np.array([float(p.attrs["wsum_img"]) for p in plist], dtype=np.float64)
+    wsum_img = float(w.sum())
     beam = None
-    if wsum_nat > 0:
+    if wsum_img > 0:
         freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
-        freq_out = float((w * freqs).sum() / wsum_nat)
+        freq_out = float((w * freqs).sum() / wsum_img)
         if has_beam:
             # accumulate rather than stack: one buffer, not npiece of them
             beam = np.zeros(plist[0].BEAM_SMALL.shape, dtype=np.float64)
             for wi, p in zip(w, plist):
                 beam += wi * p.BEAM_SMALL.values
-            beam /= wsum_nat
+            beam /= wsum_img
     else:
         freq_out = float(plist[0].attrs["freq_out"])
         if has_beam:
@@ -414,7 +404,7 @@ def _concat_pieces(plist):
     if has_beam:
         part["BEAM_SMALL"] = (part.BEAM_SMALL.dims, beam.astype(part.BEAM_SMALL.dtype))
     part.attrs["freq_out"] = freq_out
-    part.attrs["wsum_nat"] = wsum_nat
+    part.attrs["wsum_img"] = wsum_img
     # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
     # is what `part = plist[0].drop_vars(...)` would otherwise leave here.
     part.attrs["beam_imre_ratio"] = max(float(p.attrs.get("beam_imre_ratio", 0.0)) for p in plist)
@@ -493,9 +483,10 @@ def _grid_image_body(
     for sn in src_names:
         for cname, child in dt[sn].children.items():
             ds = _load_piece(child)
+            ds.attrs["wsum_img"] = meta["wsum_img"][f"{sn}/{cname}"]
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
-            wsum_pred[key] = wsum_pred.get(key, 0.0) + meta["wsum_img"][f"{sn}/{cname}"]
+            wsum_pred[key] = wsum_pred.get(key, 0.0) + ds.attrs["wsum_img"]
 
     # the applied (filtered, box-summed) group counts, written once by the driver
     # (write_group_counts); grid_partition copies before use
@@ -648,11 +639,9 @@ def _grid_image_body(
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
     # partition frequencies -- the identical reduction beam_sum uses below.
-    # That is why these weights must be the imaging prod["WSUM"] and not the
-    # natural wsum_nat used inside _concat_pieces: they are what actually
-    # determines each partition's contribution to the summed image, and BEAM
-    # and freq_out must not be weighted by different quantities at the same
-    # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
+    # These are the imaging prod["WSUM"], the same basis _concat_pieces uses
+    # one level down, so the whole reduction is the imaging-weighted mean over
+    # pieces (wiki D28). Reduced with corr-summed weights and stored scalar, as
     # dt2fits already does for freq_mfs.
     wsum_tot = float(wsum_sum.astype(np.float64).sum())
     freq_gridded = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
@@ -1437,8 +1426,8 @@ def imager(
     # applied-weighting group -> its pieces' node paths; the counts themselves
     # are streamed by write_group_counts below, never held per piece
     counts_sources = {}
-    # piece node path -> (partition key, wsum_nat, freq_out), for the effective
-    # frequency computed below before pass 2
+    # piece node path -> (wsum_nat, freq_out), for the effective frequency
+    # computed below before pass 2
     piece_info = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
@@ -1454,11 +1443,7 @@ def imager(
             counts_sources.setdefault(counts_key(bandid, timeid), []).extend(f"{name}/{c}" for c in children)
         for c, ds in zip(children, pieces):
             a = ds.attrs
-            piece_info[f"{name}/{c}"] = (
-                (a["msid"], a["field_name"], a["spw_name"], a["baseline_group"]),
-                float(a["wsum_nat"]),
-                float(a["freq_out"]),
-            )
+            piece_info[f"{name}/{c}"] = (float(a["wsum_nat"]), float(a["freq_out"]))
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1517,7 +1502,7 @@ def imager(
     # store; pass-2 workers read their group's grid from there (#339)
     counts_groups = {}
     # natural weighting: the imaging weights are the natural ones
-    wsum_img = {path: info[1] for path, info in piece_info.items()}
+    wsum_img = {path: info[0] for path, info in piece_info.items()}
     if robustness is not None:
         counts_groups, wsum_img = write_group_counts(
             scratch_url, counts_sources, robustness, filter_level=filter_counts_level, npix_super=npix_super
@@ -1532,7 +1517,7 @@ def imager(
         pieces = {p: wsum_img[p] for p in piece_info if p.split("/")[0] in src_names}
         meta["wsum_img"] = pieces
         meta["freq_out"] = effective_frequency(
-            [(*piece_info[p], w) for p, w in pieces.items()], band_centres[meta["bandid"]]
+            [(w, piece_info[p][1]) for p, w in pieces.items()], band_centres[meta["bandid"]]
         )
     if transfer_model_from is not None:
         msg = transfer_coverage_warning([meta["freq_out"] for _, _, meta in work], transfer_coverage)
