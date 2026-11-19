@@ -169,8 +169,9 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
     ratcheting post-gc `anon` per pid = below-Python retention; ratcheting `shm` = arrays
     shipped through the object store; flat with a high peak = per-task transients.
 * **Deconvolution operators.** `HessianTree` is PSF-convolution only;
-  `gridder.residual_from_partitions` owns the exact degrid/grid path and **never recomputes
-  the PSF**; `BandWorkerPool` workers claim nominal (1e-2) CPUs because a real claim can
+  `gridder.residual_from_partitions` owns deconv's exact degrid/grid path and **never recomputes
+  the PSF** (the imager's transfer residual is gridded from residual visibilities in pass 2
+  instead, D65; both degrid through `gridder.degrid_apparent`); `BandWorkerPool` workers claim nominal (1e-2) CPUs because a real claim can
   deadlock scheduling (D8), and read their own vis-scale inputs straight from the store so
   that data never enters the driver or the Ray object store (D10). The driver sizes the local
   cluster to `max(nworkers, nband+1)`. Rationale: `docs/wiki/imager-pipeline.md`.
