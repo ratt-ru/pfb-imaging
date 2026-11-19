@@ -56,11 +56,13 @@ log = pfb_logging.get_logger("IMAGER")
 def _partition_fits(
     fits_dir, out_name, pid, field_name, baseline_group, prod, meta, freq_out, cell_rad, do_psf, do_beam
 ):
-    """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
+    """Write one partition's sanity-check FITS (dirty [+residual] [+psf] [+beam]).
 
     Runs inside the pass-2 worker while the partition products are in memory;
-    per-partition DIRTY/PSF are wsum-normalised, the beam is written as stored
-    (effective response B/n, wiki D22).
+    per-partition DIRTY/RESIDUAL/PSF are wsum-normalised, the beam is written as
+    stored (effective response B/n, wiki D22). The residual exists under
+    ``--transfer-model-from``: each partition's own misfit to the band model,
+    so a partition that calibrated worse than its siblings stands out.
     """
     field = str(field_name).replace(" ", "_").replace("/", "-")
     cell_deg = np.rad2deg(cell_rad)
@@ -91,6 +93,10 @@ def _partition_fits(
         dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
     ny_im, nx_im = prod["DIRTY"].shape[1:]
     save_fits(dirty, stem.format(var="dirty"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
+    if "RESIDUAL" in prod:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            residual = np.where(wsum > 0, prod["RESIDUAL"] / wsum, 0.0)
+        save_fits(residual, stem.format(var="residual"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
     if do_psf:
         with np.errstate(invalid="ignore", divide="ignore"):
             psf = np.where(wsum > 0, prod["PSF"] / wsum, 0.0)

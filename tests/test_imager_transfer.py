@@ -321,9 +321,12 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
         transfer_model_from=mds_path,
         **{**common, "fits_mfs": True},
         fits_output_folder=str(fits_dir),
+        fits_per_partition=True,
     )
     # the transferred residual reaches FITS beside the dirty image
     assert list(fits_dir.glob("*_residual_*mfs.fits")) and list(fits_dir.glob("*_dirty_*mfs.fits"))
+    from astropy.io import fits as afits
+
     dt = xr.open_datatree(second + "_I.dt", engine="zarr", chunks=None)
     try:
         nodes = sorted(n for n in dt.children if n.startswith("band"))
@@ -332,6 +335,16 @@ def test_transferred_truth_nulls_the_residual(sky_truth, ms_meta, ms_name, tmp_p
             assert {"MODEL", "RESIDUAL", "BRESIDUAL"} <= set(band.data_vars)
             assert band.attrs["transferred_from"] == mds_path
             assert band.MODEL.dtype == band.DIRTY.dtype
+            # each partition's own residual FITS, wsum-normalised: undoing the
+            # normalisation and summing gives the band RESIDUAL
+            parts = sorted(c for c in dt[n].children if c.startswith("part"))
+            total = np.zeros(band.RESIDUAL.shape[1:])
+            for pid, c in enumerate(parts):
+                (path,) = (fits_dir / "second_I_partitions").glob(f"residual_{n}_part{pid:04d}_*.fits")
+                wsum_p = float(dt[n][c].attrs["wsum"][0])
+                total += wsum_p * np.squeeze(afits.getdata(path))
+            ref = band.RESIDUAL.values[0]
+            np.testing.assert_allclose(total, ref, rtol=0, atol=1e-5 * np.abs(ref).max())
         residual = sum(dt[n].ds.RESIDUAL[0] for n in nodes).values
         peak = float(np.abs(residual).max() / wsum)
         bresidual = sum(dt[n].ds.BRESIDUAL[0] for n in nodes).values
