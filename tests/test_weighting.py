@@ -12,6 +12,7 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.weighting import (
     _compute_counts,
     box_sum_counts,
+    compute_sparse_counts,
     counts_to_weights,
     filter_extreme_counts,
     sparse_counts,
@@ -365,3 +366,27 @@ def test_predicted_imaging_wsum_matches_the_applied_weights(tmp_path, robust, np
         img = counts_to_weights(applied.copy(), uvw, freq, wgt.copy(), mask, n, n, cell, cell, robust, **signs)
         want = float(img[:, mask.astype(bool)].sum())
         np.testing.assert_allclose(wsum_img[path], want, rtol=1e-12)
+
+
+@pmp("dtype", [np.float32, np.float64])
+def test_compute_sparse_counts_equals_the_dense_grid_made_sparse(dtype):
+    """The scatter-tracked occupied cells equal flatnonzero over the dense grid (#365).
+
+    Two correlations, flagged samples, baselines past the grid edge, and a cell
+    reached only by zero weights (empty, as flatnonzero has it).
+    """
+    rng = np.random.default_rng(5)
+    nrow, nchan, n = 400, 3, 64
+    cell = np.deg2rad(20 / 3600)
+    uvw = rng.uniform(-6000, 6000, (nrow, 3))
+    freq = np.linspace(1.0e9, 1.4e9, nchan)
+    mask = (rng.random((nrow, nchan)) > 0.3).astype(np.uint8)
+    wgt = rng.random((2, nrow, nchan)).astype(dtype)
+    wgt[:, :20] = 0
+    kw = dict(usign=-1.0, vsign=1.0)
+    want = sparse_counts(_compute_counts(uvw, freq, mask, wgt, n, n, cell, cell, dtype, **kw))
+    got = compute_sparse_counts(uvw, freq, mask, wgt, n, n, cell, cell, dtype, **kw)
+    assert want["COUNTS_INDEX"][2] == got["COUNTS_INDEX"][2]
+    np.testing.assert_array_equal(got["COUNTS_INDEX"][1], want["COUNTS_INDEX"][1])
+    np.testing.assert_array_equal(got["COUNTS_VALUE"][1], want["COUNTS_VALUE"][1])
+    assert got["COUNTS_VALUE"][1].dtype == dtype

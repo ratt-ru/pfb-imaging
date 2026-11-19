@@ -22,7 +22,7 @@ from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
-from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, sparse_counts, weight_data
+from pfb_imaging.utils.weighting import as_contiguous_readonly_view, compute_sparse_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -722,7 +722,8 @@ def stokes_vis(
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     if compute_counts:
-        counts = _compute_counts(
+        # only the occupied cells: the dense grid is freed inside (#365)
+        counts_vars = compute_sparse_counts(
             uvw,
             freq,
             mask,
@@ -745,8 +746,8 @@ def stokes_vis(
     if beam_small is not None:
         data_vars["BEAM_SMALL"] = (("corr", "m_beam", "l_beam"), beam_small.astype(real_type))
     if compute_counts:
-        data_vars.update(sparse_counts(counts))
-        del counts  # the dense grid is not needed through the zarr write
+        data_vars.update(counts_vars)
+        del counts_vars
 
     coords = {
         "chan": (("chan",), freq),

@@ -21,27 +21,30 @@ JIT_OPTIONS = {
 
 
 @njit(nogil=True, cache=True)
-def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
-    """Nearest-cell sum of the weights on the (folded, v >= 0) padded uv grid.
+def _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_size_y, usign, vsign):
+    """Nearest-cell sum of the weights into ``counts`` (folded, v >= 0 padded uv grid).
 
     Serial on purpose: per-thread grids plus their sum held nthreads + 1 padded
     grids (1.6 GiB at 3840^2 with 4 threads) and, measured on 1.3M-27M samples
     on a 6528^2 grid, were no faster -- zeroing and summing whole grids costs
     more than the scatter they parallelise (#339).
-    """
-    # ufreq
-    u_cell = 1 / (nx * cell_size_x)
-    # factor of 2 because -umax/2 <= u < umax
-    umax = np.abs(1 / cell_size_x / 2)
 
-    # vfreq
+    With a non-empty ``seen`` (``nx * ny`` u1, zeroed) it also returns the flat
+    ``u * ny + v`` cells it touched, in first-touch order, so a caller can read
+    the occupied cells without scanning the grid (#365). With an empty one it
+    returns an empty array.
+    """
+    # factor of 2 because -umax/2 <= u < umax
+    nx, ny = counts.shape[1], counts.shape[2]
+    u_cell = 1 / (nx * cell_size_x)
+    umax = np.abs(1 / cell_size_x / 2)
     v_cell = 1 / (ny * cell_size_y)
     vmax = np.abs(1 / cell_size_y / 2)
 
-    ncorr, nrow, nchan = wgt.shape
-
-    counts = np.zeros((ncorr, nx, ny), dtype=dtype)
-
+    track = seen.size > 0
+    cells = np.empty(1024 if track else 0, dtype=np.int64)
+    ncell = 0
+    nrow, nchan = mask.shape
     for r in range(nrow):
         uvw_row = uvw[r]
         wgt_row = wgt[:, r]
@@ -63,19 +66,65 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtyp
             u_idx = np.int32(np.floor(ug))
             v_idx = np.int32(np.floor(vg))
 
-            # corr weights
-            wrf = wgt_row[:, f]
-
-            # LB - is there an easier check for this?
             if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
                 # out of bounds so continue.
                 # raising an error means we can't grid at sub-Nyquist
                 continue
 
-            # nearest neighbour
-            counts[:, u_idx, v_idx] += wrf
+            if track:
+                k = np.int64(u_idx) * ny + v_idx
+                if not seen[k]:
+                    seen[k] = 1
+                    if ncell == cells.size:
+                        grown = np.empty(2 * cells.size, dtype=np.int64)
+                        grown[:ncell] = cells
+                        cells = grown
+                    cells[ncell] = k
+                    ncell += 1
 
+            # nearest neighbour
+            counts[:, u_idx, v_idx] += wgt_row[:, f]
+
+    return cells[:ncell]
+
+
+@njit(nogil=True, cache=True)
+def _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
+    """Dense ``(corr, nx, ny)`` counts grid; see ``_accumulate_counts``."""
+    counts = np.zeros((wgt.shape[0], nx, ny), dtype=dtype)
+    _accumulate_counts(
+        uvw, freq, mask, wgt, counts, np.empty(0, dtype=np.uint8), cell_size_x, cell_size_y, usign, vsign
+    )
     return counts
+
+
+def compute_sparse_counts(uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, usign=1.0, vsign=-1.0):
+    """A piece's counts as its occupied cells, without scanning the dense grid (#365).
+
+    Equal to ``sparse_counts(_compute_counts(...))``. The grid and the touched
+    mask are allocated by numpy, whose zeroed allocations are lazily mapped, so
+    only the pages the piece's samples land on are ever touched; the occupied
+    cells come from the scatter itself rather than ``np.flatnonzero`` over the
+    whole padded grid, which #365 measured at 6% of pass 1.
+
+    Returns:
+        Data variables ``COUNTS_INDEX``/``COUNTS_VALUE``, as ``sparse_counts``.
+    """
+    ncorr = wgt.shape[0]
+    counts = np.zeros((ncorr, nx, ny), dtype=dtype)
+    seen = np.zeros(nx * ny, dtype=np.uint8)
+    cells = _accumulate_counts(uvw, freq, mask, wgt, counts, seen, cell_size_x, cell_size_y, usign, vsign)
+    del seen
+    cells.sort()
+    values = counts.reshape(ncorr, -1)[:, cells]
+    del counts
+    index = np.arange(ncorr, dtype=np.int64)[:, None] * (nx * ny) + cells[None, :]
+    # a cell touched only by zero weights is empty, as flatnonzero would have it
+    keep = values != 0
+    return {
+        "COUNTS_INDEX": (("counts_cell",), index[keep], {"shape": [ncorr, nx, ny]}),
+        "COUNTS_VALUE": (("counts_cell",), values[keep]),
+    }
 
 
 @njit(**JIT_OPTIONS)
