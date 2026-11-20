@@ -305,9 +305,9 @@ def prefixes(a):
     return pfb, wsc
 
 
-# core/imager.py hardcodes the COUNTS uv-grid padding: it is NOT psf_oversize,
-# which only sizes the PSF image.  Kept in sync manually; the actual COUNTS shape
-# read back from the .scratch store is checked against it.
+# The COUNTS uv-grid padding, passed to pfb imager as --min-padding: it is NOT
+# psf_oversize, which only sizes the PSF image.  The actual COUNTS shape read
+# back from the .scratch store is checked against it.
 PFB_MIN_PADDING = 1.7
 
 
@@ -484,6 +484,8 @@ def pfb_cmd(a, prefix):
         repr(a.epsilon),
         "--psf-oversize",
         repr(a.psf_oversize),
+        "--min-padding",
+        repr(PFB_MIN_PADDING),
         "--double-accum" if a.double_accum else "--no-double-accum",
         "--overwrite",
         # the reduced counts grid only ever lives in the driver's memory, so the

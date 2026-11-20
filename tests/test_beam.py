@@ -94,7 +94,9 @@ def test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis(
     toward, away = (float(lf), float(mf)), (-float(lf), -float(mf))
     check_beam_reach([far], tangent, {toward}, nx, ny, cell, half_diag * (1 + 1e-9), np.inf)
     check_beam_reach([far], tangent, {away}, nx, ny, cell, (2 * dist + half_diag) * (1 + 1e-9), np.inf)
-    with pytest.raises(ValueError, match="beyond the 9.00 deg the beam cube covers"):
+    with pytest.raises(
+        ValueError, match="beyond the .* deg the beam can be placed out to: the beam cube covers 9.00 deg"
+    ):
         check_beam_reach([far], tangent, {away}, nx, ny, cell, 2 * dist + half_diag - 1e-6, 9.0)
 
     # inside the cube's inscribed disk but within two cube pixels of its edge: refused

@@ -779,18 +779,20 @@ def check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad):
     return float(np.rad2deg(reach))
 
 
-def counts_grid(max_blength, max_freq, max_fov_rad, min_padding):
+def counts_grid(max_uvw, max_freq, max_fov_rad, min_padding):
     """The counts grid that serves every image within ``--max-field-of-view`` (#354).
 
     Its uv cell, ``1 / (min_padding * sqrt(2) * R)``, is the padded image-grid
     cell of the largest square image within ``R`` (side ``sqrt(2) * R``), and
-    it reaches one cell past the longest baseline at the highest frequency. It
+    it reaches one cell past the longest baseline at the highest frequency,
+    measured in 3D: rephasing (``--phase-dir``, a mosaic barycentre) rotates
+    ``uvw``, so only ``|uvw|`` bounds the ``uv`` pass 1 grids. It
     is returned as the padded uv grid of a virtual image, the form the counts
     kernels take: an even ``n`` puts every cell edge on a multiple of the uv
     cell, so a grid with the same cell bins identically whatever its extent.
 
     Args:
-        max_blength: Longest baseline (m).
+        max_uvw: Longest baseline, ``max |uvw|`` (m).
         max_freq: Highest frequency gridded (Hz).
         max_fov_rad: ``R`` (rad).
         min_padding: ``--min-padding``.
@@ -799,7 +801,7 @@ def counts_grid(max_blength, max_freq, max_fov_rad, min_padding):
         ``(n, n, cell)``: grid size and the virtual image cell (rad).
     """
     du = 1.0 / (min_padding * np.sqrt(2.0) * max_fov_rad)
-    umax = max_blength * max_freq / lightspeed
+    umax = max_uvw * max_freq / lightspeed
     n = 2 * (int(np.ceil(umax / du)) + 1)
     return n, n, 1.0 / (n * du)
 
@@ -869,8 +871,9 @@ def check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_
     radius_deg = float(np.rad2deg(radius))
     if radius_deg > axis_deg * (1 + 1e-12):
         raise ValueError(
-            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {limit_deg:.2f} deg "
-            f"the beam cube covers at every parallactic angle (less a two-pixel margin at its edge). "
+            f"the image reaches {radius_deg:.3f} deg from a pointing centre, beyond the {axis_deg:.3f} deg "
+            f"the beam can be placed out to: the beam cube covers {limit_deg:.2f} deg at every parallactic "
+            f"angle (less a two-pixel margin at its edge). "
             f"Reduce --field-of-view or the pointing offset, or image without --beam-model."
         )
 
@@ -1104,6 +1107,8 @@ def imager(
     all_freqs = []
     all_chan_widths = []
     max_blength = 0
+    # 3D: bounds |uv| after any rephasing, which max_blength (uv only) does not
+    max_uvw = 0
     selected = []  # cached (ims, node, freqs_node, times_node, chan0) for the dispatch loop
     for ims, ms_name in enumerate(ms):
         dt_kwargs = get_engine(ms_name, partition_columns)
@@ -1152,6 +1157,7 @@ def imager(
             uvw = uvw[~uvw_mask]
             if uvw.size:
                 max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
+                max_uvw = max(max_uvw, np.linalg.norm(uvw, axis=-1).max())
             # cache the selected node and its loaded coords so the dispatch loop
             # below does not have to re-open and re-filter the datatree
             selected.append((ims, node, freqs_node, ds.time.load().values, sel.chan0, sel.field_radec))
@@ -1242,7 +1248,7 @@ def imager(
     if weight_on_image_grid:
         counts_nx, counts_ny, counts_cell = nx_pad, ny_pad, cell_rad
     else:
-        counts_nx, counts_ny, counts_cell = counts_grid(max_blength, max_freq, max_fov_rad, min_padding)
+        counts_nx, counts_ny, counts_cell = counts_grid(max_uvw, max_freq, max_fov_rad, min_padding)
         # < 1: finer than the image's own uv cell, so robust weights lean towards natural
         ratio = (nx_pad * cell_rad) / (counts_nx * counts_cell)
         log.info(
@@ -1348,9 +1354,11 @@ def imager(
     if wizards:
         beam_lm, axis_deg, limit_deg = field_beam_axis(wizards, beam_reach_deg, max_freq)
         if axis_deg < beam_reach_deg:
-            log.warning(
+            # routine under --baseline-groups (1.81 deg group cubes against the default R)
+            log.info(
                 f"The beam cube covers {limit_deg:.2f} deg, less than the {beam_reach_deg:.2f} deg "
-                f"--max-field-of-view asks for: images reaching past {axis_deg:.2f} deg from a pointing are refused"
+                f"--max-field-of-view and the pointing offsets ask for: images reaching past "
+                f"{axis_deg:.2f} deg from a pointing are refused"
             )
         try:
             check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_deg, limit_deg)
@@ -1655,6 +1663,10 @@ def imager(
         "cell_rad": float(cell_rad),
         "max_blength": float(max_blength),
         "max_freq": float(max_freq),
+        # the uv grid the imaging weights were computed on (D66)
+        "counts_nx": int(counts_nx),
+        "counts_ny": int(counts_ny),
+        "counts_cell": float(counts_cell),
     }
     xr.Dataset(attrs=root_attrs).to_zarr(dt_url, mode="w")
     log.info(f"Imaging products will be written to {dt_url}")

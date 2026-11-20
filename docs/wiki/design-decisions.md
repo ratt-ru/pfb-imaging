@@ -2392,7 +2392,12 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   grids them on the padded image grid as before; `--no-weight-on-image-grid` grids them on
   `counts_grid`: uv cell `1/(min_padding · √2 · R)`, the padded cell of the largest square
   image within `R` (side `√2 R`), reaching one cell past the longest baseline, with an even
-  size so cell edges fall on multiples of the cell whatever the extent.
+  size so cell edges fall on multiples of the cell whatever the extent. The longest
+  baseline is the 3D `max |uvw|`, because rephasing (`--phase-dir`, a mosaic barycentre)
+  rotates `uvw` before pass 1 grids the counts and `max |uv|` would let the longest spacings
+  fall off the grid, keep their natural weight and so be up-weighted under robust weighting
+  (`wsum_offgrid` keeps the D65 prediction consistent, so nothing would have failed). The
+  `.dt` root records the counts grid as `counts_nx`/`counts_ny`/`counts_cell`.
 - **Rationale:** one meaning per option, and the one BDA already used. The image-grid
   default is kept because a counts cell set by `R` is finer than a smaller image's own, so
   its robust weights lean towards natural: the same recipe would give a different image,
@@ -2419,7 +2424,14 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   and the sparse store it used to skip. With `--no-weight-on-image-grid` every piece
   scatters into a transient dense grid of `(1.7 · √2 R / cell_N)²` cells (`cell_N` the
   Nyquist cell), whatever the image: at R = 3° and an 8 km baseline at 1.7 GHz about
-  11 400², 1 GB in float64 per correlation, and four times that at twice the baseline.
+  11 400², 1 GB in float64 per correlation, and four times that at twice the baseline. That
+  transient is the cheap one, since only touched pages cost anything. Each pass-2 task reads
+  its group's dense grid and copies it (`counts_to_weights` mutates it), so 2 GB per
+  correlation per concurrent task, and the driver's `write_group_counts` holds the
+  accumulator plus, with `npix_super > 0`, the box sum. Relative to a 1° image that is about
+  18×. `npix_super` and `--filter-counts-level` also act on the finer cells: the same
+  `npix_super` is a smaller box in uv, and the filter's median is over a different set of
+  occupied cells.
 - **Source:** #354; `src/pfb_imaging/core/imager.py` (`pointing_reach`,
   `check_image_extent`, `counts_grid`, `field_beam_axis`, `check_beam_reach`);
   `src/pfb_imaging/utils/stokes2vis.py` (katbeam rotation average);
@@ -2434,6 +2446,14 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   `::test_katbeam_axis_reaches_the_max_field_of_view_and_matches_the_analytic_average`.
 
 ## Known debt
+
+- **Dense counts grids are twice the size they need to be.** `_accumulate_counts` folds
+  every sample to `v ≥ 0`, so half of each `(ncorr, counts_nx, counts_ny)` grid is always
+  empty: the pass-1 transient, the driver's group accumulator and the pass-2 read and copy.
+  It mattered little on the padded image grid; under `--no-weight-on-image-grid` these are the
+  largest grids in the run (D66). **Follow-up:** store and reduce a half plane, and give pass
+  2 the Briggs denominator (`write_group_counts` already forms it) instead of the counts, so
+  it needs no copy. Raised in the review of #354.
 
 - **`hci` has no antenna-dependent gain test.** Both end-to-end gain tests give every
   antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a

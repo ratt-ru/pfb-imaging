@@ -120,7 +120,8 @@ def beam_on_image_grid(
     degrid evaluates its beam on, #355) is rotated from the image tangent point
     to the field's pointing and bilinearly interpolated in ``beam_small``
     (meerkat-beams ``beam_on_grid``). A pixel outside the small grid is 0; the
-    driver sizes a wizard's grid to cover the image (``field_beam_axis``).
+    driver sizes the grid to cover every image within ``--max-field-of-view``,
+    less what the beam cube cannot reach (``field_beam_axis``, D66).
 
     Args:
         beam_small: `(ncorr, m_beam.size, l_beam.size)` (Y, X)-ordered maps

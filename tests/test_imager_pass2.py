@@ -548,7 +548,7 @@ def test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image()
     nx_pad = int(np.ceil(1.7 * nx))
     nx_pad += nx_pad % 2
     uvw, freq, mask, wgt = part.UVW.values, part.FREQ.values, part.MASK.values, part.WEIGHT.values
-    max_blength = float(np.hypot(uvw[:, 0], uvw[:, 1]).max())
+    max_uvw = float(np.linalg.norm(uvw, axis=-1).max())
 
     def weights(cnx, cny, ccell):
         counts = _compute_counts(uvw, freq, mask, wgt, cnx, cny, ccell, ccell, wgt.dtype, usign=-1.0, vsign=1.0)
@@ -557,7 +557,7 @@ def test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image()
 
     on_image = weights(nx_pad, nx_pad, cell)
     r = nx_pad * cell / (1.7 * np.sqrt(2.0))
-    cnx, cny, ccell = counts_grid(max_blength, float(freq.max()), r, 1.7)
+    cnx, cny, ccell = counts_grid(max_uvw, float(freq.max()), r, 1.7)
     assert cnx < nx_pad  # a different extent, the same cell edges
     on_fov = weights(cnx, cny, ccell)
     # the reference must actually reweight, else equality says nothing
@@ -566,5 +566,26 @@ def test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image()
     np.testing.assert_allclose(on_fov["DIRTY"], on_image["DIRTY"], rtol=1e-12, atol=0)
 
     # a larger R makes the cells finer, so the weights move towards natural
-    finer = weights(*counts_grid(max_blength, float(freq.max()), 2 * r, 1.7))
+    finer = weights(*counts_grid(max_uvw, float(freq.max()), 2 * r, 1.7))
     assert not np.allclose(finer["WEIGHT"], on_image["WEIGHT"])
+
+
+def test_counts_grid_holds_every_rephased_baseline():
+    """Rephasing rotates uvw, so the grid is sized on |uvw|: no rotated sample lands off it (#354)."""
+    from scipy.constants import c as lightspeed
+    from scipy.spatial.transform import Rotation
+
+    from pfb_imaging.core.imager import counts_grid
+
+    rng = np.random.default_rng(3)
+    uvw = rng.standard_normal((5000, 3)) * np.array([4000.0, 4000.0, 2000.0])
+    freq = 1.7e9
+    n, _, cell = counts_grid(float(np.linalg.norm(uvw, axis=-1).max()), freq, np.deg2rad(3.0), 1.7)
+    half = 1.0 / (2 * cell) - 1.0 / (n * cell)  # one cell inside the edge
+    for rot in Rotation.random(20, random_state=4):
+        uv = rot.apply(uvw)[:, :2] * freq / lightspeed
+        assert np.abs(uv).max() < half
+    # the 2D length alone would not have held them
+    n2, _, cell2 = counts_grid(float(np.hypot(uvw[:, 0], uvw[:, 1]).max()), freq, np.deg2rad(3.0), 1.7)
+    worst = max(np.abs(rot.apply(uvw)[:, :2]).max() for rot in Rotation.random(20, random_state=4))
+    assert worst * freq / lightspeed > 1.0 / (2 * cell2)
