@@ -13,12 +13,11 @@ from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard, beam_on_grid
 from pfb_model_spec.utils.degrid import pixel_lm
 from rarg_python_patterns.multiton import Multiton
-from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
+from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, BEAM_PA_TOLERANCE_DEG, beam_grid
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
@@ -237,7 +236,6 @@ def stokes_vis(
     chan_average=1,
     bda_decorr=1.0,
     max_field_of_view=3.0,
-    beam_reach_deg=None,
     beam_model=None,
     wgt_mode="minvar",
     max_blength=None,
@@ -280,9 +278,6 @@ def stokes_vis(
         bda_decorr: decorrelation threshold for baseline dependent averaging.
         max_field_of_view: radius (deg) about the phase centre within which BDA
             bounds the decorrelation, and within which every image must lie.
-        beam_reach_deg: distance from the pointing (deg) a katbeam beam is
-            evaluated out to; the driver's ``pointing_reach``. Defaults to
-            ``max_field_of_view``.
         beam_model: model to use for beam correction: "katbeam", None, a
             BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
@@ -290,8 +285,9 @@ def stokes_vis(
             phase centre / tangent point). None means image about the field centre.
         target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
             body); resolved to an in-plane (l0, m0) at this piece's own time.
-        beam_lm: 1D field-centred beam axis (deg) for a BeamWizard beam, used for
-            both l and m; the driver sizes it once per run (``utils.beam.beam_grid``).
+        beam_lm: 1D field-centred beam axis (deg), used for both l and m; the
+            driver sizes it once per run (``utils.beam.beam_grid``). Required for
+            a BeamWizard; katbeam defaults to an axis reaching ``max_field_of_view``.
         nthreads: threads available to the task (parallelises the COUNTS gridding
             and meerkat-beams' rotation average).
         double_accum: accumulate the counts in float64 (``--double-accum``);
@@ -690,34 +686,32 @@ def stokes_vis(
                 raw_maps.append(bmap)
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
         elif str(beam_model).lower() == "katbeam":
-            # NB: the evaluation grid is sized at the critically-sampled
-            # (Nyquist) cell, a *separate* quantity from the counts cell
-            # used for the COUNTS uv-grid below. It reaches beam_reach_deg plus
-            # one cell, so bilinear placement of the farthest pixel stays on it.
-            reach = max_field_of_view if beam_reach_deg is None else beam_reach_deg
-            beam_cell_deg = np.rad2deg(1.0 / (max_blength * max_freq / lightspeed))
-            npix = 2 * (int(np.ceil(reach / beam_cell_deg)) + 1)
-            l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-            m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            # the driver's axis when given (pointing_reach at the beam_grid cell),
+            # else one reaching max_field_of_view, for direct callers
+            if beam_lm is None:
+                beam_lm = beam_grid(max_freq, BEAM_DISH_DIAMETER[None], max_field_of_view)
+            l_beam = m_beam = np.asarray(beam_lm, dtype=np.float64)
             if freq_min >= 8.5e8 and freq_max <= 1.8e9:
                 beamo = JimBeam("MKAT-AA-L-JIM-2020")
             elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
                 beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
             else:
                 raise ValueError("Freq range not covered by katbeam")
-            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
-            # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
+            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like
             mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
             # katbeam expects freq in MHz
             fmhz = freq_eff / 1e6
-            beam_small = np.zeros((ncorr, npix, npix), dtype=np.float64)
-            for i, p in enumerate(corr):
-                beam0 = getattr(beamo, p)(ll, mm, fmhz)
-                step = 25
-                angles = np.linspace(0, 359, step)
-                for angle in angles:
-                    beam_small[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
-                beam_small[i] /= angles.size
+            # Rotation average over 25 angles, rotating the coordinates rather
+            # than the image: katbeam is analytic, so this is exact on any grid.
+            # ndimage.rotate on a grid erred by 1.3e-3 at this cell (D66).
+            angles = np.deg2rad(np.linspace(0, 359, 25))
+            beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
+            for angle in angles:
+                ca, sa = np.cos(angle), np.sin(angle)
+                lr, mr = ca * ll - sa * mm, sa * ll + ca * mm
+                for i, p in enumerate(corr):
+                    beam_small[i] += getattr(beamo, p)(lr, mr, fmhz)
+            beam_small /= angles.size
         else:
             raise ValueError(f"Unknown beam model {beam_model}")
 

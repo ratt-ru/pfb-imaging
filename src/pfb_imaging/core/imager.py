@@ -1361,6 +1361,10 @@ def imager(
             f"out to {axis_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
         )
         del wizards
+    elif isinstance(beam_model, str) and beam_model.lower() == "katbeam":
+        # analytic, so no cube limits it (D66)
+        beam_lm = beam_grid(max_freq, BEAM_DISH_DIAMETER[None], beam_reach_deg)
+        log.info(f"katbeam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec")
 
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
@@ -1448,7 +1452,6 @@ def imager(
                         chan_average=chan_average,
                         bda_decorr=bda_decorr,
                         max_field_of_view=max_field_of_view,
-                        beam_reach_deg=beam_reach_deg,
                         beam_model=beam_model if beam_refs is None else beam_refs[bg],
                         wgt_mode=wgt_mode,
                         max_blength=max_blength,

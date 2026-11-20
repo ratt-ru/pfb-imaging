@@ -2285,7 +2285,8 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   largest dish any of the run's beams describes (`BEAM_DISH_DIAMETER`: 13.5 m for `MM` and
   ungrouped, 15 m for `MPM`/`MPMP`). An image whose bilinear nodes reach past the cube's
   largest centred disk, less two cube pixels, is refused before Ray starts. The disk is read
-  from each wizard's `bds.X`/`bds.Y`, and the smallest over the run's cubes binds. katbeam
+  from each wizard's `bds.X`/`bds.Y`, and the smallest over the run's cubes binds. *(D66: katbeam
+  now shares this axis, rotating coordinates instead of the image.)* katbeam
   keeps its own Nyquist grid over `--max-field-of-view`, because its `ndimage.rotate` makes
   the beam depend on the grid, so katbeam pieces still carry an image-scale beam.
 - **Rationale:** the bilinear placement error in the main lobe was measured at
@@ -2380,8 +2381,10 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   tangent point) and means that everywhere. Set-up refuses, before Ray starts, an image
   whose farthest corner, `--target` offsets included, lies beyond `R`
   (`core/imager.check_image_extent`). Beams are described out to `R` plus the farthest
-  field's distance from the tangent point (`pointing_reach`), for both the wizard axis
-  (`field_beam_axis`) and katbeam's Nyquist grid. The wizard axis is capped one diagonal
+  field's distance from the tangent point (`pointing_reach`), on the `beam_grid` axis for
+  both wizards (`field_beam_axis`) and katbeam. katbeam's rotation average now rotates the
+  coordinates of its analytic beam rather than the gridded image (`ndimage.rotate`), which
+  is exact on any grid, so its Nyquist grid is gone. The wizard axis is capped one diagonal
   cell inside the cube's limit (D64), and only then can an image within `R` still be refused
   for reaching past the beam (`check_beam_reach`, also before Ray). `--min-padding` (default
   1.7, previously hard-coded) sets the padded uv grid of the counts. Pass 1 grids the counts
@@ -2401,9 +2404,16 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
 - **Consequences:** the beam axis now reaches 3° (the default) plus the field offset whatever
   the image, capped by the cube: on ESO137-006's group cubes about 543² at 24.1″ out to 1.80°,
   against 385² out to 1.28° under D64, so pass 1 does roughly twice the beam work and stores
-  twice the beam per piece. A smaller `--max-field-of-view` brings it back. katbeam's grid
-  covers `±R` instead of `±R/2`, four times the pixels; katbeam pieces previously had a zero
-  beam beyond 1.5°. Under `--baseline-groups --beam-model L` the 1.81° group-cube limit is
+  twice the beam per piece. An uncapped cube grows more: the ungrouped L cube (3.81°) serves
+  the full 3°, 811² against about 195² for a 1° image, some 17× the beam work and storage per
+  piece. A smaller `--max-field-of-view` brings either back. katbeam got cheaper, not dearer:
+  `ndimage.rotate` erred by 1.3e-3 of the peak on the 26.8″ `beam_grid` cell against a 4.7″
+  Nyquist reference, while the coordinate rotation places within 7e-5 there; at R = 3° its
+  811² grid costs 0.67 s per correlation, against about 44 s for the 4608² Nyquist grid it
+  would otherwise have needed (1.4 GB per worker). It previously covered only `±R/2`, so its
+  beam was zero beyond 1.5°. **Images whose half-diagonal exceeds the default 3° are now
+  refused** where `--max-field-of-view` used to be ignored with BDA off (a 4.3° square UHF
+  image, for instance): raise it. Under `--baseline-groups --beam-model L` the 1.81° group-cube limit is
   below the default `R`, so set-up warns and images reaching further from a pointing are
   refused as before. Gridding the counts under natural weighting costs pass 1 the scatter
   and the sparse store it used to skip. With `--no-weight-on-image-grid` every piece
@@ -2412,14 +2422,16 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   11 400², 1 GB in float64 per correlation, and four times that at twice the baseline.
 - **Source:** #354; `src/pfb_imaging/core/imager.py` (`pointing_reach`,
   `check_image_extent`, `counts_grid`, `field_beam_axis`, `check_beam_reach`);
-  `src/pfb_imaging/utils/stokes2vis.py` (katbeam grid);
+  `src/pfb_imaging/utils/stokes2vis.py` (katbeam rotation average);
   `tests/test_beam.py::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
   `::test_pointing_reach_adds_the_farthest_field_to_the_radius`,
   `::test_check_image_extent_refuses_an_image_past_the_max_field_of_view`,
   `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`;
   `tests/test_imager_pass2.py::test_counts_grid_cell_and_reach`,
   `::test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image`;
-  `tests/test_imager.py::test_no_weight_on_image_grid_matches_the_image_grid_for_the_largest_image`.
+  `tests/test_imager.py::test_no_weight_on_image_grid_matches_the_image_grid_for_the_largest_image`,
+  `::test_imager_refuses_an_image_past_the_max_field_of_view_before_ray`,
+  `::test_katbeam_axis_reaches_the_max_field_of_view_and_matches_the_analytic_average`.
 
 ## Known debt
 

@@ -166,9 +166,9 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    only valid for the node they came from. Groups with no baselines are omitted
    rather than written as empty partitions.
 
-   **The beam grid** (meerkat-beams wizards; katbeam keeps its own Nyquist-sized grid,
-   because `ndimage.rotate` makes its beam depend on the grid) is sized once by the driver,
-   in `core/imager.field_beam_axis`. It does not depend on the image: it reaches
+   **The beam grid** is sized once by the driver, in `core/imager.field_beam_axis` (katbeam
+   uses the same cell and reach, uncapped, and rotates coordinates for its rotation average,
+   D66). It does not depend on the image: it reaches
    `--max-field-of-view` (a radius `R` about the tangent point) plus the farthest field's
    distance from the tangent point (`pointing_reach`, D66), at the cell `utils/beam.beam_grid` sets:
    `h = sqrt(tol) * lambda_min / D_max`. Here `D_max` is the largest dish any of the run's
@@ -220,7 +220,7 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    mean `BEAM_SMALL` on the image grid once at the offset it is gridded with and fold in `1/n`
    (`stokes2vis.partition_beam`, #365; `1/n` alone without a beam model — placement is linear,
    so this equals averaging placed beams, and a wizard piece never writes an image-sized
-   beam; katbeam pieces keep their own Nyquist grid, out to the same reach),
+   beam),
    read the image's `counts/group####` grid and apply `counts_to_weights` per partition, grid
    each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
