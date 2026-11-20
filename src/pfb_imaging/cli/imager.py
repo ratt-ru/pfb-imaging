@@ -117,7 +117,8 @@ def imager(
     overwrite: Annotated[
         bool,
         typer.Option(
-            help="Allow overwrite of output xds",
+            help="Replace an existing .dt, and rebuild a .scratch that cannot serve this run. "
+            "A .scratch whose pass-1 inputs match is reused either way.",
             rich_help_panel="Control",
         ),
     ] = False,
@@ -448,7 +449,8 @@ def imager(
     keep_scratch: Annotated[
         bool,
         typer.Option(
-            help="Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.",
+            help="Keep the .scratch store of pass-1 averaged data. "
+            "A later run whose pass-1 inputs match reuses it and skips reading the MS.",
             rich_help_panel="Control",
         ),
     ] = True,

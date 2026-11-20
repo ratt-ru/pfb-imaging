@@ -134,6 +134,18 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 ## Two passes and the counts product
 
+**A matching scratch is reused (#354, D67).** Pass 1 writes a validity record into the
+scratch root's `pass1` attr after it finishes: the run's pass-1 inputs
+(`core/imager.pass1_inputs`), what set-up read from the MS (`scan_ms`'s `derived`: data
+extent, bands, field centres, track times), the counts grid, each band's channel extent,
+the cube-capped beam axis and a `SCRATCH_SCHEMA` integer. A later run compares its own
+inputs and counts grid with the record before it opens any MS. On a match it skips the MS
+scan and pass 1 entirely and goes straight to the counts reduction, replacing the old
+`counts/` groups; a mismatch is refused, naming each field, or rebuilt under
+`--overwrite`; a scratch with no record (older version, or a pass 1 that did not finish)
+is treated the same way. `--overwrite` governs the `.dt`, which is refused before anything
+runs when it exists without it. To force pass 1 with identical inputs, delete the scratch.
+
 1. **Pass 1** (`utils/stokes2vis.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean

@@ -130,6 +130,9 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
 (`--psf`/`--beam`/`--fits-per-partition`), the two passes and the counts reduction:
 `docs/wiki/imager-pipeline.md`.** Do not restate them here.
 
+* **A `.scratch` is reused only on a matching record** (D67). Anything new that changes
+  what pass 1 writes must enter `core/imager.pass1_inputs` (or the counts grid), or bump
+  `SCRATCH_SCHEMA` — otherwise a stale scratch is silently reused.
 * **Native DataTree API only.** `xr.open_datatree`, `ds.to_zarr(group=…)`, `dt.children`.
   Do not add `xds_from_url`/`xds_from_list`-style wrappers for the `.dt` (the legacy `.dds`
   ones were deleted with their last consumer), and do not add one-level-deep shims around the native API.

@@ -60,7 +60,8 @@ cabs:
           rich_help_panel: Data Selection
       overwrite:
         info:
-          Allow overwrite of output xds
+          Replace an existing .dt, and rebuild a .scratch that cannot serve this run.
+          A .scratch whose pass-1 inputs match is reused either way.
         dtype: bool
         default: false
         metadata:
@@ -391,7 +392,8 @@ cabs:
           rich_help_panel: Imaging
       keep-scratch:
         info:
-          Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.
+          Keep the .scratch store of pass-1 averaged data.
+          A later run whose pass-1 inputs match reuses it and skips reading the MS.
         dtype: bool
         default: true
         metadata:

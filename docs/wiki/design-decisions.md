@@ -2445,6 +2445,41 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   `::test_imager_refuses_an_image_past_the_max_field_of_view_before_ray`,
   `::test_katbeam_axis_reaches_the_max_field_of_view_and_matches_the_analytic_average`.
 
+### D67 — A scratch is reused when its pass-1 record matches the run
+
+- **Context:** pass 1 is the expensive half of `pfb imager` (on ESO137-006, 647 s of set-up
+  reading the MS and 1285 s of pass 1, against 1953 s of pass 2), yet re-imaging at another
+  robustness, or against a new `--transfer-model-from` model, re-ran it from the MS. An
+  existing `.scratch` was refused without `--overwrite` and deleted with it (#354). D66 made
+  pass 1 independent of the image wherever the counts allow.
+- **Decision:** pass 1 ends by writing a record into the scratch root attrs (`pass1`, JSON):
+  `SCRATCH_SCHEMA`, the canonical pass-1 inputs (`pass1_inputs`: selection, columns,
+  chunking, product, precision, averaging, BDA, `--max-field-of-view`, beam model, baseline
+  groups, rephasing, `--target`, weighting mode, `--double-accum`,
+  `--weight-on-image-grid`), the MS-derived values set-up needs (`scan_ms`), the counts grid,
+  the bands' channel extents and the beam axis. The next run compares, before any MS is
+  opened: inputs first, then the counts grid its own image settings imply. A match is
+  reused whatever `--overwrite` says; a mismatch is refused, listing every differing field,
+  unless `--overwrite`, which rebuilds. No record is a mismatch. `--overwrite` otherwise
+  governs the `.dt`, now refused before anything runs rather than after pass 1.
+- **Rationale:** reuse must never be silent about staleness, and must never cost a pass-1
+  rerun the user did not ask for, so it is decided from values rather than file times. MS
+  contents are not fingerprinted: casacore rewrites table files in place and directory
+  mtimes do not track it, so the rule is that rewriting a column in place means deleting the
+  scratch. The package version is recorded but not compared, so a release does not discard
+  every cache; `SCRATCH_SCHEMA` is bumped when what pass 1 writes changes. A beam model
+  passed as an object (tests) cannot be compared and never matches. Under
+  `--weight-on-image-grid` (the default, D66) the counts follow the image, so a change of cell
+  or field of view rebuilds, while robustness, `--filter-counts-level`, `--npix-super`,
+  `--weight-grouping`, `--concat-row`, `--transfer-model-from` and product selection reuse.
+- **Consequences:** the record is written last, after consolidation, so an interrupted pass 1
+  leaves a scratch that is refused rather than half-reused. A reuse skips `scan_ms`, the
+  baseline-group masks, the wizards and pass 1; the R bound and, for a cube-capped axis, the
+  beam reach are still checked against the record before Ray starts.
+- **Source:** #354; `src/pfb_imaging/core/imager.py` (`SCRATCH_SCHEMA`,
+  `read_scratch_record`, `record_diffs`, `pass1_inputs`, `image_geometry`, `scan_ms`);
+  `tests/test_imager_reuse.py`.
+
 ## Known debt
 
 - **Dense counts grids are twice the size they need to be.** `_accumulate_counts` folds
