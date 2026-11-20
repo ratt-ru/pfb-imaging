@@ -1,7 +1,6 @@
 """imager reuses a .scratch whose pass-1 inputs match the run (#354)."""
 
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -67,13 +66,13 @@ def _no_ray(monkeypatch):
 
 
 def test_a_scratch_without_a_record_is_refused_before_the_ms_is_read(ms_name, tmp_path, monkeypatch):
-    """An older or interrupted scratch: refused with the --overwrite hint, before any MS read."""
+    """An older or interrupted scratch: refused with the --rebuild-scratch hint, before any MS read."""
     _no_ray(monkeypatch)
     monkeypatch.setattr(imager_mod, "scan_ms", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MS read")))
     out = tmp_path / "old"
     zarr.open_group(str(out) + "_I.scratch", mode="w")
     assert read_scratch_record(str(out) + "_I.scratch") is None
-    with pytest.raises(RuntimeError, match="no validity record(.|\n)*--overwrite"):
+    with pytest.raises(RuntimeError, match="no validity record(.|\n)*--rebuild-scratch"):
         imager_core([Path(ms_name)], str(out), product="I", field_of_view=1.0, keep_ray_alive=True)
 
 
@@ -135,20 +134,25 @@ def test_a_robustness_change_reuses_the_scratch_and_matches_a_fresh_run(ms_name,
         assert_allclose(reused[b].DIRTY.values, fresh[b].DIRTY.values, rtol=0, atol=1e-8 * np.abs(fresh[b].DIRTY).max())
         assert reused[b].attrs["freq_out"] == pytest.approx(fresh[b].attrs["freq_out"], rel=1e-12)
 
-    # a pass-1 input changed: refused naming it, rebuilt under --overwrite
-    # (without the .dt, which is refused first)
-    shutil.rmtree(out + "_I.dt")
-    with pytest.raises(RuntimeError, match="chan_average: 1 -> 2"):
-        imager_core([Path(ms_name)], out, robustness=-1.0, chan_average=2, overwrite=False, **kw)
+    # a pass-1 input changed: refused naming it even under --overwrite, which governs only
+    # the .dt; rebuilt under --rebuild-scratch
+    with pytest.raises(RuntimeError, match="chan_average: 1 -> 2(.|\n)*--rebuild-scratch"):
+        imager_core([Path(ms_name)], out, robustness=-1.0, chan_average=2, overwrite=True, **kw)
     # the image grid changed under --weight-on-image-grid: refused naming the counts grid
     with pytest.raises(RuntimeError, match="counts grid"):
-        imager_core([Path(ms_name)], out, robustness=-1.0, **{**kw, "field_of_view": 0.8}, overwrite=False)
-    imager_core([Path(ms_name)], out, robustness=-1.0, chan_average=2, overwrite=True, **kw)
+        imager_core([Path(ms_name)], out, robustness=-1.0, **{**kw, "field_of_view": 0.8}, overwrite=True)
+    imager_core([Path(ms_name)], out, robustness=-1.0, chan_average=2, overwrite=True, rebuild_scratch=True, **kw)
     assert read_scratch_record(out + "_I.scratch")["inputs"]["chan_average"] == 2
+
+    # --rebuild-scratch runs pass 1 even when nothing changed
+    with monkeypatch.context() as m:
+        _no_pass1(m)
+        with pytest.raises(AssertionError, match="pass 1 ran"):
+            imager_core([Path(ms_name)], out, chan_average=2, overwrite=True, rebuild_scratch=True, **kw)
 
 
 def test_a_refused_run_neither_leaves_nor_deletes_a_scratch(ms_name, tmp_path, monkeypatch):
-    """Set-up refusals come before the scratch is touched: none is created, and --overwrite deletes none."""
+    """Set-up refusals come before the scratch is touched: none is created, and --rebuild-scratch deletes none."""
     _no_ray(monkeypatch)
     kw = dict(product="I", keep_ray_alive=True, max_field_of_view=0.5)
     out = tmp_path / "refused"
@@ -156,13 +160,13 @@ def test_a_refused_run_neither_leaves_nor_deletes_a_scratch(ms_name, tmp_path, m
         imager_core([Path(ms_name)], str(out), field_of_view=1.0, **kw)
     assert not Path(str(out) + "_I.scratch").exists()
 
-    # a scratch that cannot serve the run, under --overwrite, survives a later refusal
+    # a scratch that cannot serve the run, under --rebuild-scratch, survives a later refusal
     kept = tmp_path / "kept"
     scratch = str(kept) + "_I.scratch"
     zarr.open_group(scratch, mode="w").attrs["pass1"] = json.dumps(_record({}))
     (Path(scratch) / "sentinel").write_text("hours of pass 1")
     with pytest.raises(ValueError, match="beyond --max-field-of-view"):
-        imager_core([Path(ms_name)], str(kept), field_of_view=1.0, overwrite=True, **kw)
+        imager_core([Path(ms_name)], str(kept), field_of_view=1.0, rebuild_scratch=True, **kw)
     assert (Path(scratch) / "sentinel").exists()
 
 

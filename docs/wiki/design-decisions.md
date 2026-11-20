@@ -2461,17 +2461,17 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   values set-up needs (`scan_ms`), the counts grid,
   the bands' channel extents and the beam axis. The next run compares, before any MS is
   opened: inputs first, then the counts grid its own image settings imply. A match is
-  reused whatever `--overwrite` says; a mismatch is refused, listing every differing field,
-  unless `--overwrite`, which rebuilds and lists the differences as a warning. No record is a
-  mismatch. `--overwrite` otherwise governs the `.dt`, now refused before anything runs
-  rather than after pass 1. The scratch is neither removed nor created until every set-up
+  reused; a mismatch is refused, listing every differing field. No record is a mismatch.
+  `--rebuild-scratch` runs pass 1 again and replaces the scratch, whether or not it matches.
+  `--overwrite` governs only the `.dt`, now refused before anything runs rather than after
+  pass 1. The scratch is neither removed nor created until every set-up
   refusal has passed, just before pass 1, so a refused run cannot delete hours of pass 1 or
   leave an empty scratch that blocks the next run.
 - **Rationale:** reuse must never be silent about staleness, and must never cost a pass-1
   rerun the user did not ask for, so it is decided from values rather than file times. MS
   contents are not fingerprinted: casacore rewrites table files in place and directory
-  mtimes do not track it, so the rule is that rewriting a column in place means deleting the
-  scratch. The package version is recorded but not compared, so a release does not discard
+  mtimes do not track it, so the rule is that rewriting a column in place means
+  `--rebuild-scratch`. The package version is recorded but not compared, so a release does not discard
   every cache (a reuse across versions warns); `SCRATCH_SCHEMA` is bumped when what pass 1
   writes changes. A beam model
   passed as an object (tests) cannot be compared and never matches. Under
@@ -2479,10 +2479,11 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   or field of view rebuilds, while robustness, `--filter-counts-level`, `--npix-super`,
   `--weight-grouping`, `--concat-row`, `--transfer-model-from` and product selection reuse.
 - **Consequences:** the record is written last, after consolidation, so an interrupted pass 1
-  leaves a scratch that is refused rather than half-reused. Because the `.dt` and the scratch
-  share a basename, re-imaging into the same output needs `--overwrite`, and under it a
-  mismatch rebuilds rather than refuses: the per-field refusal protects only a run into a new
-  or deleted `.dt`. The warning is the guard against a typo silently costing a pass-1 rerun. A reuse skips `scan_ms`, the
+  leaves a scratch that is refused rather than half-reused. The scratch's own flag exists
+  because the `.dt` and the scratch share a basename: re-imaging into the same output needs
+  `--overwrite`, and when that also rebuilt a mismatched scratch (the first version of this
+  decision) the per-field refusal could only fire for a new or deleted `.dt`, so a typo in a
+  pass-1 option silently cost a pass-1 rerun. A reuse skips `scan_ms`, the
   baseline-group masks, the wizards and pass 1; the R bound and, for a cube-capped axis, the
   beam reach are still checked against the record before Ray starts.
 - **Source:** #354; `src/pfb_imaging/core/imager.py` (`SCRATCH_SCHEMA`,

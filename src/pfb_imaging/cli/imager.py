@@ -117,8 +117,16 @@ def imager(
     overwrite: Annotated[
         bool,
         typer.Option(
-            help="Replace an existing .dt, and rebuild a .scratch that cannot serve this run. "
-            "A .scratch whose pass-1 inputs match is reused either way.",
+            help="Replace an existing .dt. "
+            "It has no effect on the .scratch, which is reused when its pass-1 inputs match this run.",
+            rich_help_panel="Control",
+        ),
+    ] = False,
+    rebuild_scratch: Annotated[
+        bool,
+        typer.Option(
+            help="Run pass 1 again and replace an existing .scratch. "
+            "Needed when its pass-1 inputs differ from this run, and forces pass 1 even when they match.",
             rich_help_panel="Control",
         ),
     ] = False,
@@ -560,6 +568,7 @@ def imager(
                     field_names=field_names,
                     freq_range=freq_range,
                     overwrite=overwrite,
+                    rebuild_scratch=rebuild_scratch,
                     data_column=data_column,
                     data_group=data_group,
                     partition_columns=partition_columns,
@@ -624,6 +633,7 @@ def imager(
                 field_names=field_names,
                 freq_range=freq_range,
                 overwrite=overwrite,
+                rebuild_scratch=rebuild_scratch,
                 data_column=data_column,
                 data_group=data_group,
                 partition_columns=partition_columns,
@@ -697,6 +707,7 @@ def imager(
             field_names=field_names,
             freq_range=freq_range,
             overwrite=overwrite,
+            rebuild_scratch=rebuild_scratch,
             data_column=data_column,
             data_group=data_group,
             partition_columns=partition_columns,

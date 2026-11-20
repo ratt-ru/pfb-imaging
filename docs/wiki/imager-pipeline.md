@@ -141,10 +141,11 @@ extent, bands, field centres, track times), the counts grid, each band's channel
 the cube-capped beam axis and a `SCRATCH_SCHEMA` integer. A later run compares its own
 inputs and counts grid with the record before it opens any MS. On a match it skips the MS
 scan and pass 1 entirely and goes straight to the counts reduction, replacing the old
-`counts/` groups; a mismatch is refused, naming each field, or rebuilt under
-`--overwrite`; a scratch with no record (older version, or a pass 1 that did not finish)
-is treated the same way. `--overwrite` governs the `.dt`, which is refused before anything
-runs when it exists without it. To force pass 1 with identical inputs, delete the scratch.
+`counts/` groups; a mismatch is refused, naming each field; a scratch with no record
+(older version, or a pass 1 that did not finish) is treated the same way.
+`--rebuild-scratch` runs pass 1 again and replaces the scratch, matching or not.
+`--overwrite` governs only the `.dt`, which is refused before anything runs when it exists
+without it.
 
 1. **Pass 1** (`utils/stokes2vis.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,

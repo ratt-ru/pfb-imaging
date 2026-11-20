@@ -1132,6 +1132,7 @@ def imager(
     field_names: list[str] | None = None,
     freq_range: str | None = None,
     overwrite: bool = False,
+    rebuild_scratch: bool = False,
     data_column: str = "DATA",
     data_group: str = "base",
     partition_columns: list[str] | None = None,
@@ -1373,24 +1374,26 @@ def imager(
             counts = image_geometry(d["max_blength"], d["max_uvw"], d["max_freq"], **geom_kw)["counts"]
             diffs = record_diffs(record, inputs, counts)
         why = "".join(f"\n  {d}" for d in diffs)
-        if not diffs:
+        if rebuild_scratch:
+            # removed only once every set-up refusal has passed, just before pass 1
+            log.info(
+                f"Scratch {scratch_url} will be rebuilt (--rebuild-scratch)" + (f", and differs:{why}" if diffs else "")
+            )
+        elif not diffs:
             reuse = True
             log.info(
                 f"Reusing scratch {scratch_url}: its pass-1 inputs match this run, so pass 1 is skipped. "
-                f"Delete it to run pass 1 again."
+                f"Run with --rebuild-scratch to run pass 1 again."
             )
             if record.get("pfb-imaging-version") != pfb_version:
                 log.warning(
                     f"The scratch was written by pfb-imaging {record.get('pfb-imaging-version')}, this is "
-                    f"{pfb_version}. A fix to pass 1 between them is not in it: delete it to run pass 1 again."
+                    f"{pfb_version}. A fix to pass 1 between them is not in it: run with --rebuild-scratch."
                 )
-        elif overwrite:
-            # removed only once every set-up refusal has passed, just before pass 1
-            log.warning(f"Scratch {scratch_url} will be rebuilt (--overwrite), because:{why}")
         else:
             log.error_and_raise(
                 f"{scratch_url} exists but cannot serve this run, because:{why}\n"
-                f"Run with --overwrite to rebuild it, or change the options back.",
+                f"Run with --rebuild-scratch to run pass 1 again, or change the options back.",
                 RuntimeError,
             )
     # crude column arithmetic
