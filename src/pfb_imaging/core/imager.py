@@ -728,34 +728,76 @@ def _grid_image_body(
     }
 
 
-def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq):
-    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365).
+def pointing_reach(field_centres, grid_radec, max_fov_rad):
+    """How far from a pointing centre the scratch must describe the sky (deg).
 
-    It reaches the farthest image pixel from any pointing, at the cell
-    ``utils.beam.beam_grid`` sets for the bilinear placement tolerance. An image
-    reaching past the beam cube is refused: the rotation average turns the field
-    with parallactic angle, so only the cube's largest centred disk is covered at
-    every angle, and beyond it the placement error does not converge with the
-    cell (wiki D64). The check counts the bilinear nodes the farthest pixel
-    reads (up to one diagonal cell further out) and keeps two cube pixels clear
-    of the edge, where the cube's cubic spline is pulled towards its zero fill.
+    Every image the scratch can serve lies within ``--max-field-of-view`` (a
+    radius ``R`` about the image tangent point, the same radius BDA bounds its
+    decorrelation over), so a field's beam is needed out to ``R`` plus that
+    field's distance from the tangent point. Neither depends on the image grid
+    (#354).
 
     Args:
-        wizards: Baseline group (None when ungrouped) -> BeamWizard.
         field_centres: ``(nfield, 2)`` pointing centres (rad).
         grid_radec: The image tangent point (rad).
-        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        max_fov_rad: ``R`` (rad).
+
+    Returns:
+        The largest such distance over the fields (deg).
+    """
+    dist = max(float(np.hypot(*radec_to_lm(np.asarray(fc), grid_radec))) for fc in field_centres)
+    return float(np.rad2deg(dist + max_fov_rad))
+
+
+def check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad):
+    """Refuse an image reaching past ``--max-field-of-view`` from the tangent point.
+
+    Args:
         nx: Image pixels along x.
         ny: Image pixels along y.
         cell_rad: Image cell (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        max_fov_rad: ``R`` (rad).
+
+    Returns:
+        The distance of the farthest image pixel from the tangent point (deg).
+
+    Raises:
+        ValueError: If that distance exceeds ``R``.
+    """
+    half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
+    reach = max(float(np.hypot(l0, m0)) for l0, m0 in offsets) + half_diag
+    if reach > max_fov_rad * (1 + 1e-12):
+        raise ValueError(
+            f"the image reaches {np.rad2deg(reach):.3f} deg from the phase centre, beyond "
+            f"--max-field-of-view {np.rad2deg(max_fov_rad):.3f} deg (a radius). Reduce the image "
+            f"(--field-of-view, --nx/--ny, --cell-size) or the --target offset, or raise --max-field-of-view."
+        )
+    return float(np.rad2deg(reach))
+
+
+def field_beam_axis(wizards, reach_deg, max_freq):
+    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365, #354).
+
+    It reaches ``reach_deg`` from the pointing (:func:`pointing_reach`), at the
+    cell ``utils.beam.beam_grid`` sets for the bilinear placement tolerance, but
+    no further than the beam cube covers. The rotation average turns the field
+    with parallactic angle, so only the cube's largest centred disk is covered
+    at every angle, and beyond it the placement error does not converge with the
+    cell (wiki D64). The farthest pixel reads bilinear nodes up to one diagonal
+    cell further out, and two cube pixels at the edge are kept clear, where the
+    cube's cubic spline is pulled towards its zero fill. An image reaching past
+    the returned axis is refused by :func:`check_beam_reach`.
+
+    Args:
+        wizards: Baseline group (None when ungrouped) -> BeamWizard.
+        reach_deg: Distance from a pointing the beam is wanted out to (deg).
         max_freq: Highest frequency gridded (Hz).
 
     Returns:
-        ``(beam_lm, radius_deg, limit_deg)``: the axis (deg), the distance it
-        must reach, and the radius the cube covers less the edge margin.
-
-    Raises:
-        ValueError: If the image reaches beyond that radius.
+        ``(beam_lm, axis_deg, limit_deg)``: the axis (deg), the distance from
+        the pointing it serves, and the radius the cube covers less the edge
+        margin.
     """
     limit_deg = np.inf
     for wizard in wizards.values():
@@ -764,6 +806,32 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         cover = float(np.abs([xy.min(), xy.max()]).min())
         dx = float(max(np.abs(np.diff(x)).max(), np.abs(np.diff(y)).max()))
         limit_deg = min(limit_deg, cover - 2.0 * dx)
+    # the largest dish any of these beams describes bounds the error for all of them
+    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
+    cell = float(np.diff(beam_grid(max_freq, dish, 0.0))[0])
+    axis_deg = min(reach_deg, limit_deg - np.sqrt(2.0) * cell)
+    return beam_grid(max_freq, dish, axis_deg), axis_deg, limit_deg
+
+
+def check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_deg, limit_deg):
+    """Refuse an image reaching past the beam axis from any pointing (wiki D64).
+
+    Only binds when the beam cube capped the axis (:func:`field_beam_axis`);
+    otherwise :func:`check_image_extent` already keeps every image inside it.
+
+    Args:
+        field_centres: ``(nfield, 2)`` pointing centres (rad).
+        grid_radec: The image tangent point (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        cell_rad: Image cell (rad).
+        axis_deg: Distance from a pointing the beam axis serves (deg).
+        limit_deg: Radius the beam cube covers less its edge margin (deg).
+
+    Raises:
+        ValueError: If the image reaches beyond ``axis_deg`` from a pointing.
+    """
     half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
     radius = 0.0
     for fc in field_centres:
@@ -771,17 +839,12 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         for l0, m0 in offsets:
             radius = max(radius, float(np.hypot(l0 - lf, m0 - mf)) + half_diag)
     radius_deg = float(np.rad2deg(radius))
-    # the largest dish any of these beams describes bounds the error for all of them
-    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
-    beam_lm = beam_grid(max_freq, dish, radius_deg)
-    reach_deg = radius_deg + np.sqrt(2.0) * float(beam_lm[1] - beam_lm[0])
-    if reach_deg > limit_deg:
+    if radius_deg > axis_deg * (1 + 1e-12):
         raise ValueError(
             f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {limit_deg:.2f} deg "
             f"the beam cube covers at every parallactic angle (less a two-pixel margin at its edge). "
             f"Reduce --field-of-view or the pointing offset, or image without --beam-model."
         )
-    return beam_lm, radius_deg, limit_deg
 
 
 @pfb_logging.log_exceptions
@@ -827,6 +890,7 @@ def imager(
     nx: int | None = None,
     ny: int | None = None,
     psf_oversize: float = 1.4,
+    min_padding: float = 1.7,
     filter_counts_level: float = 5.0,
     npix_super: int = 0,
     epsilon: float = 1e-5,
@@ -873,6 +937,13 @@ def imager(
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
+
+    # africanus' BDA refuses the same range, but only inside pass 1
+    if not 0.0 < max_field_of_view <= 90.0:
+        log.error_and_raise(f"--max-field-of-view must lie in (0, 90] deg, got {max_field_of_view}", ValueError)
+    max_fov_rad = float(np.deg2rad(max_field_of_view))
+    if min_padding < 1.0:
+        log.error_and_raise(f"--min-padding must be at least 1, got {min_padding}", ValueError)
 
     # Before init_ray and before pass 1: ducc only refuses an unreachable
     # epsilon when it is handed data, which in the imager is pass 2 -- after the
@@ -1132,15 +1203,28 @@ def imager(
     nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
         max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
     )
-    # TODO - this is currently hard-coded to 1.7 because we don't know what padding the
-    # wgridder will choose. It could be exposed as a parameter but ideally should be
-    # determined by the gridder (consider adding functionality to radiomesh)
-    min_padding = 1.7
+    # the padded uv grid the COUNTS are gridded on; ideally the wgridder's own
+    # padding, which it chooses internally (consider adding that to radiomesh)
     nx_pad = int(np.ceil(min_padding * nx))
     nx_pad += nx_pad % 2
     ny_pad = int(np.ceil(min_padding * ny))
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+
+    # a --target is resolved at the ends and middle of the track: a named body moves
+    times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
+    times = times[np.isfinite(times)]
+    offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
+    # before anything is computed: a scratch serves every image within --max-field-of-view
+    try:
+        image_reach_deg = check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
+    beam_reach_deg = pointing_reach(field_centres, grid_radec, max_fov_rad)
+    log.info(
+        f"The image reaches {image_reach_deg:.3f} deg of the {max_field_of_view:.3f} deg --max-field-of-view; "
+        f"beams are described out to {beam_reach_deg:.3f} deg from a pointing"
+    )
 
     if transfer_ds is not None:
         try:
@@ -1223,19 +1307,19 @@ def imager(
     elif isinstance(beam_model, BeamWizard):
         wizards = {getattr(beam_model, "group", None): beam_model}
     if wizards:
-        # a --target is resolved at the ends and middle of the track: a named body moves
-        times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
-        times = times[np.isfinite(times)]
-        offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
-        try:
-            beam_lm, radius_deg, limit_deg = field_beam_axis(
-                wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq
+        beam_lm, axis_deg, limit_deg = field_beam_axis(wizards, beam_reach_deg, max_freq)
+        if axis_deg < beam_reach_deg:
+            log.warning(
+                f"The beam cube covers {limit_deg:.2f} deg, less than the {beam_reach_deg:.2f} deg "
+                f"--max-field-of-view asks for: images reaching past {axis_deg:.2f} deg from a pointing are refused"
             )
+        try:
+            check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_deg, limit_deg)
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
         log.info(
             f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
-            f"out to {radius_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
+            f"out to {axis_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
         )
         del wizards
 
@@ -1325,6 +1409,7 @@ def imager(
                         chan_average=chan_average,
                         bda_decorr=bda_decorr,
                         max_field_of_view=max_field_of_view,
+                        beam_reach_deg=beam_reach_deg,
                         beam_model=beam_model if beam_refs is None else beam_refs[bg],
                         wgt_mode=wgt_mode,
                         max_blength=max_blength,

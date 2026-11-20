@@ -231,7 +231,9 @@ def imager(
     max_field_of_view: Annotated[
         float,
         typer.Option(
-            help="The maximum field of view that will be considered. Used to compute decorrelation due to BDA.",
+            help="Radius in degrees about the phase centre within which every image must lie. "
+            "It bounds the decorrelation BDA allows and how far from each pointing the beam is described. "
+            "An image reaching further is refused before any compute.",
             rich_help_panel="Averaging",
         ),
     ] = 3.0,
@@ -392,6 +394,13 @@ def imager(
             rich_help_panel="Imaging",
         ),
     ] = 1.4,
+    min_padding: Annotated[
+        float,
+        typer.Option(
+            help="Padding factor of the uv grid the counts for imaging weights are computed on.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 1.7,
     filter_counts_level: Annotated[
         float,
         typer.Option(
@@ -574,6 +583,7 @@ def imager(
                     nx=nx,
                     ny=ny,
                     psf_oversize=psf_oversize,
+                    min_padding=min_padding,
                     filter_counts_level=filter_counts_level,
                     npix_super=npix_super,
                     epsilon=epsilon,
@@ -636,6 +646,7 @@ def imager(
                 nx=nx,
                 ny=ny,
                 psf_oversize=psf_oversize,
+                min_padding=min_padding,
                 filter_counts_level=filter_counts_level,
                 npix_super=npix_super,
                 epsilon=epsilon,
@@ -707,6 +718,7 @@ def imager(
             nx=nx,
             ny=ny,
             psf_oversize=psf_oversize,
+            min_padding=min_padding,
             filter_counts_level=filter_counts_level,
             npix_super=npix_super,
             epsilon=epsilon,

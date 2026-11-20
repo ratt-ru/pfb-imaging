@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-19T14:39:00Z
-last_verified_commit: 66054ce
+timestamp: 2026-11-20T16:00:00Z
+last_verified_commit: c23a68f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -2271,6 +2271,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D64 — The pass-1 beam grid is sized per run, and images past the beam cube are refused
 
+*Amended by D66: the axis now reaches `--max-field-of-view` rather than the image, and the
+image checks are split in two. The cell, the cube limit and its margin are unchanged.*
+
 - **Context:** pass 1 evaluated every piece's wizard beam on a fixed 1024² grid over the whole
   beam cube, whatever the image, and placed it on the image grid per piece (#365). Moving the
   placement to pass 2 (D21) left the grid's size and cell as the remaining cost, and the beam
@@ -2312,8 +2315,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** #365; `src/pfb_imaging/utils/beam.py` (`beam_grid`, `BEAM_CELL_TOL`,
   `BEAM_DISH_DIAMETER`); `src/pfb_imaging/core/imager.py` (`field_beam_axis`);
   `tests/test_beam.py::test_beam_grid_cell_bounds_the_placement_error`,
-  `::test_field_beam_axis_reaches_the_farthest_pixel_and_refuses_past_the_cube`,
-  `::test_field_beam_axis_measures_from_each_pointing_in_a_mosaic`;
+  `::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
+  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`;
   `tests/test_imager.py::test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels`.
 
 ### D65 — Pass 2's reductions are predicted from the counts, so the residual is formed in pass 2
@@ -2363,6 +2366,42 @@ update it (and this page's `last_verified_commit`) in the same session.
   `::test_float32_prediction_holds_with_many_samples_per_cell`;
   `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_residual`;
   `tests/test_imager_transfer.py::test_transferred_truth_nulls_the_residual`.
+
+### D66 — `--max-field-of-view` is a radius that bounds every image, so pass 1 need not know the image
+
+- **Context:** a scratch is only reusable across image settings (#354) if pass 1 does not
+  depend on them. After D21/D64 pass 1 still did twice: the beam axis reached the image's
+  farthest pixel, and the COUNTS were gridded on the padded image grid. `--max-field-of-view`
+  meant three things: a radius to africanus' BDA (`max_lm = deg2rad(max_fov)`), the full
+  width of the katbeam grid, and nothing at all to the image.
+- **Decision:** `--max-field-of-view` is a radius `R` about the phase centre (the image
+  tangent point) and means that everywhere. Set-up refuses, before Ray starts, an image
+  whose farthest corner, `--target` offsets included, lies beyond `R`
+  (`core/imager.check_image_extent`). Beams are described out to `R` plus the farthest
+  field's distance from the tangent point (`pointing_reach`), for both the wizard axis
+  (`field_beam_axis`) and katbeam's Nyquist grid. The wizard axis is capped one diagonal
+  cell inside the cube's limit (D64), and only then can an image within `R` still be refused
+  for reaching past the beam (`check_beam_reach`, also before Ray). `--min-padding` (default
+  1.7, previously hard-coded) sets the padded uv grid of the counts.
+- **Rationale:** one meaning per option, and the one BDA already used. A bound checked at
+  set-up means a run never fails halfway, which matters more once a scratch can outlive the
+  run that wrote it. Measuring beam reach from the tangent point means it does not move
+  with the image.
+- **Consequences:** the beam axis now reaches 3° (the default) plus the field offset whatever
+  the image, capped by the cube: on ESO137-006's group cubes about 543² at 24.1″ out to 1.80°,
+  against 385² out to 1.28° under D64, so pass 1 does roughly twice the beam work and stores
+  twice the beam per piece. A smaller `--max-field-of-view` brings it back. katbeam's grid
+  covers `±R` instead of `±R/2`, four times the pixels; katbeam pieces previously had a zero
+  beam beyond 1.5°. Under `--baseline-groups --beam-model L` the 1.81° group-cube limit is
+  below the default `R`, so set-up warns and images reaching further from a pointing are
+  refused as before.
+- **Source:** #354; `src/pfb_imaging/core/imager.py` (`pointing_reach`,
+  `check_image_extent`, `field_beam_axis`, `check_beam_reach`);
+  `src/pfb_imaging/utils/stokes2vis.py` (katbeam grid);
+  `tests/test_beam.py::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
+  `::test_pointing_reach_adds_the_farthest_field_to_the_radius`,
+  `::test_check_image_extent_refuses_an_image_past_the_max_field_of_view`,
+  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`.
 
 ## Known debt
 

@@ -169,8 +169,9 @@ cabs:
           rich_help_panel: Averaging
       max-field-of-view:
         info:
-          The maximum field of view that will be considered.
-          Used to compute decorrelation due to BDA.
+          Radius in degrees about the phase centre within which every image must lie.
+          It bounds the decorrelation BDA allows and how far from each pointing the beam is described.
+          An image reaching further is refused before any compute.
         dtype: float
         default: 3.0
         metadata:
@@ -335,6 +336,13 @@ cabs:
         default: 1.4
         metadata:
           rich_help_panel: Imaging
+      min-padding:
+        info:
+          Padding factor of the uv grid the counts for imaging weights are computed on.
+        dtype: float
+        default: 1.7
+        metadata:
+          rich_help_panel: Weighting
       filter-counts-level:
         info:
           Replace uv cells with counts below median/level to avoid upweighting near-empty cells.

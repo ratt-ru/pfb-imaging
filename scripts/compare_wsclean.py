@@ -33,7 +33,7 @@ that have to be handled explicitly:
    ``-weighting-rank-filter`` -- which is **active out of the box** at level 3.0,
    window 16 -- is set to 0.
 5. **Matching the uv grid size.**  ``psf_oversize`` does *not* size pfb's density
-   grid: ``core/imager.py`` hardcodes ``min_padding = 1.7`` for the COUNTS grid and
+   grid: ``pfb imager --min-padding`` (default 1.7) sizes the COUNTS grid and
    rounds up to an even number, while wsclean uses the padded image size rounded
    up to a multiple of 4.  For ``nx=462`` that is 786 vs 788, and they cannot be
    made equal by choosing ``-padding``.  Since different grid sizes mean different

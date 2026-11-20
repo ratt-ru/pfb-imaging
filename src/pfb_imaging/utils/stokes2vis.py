@@ -237,6 +237,7 @@ def stokes_vis(
     chan_average=1,
     bda_decorr=1.0,
     max_field_of_view=3.0,
+    beam_reach_deg=None,
     beam_model=None,
     wgt_mode="minvar",
     max_blength=None,
@@ -276,7 +277,11 @@ def stokes_vis(
         product: Stokes product. Can be any subset of IQUV.
         chan_average: number of channels to average together.
         bda_decorr: decorrelation threshold for baseline dependent averaging.
-        max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
+        max_field_of_view: radius (deg) about the phase centre within which BDA
+            bounds the decorrelation, and within which every image must lie.
+        beam_reach_deg: distance from the pointing (deg) a katbeam beam is
+            evaluated out to; the driver's ``pointing_reach``. Defaults to
+            ``max_field_of_view``.
         beam_model: model to use for beam correction: "katbeam", None, a
             BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
@@ -689,10 +694,11 @@ def stokes_vis(
         elif str(beam_model).lower() == "katbeam":
             # NB: the evaluation grid is sized at the critically-sampled
             # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
-            # used for the COUNTS uv-grid below.
-            fov = max_field_of_view
+            # used for the COUNTS uv-grid below. It reaches beam_reach_deg plus
+            # one cell, so bilinear placement of the farthest pixel stays on it.
+            reach = max_field_of_view if beam_reach_deg is None else beam_reach_deg
             beam_cell_deg = np.rad2deg(1.0 / (max_blength * max_freq / lightspeed))
-            npix = int(fov / beam_cell_deg)
+            npix = 2 * (int(np.ceil(reach / beam_cell_deg)) + 1)
             l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
             m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
             if freq_min >= 8.5e8 and freq_max <= 1.8e9:
