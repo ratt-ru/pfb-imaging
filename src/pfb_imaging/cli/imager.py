@@ -401,6 +401,15 @@ def imager(
             rich_help_panel="Weighting",
         ),
     ] = 1.7,
+    weight_on_image_grid: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the counts for imaging weights on the padded image grid. "
+            "Otherwise they are computed on a grid set by max-field-of-view. "
+            "That grid lets a reused scratch serve any image.",
+            rich_help_panel="Weighting",
+        ),
+    ] = True,
     filter_counts_level: Annotated[
         float,
         typer.Option(
@@ -584,6 +593,7 @@ def imager(
                     ny=ny,
                     psf_oversize=psf_oversize,
                     min_padding=min_padding,
+                    weight_on_image_grid=weight_on_image_grid,
                     filter_counts_level=filter_counts_level,
                     npix_super=npix_super,
                     epsilon=epsilon,
@@ -647,6 +657,7 @@ def imager(
                 ny=ny,
                 psf_oversize=psf_oversize,
                 min_padding=min_padding,
+                weight_on_image_grid=weight_on_image_grid,
                 filter_counts_level=filter_counts_level,
                 npix_super=npix_super,
                 epsilon=epsilon,
@@ -719,6 +730,7 @@ def imager(
             ny=ny,
             psf_oversize=psf_oversize,
             min_padding=min_padding,
+            weight_on_image_grid=weight_on_image_grid,
             filter_counts_level=filter_counts_level,
             npix_super=npix_super,
             epsilon=epsilon,

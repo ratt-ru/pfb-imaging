@@ -242,16 +242,15 @@ def stokes_vis(
     wgt_mode="minvar",
     max_blength=None,
     max_freq=None,
-    nx_pad=None,
-    ny_pad=None,
-    cell_rad=None,
+    counts_nx=None,
+    counts_ny=None,
+    counts_cell=None,
     baseline_group="all",
     data_group="base",
     radec_new=None,
     target=None,
     beam_lm=None,
     nthreads=1,
-    compute_counts=True,
     double_accum=True,
 ):
     """
@@ -263,9 +262,11 @@ def stokes_vis(
         scratch_store: parent .scratch DataTree store; the piece is written to the group
             ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
-        nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
-            COUNTS grid used to build imaging weights in pass 2 (stored sparse,
-            see ``weighting.compute_sparse_counts``).
+        counts_nx, counts_ny, counts_cell: the per-piece COUNTS grid used to build
+            imaging weights in pass 2, as the padded uv grid of a ``counts_nx`` x
+            ``counts_ny`` image of cell ``counts_cell`` (rad): the image's own
+            under ``--weight-on-image-grid``, else the driver's ``counts_grid``
+            (stored sparse, see ``weighting.compute_sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -293,9 +294,6 @@ def stokes_vis(
             both l and m; the driver sizes it once per run (``utils.beam.beam_grid``).
         nthreads: threads available to the task (parallelises the COUNTS gridding
             and meerkat-beams' rotation average).
-        compute_counts: grid and store the piece's uv counts. Only robust
-            weighting reads them, so natural weighting skips a full padded-grid
-            allocation and gridding per piece.
         double_accum: accumulate the counts in float64 (``--double-accum``);
             they are stored at ``precision`` either way (D27).
     """
@@ -693,7 +691,7 @@ def stokes_vis(
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
         elif str(beam_model).lower() == "katbeam":
             # NB: the evaluation grid is sized at the critically-sampled
-            # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
+            # (Nyquist) cell, a *separate* quantity from the counts cell
             # used for the COUNTS uv-grid below. It reaches beam_reach_deg plus
             # one cell, so bilinear placement of the farthest pixel stays on it.
             reach = max_field_of_view if beam_reach_deg is None else beam_reach_deg
@@ -730,22 +728,22 @@ def stokes_vis(
 
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
-    if compute_counts:
-        # only the occupied cells: the dense grid is freed inside (#365)
-        counts_vars, wsum_offgrid = compute_sparse_counts(
-            uvw,
-            freq,
-            mask,
-            wgt_cf,
-            nx_pad,
-            ny_pad,
-            cell_rad,
-            cell_rad,
-            wgt_cf.dtype,
-            usign=1.0 if flip_u else -1.0,
-            vsign=1.0 if flip_v else -1.0,
-            accum_dtype=np.float64 if double_accum else wgt_cf.dtype,
-        )
+    # always gridded, so one scratch serves natural and robust weighting (#354);
+    # only the occupied cells are kept: the dense grid is freed inside (#365)
+    counts_vars, wsum_offgrid = compute_sparse_counts(
+        uvw,
+        freq,
+        mask,
+        wgt_cf,
+        counts_nx,
+        counts_ny,
+        counts_cell,
+        counts_cell,
+        wgt_cf.dtype,
+        usign=1.0 if flip_u else -1.0,
+        vsign=1.0 if flip_v else -1.0,
+        accum_dtype=np.float64 if double_accum else wgt_cf.dtype,
+    )
 
     data_vars = {}
     data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
@@ -755,9 +753,8 @@ def stokes_vis(
     data_vars["FREQ"] = (("chan",), freq)
     if beam_small is not None:
         data_vars["BEAM_SMALL"] = (("corr", "m_beam", "l_beam"), beam_small.astype(real_type))
-    if compute_counts:
-        data_vars.update(counts_vars)
-        del counts_vars
+    data_vars.update(counts_vars)
+    del counts_vars
 
     coords = {
         "chan": (("chan",), freq),
@@ -815,9 +812,8 @@ def stokes_vis(
         "beam_imre_ratio": float(beam_imre_ratio),
     }
 
-    if compute_counts:
-        # natural weight beyond the padded grid, for the imaging-wsum prediction (D65)
-        attrs["wsum_offgrid"] = wsum_offgrid
+    # natural weight beyond the counts grid, for the imaging-wsum prediction (D65)
+    attrs["wsum_offgrid"] = wsum_offgrid
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     group = f"band{bandid:04d}_time{timeid:04d}/{piece_name}"
     # consolidated=False: many workers write distinct leaf groups into the shared

@@ -2369,6 +2369,8 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
 
 ### D66 — `--max-field-of-view` is a radius that bounds every image, so pass 1 need not know the image
 
+*Built in steps on the #354 branch: the beam bound below, then the counts grid.*
+
 - **Context:** a scratch is only reusable across image settings (#354) if pass 1 does not
   depend on them. After D21/D64 pass 1 still did twice: the beam axis reached the image's
   farthest pixel, and the COUNTS were gridded on the padded image grid. `--max-field-of-view`
@@ -2382,8 +2384,17 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   (`field_beam_axis`) and katbeam's Nyquist grid. The wizard axis is capped one diagonal
   cell inside the cube's limit (D64), and only then can an image within `R` still be refused
   for reaching past the beam (`check_beam_reach`, also before Ray). `--min-padding` (default
-  1.7, previously hard-coded) sets the padded uv grid of the counts.
-- **Rationale:** one meaning per option, and the one BDA already used. A bound checked at
+  1.7, previously hard-coded) sets the padded uv grid of the counts. Pass 1 grids the counts
+  whatever the weighting (natural used to skip them). `--weight-on-image-grid` (the default)
+  grids them on the padded image grid as before; `--no-weight-on-image-grid` grids them on
+  `counts_grid`: uv cell `1/(min_padding · √2 · R)`, the padded cell of the largest square
+  image within `R` (side `√2 R`), reaching one cell past the longest baseline, with an even
+  size so cell edges fall on multiples of the cell whatever the extent.
+- **Rationale:** one meaning per option, and the one BDA already used. The image-grid
+  default is kept because a counts cell set by `R` is finer than a smaller image's own, so
+  its robust weights lean towards natural: the same recipe would give a different image,
+  and the main reuse case (changing robustness, later robust L2 reweighting) does not need
+  it. A bound checked at
   set-up means a run never fails halfway, which matters more once a scratch can outlive the
   run that wrote it. Measuring beam reach from the tangent point means it does not move
   with the image.
@@ -2394,14 +2405,21 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   covers `±R` instead of `±R/2`, four times the pixels; katbeam pieces previously had a zero
   beam beyond 1.5°. Under `--baseline-groups --beam-model L` the 1.81° group-cube limit is
   below the default `R`, so set-up warns and images reaching further from a pointing are
-  refused as before.
+  refused as before. Gridding the counts under natural weighting costs pass 1 the scatter
+  and the sparse store it used to skip. With `--no-weight-on-image-grid` every piece
+  scatters into a transient dense grid of `(1.7 · √2 R / cell_N)²` cells (`cell_N` the
+  Nyquist cell), whatever the image: at R = 3° and an 8 km baseline at 1.7 GHz about
+  11 400², 1 GB in float64 per correlation, and four times that at twice the baseline.
 - **Source:** #354; `src/pfb_imaging/core/imager.py` (`pointing_reach`,
-  `check_image_extent`, `field_beam_axis`, `check_beam_reach`);
+  `check_image_extent`, `counts_grid`, `field_beam_axis`, `check_beam_reach`);
   `src/pfb_imaging/utils/stokes2vis.py` (katbeam grid);
   `tests/test_beam.py::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
   `::test_pointing_reach_adds_the_farthest_field_to_the_radius`,
   `::test_check_image_extent_refuses_an_image_past_the_max_field_of_view`,
-  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`.
+  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`;
+  `tests/test_imager_pass2.py::test_counts_grid_cell_and_reach`,
+  `::test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image`;
+  `tests/test_imager.py::test_no_weight_on_image_grid_matches_the_image_grid_for_the_largest_image`.
 
 ## Known debt
 

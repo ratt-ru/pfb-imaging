@@ -141,8 +141,11 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    evaluated on a small field-centred grid and stored there as `BEAM_SMALL`
    `(corr, m_beam, l_beam)` (no beam model: none at all), and write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
-   counts under robust weighting (natural weighting skips gridding them,
-   `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
+   counts, which are gridded whatever the weighting so one scratch serves natural and robust
+   imaging (#354, D66). They go on the padded image grid by default (`--weight-on-image-grid`);
+   `--no-weight-on-image-grid` puts them on `core/imager.counts_grid`, whose uv cell is the
+   padded cell of the largest square image within `--max-field-of-view` and which reaches the
+   longest baseline. The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
    with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
    unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The driver
    builds each wizard once (staging, validation) but ships pass 1 a `Multiton` recipe,
@@ -189,8 +192,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    accumulator, into which each piece's occupied cells are added — applies
    `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result
    to `.scratch` as `counts/group####` (`COUNTS (corr, u, v)`). Pass-2 tasks receive
-   that node path and read the grid themselves: a counts grid is `(ncorr, nx_pad,
-   ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
+   that node path and read the grid themselves: a counts grid is `(ncorr, counts_nx,
+   counts_ny)` — 0.32 GiB at the 3840² image's padded grid — and passing it as a Ray argument put a copy per task
    in the object store (#339). With the applied grid in hand, a second sparse read of
    the group's pieces gives each piece's exact imaging-weight sum
    (`weighting.piece_imaging_wsum`, with the off-grid natural weight pass 1 recorded as
@@ -198,11 +201,10 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `freq_out` before pass 2 (D65). Before the pieces went sparse this step read every
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
-   uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
+   uv grid is commensurate across bands (one counts geometry per run).
    Natural weighting (`robustness None`, or `> 2`, which `effective_robustness` maps to
-   `None` up front) skips counts entirely: pass 1 does not grid them and the driver
-   does not reduce them. Before that mapping a value above 2 was Briggs-weighted
-   (close to natural, not equal to it) and paid the full counts cost.
+   `None` up front) does not reduce the counts, which pass 1 still grids (D66). Before
+   that mapping a value above 2 was Briggs-weighted (close to natural, not equal to it).
    Counts are reduced per `weight_grouping` group, **not** per partition, so
    baseline groups share one counts grid exactly as multiple fields do. Robust
    weighting is therefore computed over the whole array rather than

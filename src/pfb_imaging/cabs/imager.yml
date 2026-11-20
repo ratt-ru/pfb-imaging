@@ -343,6 +343,15 @@ cabs:
         default: 1.7
         metadata:
           rich_help_panel: Weighting
+      weight-on-image-grid:
+        info:
+          Compute the counts for imaging weights on the padded image grid.
+          Otherwise they are computed on a grid set by max-field-of-view.
+          That grid lets a reused scratch serve any image.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Weighting
       filter-counts-level:
         info:
           Replace uv cells with counts below median/level to avoid upweighting near-empty cells.

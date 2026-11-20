@@ -13,6 +13,7 @@ from meerkat_beams.utils import BeamWizard
 from pfb_model_spec.utils.degrid import model_geometry, model_sampling, render_model_region
 from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
+from scipy.constants import c as lightspeed
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
@@ -425,8 +426,9 @@ def _grid_image_body(
     freq_nominal,
     meta,
     robustness=None,
-    nx_pad=None,
-    ny_pad=None,
+    counts_nx=None,
+    counts_ny=None,
+    counts_cell=None,
     nthreads=1,
     epsilon=1e-5,
     do_wgridding=True,
@@ -555,8 +557,9 @@ def _grid_image_body(
             ny_psf,
             cell_rad,
             robustness=robustness,
-            nx_pad=nx_pad,
-            ny_pad=ny_pad,
+            counts_nx=counts_nx,
+            counts_ny=counts_ny,
+            counts_cell=counts_cell,
             l0=meta.get("l0", 0.0),
             m0=meta.get("m0", 0.0),
             nthreads=nthreads,
@@ -776,6 +779,31 @@ def check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad):
     return float(np.rad2deg(reach))
 
 
+def counts_grid(max_blength, max_freq, max_fov_rad, min_padding):
+    """The counts grid that serves every image within ``--max-field-of-view`` (#354).
+
+    Its uv cell, ``1 / (min_padding * sqrt(2) * R)``, is the padded image-grid
+    cell of the largest square image within ``R`` (side ``sqrt(2) * R``), and
+    it reaches one cell past the longest baseline at the highest frequency. It
+    is returned as the padded uv grid of a virtual image, the form the counts
+    kernels take: an even ``n`` puts every cell edge on a multiple of the uv
+    cell, so a grid with the same cell bins identically whatever its extent.
+
+    Args:
+        max_blength: Longest baseline (m).
+        max_freq: Highest frequency gridded (Hz).
+        max_fov_rad: ``R`` (rad).
+        min_padding: ``--min-padding``.
+
+    Returns:
+        ``(n, n, cell)``: grid size and the virtual image cell (rad).
+    """
+    du = 1.0 / (min_padding * np.sqrt(2.0) * max_fov_rad)
+    umax = max_blength * max_freq / lightspeed
+    n = 2 * (int(np.ceil(umax / du)) + 1)
+    return n, n, 1.0 / (n * du)
+
+
 def field_beam_axis(wizards, reach_deg, max_freq):
     """The field-centred beam axis every pass-1 piece evaluates its beam on (#365, #354).
 
@@ -891,6 +919,7 @@ def imager(
     ny: int | None = None,
     psf_oversize: float = 1.4,
     min_padding: float = 1.7,
+    weight_on_image_grid: bool = True,
     filter_counts_level: float = 5.0,
     npix_super: int = 0,
     epsilon: float = 1e-5,
@@ -1210,6 +1239,16 @@ def imager(
     ny_pad = int(np.ceil(min_padding * ny))
     ny_pad += ny_pad % 2
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+    if weight_on_image_grid:
+        counts_nx, counts_ny, counts_cell = nx_pad, ny_pad, cell_rad
+    else:
+        counts_nx, counts_ny, counts_cell = counts_grid(max_blength, max_freq, max_fov_rad, min_padding)
+        # < 1: finer than the image's own uv cell, so robust weights lean towards natural
+        ratio = (nx_pad * cell_rad) / (counts_nx * counts_cell)
+        log.info(
+            f"Counts grid {counts_nx}^2 set by --max-field-of-view: its uv cell is {ratio:.2f} times the image's "
+            f"(--weight-on-image-grid matches them)"
+        )
 
     # a --target is resolved at the ends and middle of the track: a named body moves
     times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
@@ -1414,17 +1453,15 @@ def imager(
                         wgt_mode=wgt_mode,
                         max_blength=max_blength,
                         max_freq=max_freq,
-                        nx_pad=nx_pad,
-                        ny_pad=ny_pad,
-                        cell_rad=cell_rad,
+                        counts_nx=counts_nx,
+                        counts_ny=counts_ny,
+                        counts_cell=counts_cell,
                         baseline_group=bg,
                         data_group=data_group,
                         radec_new=radec_new,
                         target=target,
                         beam_lm=beam_lm,
                         nthreads=nthreads,
-                        # only robust weighting reads the counts (see counts_sources)
-                        compute_counts=robustness is not None,
                         double_accum=double_accum,
                     )
                     tasks.append(fut)
@@ -1649,8 +1686,9 @@ def imager(
             band_centres[meta["bandid"]],
             meta,
             robustness=robustness,
-            nx_pad=nx_pad,
-            ny_pad=ny_pad,
+            counts_nx=counts_nx,
+            counts_ny=counts_ny,
+            counts_cell=counts_cell,
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
