@@ -2,6 +2,7 @@ import gc
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -922,9 +923,10 @@ def read_scratch_record(scratch_url: str) -> dict | None:
     """
     try:
         raw = zarr.open_group(scratch_url, mode="r").attrs.get("pass1")
+        return None if raw is None else json.loads(raw)
     except (FileNotFoundError, KeyError, ValueError, zarr.errors.GroupNotFoundError):
+        # ValueError covers a truncated or corrupt record (json.JSONDecodeError)
         return None
-    return None if raw is None else json.loads(raw)
 
 
 def record_diffs(record: dict | None, inputs: dict, counts: dict | None = None) -> list[str]:
@@ -957,7 +959,8 @@ def pass1_inputs(**kwargs) -> dict:
     """Canonical, JSON-comparable values of everything pass 1's output depends on.
 
     Sequences become lists and MS paths are absolute. A beam model given as an
-    object (tests pass BeamWizards) cannot be compared, so it never matches.
+    object (tests pass BeamWizards) cannot be compared: it gets a fresh uuid, so
+    it never matches (an ``id`` can be reused after garbage collection).
     """
     out = {}
     for k, v in kwargs.items():
@@ -968,7 +971,7 @@ def pass1_inputs(**kwargs) -> dict:
         out[k] = v
     beam_model = out.get("beam_model")
     if beam_model is not None and not isinstance(beam_model, str):
-        out["beam_model"] = f"<{type(beam_model).__name__} object {id(beam_model)}>"
+        out["beam_model"] = f"<{type(beam_model).__name__} object {uuid.uuid4().hex}>"
     return json.loads(json.dumps(out))
 
 
@@ -1300,21 +1303,36 @@ def imager(
     if dt_fs.exists(dt_url) and not overwrite:
         log.error_and_raise(f"{basename}.dt exists. Set overwrite to overwrite it.", RuntimeError)
 
+    if freq_range is not None and len(freq_range):
+        fmin, fmax = freq_range.strip(" ").split(":")
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = -np.inf
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = np.inf
+    else:
+        freq_min = -np.inf
+        freq_max = np.inf
+
     # Everything pass 1's output depends on (#354). A scratch whose record
     # matches is reused and pass 1 is skipped; the image grid enters through
     # the counts grid, compared below once the record's data extent is known.
     inputs = pass1_inputs(
         ms=ms,
-        field_names=field_names,
-        spw_names=spw_names,
-        scan_names=scan_names,
-        freq_range=freq_range,
+        # selection is by membership, so the order names are given in is irrelevant
+        field_names=None if field_names is None else sorted(field_names),
+        spw_names=None if spw_names is None else sorted(spw_names),
+        scan_names=None if scan_names is None else sorted(scan_names),
+        # parsed, so "1.4e9:" and "1400000000:" agree; None for an open end
+        freq_range=[None if np.isinf(f) else float(f) for f in (freq_min, freq_max)],
         data_column=data_column,
         data_group=data_group,
         partition_columns=partition_columns,
         weight_column=weight_column,
         sigma_column=sigma_column,
-        flag_column=flag_column,
         integrations_per_image=integrations_per_image,
         channels_per_image=channels_per_image,
         product=product,
@@ -1361,33 +1379,20 @@ def imager(
                 f"Reusing scratch {scratch_url}: its pass-1 inputs match this run, so pass 1 is skipped. "
                 f"Delete it to run pass 1 again."
             )
+            if record.get("pfb-imaging-version") != pfb_version:
+                log.warning(
+                    f"The scratch was written by pfb-imaging {record.get('pfb-imaging-version')}, this is "
+                    f"{pfb_version}. A fix to pass 1 between them is not in it: delete it to run pass 1 again."
+                )
         elif overwrite:
-            log.info(f"Rebuilding scratch {scratch_url}, because:{why}")
-            scratch_fs.rm(scratch_url, recursive=True)
+            # removed only once every set-up refusal has passed, just before pass 1
+            log.warning(f"Scratch {scratch_url} will be rebuilt (--overwrite), because:{why}")
         else:
             log.error_and_raise(
                 f"{scratch_url} exists but cannot serve this run, because:{why}\n"
                 f"Run with --overwrite to rebuild it, or change the options back.",
                 RuntimeError,
             )
-    if not reuse:
-        scratch_fs.makedirs(scratch_url, exist_ok=True)
-        log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
-
-    if freq_range is not None and len(freq_range):
-        fmin, fmax = freq_range.strip(" ").split(":")
-        if len(fmin) > 0:
-            freq_min = float(fmin)
-        else:
-            freq_min = -np.inf
-        if len(fmax) > 0:
-            freq_max = float(fmax)
-        else:
-            freq_max = np.inf
-    else:
-        freq_min = -np.inf
-        freq_max = np.inf
-
     # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
@@ -1624,8 +1629,14 @@ def imager(
         # the previous run's applied counts groups; this run writes its own
         if scratch_fs.exists(f"{scratch_url}/counts"):
             scratch_fs.rm(f"{scratch_url}/counts", recursive=True)
-            zarr.consolidate_metadata(scratch_url)
+        zarr.consolidate_metadata(scratch_url)
     else:
+        # Only now, with every set-up refusal behind it: a refused run must
+        # neither delete a scratch nor leave an empty one behind (#354)
+        if scratch_fs.exists(scratch_url):
+            scratch_fs.rm(scratch_url, recursive=True)
+        scratch_fs.makedirs(scratch_url, exist_ok=True)
+        log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
         tasks = []
         scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
         next_tid = 0

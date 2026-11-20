@@ -145,3 +145,62 @@ def test_a_robustness_change_reuses_the_scratch_and_matches_a_fresh_run(ms_name,
         imager_core([Path(ms_name)], out, robustness=-1.0, **{**kw, "field_of_view": 0.8}, overwrite=False)
     imager_core([Path(ms_name)], out, robustness=-1.0, chan_average=2, overwrite=True, **kw)
     assert read_scratch_record(out + "_I.scratch")["inputs"]["chan_average"] == 2
+
+
+def test_a_refused_run_neither_leaves_nor_deletes_a_scratch(ms_name, tmp_path, monkeypatch):
+    """Set-up refusals come before the scratch is touched: none is created, and --overwrite deletes none."""
+    _no_ray(monkeypatch)
+    kw = dict(product="I", keep_ray_alive=True, max_field_of_view=0.5)
+    out = tmp_path / "refused"
+    with pytest.raises(ValueError, match="beyond --max-field-of-view"):
+        imager_core([Path(ms_name)], str(out), field_of_view=1.0, **kw)
+    assert not Path(str(out) + "_I.scratch").exists()
+
+    # a scratch that cannot serve the run, under --overwrite, survives a later refusal
+    kept = tmp_path / "kept"
+    scratch = str(kept) + "_I.scratch"
+    zarr.open_group(scratch, mode="w").attrs["pass1"] = json.dumps(_record({}))
+    (Path(scratch) / "sentinel").write_text("hours of pass 1")
+    with pytest.raises(ValueError, match="beyond --max-field-of-view"):
+        imager_core([Path(ms_name)], str(kept), field_of_view=1.0, overwrite=True, **kw)
+    assert (Path(scratch) / "sentinel").exists()
+
+
+def test_a_corrupt_record_reads_as_none(tmp_path):
+    scratch = str(tmp_path / "c.scratch")
+    zarr.open_group(scratch, mode="w").attrs["pass1"] = '{"schema": 1, "inp'
+    assert read_scratch_record(scratch) is None
+    assert read_scratch_record(str(tmp_path / "missing.scratch")) is None
+
+
+@pytest.mark.slow
+def test_the_max_fov_counts_grid_serves_another_image_and_natural_weighting(ms_name, sky_truth, tmp_path, monkeypatch):
+    """Under --no-weight-on-image-grid a new field of view reuses the scratch; so does natural after robust."""
+    kw = dict(
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        max_field_of_view=1.0,
+        weight_on_image_grid=False,
+        fits_mfs=False,
+        fits_cubes=False,
+        keep_ray_alive=True,
+    )
+    out = str(tmp_path / "fov")
+    imager_core([Path(ms_name)], out, field_of_view=1.0, robustness=0.0, **kw)
+    assert Path(out + "_I.scratch/counts").exists()
+    with monkeypatch.context() as m:
+        _no_pass1(m)
+        imager_core([Path(ms_name)], out, field_of_view=0.6, robustness=None, overwrite=True, **kw)
+    # natural weighting writes no counts groups, and the robust run's are gone
+    assert not Path(out + "_I.scratch/counts").exists()
+    reused = _bands(out + "_I.dt")
+
+    fresh_out = str(tmp_path / "fresh")
+    imager_core([Path(ms_name)], fresh_out, field_of_view=0.6, robustness=None, **kw)
+    fresh = _bands(fresh_out + "_I.dt")
+    assert reused.keys() == fresh.keys()
+    for b in fresh:
+        assert np.abs(fresh[b].DIRTY.values).max() > 0
+        assert reused[b].DIRTY.shape == fresh[b].DIRTY.shape
+        assert_allclose(reused[b].DIRTY.values, fresh[b].DIRTY.values, rtol=0, atol=1e-8 * np.abs(fresh[b].DIRTY).max())
