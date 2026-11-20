@@ -22,7 +22,7 @@ from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
-from pfb_imaging.utils.weighting import _compute_counts, as_contiguous_readonly_view, sparse_counts, weight_data
+from pfb_imaging.utils.weighting import as_contiguous_readonly_view, compute_sparse_counts, weight_data
 
 
 # wrapper to facilitate calling stokes_vis without ray
@@ -251,6 +251,7 @@ def stokes_vis(
     beam_lm=None,
     nthreads=1,
     compute_counts=True,
+    double_accum=True,
 ):
     """
     MSv4 version of stokes2vis.
@@ -263,7 +264,7 @@ def stokes_vis(
         bandid, timeid, msid: identifiers for the output dataset.
         nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
             COUNTS grid used to build imaging weights in pass 2 (stored sparse,
-            see ``weighting.sparse_counts``).
+            see ``weighting.compute_sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -290,6 +291,8 @@ def stokes_vis(
         compute_counts: grid and store the piece's uv counts. Only robust
             weighting reads them, so natural weighting skips a full padded-grid
             allocation and gridding per piece.
+        double_accum: accumulate the counts in float64 (``--double-accum``);
+            they are stored at ``precision`` either way (D27).
     """
     # Load only the variables this task consumes. The MSv4 node exposes every
     # correlated-data column (VISIBILITY, CORRECTED_DATA, MODEL_DATA, ...) plus
@@ -602,9 +605,9 @@ def stokes_vis(
     # only the band *assignment* grid and is wrong by up to half a channel
     # whenever nband does not divide nchan. This value is what the beam is
     # evaluated at below and what the piece reports as freq_out.
-    # These are natural weights because they are the only ones that exist here:
-    # robust imaging weights are not formed until pass 2. See wiki D28 for why
-    # that basis is deliberate rather than an oversight.
+    # Within a piece these are natural weights, the only ones that exist here.
+    # Pieces are then combined on their imaging-weight sums, which the counts
+    # reduction predicts before pass 2 (wiki D28, D65).
     w_chan = (weight * mask[:, :, None]).sum(axis=(0, 2), dtype=np.float64)
     wsum_nat = float(w_chan.sum())
     if wsum_nat > 0:
@@ -722,7 +725,8 @@ def stokes_vis(
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     if compute_counts:
-        counts = _compute_counts(
+        # only the occupied cells: the dense grid is freed inside (#365)
+        counts_vars, wsum_offgrid = compute_sparse_counts(
             uvw,
             freq,
             mask,
@@ -734,6 +738,7 @@ def stokes_vis(
             wgt_cf.dtype,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0,
+            accum_dtype=np.float64 if double_accum else wgt_cf.dtype,
         )
 
     data_vars = {}
@@ -745,8 +750,8 @@ def stokes_vis(
     if beam_small is not None:
         data_vars["BEAM_SMALL"] = (("corr", "m_beam", "l_beam"), beam_small.astype(real_type))
     if compute_counts:
-        data_vars.update(sparse_counts(counts))
-        del counts  # the dense grid is not needed through the zarr write
+        data_vars.update(counts_vars)
+        del counts_vars
 
     coords = {
         "chan": (("chan",), freq),
@@ -804,6 +809,9 @@ def stokes_vis(
         "beam_imre_ratio": float(beam_imre_ratio),
     }
 
+    if compute_counts:
+        # natural weight beyond the padded grid, for the imaging-wsum prediction (D65)
+        attrs["wsum_offgrid"] = wsum_offgrid
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     group = f"band{bandid:04d}_time{timeid:04d}/{piece_name}"
     # consolidated=False: many workers write distinct leaf groups into the shared

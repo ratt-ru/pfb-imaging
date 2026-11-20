@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-17T13:06:00Z
-last_verified_commit: cbc4c68
+timestamp: 2026-11-19T14:39:00Z
+last_verified_commit: 66054ce
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -391,7 +391,7 @@ update it (and this page's `last_verified_commit`) in the same session.
   placed on the image grid by meerkat-beams `beam_on_grid` (each `pixel_lm` pixel, target
   offset included, rotated to the pointing and interpolated bilinearly, zero outside the
   small grid; landmanbester/meerkat-beams#60). It replaced a SIN→SIN reprojection, which
-  it matches to 4e-13 of the peak and beats by ~30× on one thread. Pass 2 averages a partition's small beams (`wsum_nat`-weighted, `_concat_pieces`,
+  it matches to 4e-13 of the peak and beats by ~30× on one thread. Pass 2 averages a partition's small beams (`wsum_img`-weighted, `_concat_pieces`,
   D28) and places the mean once (`stokes2vis.partition_beam`); `grid_partition` does no beam
   interpolation. A moving `--target` is placed at the partition's gridding offset, where pass
   1 used each piece's own. Verified on 3 MeerKLASS pointings: each partition's wizard beam peaks within half a
@@ -718,24 +718,28 @@ update it (and this page's `last_verified_commit`) in the same session.
   actually gridded**, reduced at three levels:
   1. **piece** (`stokes_vis`, pass 1) — `Σ w·mask·ν / Σ w·mask` over the post-averaging
      channel axis, using **natural** weights. This value evaluates the beam *and* is stored.
-  2. **partition** (`_concat_pieces`, pass 2) — `wsum_nat`-weighted mean of the pieces'
-     frequencies, and of their field-centred `BEAM_SMALL`s, which pass 2 then places once
+  2. **partition** (`_concat_pieces`, pass 2) — mean of the pieces' frequencies, and of
+     their field-centred `BEAM_SMALL`s, weighted by each piece's **imaging** wsum as the
+     counts reduction predicts it (`wsum_img`, D65); pass 2 then places the mean beam once
      (#365; placement is linear, so this equals the mean of the placed beams).
-  3. **band** (`_grid_image`, pass 2) — weighted by the **imaging** `prod["WSUM"]`.
+  3. **band** (`_grid_image`, pass 2) — weighted by the **imaging** `prod["WSUM"]`, which
+     makes the whole reduction the imaging-weighted mean over pieces. The driver computes
+     it before pass 2 (D65) and pass 2 refuses a disagreement with its gridded `WSUM`.
   The band-edge midpoints keep their sole remaining role, band *assignment*, renamed
   `band_centres` (driver) / `freq_nominal` (parameters and attrs) so one name no longer
   means two things. `freq_nominal` is also the fallback when no weight survives.
 - **Rationale:** A band product is the wsum-weighted sum of its partitions, so its effective
   frequency is the wsum-weighted mean of theirs — the identical reduction `beam_sum` already
   performs, which is *why* level 3 must use the imaging weights: `BEAM` and `freq_out` must
-  not be weighted by different quantities at the same level. Level 2 uses natural weights
-  because it runs before gridding, where robust weights do not exist; obtaining them would
-  mean passing per-piece row offsets into `grid_partition` and reducing the beams after
-  gridding, to correct a beam that varies slowly with frequency. Until #365 it also meant
-  holding every piece's image-sized `BEAM` resident through gridding (~67 MB per piece at
-  4096² f4); pieces now hold only a small field-centred beam, so that cost is gone and
-  the rest is plumbing. **The mixed basis is deliberate — do not "fix" it into a
-  regression;** revisit it with #401's time blocks, which change what a partition sums. `freq_out` stays scalar, reduced with corr-summed weights, matching what
+  not be weighted by different quantities at the same level. Level 2 used natural weights
+  until D65, because it ran before gridding and robust weights did not exist yet, and this
+  entry called that mixed basis deliberate. The counts reduction now gives each piece's
+  imaging wsum exactly before pass 2, so that reason is gone and both levels use one basis:
+  the dirty image is a sum of imaging-weighted visibilities, so to first order in the
+  spectrum a source appears at the imaging-weighted mean frequency, the one the transferred
+  model is rendered at. A per-channel imaging weighting within a piece would need a second
+  sparse value per cell from pass 1, and the beam could not follow it (it is evaluated once
+  per piece), so it is not done. `freq_out` stays scalar, reduced with corr-summed weights, matching what
   `dt2fits` already does for `freq_mfs`; per-correlation flagging differences are
   second-order for continuum and a per-Stokes frequency axis has no home in FITS.
 - **Consequences:** Band frequencies **change value** for uneven splits — measured on
@@ -1502,8 +1506,10 @@ update it (and this page's `last_verified_commit`) in the same session.
   non-MeerKAT array has no group beam at all.
 - **Decision:** the telescope and band guards fire when a group-capable
   `BeamWizard` is required — i.e. whenever `--beam-model` is set — not on
-  `--baseline-groups` alone. They run in `utils/baselines.preflight_baseline_groups` **before**
-  `init_ray`, so a bad request never stands up a cluster.
+  `--baseline-groups` alone. They run **before** `init_ray`, so a bad request never stands
+  up a cluster: the option checks in `utils/baselines.preflight_baseline_groups`, the
+  telescope check in `check_group_telescope` on the MS tree the driver opens anyway (it was
+  a second open of every MS until #365 measured it at ~180 s on ESO137).
 - **Rationale:** with no beam model there is no group beam to get wrong, and the
   split degenerates to pure data partitioning whose summation is algebraically
   identical to not splitting (imaging weights are reduced per band, not per
@@ -1773,7 +1779,7 @@ update it (and this page's `last_verified_commit`) in the same session.
     (`test_degrid_beam_failure_leaves_the_ms_untouched`). Replicas get `Multiton(BeamWizard, ...)`
     recipes, never loaded objects (D38). Groups are classified per node with
     `utils/baselines.node_baseline_groups`, sharing the imager's preflight
-    (`utils/baselines.preflight_baseline_groups`).
+    (`utils/baselines.preflight_baseline_groups`, `check_group_telescope`).
 - **Rationale:** ducc's `divide_by_n=True` is exactly `diag(1/n)` under w-gridding (D22), so
   degrid gets the right physics without inventing a second beam convention. D22's reasons for
   folding (the PSF-convolution Hessian) do not apply to a forward prediction. Evaluating on a
@@ -2309,6 +2315,54 @@ update it (and this page's `last_verified_commit`) in the same session.
   `::test_field_beam_axis_reaches_the_farthest_pixel_and_refuses_past_the_cube`,
   `::test_field_beam_axis_measures_from_each_pointing_in_a_mosaic`;
   `tests/test_imager.py::test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels`.
+
+### D65 — Pass 2's reductions are predicted from the counts, so the residual is formed in pass 2
+
+- **Context:** the image's effective frequency (D28) is a reduction over every piece's
+  imaging wsum, which pass 2 only knew after gridding every partition. With
+  `--transfer-model-from` the model could therefore only be rendered after the gridding
+  loop, and the residual took a second sweep that read every partition's
+  UVW/WEIGHT/MASK back from the `.dt` (12% of pass 2 on ESO137, #365). Splitting the
+  imager into two passes exists precisely so that reductions needing a full scan of the
+  data are done between them.
+- **Decision:** the counts reduction predicts each piece's imaging-weight sum exactly
+  (`weighting.piece_imaging_wsum`): the imaging weight is `w_nat / D[cell]`
+  (`briggs_denominator`, shared with `counts_to_weights`), so a piece's samples in a cell
+  sum to `N[cell] / D[cell]`, plus the natural weight of samples beyond the padded grid,
+  which are in neither. The pass-1 scatter sums that off-grid weight directly in float64
+  (`wsum_offgrid`) and, under `--double-accum`, accumulates the cells in float64 before
+  storing them at `--precision`. Deriving the off-grid term as `wsum_nat − Σ N` instead
+  cancelled catastrophically with float32 counts: 1.3e-3 relative error at 2e8 samples on a
+  256² grid at robust −2, against 2e-9 recorded directly. The driver reduces every image's `freq_out`
+  from these before pass 2, also using them to weight `_concat_pieces` (D28). Pass 2
+  renders the model first and `grid_partition(model=…)` grids each partition's residual
+  visibilities. Pass 2 recomputes the partition `WSUM` (rtol 1e-4, checked before the
+  partition is written) and the image `freq_out` (rtol 1e-6, from a float64 accumulator)
+  from its gridded products and raises on a disagreement.
+- **Rationale:** the prediction needs one new pass-1 scalar, `wsum_offgrid`, beside the
+  `COUNTS_INDEX`/`COUNTS_VALUE` already stored, and the extra sparse read is cheap beside the
+  dense grid. Gridding `V − G(B·x)` rather than subtracting `GᵀWG(B·x)` from the dirty image is
+  the same number of degrids and grids, minus the read-back, and puts ducc's relative
+  `epsilon` on the residual. It also forms the per-visibility residual that per-partition
+  diagnostics (`--fits-per-partition`) and robust reweighting (#304) need, and is where a
+  complex cross-group beam would enter on the imager side (#408). Deconv's major cycles
+  keep the image-space `residual_from_partitions`, since switching them would mean
+  reading VIS every cycle; both share `gridder.degrid_apparent`.
+- **Consequences:** the frequency-coverage warning for a transferred model fires before
+  pass 2. A logic error in the prediction cannot silently move a model's frequency: the
+  pass-2 check raises. A pass-2 task with a transferred model holds three extra images
+  (the model, `RESIDUAL` and `BRESIDUAL` sums) through its gridding loop rather than after it.
+  `freq_out` and `BEAM` follow the imaging basis (D28), so they
+  differ slightly from earlier `.dt`s wherever a partition's pieces differ in flagging or
+  beam.
+- **Source:** #365; `src/pfb_imaging/utils/weighting.py` (`briggs_denominator`,
+  `piece_imaging_wsum`, `write_group_counts`); `src/pfb_imaging/core/imager.py`
+  (`effective_frequency`, `_check_prediction`, `_grid_image`);
+  `src/pfb_imaging/operators/gridder.py` (`grid_partition`, `degrid_apparent`);
+  `tests/test_weighting.py::test_predicted_imaging_wsum_matches_the_applied_weights`,
+  `::test_float32_prediction_holds_with_many_samples_per_cell`;
+  `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_residual`;
+  `tests/test_imager_transfer.py::test_transferred_truth_nulls_the_residual`.
 
 ## Known debt
 

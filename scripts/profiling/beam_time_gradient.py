@@ -1,8 +1,10 @@
 """How much does a time-averaged beam bias the deconv gradient? (#401, step 0)
 
-Deconv's gradient applies one beam per partition, the ``wsum_nat``-weighted mean
-of its scans' beams (``core/imager._concat_pieces``, wiki D28). The exact
-gradient applies each scan's own beam:
+Deconv's gradient applies one beam per partition, the weighted mean of its scans'
+beams (``core/imager._concat_pieces``, wiki D28). This script reproduces the
+``wsum_nat``-weighted mean that was measured (docs/experiments/beam_time_gradient.md);
+since D65 ``_concat_pieces`` weights the scans by their imaging wsum instead. The
+exact gradient applies each scan's own beam:
 
     g_exact = sum_s B_s G_s^T W_s (V_s - G_s(B_s x))
     g_avg   = sum_s Bbar G_s^T W_s (V_s - G_s(Bbar x))
@@ -114,7 +116,7 @@ def gradient(args):
     wsum = np.zeros(model.shape[0])
     per_group = {}
     for bg, paths in groups.items():
-        # the partition's mean beam, as _concat_pieces forms it
+        # the partition's mean beam, as _concat_pieces formed it before D65
         w = np.array([float(scratch[p].ds.attrs["wsum_nat"]) for p in paths])
         bbar = np.zeros_like(model)
         for wi, p in zip(w, paths):
@@ -219,7 +221,7 @@ def beams(args):
 
     scratch = xr.open_datatree(args.scratch, engine="zarr", chunks=None, cache=False)
     # band frequencies from the pieces (the .dt need not exist yet): the extreme
-    # channel centres, and the wsum_nat-weighted mean as _concat_pieces forms it
+    # channel centres, and the wsum_nat-weighted mean as _concat_pieces formed it before D65
     pattrs = [scratch[p].ds.attrs for ps in band_pieces(scratch, args.band).values() for p in ps]
     flo = min(float(a["freq_min"]) for a in pattrs)
     fhi = max(float(a["freq_max"]) for a in pattrs)

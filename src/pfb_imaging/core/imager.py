@@ -1,7 +1,6 @@
 import gc
 import os
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -16,10 +15,11 @@ from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
-from pfb_imaging.operators.gridder import grid_partition, residual_from_partitions, wgridder_conventions
+from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
     GROUP_LABELS,
+    check_group_telescope,
     node_baseline_groups,
     preflight_baseline_groups,
     resolve_group_beam_cache,
@@ -57,11 +57,13 @@ log = pfb_logging.get_logger("IMAGER")
 def _partition_fits(
     fits_dir, out_name, pid, field_name, baseline_group, prod, meta, freq_out, cell_rad, do_psf, do_beam
 ):
-    """Write one partition's sanity-check FITS (dirty [+psf] [+beam]).
+    """Write one partition's sanity-check FITS (dirty [+residual] [+psf] [+beam]).
 
     Runs inside the pass-2 worker while the partition products are in memory;
-    per-partition DIRTY/PSF are wsum-normalised, the beam is written as stored
-    (effective response B/n, wiki D22).
+    per-partition DIRTY/RESIDUAL/PSF are wsum-normalised, the beam is written as
+    stored (effective response B/n, wiki D22). The residual exists under
+    ``--transfer-model-from``: each partition's own misfit to the band model,
+    so a partition that calibrated worse than its siblings stands out.
     """
     field = str(field_name).replace(" ", "_").replace("/", "-")
     cell_deg = np.rad2deg(cell_rad)
@@ -92,6 +94,10 @@ def _partition_fits(
         dirty = np.where(wsum > 0, prod["DIRTY"] / wsum, 0.0)
     ny_im, nx_im = prod["DIRTY"].shape[1:]
     save_fits(dirty, stem.format(var="dirty"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
+    if "RESIDUAL" in prod:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            residual = np.where(wsum > 0, prod["RESIDUAL"] / wsum, 0.0)
+        save_fits(residual, stem.format(var="residual"), mk_hdr(nx_im, ny_im, "Jy/beam"), yx_order=True)
     if do_psf:
         with np.errstate(invalid="ignore", divide="ignore"):
             psf = np.where(wsum > 0, prod["PSF"] / wsum, 0.0)
@@ -189,34 +195,6 @@ def _transfer_planes(model_stokes: list[str], corr: list[str]) -> list[int]:
     return [list(model_stokes).index(str(c)) for c in corr]
 
 
-def _iter_parts(dt_store: str, out_name: str, npart: int) -> Iterator[xr.Dataset]:
-    """Stream one image's partitions back from the `.dt`, one at a time (#309).
-
-    Only the variables `residual_from_partitions` reads, plus the attrs (its
-    l0/m0 set the phase centre). Reading back rather than holding the
-    partitions keeps the pass-2 task at one partition's vis data at a time.
-
-    Args:
-        dt_store: The `.dt` store URL.
-        out_name: The band node the partitions live under.
-        npart: Number of `part####` children.
-
-    Yields:
-        Each partition's UVW/WEIGHT/MASK/FREQ/BEAM, loaded, with its attrs.
-    """
-    for pid in range(npart):
-        ds = xr.open_zarr(dt_store, group=f"{out_name}/part{pid:04d}", consolidated=False, chunks=None)
-        try:
-            sub = ds[["UVW", "WEIGHT", "MASK", "FREQ", "BEAM"]].load()
-            sub.attrs = dict(ds.attrs)
-        finally:
-            ds.close()
-        del ds
-        yield sub
-        # drop the generator's own reference before loading the next partition
-        del sub
-
-
 def _sampling_bounds(infos: list[dict], band_lo: float, band_hi: float) -> dict:
     """Channel extent and integration-edge time extent of one output image (#327).
 
@@ -311,31 +289,51 @@ def transfer_coverage_warning(freqs_out, coverage: tuple[float, float, bool]) ->
     )
 
 
+def effective_frequency(pieces, freq_nominal):
+    """An output image's effective frequency, from its pieces, before pass 2 (wiki D28).
+
+    The imaging-wsum-weighted mean of the pieces' own effective frequencies:
+    the image is a sum of imaging-weighted visibilities, so to first order in
+    the spectrum a source appears at this frequency, and it is the one the
+    transferred model is rendered at. Partition frequencies and beams are
+    reduced on the same weights (``_concat_pieces``), and so is the band level
+    in pass 2, which recomputes this from its gridded ``WSUM`` and refuses a
+    disagreement.
+
+    Args:
+        pieces: ``(wsum_img, freq_out)`` per piece of the image.
+        freq_nominal: Fallback when the image carries no weight.
+
+    Returns:
+        The effective frequency in Hz.
+    """
+    w = np.array([p[0] for p in pieces], dtype=np.float64)
+    f = np.array([p[1] for p in pieces], dtype=np.float64)
+    den = float(w.sum())
+    return float((w * f).sum() / den) if den > 0 else float(freq_nominal)
+
+
 def _concat_pieces(plist):
     """Reduce a partition's scratch pieces to a single Dataset.
 
     Rows are concatenated; the field-centred BEAM_SMALL and the effective
-    frequency are combined as ``wsum_nat``-weighted means. Pieces of a
-    partition can differ in both -- BeamWizard evaluates the beam at the
-    piece's own timestamps, and post-#296 at its own effective frequency -- so
-    taking piece 0's beam, as this used to, silently discarded every other
-    piece (wiki D28). The caller places the mean on the image grid once
-    (``partition_beam``); placement is linear, so that equals averaging the
-    placed beams (#365).
-
-    The weights are the *natural* wsum because this runs before gridding, where
-    the robust imaging weights do not yet exist. Getting them would mean
-    passing per-piece row offsets into grid_partition and reducing the beams
-    after gridding, for a correction to a beam that varies slowly with
-    frequency. The band-level reduction in _grid_image does use the imaging
-    weights; see wiki D28 for why the mixed basis is acceptable.
+    frequency are combined as ``wsum_img``-weighted means, the pieces'
+    imaging-weight sums the driver predicted before pass 2
+    (``weighting.piece_imaging_wsum``). Pieces of a partition can differ in
+    both -- BeamWizard evaluates the beam at the piece's own timestamps, and
+    post-#296 at its own effective frequency -- so taking piece 0's beam, as
+    this used to, silently discarded every other piece (wiki D28). The caller
+    places the mean on the image grid once (``partition_beam``); placement is
+    linear, so that equals averaging the placed beams (#365). The weights are
+    the imaging ones, the same basis as the band-level reduction in pass 2,
+    because those are what each piece contributes to the gridded image.
 
     Args:
         plist: scratch-piece Datasets of one partition, all sharing a FREQ axis.
 
     Returns:
         The merged partition Dataset, carrying the weighted ``freq_out`` and
-        the summed ``wsum_nat`` in its attrs. A single-piece list is returned
+        the summed ``wsum_img`` in its attrs. A single-piece list is returned
         unchanged.
     """
     if len(plist) == 1:
@@ -358,18 +356,18 @@ def _concat_pieces(plist):
                 "concat group has mismatched beam grids; cannot average BEAM_SMALL"
             )
 
-    w = np.array([float(p.attrs["wsum_nat"]) for p in plist], dtype=np.float64)
-    wsum_nat = float(w.sum())
+    w = np.array([float(p.attrs["wsum_img"]) for p in plist], dtype=np.float64)
+    wsum_img = float(w.sum())
     beam = None
-    if wsum_nat > 0:
+    if wsum_img > 0:
         freqs = np.array([float(p.attrs["freq_out"]) for p in plist], dtype=np.float64)
-        freq_out = float((w * freqs).sum() / wsum_nat)
+        freq_out = float((w * freqs).sum() / wsum_img)
         if has_beam:
             # accumulate rather than stack: one buffer, not npiece of them
             beam = np.zeros(plist[0].BEAM_SMALL.shape, dtype=np.float64)
             for wi, p in zip(w, plist):
                 beam += wi * p.BEAM_SMALL.values
-            beam /= wsum_nat
+            beam /= wsum_img
     else:
         freq_out = float(plist[0].attrs["freq_out"])
         if has_beam:
@@ -384,11 +382,24 @@ def _concat_pieces(plist):
     if has_beam:
         part["BEAM_SMALL"] = (part.BEAM_SMALL.dims, beam.astype(part.BEAM_SMALL.dtype))
     part.attrs["freq_out"] = freq_out
-    part.attrs["wsum_nat"] = wsum_nat
+    part.attrs["wsum_img"] = wsum_img
     # Re(B) diagnostic (wiki D46): report the WORST piece, not piece 0's, which
     # is what `part = plist[0].drop_vars(...)` would otherwise leave here.
     part.attrs["beam_imre_ratio"] = max(float(p.attrs.get("beam_imre_ratio", 0.0)) for p in plist)
     return part
+
+
+def _check_prediction(what, where, got, predicted, rtol):
+    """Refuse a pass-2 product that disagrees with the driver's pre-pass-2 reduction.
+
+    Raises:
+        RuntimeError: If ``got`` and ``predicted`` differ by more than ``rtol``.
+    """
+    if not np.isclose(got, predicted, rtol=rtol, atol=0.0):
+        raise RuntimeError(
+            f"{what} of {where}: gridded {got!r} but predicted {predicted!r} before pass 2 "
+            f"(wiki D28: the counts reduction and pass 2 must agree)"
+        )
 
 
 @ray.remote
@@ -445,11 +456,15 @@ def _grid_image_body(
     # Pieces are detached from the tree by _load_piece for the same reason.
     dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
     groups = {}
+    # each partition's imaging wsum as the driver predicted it (write_group_counts)
+    wsum_pred = {}
     for sn in src_names:
-        for _, child in dt[sn].children.items():
+        for cname, child in dt[sn].children.items():
             ds = _load_piece(child)
+            ds.attrs["wsum_img"] = meta["wsum_img"][f"{sn}/{cname}"]
             key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
             groups.setdefault(key, []).append(ds)
+            wsum_pred[key] = wsum_pred.get(key, 0.0) + ds.attrs["wsum_img"]
 
     # the applied (filtered, box-summed) group counts, written once by the driver
     # (write_group_counts); grid_partition copies before use
@@ -470,18 +485,44 @@ def _grid_image_body(
     # sweep; `ds` is the loop's last piece. `first` existing means the loop
     # bound `ds` (next() raises on an empty `groups`).
     del first, ds
+    model = None
+    if transfer_model is not None:
+        # Render at the image's effective frequency, which the driver predicted
+        # from the counts before pass 2 (D28): the residual is then formed per
+        # partition while its visibilities are in memory (#309, #365).
+        model_ds = transfer_model.instance  # one load per worker process
+        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
+        rendered = render_model_region(
+            model_ds,
+            time=meta["time_out"],
+            freq_out=float(meta["freq_out"]),
+            nx=nx,
+            ny=ny,
+            cell_rad=cell_rad,
+            x0=x0,
+            y0=y0,
+            # flux-conserving remap onto this grid, refining or coarsening (D52)
+            kernel="box",
+        )
+        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
+        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
+        del rendered, model_ds
     dirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
+    residual_sum = np.zeros((ncorr, ny, nx), dtype=real_type) if model is not None else None
+    bresidual_sum = np.zeros((ncorr, ny, nx), dtype=real_type) if model is not None else None
     psf_sum = np.zeros((ncorr, ny_psf, nx_psf), dtype=real_type) if do_psf else None
     beam_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     bdirty_sum = np.zeros((ncorr, ny, nx), dtype=real_type)
     wsum_sum = np.zeros(ncorr, dtype=real_type)
+    # float64 copy for the frequency check alone: summed over hundreds of
+    # partitions in float32 it drifts to within a factor of 2 of the 1e-6 rtol
+    wsum_check = np.zeros(ncorr, dtype=np.float64)
     # worst Re(B) approximation error over this image's partitions (wiki D46)
     beam_imre_max = 0.0
     # float64 regardless of --precision: the tree may be single-precision
     # (wiki D27) and float32 resolves 1e9 Hz only to ~64 Hz
     freq_sum = np.zeros(ncorr, dtype=np.float64)
 
-    npart = len(groups)
     for pid, key in enumerate(list(sorted(groups))):
         plist = groups.pop(key)
         part = _concat_pieces(plist)
@@ -526,7 +567,10 @@ def _grid_image_body(
             # part is this task's own concat (or loaded piece), and only the
             # imaging weights are stored: reuse its WEIGHT buffer (#339)
             overwrite_weight=True,
+            model=model,
         )
+        # before anything is written, so a failed prediction leaves no partial node
+        _check_prediction("imaging wsum", key, float(prod["WSUM"].astype(np.float64).sum()), wsum_pred[key], 1e-4)
 
         part_vars = {
             "VIS": (("corr", "row", "chan"), part.VIS.values),
@@ -589,26 +633,32 @@ def _grid_image_body(
         # of the deconv gradient (D23), not derivable from the summed DIRTY
         # when partitions carry distinct beams
         bdirty_sum += prod["BEAM"] * prod["DIRTY"]
+        if model is not None:
+            residual_sum += prod["RESIDUAL"]
+            # the outer per-partition beam of the gradient residual (D23)
+            bresidual_sum += prod["BEAM"] * prod["RESIDUAL"]
         if do_psf:
             psf_sum += prod["PSF"]
         wsum_sum += prod["WSUM"]
+        wsum_check += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
-    # release the last partition's vis-space data now: the transfer residual
-    # below re-reads each partition from the store (#339). part_vars holds the
-    # same VIS/WEIGHT/MASK/UVW buffers as part, so it must go too.
+    # release the last partition's vis-space data before the band products are
+    # assembled (#339); part_vars holds the same VIS/WEIGHT/MASK/UVW buffers
     del part, part_vars, part_out, prod
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
     # partition frequencies -- the identical reduction beam_sum uses below.
-    # That is why these weights must be the imaging prod["WSUM"] and not the
-    # natural wsum_nat used inside _concat_pieces: they are what actually
-    # determines each partition's contribution to the summed image, and BEAM
-    # and freq_out must not be weighted by different quantities at the same
-    # level (wiki D28). Reduced with corr-summed weights and stored scalar, as
+    # These are the imaging prod["WSUM"], the same basis _concat_pieces uses
+    # one level down, so the whole reduction is the imaging-weighted mean over
+    # pieces (wiki D28). Reduced with corr-summed weights and stored scalar, as
     # dt2fits already does for freq_mfs.
-    wsum_tot = float(wsum_sum.astype(np.float64).sum())
-    freq_eff = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
+    wsum_tot = float(wsum_check.sum())
+    freq_gridded = float(freq_sum.sum() / wsum_tot) if wsum_tot > 0 else float(freq_nominal)
+    # the driver's value is the one the model was rendered at; this pins that it
+    # is the same reduction (to the --precision rounding of WSUM)
+    freq_eff = float(meta["freq_out"])
+    _check_prediction("effective frequency", out_name, freq_gridded, freq_eff, 1e-6)
     band_attrs = {
         "bandid": meta["bandid"],
         "timeid": meta["timeid"],
@@ -647,41 +697,10 @@ def _grid_image_body(
             np.array(fitcleanbeam(psf_sum / wsum_sum[:, None, None], yx_order=True), dtype=real_type),
         )
         band_coords["bpar"] = bpar
-    if transfer_model is not None:
-        # Render at the band's effective frequency, known only now that the
-        # partitions are gridded (D28), then take the exact residual over the
-        # partitions just written -- the same path deconv uses (#309).
-        model_ds = transfer_model.instance  # one load per worker process
-        _, _, _, x0, y0 = wgridder_conventions(meta.get("l0", 0.0), meta.get("m0", 0.0))
-        rendered = render_model_region(
-            model_ds,
-            time=meta["time_out"],
-            freq_out=freq_eff,
-            nx=nx,
-            ny=ny,
-            cell_rad=cell_rad,
-            x0=x0,
-            y0=y0,
-            # flux-conserving remap onto this grid, refining or coarsening (D52)
-            kernel="box",
-        )
-        planes = _transfer_planes([str(s) for s in model_ds.stokes.values], [str(c) for c in corr])
-        model = np.ascontiguousarray(rendered[planes], dtype=real_type)
-        del rendered
-        residual, bresidual = residual_from_partitions(
-            dirty_sum,
-            _iter_parts(dt_store, out_name, npart),
-            model,
-            cell_rad,
-            nthreads=nthreads,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            double_accum=double_accum,
-            bdirty=bdirty_sum,
-        )
+    if model is not None:
         band_vars["MODEL"] = (("corr", "y", "x"), model)
-        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual.astype(real_type, copy=False))
-        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual.astype(real_type, copy=False))
+        band_vars["RESIDUAL"] = (("corr", "y", "x"), residual_sum)
+        band_vars["BRESIDUAL"] = (("corr", "y", "x"), bresidual_sum)
         band_attrs_extra = {"transferred_from": transfer_path}
     else:
         band_attrs_extra = {}
@@ -878,7 +897,7 @@ def imager(
 
     antenna_group_override = None
     if baseline_groups:
-        antenna_group_override = preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
+        antenna_group_override = preflight_baseline_groups(beam_model, antenna_groups)
     elif antenna_groups is not None:
         # Refuse rather than ignore: an ungrouped run with --antenna-groups set
         # is indistinguishable in its output from the grouped run the user asked
@@ -990,10 +1009,14 @@ def imager(
         dt_kwargs = get_engine(ms_name, partition_columns)
         if "file://" in ms_name:
             ms_name = ms_name.replace("file://", "")
+        # the only open of this MS in the driver: the --baseline-groups telescope
+        # check reads the same tree (#365)
         dt = xr.open_datatree(
             ms_name,
             **dt_kwargs,
         )
+        if baseline_groups and beam_model is not None:
+            check_group_telescope(dt, ms_name)
         # Name-based selection, the frequency window and the chan0 offset all
         # come from utils/msv4.select_vis_nodes, shared with degrid so the
         # two front ends cannot drift. It selects channels by matching index
@@ -1317,6 +1340,7 @@ def imager(
                         nthreads=nthreads,
                         # only robust weighting reads the counts (see counts_sources)
                         compute_counts=robustness is not None,
+                        double_accum=double_accum,
                     )
                     tasks.append(fut)
 
@@ -1386,6 +1410,10 @@ def imager(
     # applied-weighting group -> its pieces' node paths; the counts themselves
     # are streamed by write_group_counts below, never held per piece
     counts_sources = {}
+    # piece node path -> (wsum_nat, freq_out), for the effective frequency
+    # computed below before pass 2; scratch node -> its piece paths
+    piece_info = {}
+    node_pieces = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
             continue
@@ -1398,6 +1426,10 @@ def imager(
         # natural weighting (robustness None) never touches counts
         if robustness is not None:
             counts_sources.setdefault(counts_key(bandid, timeid), []).extend(f"{name}/{c}" for c in children)
+        for c, ds in zip(children, pieces):
+            a = ds.attrs
+            piece_info[f"{name}/{c}"] = (float(a["wsum_nat"]), float(a["freq_out"]))
+            node_pieces.setdefault(name, []).append(f"{name}/{c}")
         node_info[name] = {
             "bandid": bandid,
             "timeid": timeid,
@@ -1455,13 +1487,28 @@ def imager(
     # one applied counts grid per weighting group, streamed into the scratch
     # store; pass-2 workers read their group's grid from there (#339)
     counts_groups = {}
+    # natural weighting: the imaging weights are the natural ones
+    wsum_img = {path: info[0] for path, info in piece_info.items()}
     if robustness is not None:
-        counts_groups = write_group_counts(
-            scratch_url, counts_sources, filter_level=filter_counts_level, npix_super=npix_super
+        counts_groups, wsum_img = write_group_counts(
+            scratch_url, counts_sources, robustness, filter_level=filter_counts_level, npix_super=npix_super
         )
         # the counts groups were written after pass 1's consolidation
         zarr.consolidate_metadata(scratch_url)
     log.info(f"Applied uv counts grouping '{grouping_eff}' over {len(counts_groups)} group(s)")
+
+    # every image's effective frequency, before pass 2 (wiki D28): the model is
+    # rendered at it, so pass 2 can form residuals while the vis are in memory
+    for _, src_names, meta in work:
+        pieces = {p: wsum_img[p] for sn in src_names for p in node_pieces[sn]}
+        meta["wsum_img"] = pieces
+        meta["freq_out"] = effective_frequency(
+            [(w, piece_info[p][1]) for p, w in pieces.items()], band_centres[meta["bandid"]]
+        )
+    if transfer_model_from is not None:
+        msg = transfer_coverage_warning([meta["freq_out"] for _, _, meta in work], transfer_coverage)
+        if msg is not None:
+            log.warning(msg)
 
     # ---- initialise the .dt store root ----
     dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
@@ -1536,22 +1583,15 @@ def imager(
     ncomplete = 0
     remaining_tasks = tasks.copy()
     beam_imre_max = 0.0
-    freqs_out = []
     while remaining_tasks:
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
         for task in ready:
             res = ray.get(task)
             beam_imre_max = max(beam_imre_max, float(res.get("beam_imre_ratio", 0.0)))
-            freqs_out.append(res["freq_out"])
             ncomplete += 1
             if progressbar:
                 mem = res["mem"]
                 log.info(f"Gridded: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
-
-    if transfer_model_from is not None:
-        msg = transfer_coverage_warning(freqs_out, transfer_coverage)
-        if msg is not None:
-            log.warning(msg)
 
     if beam_imre_max > 0:
         # The MPM cross-group beam is complex and we store Re(B) (wiki D46).

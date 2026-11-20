@@ -675,6 +675,9 @@ def test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels(ms_name, tmp_path)
     np.testing.assert_array_equal(a.l_beam.values, beam_lm)
     np.testing.assert_array_equal(a.l_beam.values, b.l_beam.values)
 
+    # pass 2 stamps each piece's predicted imaging wsum (natural weighting here)
+    for p in (a, b):
+        p.attrs["wsum_img"] = p.attrs["wsum_nat"]
     part = _concat_pieces([a, b])
     grid = np.array([a.attrs["ra"], a.attrs["dec"]])
     placed = partition_beam(part, grid, cell, npix, npix)
@@ -1248,6 +1251,17 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
     # BEFORE it and would stop too early to observe the wizards.
     monkeypatch.setattr(imager_mod, "init_ray", _stop)
 
+    # the driver opens the MS once: the telescope check reads the same tree (#365)
+    opened = []
+    real_open = xr.open_datatree
+
+    def _counting_open(path, *a, **kw):
+        if str(path).rstrip("/") == str(ms_name).rstrip("/"):
+            opened.append(path)
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(xr, "open_datatree", _counting_open)
+
     with pytest.raises(RuntimeError, match="stop after beam construction"):
         imager_core(
             [Path(ms_name)],
@@ -1262,6 +1276,7 @@ def test_one_beam_wizard_is_built_per_baseline_group(ms_name, tmp_path, monkeypa
 
     assert sorted(g for _, g in built) == ["MM", "MPM", "MPMP"]
     assert {b for b, _ in built} == {"L"}
+    assert len(opened) == 1, f"the driver opened the MS {len(opened)} times"
 
 
 def test_partition_fits_names_carry_the_group_when_split(tmp_path):
@@ -1338,7 +1353,7 @@ def test_concat_pieces_reports_the_worst_beam_imre_ratio():
                 "FREQ": (("chan",), np.array([1.4e9])),
                 "BEAM": (("corr", "y", "x"), np.ones((1, 2, 2), dtype=np.float32)),
             },
-            attrs={"wsum_nat": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
+            attrs={"wsum_img": wsum, "freq_out": 1.4e9, "beam_imre_ratio": ratio},
         )
 
     part = _concat_pieces([_piece(0.01, 1.0), _piece(0.25, 1.0), _piece(0.05, 1.0)])

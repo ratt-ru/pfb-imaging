@@ -11,7 +11,6 @@ imager and degrid, open MS metadata and log.
 """
 
 import fnmatch
-import gc
 import os
 from pathlib import Path
 
@@ -21,7 +20,6 @@ from meerkat_beams import cache as mbeams_cache
 
 from pfb_imaging import MBEAMS_CACHE_DEFAULT
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.msv4 import get_engine
 
 log = pfb_logging.get_logger("BASELINES")
 
@@ -216,21 +214,20 @@ def baseline_group_masks(is_ext, antenna_names, ant1_names, ant2_names):
 GROUP_BANDS = ("L",)
 
 
-def preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups):
-    """Validate a --baseline-groups request before any Ray cluster exists.
+def preflight_baseline_groups(beam_model, antenna_groups):
+    """Validate a --baseline-groups request before any MS is opened.
 
-    Opens each MS once to read antenna_xds.attrs["overall_telescope_name"].
-    That attr is broadcast from OBSERVATION::TELESCOPE_NAME, so it identifies
-    the array (it cannot discriminate dishes -- that is dish diameter's job).
+    The checks that need only the options: the antenna-group override parses,
+    and the beam model has per-group beams. The telescope check needs the MS
+    and is ``check_group_telescope``, run on the tree the caller opens anyway
+    (opening a large MS costs minutes in xarray-ms, so it is opened once, #365).
 
-    The telescope and band checks are conditioned on a beam model being
-    requested: with no beam model there is no group beam to get wrong, and the
-    split degenerates to pure data partitioning whose summation is algebraically
-    identical to not splitting. See wiki design-decisions D47.
+    The band checks are conditioned on a beam model being requested: with no
+    beam model there is no group beam to get wrong, and the split degenerates
+    to pure data partitioning whose summation is algebraically identical to not
+    splitting. See wiki design-decisions D47.
 
     Args:
-        ms: resolved MS paths.
-        partition_columns: MSv2 partition schema override, as passed to imager.
         beam_model: the --beam-model value, or None.
         antenna_groups: the --antenna-groups value, or None.
 
@@ -238,8 +235,8 @@ def preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
         The parsed (meerkat_pattern, meerkat_plus_pattern) override, or None.
 
     Raises:
-        ValueError: on a bad override, a non-MeerKAT array, katbeam, or a band
-            for which meerkat-beams has no group beams.
+        ValueError: on a bad override, katbeam, or a band for which
+            meerkat-beams has no group beams.
     """
     override = None
     if antenna_groups is not None:
@@ -264,24 +261,30 @@ def preflight_baseline_groups(ms, partition_columns, beam_model, antenna_groups)
             f"beams also need staging by hand -- see meerkat-beams scripts/stage_group_cache.py.",
             ValueError,
         )
-
-    for ms_name in ms:
-        dt_kwargs = get_engine(ms_name, partition_columns)
-        path = ms_name.replace("file://", "") if "file://" in ms_name else ms_name
-        dt = xr.open_datatree(path, **dt_kwargs)
-        try:
-            node = next(iter(dt.children.values()))
-            telescope = node["antenna_xds"].ds.attrs["overall_telescope_name"]
-        finally:
-            dt.close()
-            del dt
-            gc.collect()
-        try:
-            check_telescope_is_meerkat(telescope, path)
-        except ValueError as e:
-            log.error_and_raise(str(e), ValueError)
-
     return override
+
+
+def check_group_telescope(dt, path):
+    """Refuse per-group beams on an MS that is not a MeerKAT array.
+
+    Reads ``antenna_xds.attrs["overall_telescope_name"]``, which is broadcast
+    from OBSERVATION::TELESCOPE_NAME, so it identifies the array (it cannot
+    discriminate dishes -- that is dish diameter's job). Only meaningful when a
+    beam model is requested (D47).
+
+    Args:
+        dt: The MS, already opened as an MSv4 DataTree by the caller.
+        path: The MS path, for the message.
+
+    Raises:
+        ValueError: if the telescope is not MeerKAT.
+    """
+    node = next(iter(dt.children.values()))
+    telescope = node["antenna_xds"].ds.attrs["overall_telescope_name"]
+    try:
+        check_telescope_is_meerkat(telescope, path)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
 
 
 def resolve_group_beam_cache(band: str, groups: list[str]) -> str | None:

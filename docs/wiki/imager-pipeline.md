@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-17T13:06:00Z
-last_verified_commit: cbc4c68
+timestamp: 2026-11-19T14:39:00Z
+last_verified_commit: 66054ce
 ---
 
 # MSv4 DataTree imager pipeline
@@ -92,24 +92,25 @@ carry a `BEAMINCN` card because the stored beam includes the folded n-term. With
 (`core/deconv.py`, where the driver loads the band cubes). A resumed run is different: a band with a `MODEL` but no `BRESIDUAL` is
 refused outright, because the forward solver needs the beam-attenuated gradient (D23).
 `--transfer-model-from <.mds>` (#309) seeds that resume: the product, path and flux scale (an
-apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point (D52) right after it; all of them before Ray starts. Frequency coverage is checked after pass 2, against each band's effective `freq_out`, the frequency the model was rendered at (D52).
+apparent model is refused, D54) are checked before the MS metadata is read, and the tangent point (D52) right after it; all of them before Ray starts. Frequency coverage is checked between the passes, against each image's effective `freq_out`, the frequency the model is rendered at (D52, D65).
 Any cell and image size are accepted: the render remaps the model onto the run's grid
-conserving flux, refining or coarsening (box kernel, D52). In pass 2, after the gridding loop,
-each task renders the model at the band's effective
-`freq_out` (known only then, D28), then runs `residual_from_partitions` over the partitions
-streamed back from the `.dt` one at a time, and writes `MODEL`/`RESIDUAL`/`BRESIDUAL` plus the
-`transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
+conserving flux, refining or coarsening (box kernel, D52). Each pass-2 task renders the model
+**before** its gridding loop, at the `freq_out` the driver predicted from the counts (D65),
+and `grid_partition` forms each partition's residual visibilities `r = V − G(B_p·x)` while
+its VIS is in memory, gridding them into the partition's `RESIDUAL`. The band sums are
+`RESIDUAL = Σ_p RESIDUAL_p` and `BRESIDUAL = Σ_p B_p·RESIDUAL_p` (D23), written with `MODEL`
+and the `transferred_from` attr. `RESIDUAL` also goes to FITS (wsum-normalised, Jy/beam, like
 `deconv`'s) under `--fits-mfs`/`--fits-cubes`; `MODEL` and `BRESIDUAL` stay tree-only.
-Every name holding gridding-loop vis buffers is released before
-that sweep -- `part`, `part_vars` (which shares its VIS/WEIGHT/MASK/UVW), the `first` piece
-read for `corr`/dtype (for a one-piece partition `_concat_pieces` returns it as the partition
-itself) and the loop's stale `ds` -- so the sweep holds one streamed partition's vis-space
-data at a time. Missing any one of them pinned a whole partition through the sweep (measured
-on the test MS: 10.43 -> 5.06 MB traced at sweep entry, the difference being the 4.85 MB
-partition). `residual_from_partitions` itself drops each partition and its `model_vis` before
-advancing the iterator; without that a three-partition sweep peaked at two partitions
-(synthetic parts: 27.47 -> 17.23 MB traced,
-`tests/test_imager_transfer.py::test_residual_sweep_holds_one_streamed_partition`). The `.mds` is loaded once per worker through a `Multiton` and stays resident there
+This is the same quantity as deconv's image-space `DIRTY − Σ_p G_pᵀW_pG_p(B_p·x)`
+(`residual_from_partitions`; the two share `gridder.degrid_apparent` and agree to 1e-8 of the
+peak, `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_residual`), but
+gridding the residual puts ducc's relative `epsilon` on the residual rather than the dirty
+image, and no partition is read back from the `.dt` (until D65 a second sweep after the loop
+re-read every partition's UVW/WEIGHT/MASK). Masked samples are zeroed in `r` outright: ducc's
+mask does not stop a NaN on aarch64. The task holds three extra images through its
+gridding loop (the rendered model and the `RESIDUAL`/`BRESIDUAL` sums: 1.1 GB at 6720² in
+float64), and one vis-sized residual array per correlation, formed in the degridded
+buffer. The `.mds` is loaded once per worker through a `Multiton` and stays resident there
 (default 300 s inactivity TTL, swept lazily on cache access, as for the xarray-ms tables in
 [memory-and-ray.md](memory-and-ray.md)). That residency is bounded by the model's size, which
 is not negligible: `.mds` stores have reached 633 MB at 6720², so budget one per pass-2
@@ -119,7 +120,11 @@ sanity FITS while the products are in memory (per-partition DIRTY is never store
 tree): `<var>_band####_time####_part####_<field>.fits` under
 `<fits_output_folder>/<oname>_partitions/`, dirty/psf wsum-normalised per partition,
 beam as stored — the field name in the filename is what makes multi-pointing
-orientation checks usable.
+orientation checks usable. With `--transfer-model-from` each partition's own residual is
+written too (`residual_…`, wsum-normalised): every partition against the same band model, so
+one that calibrated worse than its siblings stands out. It costs nothing extra, being the
+term pass 2 sums into `RESIDUAL` (pinned in the slow
+`test_transferred_truth_nulls_the_residual`).
 
 All partitions in a band share one output grid: multi-field selections are rephased in
 pass 1 to a common tangent point (D21; `--phase-dir`/barycentre default) and `--target`
@@ -144,7 +149,9 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    so each worker builds its own once and keeps it, spline prefilters included, across
    its tasks; a wizard shipped by value arrived with an empty prefilter cache and
    rebuilt it per correlation per task (~0.8 s each). The counts
-   are stored **sparse**, as `COUNTS_INDEX`/`COUNTS_VALUE` (`utils/weighting.sparse_counts`):
+   are stored **sparse**, as `COUNTS_INDEX`/`COUNTS_VALUE` (`utils/weighting.compute_sparse_counts`,
+   which records each occupied cell as the scatter first touches it rather than scanning the
+   grid with `np.flatnonzero`, #365):
    a piece fills a sliver of the padded uv plane, 0.05% of a 491 MB float64 grid at
    4608², so a dense grid cost a 491 MB encode per piece and a 491 MB decode and add per
    piece in the driver. Fine granularity (per scan /
@@ -181,7 +188,11 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    to `.scratch` as `counts/group####` (`COUNTS (corr, u, v)`). Pass-2 tasks receive
    that node path and read the grid themselves: a counts grid is `(ncorr, nx_pad,
    ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
-   in the object store (#339). Before the pieces went sparse this step read every
+   in the object store (#339). With the applied grid in hand, a second sparse read of
+   the group's pieces gives each piece's exact imaging-weight sum
+   (`weighting.piece_imaging_wsum`, with the off-grid natural weight pass 1 recorded as
+   `wsum_offgrid`), from which the driver reduces every image's
+   `freq_out` before pass 2 (D65). Before the pieces went sparse this step read every
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
    uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
@@ -198,7 +209,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    which agrees to within the wgridder's own `epsilon=1e-7`).
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
    pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
-   along `row`; `BEAM_SMALL` and `freq_out` combined as `wsum_nat`-weighted means — pieces may
+   along `row`; `BEAM_SMALL` and `freq_out` combined as means weighted by each piece's
+   predicted imaging wsum, `wsum_img` (D65) — pieces may
    differ in both, so piece 0's beam is *not* representative, D28), place each partition's
    mean `BEAM_SMALL` on the image grid once at the offset it is gridded with and fold in `1/n`
    (`stokes2vis.partition_beam`, #365; `1/n` alone without a beam model — placement is linear,
@@ -208,7 +220,7 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
    (including the band's `freq_out` as the imaging-wsum-weighted mean of the partition
-   frequencies), write the `.dt`. Each `(band, part)` is an independent zarr group path,
+   frequencies, which must match the driver's prediction, D65), write the `.dt`. Each `(band, part)` is an independent zarr group path,
    so workers write concurrently without contention.
 
 ## `concat_row` semantics
@@ -224,7 +236,7 @@ pays one full DIRTY+PSF gridding per scan even at `integrations_per_image=-1`.
   fields/spws are separate partitions: **summed, never concatenated**.
 - Pieces within a concat group may still differ in `BEAM_SMALL` and effective frequency
   (different times ⇒ different `BeamWizard` beams; different flagging ⇒ different
-  effective frequency), so `_concat_pieces` reduces both as `wsum_nat`-weighted means
+  effective frequency), so `_concat_pieces` reduces both as `wsum_img`-weighted means
   rather than taking the first piece's (D28).
 - Counts are auto-coerced to band granularity, with a warning for time-resolved
   groupings: `per-band-time → per-band`, `per-time → mfs`.
@@ -299,7 +311,7 @@ own imaging geometry, channel widths and rephasing barycentre on top, and its
 transfer tangent-point check (D52) uses `wrapped_angle_diff`.
 
 `degrid` also shares the baseline-group machinery in `utils/baselines.py`
-(`preflight_baseline_groups`, `node_baseline_groups`), but none of the `.dt`: it applies the
+(`preflight_baseline_groups`, `check_group_telescope`, `node_baseline_groups`), but none of the `.dt`: it applies the
 primary beam itself (#353). `--beam-model` names a meerkat-beams band (katbeam is refused),
 `--baseline-groups` gives each `MM`/`MPM`/`MPMP` group its own beam, and `--antenna-groups`
 overrides the dish classification exactly as in the imager. `partition_mueller` gets the
