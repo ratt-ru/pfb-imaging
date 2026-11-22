@@ -2409,7 +2409,11 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
 - **Consequences:** the beam axis now reaches 3° (the default) plus the field offset whatever
   the image, capped by the cube: on ESO137-006's group cubes about 543² at 24.1″ out to 1.80°,
   against 385² out to 1.28° under D64, so pass 1 does roughly twice the beam work and stores
-  twice the beam per piece. An uncapped cube grows more: the ungrouped L cube (3.81°) serves
+  twice the beam per piece. Measured on the production command (com08, 1152 pieces), pass 1
+  took 1406 s and 1544 s in two runs against 1285 s, 10–20% of pass 1 and 2–4% of the run;
+  set-up, the counts reduction, pass 2 and per-task peaks did not move, the beams are about
+  1.6 GB of a 68.9 GB scratch, and DIRTY, PSF, WSUM, BEAM and `freq_out` agree with `main`
+  to rounding. An uncapped cube grows more: the ungrouped L cube (3.81°) serves
   the full 3°, 811² against about 195² for a 1° image, some 17× the beam work and storage per
   piece. A smaller `--max-field-of-view` brings either back. katbeam got cheaper, not dearer:
   `ndimage.rotate` erred by 1.3e-3 of the peak on the 26.8″ `beam_grid` cell against a 4.7″
@@ -2485,7 +2489,13 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   decision) the per-field refusal could only fire for a new or deleted `.dt`, so a typo in a
   pass-1 option silently cost a pass-1 rerun. A reuse skips `scan_ms`, the
   baseline-group masks, the wizards and pass 1; the R bound and, for a cube-capped axis, the
-  beam reach are still checked against the record before Ray starts.
+  beam reach are still checked against the record before Ray starts. Measured on ESO137-006
+  (com08, production command): a full run 1:14:31, a reuse at the same settings 40:18 and a
+  reuse at another robustness 41:22. Set-up fell from 648 s to 14 s and pass 1 (1406 s)
+  was skipped, the counts reduction and pass 2 (about 300 s and 2000 s) are unchanged, and
+  the driver peak fell from 8.2 to 3.4 GB. The reused products equal the full run's (MODEL,
+  BEAM, WSUM identical; DIRTY, PSF ≤ 1e-11, RESIDUAL ≤ 6e-11 of the peak). A changed pass-1
+  input was refused in 28 s, before the MS was read, with the scratch kept.
 - **Source:** #354; `src/pfb_imaging/core/imager.py` (`SCRATCH_SCHEMA`,
   `read_scratch_record`, `record_diffs`, `pass1_inputs`, `image_geometry`, `scan_ms`);
   `tests/test_imager_reuse.py`.
