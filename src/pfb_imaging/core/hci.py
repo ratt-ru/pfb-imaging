@@ -34,9 +34,12 @@ from pfb_imaging.utils.hci_common import (
 )
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env
 from pfb_imaging.utils.misc import check_gridder_epsilon, set_image_size, to_mjd_time
-from pfb_imaging.utils.msv4 import get_engine, select_vis_nodes
+from pfb_imaging.utils.msv4 import get_engine, ignore_xarray_ms_warnings, select_vis_nodes
 from pfb_imaging.utils.naming import glob_uris, uri_and_fs
 from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, HciConfig
+
+# module scope so the spawned planning processes, which re-import this module, filter too
+ignore_xarray_ms_warnings()
 
 log = pfb_logging.get_logger("HCI")
 

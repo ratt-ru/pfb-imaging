@@ -16,8 +16,11 @@ from numba import njit
 from rarg_python_patterns.multiton import Multiton
 
 from pfb_imaging.utils.memprof import ActorCapture, SectionClock, cpu_seconds, task_memory
-from pfb_imaging.utils.msv4 import get_engine
+from pfb_imaging.utils.msv4 import get_engine, ignore_xarray_ms_warnings
 from pfb_imaging.utils.stokes2im import IMAGE_SECTIONS, image_item, read_item
+
+# module scope so the Ray workers, which import this module to build the actors, filter too
+ignore_xarray_ms_warnings()
 
 _IMAGE_VARS = ("cube", "beam_weight", "psf")
 _SCALAR_VARS = ("weight", "rms", "nonzero", "psf_maj", "psf_min", "psf_pa")
