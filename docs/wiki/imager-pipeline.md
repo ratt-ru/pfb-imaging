@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-19T14:39:00Z
-last_verified_commit: 66054ce
+timestamp: 2026-11-20T16:00:00Z
+last_verified_commit: c23a68f
 ---
 
 # MSv4 DataTree imager pipeline
@@ -134,6 +134,19 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
 
 ## Two passes and the counts product
 
+**A matching scratch is reused (#354, D67).** Pass 1 writes a validity record into the
+scratch root's `pass1` attr after it finishes: the run's pass-1 inputs
+(`core/imager.pass1_inputs`), what set-up read from the MS (`scan_ms`'s `derived`: data
+extent, bands, field centres, track times), the counts grid, each band's channel extent,
+the cube-capped beam axis and a `SCRATCH_SCHEMA` integer. A later run compares its own
+inputs and counts grid with the record before it opens any MS. On a match it skips the MS
+scan and pass 1 entirely and goes straight to the counts reduction, replacing the old
+`counts/` groups; a mismatch is refused, naming each field; a scratch with no record
+(older version, or a pass 1 that did not finish) is treated the same way.
+`--rebuild-scratch` runs pass 1 again and replaces the scratch, matching or not.
+`--overwrite` governs only the `.dt`, which is refused before anything runs when it exists
+without it.
+
 1. **Pass 1** (`utils/stokes2vis.stokes_vis`, one Ray task per fine piece): load the
    node subset, column arithmetic (`dc1 [+|-] dc2`), Stokes conversion via `weight_data`,
    channel-average/BDA, the piece's **effective frequency** (natural-weight-weighted mean
@@ -141,8 +154,11 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    evaluated on a small field-centred grid and stored there as `BEAM_SMALL`
    `(corr, m_beam, l_beam)` (no beam model: none at all), and write the piece keyed
    `(ms, field, spw, baseline_group, scan, band, time)` into `.scratch`, including its uv
-   counts under robust weighting (natural weighting skips gridding them,
-   `compute_counts=False`). The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
+   counts, which are gridded whatever the weighting so one scratch serves natural and robust
+   imaging (#354, D66). They go on the padded image grid by default (`--weight-on-image-grid`);
+   `--no-weight-on-image-grid` puts them on `core/imager.counts_grid`, whose uv cell is the
+   padded cell of the largest square image within `--max-field-of-view` and which reaches the
+   longest baseline. The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
    with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
    unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The driver
    builds each wizard once (staging, validation) but ships pass 1 a `Multiton` recipe,
@@ -163,18 +179,21 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    only valid for the node they came from. Groups with no baselines are omitted
    rather than written as empty partitions.
 
-   **The beam grid** (meerkat-beams wizards; katbeam keeps its own Nyquist-sized grid,
-   because `ndimage.rotate` makes its beam depend on the grid) is sized once by the driver,
-   in `core/imager.field_beam_axis`. It reaches the image pixel farthest from any pointing,
-   `--target` offsets included, at the cell `utils/beam.beam_grid` sets:
+   **The beam grid** is sized once by the driver, in `core/imager.field_beam_axis` (katbeam
+   uses the same cell and reach, uncapped, and rotates coordinates for its rotation average,
+   D66). It does not depend on the image: it reaches
+   `--max-field-of-view` (a radius `R` about the tangent point) plus the farthest field's
+   distance from the tangent point (`pointing_reach`, D66), at the cell `utils/beam.beam_grid` sets:
    `h = sqrt(tol) * lambda_min / D_max`. Here `D_max` is the largest dish any of the run's
    beams describes, and `BEAM_CELL_TOL = 1e-4`. Pass 2 places the beam bilinearly (meerkat-beams `beam_on_grid`,
    0 outside the grid), and its
    worst error in the main lobe was measured at `(h / (lambda_min/D))^2`
    (`docs/experiments/beam_time_gradient.md`). It replaced a fixed 1024² over the whole
-   cube, whatever the image (#365). **An image reaching past the cube's largest centred
-   disk, less two cube pixels, is refused** (1.81° from the pointing for the MdV-2026 group
-   cubes, 3.81° for the ungrouped L cube). The rotation average turns the field with
+   cube, whatever the image (#365). **Two refusals, both at set-up before Ray starts:** an
+   image whose farthest corner lies beyond `R` (`check_image_extent`), and, when the cube
+   caps the axis below what `R` asks for, an image reaching past the cube's largest centred
+   disk less two cube pixels (`check_beam_reach`; 1.81° from the pointing for the MdV-2026
+   group cubes, 3.81° for the ungrouped L cube). The rotation average turns the field with
    parallactic angle, so only that disk is covered at every angle, and beyond it the
    placement error does not converge with the cell. D64 has the measurements.
 2. **Counts reduction** (driver, between passes): `COUNTS` is a first-class reducible
@@ -186,8 +205,8 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    accumulator, into which each piece's occupied cells are added — applies
    `filter_extreme_counts` and `box_sum_counts` once per group, and writes the result
    to `.scratch` as `counts/group####` (`COUNTS (corr, u, v)`). Pass-2 tasks receive
-   that node path and read the grid themselves: a counts grid is `(ncorr, nx_pad,
-   ny_pad)` — 0.32 GiB at 3840² — and passing it as a Ray argument put a copy per task
+   that node path and read the grid themselves: a counts grid is `(ncorr, counts_nx,
+   counts_ny)` — 0.32 GiB at the 3840² image's padded grid — and passing it as a Ray argument put a copy per task
    in the object store (#339). With the applied grid in hand, a second sparse read of
    the group's pieces gives each piece's exact imaging-weight sum
    (`weighting.piece_imaging_wsum`, with the off-grid natural weight pass 1 recorded as
@@ -195,11 +214,10 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    `freq_out` before pass 2 (D65). Before the pieces went sparse this step read every
    piece's dense grid back: 34.1 s of driver time for 120 pieces of an 8-band 4608²
    MeerKAT+ run, 10.8 s after. Summing counts across pieces is valid because the
-   uv grid is commensurate across bands (fixed cell + padding via `set_image_size`).
+   uv grid is commensurate across bands (one counts geometry per run).
    Natural weighting (`robustness None`, or `> 2`, which `effective_robustness` maps to
-   `None` up front) skips counts entirely: pass 1 does not grid them and the driver
-   does not reduce them. Before that mapping a value above 2 was Briggs-weighted
-   (close to natural, not equal to it) and paid the full counts cost.
+   `None` up front) does not reduce the counts, which pass 1 still grids (D66). Before
+   that mapping a value above 2 was Briggs-weighted (close to natural, not equal to it).
    Counts are reduced per `weight_grouping` group, **not** per partition, so
    baseline groups share one counts grid exactly as multiple fields do. Robust
    weighting is therefore computed over the whole array rather than
@@ -215,7 +233,7 @@ MSv2 epoch is MJD seconds — `utils/fits.set_wcs(time_is_unix=…)`).
    mean `BEAM_SMALL` on the image grid once at the offset it is gridded with and fold in `1/n`
    (`stokes2vis.partition_beam`, #365; `1/n` alone without a beam model — placement is linear,
    so this equals averaging placed beams, and a wizard piece never writes an image-sized
-   beam; katbeam pieces keep their own Nyquist grid over `--max-field-of-view`),
+   beam),
    read the image's `counts/group####` grid and apply `counts_to_weights` per partition, grid
    each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node

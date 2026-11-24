@@ -361,7 +361,6 @@ def _run_stokes_vis(
     beam_model=None,
     cell_rad=1e-5,
     flag_chans=None,
-    compute_counts=True,
     beam_lm=None,
 ):
     """Drive stokes_vis directly (no Ray) on the test MS's first node.
@@ -401,12 +400,11 @@ def _run_stokes_vis(
         beam_model=beam_model,
         max_blength=float(max_blength),
         max_freq=float(freq.max()),
-        nx_pad=64,
-        ny_pad=64,
-        cell_rad=cell_rad,
+        counts_nx=64,
+        counts_ny=64,
+        counts_cell=cell_rad,
         radec_new=radec_new,
         nthreads=1,
-        compute_counts=compute_counts,
         beam_lm=beam_lm,
     )
     ds = xr.open_datatree(scratch, engine="zarr", chunks=None)[f"band{bandid:04d}_time{timeid:04d}/{piece}"].ds
@@ -429,17 +427,6 @@ def test_stokes_vis_resolves_a_multiton_beam(ms_name, tmp_path):
     recipe = _run_stokes_vis(ms_name, str(tmp_path / "m.scratch"), beam_model=Multiton(str, "katbeam"), cell_rad=cell)
     np.testing.assert_array_equal(recipe.BEAM_SMALL.values, direct.BEAM_SMALL.values)
     assert recipe.attrs["beam_model"] == "katbeam"
-
-
-def test_stokes_vis_skips_counts_when_asked(ms_name, tmp_path):
-    """Natural weighting never reads the counts, so the driver turns them off."""
-    with_counts = _run_stokes_vis(ms_name, str(tmp_path / "c.scratch"))
-    without = _run_stokes_vis(ms_name, str(tmp_path / "n.scratch"), compute_counts=False)
-    assert {"COUNTS_INDEX", "COUNTS_VALUE"} <= set(with_counts.data_vars)
-    assert with_counts.COUNTS_INDEX.size > 0
-    assert not {"COUNTS_INDEX", "COUNTS_VALUE"} & set(without.data_vars)
-    for var in ("VIS", "WEIGHT", "MASK", "UVW"):
-        np.testing.assert_array_equal(without[var].values, with_counts[var].values)
 
 
 def test_stokes_vis_rephases_to_new_centre(sky_truth, ms_name, tmp_path, needs_rephasing):
@@ -1615,3 +1602,105 @@ def test_staged_group_beams_need_no_message(beam_caches):
     (in_use / "bds" / "MeerKAT_L_mdv2026.bds.zarr").mkdir(parents=True)
     (in_use / "inputs" / "MKE_L.zarr").mkdir(parents=True)
     assert resolve_group_beam_cache("L", ["MM", "MPM", "MPMP"]) is None
+
+
+@pytest.mark.slow
+def test_no_weight_on_image_grid_matches_the_image_grid_for_the_largest_image(ms_name, sky_truth, tmp_path):
+    """With R set so the largest image is this one, both counts grids give the same .dt (#354)."""
+    kw = dict(
+        integrations_per_image=-1,
+        channels_per_image=4,
+        product="I",
+        robustness=0.0,
+        fits_mfs=False,
+        fits_cubes=False,
+        overwrite=True,
+        keep_ray_alive=True,
+    )
+    ref_name = str(tmp_path / "img")
+    imager_core([Path(ms_name)], ref_name, field_of_view=1.0, **kw)
+    ref = xr.open_datatree(ref_name + "_I.dt", engine="zarr", chunks=None)
+    nx, ny, cell = ref.attrs["nx"], ref.attrs["ny"], ref.attrs["cell_rad"]
+    assert nx == ny
+    nx_pad = int(np.ceil(1.7 * nx))
+    nx_pad += nx_pad % 2
+    r_deg = float(np.rad2deg(nx_pad * cell / (1.7 * np.sqrt(2.0))))
+
+    fov_name = str(tmp_path / "fov")
+    imager_core(
+        [Path(ms_name)],
+        fov_name,
+        nx=nx,
+        ny=ny,
+        cell_size=float(np.rad2deg(cell) * 3600),
+        max_field_of_view=r_deg,
+        weight_on_image_grid=False,
+        **kw,
+    )
+    got = xr.open_datatree(fov_name + "_I.dt", engine="zarr", chunks=None)
+    bands = sorted(n for n in ref.children if n.startswith("band"))
+    assert bands == sorted(n for n in got.children if n.startswith("band"))
+    for b in bands:
+        rd, gd = ref[b].ds.DIRTY.values, got[b].ds.DIRTY.values
+        assert np.abs(rd).max() > 0
+        assert_allclose(got[b].ds.WSUM.values, ref[b].ds.WSUM.values, rtol=1e-10)
+        assert_allclose(gd, rd, rtol=0, atol=1e-6 * np.abs(rd).max())
+
+
+def _no_ray(monkeypatch):
+    import pfb_imaging.core.imager as imager_mod
+
+    def _boom(*a, **kw):
+        raise AssertionError("init_ray was called: the guard fired too late")
+
+    monkeypatch.setattr(imager_mod, "init_ray", _boom)
+
+
+def _target_north_of_field(ms_name, deg):
+    import arcae
+    from astropy import units
+    from astropy.coordinates import SkyCoord
+
+    with arcae.table(f"{ms_name}::FIELD") as tab:
+        ra, dec = np.asarray(tab.getcol("PHASE_DIR")).squeeze()
+    c = SkyCoord(ra * units.rad, (dec + np.deg2rad(deg)) * units.rad, frame="fk5")
+    return c.to_string("hmsdms", sep=":", precision=4).replace(" ", ",")
+
+
+def test_imager_refuses_an_image_past_the_max_field_of_view_before_ray(ms_name, tmp_path, monkeypatch):
+    """A 1 deg image has a 0.71 deg half-diagonal: R = 0.5 deg refuses it before any compute (#354)."""
+    _no_ray(monkeypatch)
+    kw = dict(product="I", field_of_view=1.0, overwrite=True, keep_ray_alive=True)
+    with pytest.raises(ValueError, match="beyond --max-field-of-view 0.500 deg"):
+        imager_core([Path(ms_name)], str(tmp_path / "out"), max_field_of_view=0.5, **kw)
+    # R = 0.8 deg holds the centred image ...
+    with pytest.raises(AssertionError, match="init_ray was called"):
+        imager_core([Path(ms_name)], str(tmp_path / "out"), max_field_of_view=0.8, **kw)
+    # ... but not one pushed 0.2 deg off centre by --target
+    target = _target_north_of_field(ms_name, 0.2)
+    with pytest.raises(ValueError, match="beyond --max-field-of-view 0.800 deg"):
+        imager_core([Path(ms_name)], str(tmp_path / "out"), max_field_of_view=0.8, target=target, **kw)
+
+
+def test_katbeam_axis_reaches_the_max_field_of_view_and_matches_the_analytic_average(ms_name, tmp_path):
+    """katbeam rotates coordinates on the beam_grid axis, so its beam is exact wherever it reaches (D66)."""
+    from katbeam import JimBeam
+
+    from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, beam_grid
+
+    ds = _run_stokes_vis(ms_name, str(tmp_path / "k.scratch"), beam_model="katbeam")
+    lm = ds.l_beam.values
+    np.testing.assert_array_equal(lm, ds.m_beam.values)
+    # stokes_vis' default max_field_of_view is 3 deg, a radius
+    want = beam_grid(float(ds.FREQ.values.max()), BEAM_DISH_DIAMETER[None], 3.0)
+    np.testing.assert_allclose(lm, want, rtol=1e-12)
+    assert lm[-1] >= 3.0 and lm[0] <= -3.0
+
+    # at a few nodes, the 25-angle rotation average of the analytic beam
+    f = float(ds.attrs["freq_out"]) / 1e6
+    jb = JimBeam("MKAT-AA-L-JIM-2020" if f >= 850.0 else "MKAT-AA-UHF-JIM-2020")
+    angles = np.deg2rad(np.linspace(0, 359, 25))
+    for iy, ix in [(lm.size // 2, lm.size // 2), (lm.size // 2 + 37, lm.size // 2 - 11), (5, lm.size - 9)]:
+        lr = np.cos(angles) * lm[ix] - np.sin(angles) * lm[iy]
+        mr = np.sin(angles) * lm[ix] + np.cos(angles) * lm[iy]
+        np.testing.assert_allclose(ds.BEAM_SMALL.values[0, iy, ix], jb.I(lr, mr, f).mean(), rtol=1e-5)

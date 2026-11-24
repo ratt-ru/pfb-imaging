@@ -82,8 +82,9 @@ def grid_partition(
     ny_psf,
     cell_rad,
     robustness=None,
-    nx_pad=None,
-    ny_pad=None,
+    counts_nx=None,
+    counts_ny=None,
+    counts_cell=None,
     l0=0.0,
     m0=0.0,
     nthreads=1,
@@ -106,13 +107,15 @@ def grid_partition(
             ``MASK`` ``(row,chan)``, ``UVW`` ``(row,3)``, ``FREQ`` ``(chan,)`` and
             ``BEAM`` ``(corr, ny, nx)`` already on the output image grid
             (placed by ``stokes2vis.partition_beam`` in pass 2).
-        counts: Reduced counts grid ``(ncorr, nx_pad, ny_pad)`` (already passed
+        counts: Reduced counts grid ``(ncorr, counts_nx, counts_ny)`` (already passed
             through ``filter_extreme_counts``/``box_sum_counts`` by the caller).
             Ignored when ``robustness`` is ``None``; copied before in-place use.
         nx, ny, nx_psf, ny_psf: Image and PSF sizes.
         cell_rad: Image cell size (rad).
         robustness: Briggs robustness; ``None`` (or ``> 2``) leaves natural weights.
-        nx_pad, ny_pad: Padded uv-grid size matching ``counts``.
+        counts_nx, counts_ny, counts_cell: ``counts`` is the padded uv grid of a
+            ``counts_nx`` x ``counts_ny`` image of cell ``counts_cell`` (rad);
+            ``counts_cell`` defaults to ``cell_rad`` (weights on the image grid).
         l0, m0: Partition phase-centre offset (rad).
         nthreads, epsilon, do_wgridding, double_accum: gridder controls.
         do_psf: skip the PSF/PSFHAT/PSFPARSN products entirely when False
@@ -155,10 +158,10 @@ def grid_partition(
             freq,
             wgt,
             mask,
-            nx_pad,
-            ny_pad,
-            cell_rad,
-            cell_rad,
+            counts_nx,
+            counts_ny,
+            cell_rad if counts_cell is None else counts_cell,
+            cell_rad if counts_cell is None else counts_cell,
             robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0,

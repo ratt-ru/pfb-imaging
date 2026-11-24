@@ -13,12 +13,11 @@ from katbeam import JimBeam
 from meerkat_beams.utils import BeamWizard, beam_on_grid
 from pfb_model_spec.utils.degrid import pixel_lm
 from rarg_python_patterns.multiton import Multiton
-from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 from pfb_imaging import pfb_version
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.beam import BEAM_PA_TOLERANCE_DEG
+from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, BEAM_PA_TOLERANCE_DEG, beam_grid
 from pfb_imaging.utils.memprof import profile_task, task_memory
 from pfb_imaging.utils.misc import parse_sky_coords, radec_to_lm, to_mjd_time
 from pfb_imaging.utils.msv4 import load_detached
@@ -121,7 +120,8 @@ def beam_on_image_grid(
     degrid evaluates its beam on, #355) is rotated from the image tangent point
     to the field's pointing and bilinearly interpolated in ``beam_small``
     (meerkat-beams ``beam_on_grid``). A pixel outside the small grid is 0; the
-    driver sizes a wizard's grid to cover the image (``field_beam_axis``).
+    driver sizes the grid to cover every image within ``--max-field-of-view``,
+    less what the beam cube cannot reach (``field_beam_axis``, D66).
 
     Args:
         beam_small: `(ncorr, m_beam.size, l_beam.size)` (Y, X)-ordered maps
@@ -241,16 +241,15 @@ def stokes_vis(
     wgt_mode="minvar",
     max_blength=None,
     max_freq=None,
-    nx_pad=None,
-    ny_pad=None,
-    cell_rad=None,
+    counts_nx=None,
+    counts_ny=None,
+    counts_cell=None,
     baseline_group="all",
     data_group="base",
     radec_new=None,
     target=None,
     beam_lm=None,
     nthreads=1,
-    compute_counts=True,
     double_accum=True,
 ):
     """
@@ -262,9 +261,11 @@ def stokes_vis(
         scratch_store: parent .scratch DataTree store; the piece is written to the group
             ``band{bandid:04d}_time{timeid:04d}/<piece_name>`` within it.
         bandid, timeid, msid: identifiers for the output dataset.
-        nx_pad, ny_pad, cell_rad: padded uv-grid size and image cell (rad) for the per-piece
-            COUNTS grid used to build imaging weights in pass 2 (stored sparse,
-            see ``weighting.compute_sparse_counts``).
+        counts_nx, counts_ny, counts_cell: the per-piece COUNTS grid used to build
+            imaging weights in pass 2, as the padded uv grid of a ``counts_nx`` x
+            ``counts_ny`` image of cell ``counts_cell`` (rad): the image's own
+            under ``--weight-on-image-grid``, else the driver's ``counts_grid``
+            (stored sparse, see ``weighting.compute_sparse_counts``).
         baseline_group: partition baseline-group label (single ``"all"`` group for now).
         freq_nominal: nominal band centre (band-edge midpoint) used by the driver to
             assign channel slices to bands. The piece reports its own effective
@@ -276,7 +277,8 @@ def stokes_vis(
         product: Stokes product. Can be any subset of IQUV.
         chan_average: number of channels to average together.
         bda_decorr: decorrelation threshold for baseline dependent averaging.
-        max_field_of_view: maximum field of view in degrees for baseline dependent averaging.
+        max_field_of_view: radius (deg) about the phase centre within which BDA
+            bounds the decorrelation, and within which every image must lie.
         beam_model: model to use for beam correction: "katbeam", None, a
             BeamWizard, or a Multiton over one (resolved per worker).
         wgt_mode: weighting mode to use in weight_data. Can be "l2" or "minvar".
@@ -284,13 +286,11 @@ def stokes_vis(
             phase centre / tangent point). None means image about the field centre.
         target: optional image-centre target ('HH:MM:SS,DD:MM:SS' or an astropy
             body); resolved to an in-plane (l0, m0) at this piece's own time.
-        beam_lm: 1D field-centred beam axis (deg) for a BeamWizard beam, used for
-            both l and m; the driver sizes it once per run (``utils.beam.beam_grid``).
+        beam_lm: 1D field-centred beam axis (deg), used for both l and m; the
+            driver sizes it once per run (``utils.beam.beam_grid``). Required for
+            a BeamWizard; katbeam defaults to an axis reaching ``max_field_of_view``.
         nthreads: threads available to the task (parallelises the COUNTS gridding
             and meerkat-beams' rotation average).
-        compute_counts: grid and store the piece's uv counts. Only robust
-            weighting reads them, so natural weighting skips a full padded-grid
-            allocation and gridding per piece.
         double_accum: accumulate the counts in float64 (``--double-accum``);
             they are stored at ``precision`` either way (D27).
     """
@@ -687,33 +687,32 @@ def stokes_vis(
                 raw_maps.append(bmap)
             beam_small, beam_imre_ratio = real_beam_maps(raw_maps)
         elif str(beam_model).lower() == "katbeam":
-            # NB: the evaluation grid is sized at the critically-sampled
-            # (Nyquist) cell, a *separate* quantity from the imaging cell_rad
-            # used for the COUNTS uv-grid below.
-            fov = max_field_of_view
-            beam_cell_deg = np.rad2deg(1.0 / (max_blength * max_freq / lightspeed))
-            npix = int(fov / beam_cell_deg)
-            l_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
-            m_beam = (-(npix // 2) + np.arange(npix)) * beam_cell_deg
+            # the driver's axis when given (pointing_reach at the beam_grid cell),
+            # else one reaching max_field_of_view, for direct callers
+            if beam_lm is None:
+                beam_lm = beam_grid(max_freq, BEAM_DISH_DIAMETER[None], max_field_of_view)
+            l_beam = m_beam = np.asarray(beam_lm, dtype=np.float64)
             if freq_min >= 8.5e8 and freq_max <= 1.8e9:
                 beamo = JimBeam("MKAT-AA-L-JIM-2020")
             elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
                 beamo = JimBeam("MKAT-AA-UHF-JIM-2020")
             else:
                 raise ValueError("Freq range not covered by katbeam")
-            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like;
-            # katbeam evaluates pointwise, so beam0 takes the (m, l) shape
+            # (Y, X)/(m, l) order end to end (wiki D19): axis 0 is m/Dec-like
             mm, ll = np.meshgrid(m_beam, l_beam, indexing="ij")
             # katbeam expects freq in MHz
             fmhz = freq_eff / 1e6
-            beam_small = np.zeros((ncorr, npix, npix), dtype=np.float64)
-            for i, p in enumerate(corr):
-                beam0 = getattr(beamo, p)(ll, mm, fmhz)
-                step = 25
-                angles = np.linspace(0, 359, step)
-                for angle in angles:
-                    beam_small[i] += ndimage.rotate(beam0, angle, reshape=False, mode="nearest")
-                beam_small[i] /= angles.size
+            # Rotation average over 25 angles, rotating the coordinates rather
+            # than the image: katbeam is analytic, so this is exact on any grid.
+            # ndimage.rotate on a grid erred by 1.3e-3 at this cell (D66).
+            angles = np.deg2rad(np.linspace(0, 359, 25))
+            beam_small = np.zeros((ncorr, m_beam.size, l_beam.size), dtype=np.float64)
+            for angle in angles:
+                ca, sa = np.cos(angle), np.sin(angle)
+                lr, mr = ca * ll - sa * mm, sa * ll + ca * mm
+                for i, p in enumerate(corr):
+                    beam_small[i] += getattr(beamo, p)(lr, mr, fmhz)
+            beam_small /= angles.size
         else:
             raise ValueError(f"Unknown beam model {beam_model}")
 
@@ -724,22 +723,22 @@ def stokes_vis(
 
     # signs occording to wgridder conventions
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
-    if compute_counts:
-        # only the occupied cells: the dense grid is freed inside (#365)
-        counts_vars, wsum_offgrid = compute_sparse_counts(
-            uvw,
-            freq,
-            mask,
-            wgt_cf,
-            nx_pad,
-            ny_pad,
-            cell_rad,
-            cell_rad,
-            wgt_cf.dtype,
-            usign=1.0 if flip_u else -1.0,
-            vsign=1.0 if flip_v else -1.0,
-            accum_dtype=np.float64 if double_accum else wgt_cf.dtype,
-        )
+    # always gridded, so one scratch serves natural and robust weighting (#354);
+    # only the occupied cells are kept: the dense grid is freed inside (#365)
+    counts_vars, wsum_offgrid = compute_sparse_counts(
+        uvw,
+        freq,
+        mask,
+        wgt_cf,
+        counts_nx,
+        counts_ny,
+        counts_cell,
+        counts_cell,
+        wgt_cf.dtype,
+        usign=1.0 if flip_u else -1.0,
+        vsign=1.0 if flip_v else -1.0,
+        accum_dtype=np.float64 if double_accum else wgt_cf.dtype,
+    )
 
     data_vars = {}
     data_vars["VIS"] = (("corr", "row", "chan"), vis_cf)
@@ -749,9 +748,8 @@ def stokes_vis(
     data_vars["FREQ"] = (("chan",), freq)
     if beam_small is not None:
         data_vars["BEAM_SMALL"] = (("corr", "m_beam", "l_beam"), beam_small.astype(real_type))
-    if compute_counts:
-        data_vars.update(counts_vars)
-        del counts_vars
+    data_vars.update(counts_vars)
+    del counts_vars
 
     coords = {
         "chan": (("chan",), freq),
@@ -809,9 +807,8 @@ def stokes_vis(
         "beam_imre_ratio": float(beam_imre_ratio),
     }
 
-    if compute_counts:
-        # natural weight beyond the padded grid, for the imaging-wsum prediction (D65)
-        attrs["wsum_offgrid"] = wsum_offgrid
+    # natural weight beyond the counts grid, for the imaging-wsum prediction (D65)
+    attrs["wsum_offgrid"] = wsum_offgrid
     out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     group = f"band{bandid:04d}_time{timeid:04d}/{piece_name}"
     # consolidated=False: many workers write distinct leaf groups into the shared

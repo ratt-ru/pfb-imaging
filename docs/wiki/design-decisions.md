@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, known debt and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for pfb-imaging's load-bearing choices, plus the debt list and the gotchas that have already cost real debugging sessions.
 tags: [design, decisions, debt, gotchas, ray, deconvolution, imager]
-timestamp: 2026-11-19T14:39:00Z
-last_verified_commit: 66054ce
+timestamp: 2026-11-20T16:00:00Z
+last_verified_commit: c23a68f
 ---
 
 # Design decisions, known debt and recurring gotchas
@@ -2271,6 +2271,9 @@ update it (and this page's `last_verified_commit`) in the same session.
 
 ### D64 — The pass-1 beam grid is sized per run, and images past the beam cube are refused
 
+*Amended by D66: the axis now reaches `--max-field-of-view` rather than the image, and the
+image checks are split in two. The cell, the cube limit and its margin are unchanged.*
+
 - **Context:** pass 1 evaluated every piece's wizard beam on a fixed 1024² grid over the whole
   beam cube, whatever the image, and placed it on the image grid per piece (#365). Moving the
   placement to pass 2 (D21) left the grid's size and cell as the remaining cost, and the beam
@@ -2282,7 +2285,8 @@ update it (and this page's `last_verified_commit`) in the same session.
   largest dish any of the run's beams describes (`BEAM_DISH_DIAMETER`: 13.5 m for `MM` and
   ungrouped, 15 m for `MPM`/`MPMP`). An image whose bilinear nodes reach past the cube's
   largest centred disk, less two cube pixels, is refused before Ray starts. The disk is read
-  from each wizard's `bds.X`/`bds.Y`, and the smallest over the run's cubes binds. katbeam
+  from each wizard's `bds.X`/`bds.Y`, and the smallest over the run's cubes binds. *(D66: katbeam
+  now shares this axis, rotating coordinates instead of the image.)* katbeam
   keeps its own Nyquist grid over `--max-field-of-view`, because its `ndimage.rotate` makes
   the beam depend on the grid, so katbeam pieces still carry an image-scale beam.
 - **Rationale:** the bilinear placement error in the main lobe was measured at
@@ -2312,8 +2316,8 @@ update it (and this page's `last_verified_commit`) in the same session.
 - **Source:** #365; `src/pfb_imaging/utils/beam.py` (`beam_grid`, `BEAM_CELL_TOL`,
   `BEAM_DISH_DIAMETER`); `src/pfb_imaging/core/imager.py` (`field_beam_axis`);
   `tests/test_beam.py::test_beam_grid_cell_bounds_the_placement_error`,
-  `::test_field_beam_axis_reaches_the_farthest_pixel_and_refuses_past_the_cube`,
-  `::test_field_beam_axis_measures_from_each_pointing_in_a_mosaic`;
+  `::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
+  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`;
   `tests/test_imager.py::test_stokes_vis_wizard_beam_is_placed_on_the_image_pixels`.
 
 ### D65 — Pass 2's reductions are predicted from the counts, so the residual is formed in pass 2
@@ -2364,7 +2368,147 @@ update it (and this page's `last_verified_commit`) in the same session.
   `tests/test_imager_pass2.py::test_pass2_residual_matches_the_image_space_residual`;
   `tests/test_imager_transfer.py::test_transferred_truth_nulls_the_residual`.
 
+### D66 — `--max-field-of-view` is a radius that bounds every image, so pass 1 need not know the image
+
+*Built in steps on the #354 branch: the beam bound below, then the counts grid.*
+
+- **Context:** a scratch is only reusable across image settings (#354) if pass 1 does not
+  depend on them. After D21/D64 pass 1 still did twice: the beam axis reached the image's
+  farthest pixel, and the COUNTS were gridded on the padded image grid. `--max-field-of-view`
+  meant three things: a radius to africanus' BDA (`max_lm = deg2rad(max_fov)`), the full
+  width of the katbeam grid, and nothing at all to the image.
+- **Decision:** `--max-field-of-view` is a radius `R` about the phase centre (the image
+  tangent point) and means that everywhere. Set-up refuses, before Ray starts, an image
+  whose farthest corner, `--target` offsets included, lies beyond `R`
+  (`core/imager.check_image_extent`). Beams are described out to `R` plus the farthest
+  field's distance from the tangent point (`pointing_reach`), on the `beam_grid` axis for
+  both wizards (`field_beam_axis`) and katbeam. katbeam's rotation average now rotates the
+  coordinates of its analytic beam rather than the gridded image (`ndimage.rotate`), which
+  is exact on any grid, so its Nyquist grid is gone. The wizard axis is capped one diagonal
+  cell inside the cube's limit (D64), and only then can an image within `R` still be refused
+  for reaching past the beam (`check_beam_reach`, also before Ray). `--min-padding` (default
+  1.7, previously hard-coded) sets the padded uv grid of the counts. Pass 1 grids the counts
+  whatever the weighting (natural used to skip them). `--weight-on-image-grid` (the default)
+  grids them on the padded image grid as before; `--no-weight-on-image-grid` grids them on
+  `counts_grid`: uv cell `1/(min_padding · √2 · R)`, the padded cell of the largest square
+  image within `R` (side `√2 R`), reaching one cell past the longest baseline, with an even
+  size so cell edges fall on multiples of the cell whatever the extent. The longest
+  baseline is the 3D `max |uvw|`, because rephasing (`--phase-dir`, a mosaic barycentre)
+  rotates `uvw` before pass 1 grids the counts and `max |uv|` would let the longest spacings
+  fall off the grid, keep their natural weight and so be up-weighted under robust weighting
+  (`wsum_offgrid` keeps the D65 prediction consistent, so nothing would have failed). The
+  `.dt` root records the counts grid as `counts_nx`/`counts_ny`/`counts_cell`.
+- **Rationale:** one meaning per option, and the one BDA already used. The image-grid
+  default is kept because a counts cell set by `R` is finer than a smaller image's own, so
+  its robust weights lean towards natural: the same recipe would give a different image,
+  and the main reuse case (changing robustness, later robust L2 reweighting) does not need
+  it. A bound checked at
+  set-up means a run never fails halfway, which matters more once a scratch can outlive the
+  run that wrote it. Measuring beam reach from the tangent point means it does not move
+  with the image.
+- **Consequences:** the beam axis now reaches 3° (the default) plus the field offset whatever
+  the image, capped by the cube: on ESO137-006's group cubes about 543² at 24.1″ out to 1.80°,
+  against 385² out to 1.28° under D64, so pass 1 does roughly twice the beam work and stores
+  twice the beam per piece. Measured on the production command (com08, 1152 pieces), pass 1
+  took 1406 s and 1544 s in two runs against 1285 s, 10–20% of pass 1 and 2–4% of the run;
+  set-up, the counts reduction, pass 2 and per-task peaks did not move, the beams are about
+  1.6 GB of a 68.9 GB scratch, and DIRTY, PSF, WSUM, BEAM and `freq_out` agree with `main`
+  to rounding. An uncapped cube grows more: the ungrouped L cube (3.81°) serves
+  the full 3°, 811² against about 195² for a 1° image, some 17× the beam work and storage per
+  piece. A smaller `--max-field-of-view` brings either back. katbeam got cheaper, not dearer:
+  `ndimage.rotate` erred by 1.3e-3 of the peak on the 26.8″ `beam_grid` cell against a 4.7″
+  Nyquist reference, while the coordinate rotation places within 7e-5 there; at R = 3° its
+  811² grid costs 0.67 s per correlation, against about 44 s for the 4608² Nyquist grid it
+  would otherwise have needed (1.4 GB per worker). It previously covered only `±R/2`, so its
+  beam was zero beyond 1.5°. **Images whose half-diagonal exceeds the default 3° are now
+  refused** where `--max-field-of-view` used to be ignored with BDA off (a 4.3° square UHF
+  image, for instance): raise it. Under `--baseline-groups --beam-model L` the 1.81° group-cube limit is
+  below the default `R`, so set-up warns and images reaching further from a pointing are
+  refused as before. Gridding the counts under natural weighting costs pass 1 the scatter
+  and the sparse store it used to skip. With `--no-weight-on-image-grid` every piece
+  scatters into a transient dense grid of `(1.7 · √2 R / cell_N)²` cells (`cell_N` the
+  Nyquist cell), whatever the image: at R = 3° and an 8 km baseline at 1.7 GHz about
+  11 400², 1 GB in float64 per correlation, and four times that at twice the baseline. That
+  transient is the cheap one, since only touched pages cost anything. Each pass-2 task reads
+  its group's dense grid and copies it (`counts_to_weights` mutates it), so 2 GB per
+  correlation per concurrent task, and the driver's `write_group_counts` holds the
+  accumulator plus, with `npix_super > 0`, the box sum. Relative to a 1° image that is about
+  18×. `npix_super` and `--filter-counts-level` also act on the finer cells: the same
+  `npix_super` is a smaller box in uv, and the filter's median is over a different set of
+  occupied cells.
+- **Source:** #354; `src/pfb_imaging/core/imager.py` (`pointing_reach`,
+  `check_image_extent`, `counts_grid`, `field_beam_axis`, `check_beam_reach`);
+  `src/pfb_imaging/utils/stokes2vis.py` (katbeam rotation average);
+  `tests/test_beam.py::test_field_beam_axis_reaches_the_requested_distance_unless_the_cube_caps_it`,
+  `::test_pointing_reach_adds_the_farthest_field_to_the_radius`,
+  `::test_check_image_extent_refuses_an_image_past_the_max_field_of_view`,
+  `::test_check_beam_reach_measures_from_each_pointing_and_refuses_past_the_axis`;
+  `tests/test_imager_pass2.py::test_counts_grid_cell_and_reach`,
+  `::test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image`;
+  `tests/test_imager.py::test_no_weight_on_image_grid_matches_the_image_grid_for_the_largest_image`,
+  `::test_imager_refuses_an_image_past_the_max_field_of_view_before_ray`,
+  `::test_katbeam_axis_reaches_the_max_field_of_view_and_matches_the_analytic_average`.
+
+### D67 — A scratch is reused when its pass-1 record matches the run
+
+- **Context:** pass 1 is the expensive half of `pfb imager` (on ESO137-006, 647 s of set-up
+  reading the MS and 1285 s of pass 1, against 1953 s of pass 2), yet re-imaging at another
+  robustness, or against a new `--transfer-model-from` model, re-ran it from the MS. An
+  existing `.scratch` was refused without `--overwrite` and deleted with it (#354). D66 made
+  pass 1 independent of the image wherever the counts allow.
+- **Decision:** pass 1 ends by writing a record into the scratch root attrs (`pass1`, JSON):
+  `SCRATCH_SCHEMA`, the canonical pass-1 inputs (`pass1_inputs`: selection, columns,
+  chunking, product, precision, averaging, BDA, `--max-field-of-view`, beam model, baseline
+  groups, rephasing, `--target`, weighting mode, `--double-accum`,
+  `--weight-on-image-grid`; names sorted and `--freq-range` parsed, so equivalent spellings
+  match; `--flag-column` is not recorded because the imager never reads it), the MS-derived
+  values set-up needs (`scan_ms`), the counts grid,
+  the bands' channel extents and the beam axis. The next run compares, before any MS is
+  opened: inputs first, then the counts grid its own image settings imply. A match is
+  reused; a mismatch is refused, listing every differing field. No record is a mismatch.
+  `--rebuild-scratch` runs pass 1 again and replaces the scratch, whether or not it matches.
+  `--overwrite` governs only the `.dt`, now refused before anything runs rather than after
+  pass 1. The scratch is neither removed nor created until every set-up
+  refusal has passed, just before pass 1, so a refused run cannot delete hours of pass 1 or
+  leave an empty scratch that blocks the next run.
+- **Rationale:** reuse must never be silent about staleness, and must never cost a pass-1
+  rerun the user did not ask for, so it is decided from values rather than file times. MS
+  contents are not fingerprinted: casacore rewrites table files in place and directory
+  mtimes do not track it, so the rule is that rewriting a column in place means
+  `--rebuild-scratch`. The package version is recorded but not compared, so a release does not discard
+  every cache (a reuse across versions warns); `SCRATCH_SCHEMA` is bumped when what pass 1
+  writes changes. A beam model
+  passed as an object (tests) cannot be compared and never matches. Under
+  `--weight-on-image-grid` (the default, D66) the counts follow the image, so a change of cell
+  or field of view rebuilds, while robustness, `--filter-counts-level`, `--npix-super`,
+  `--weight-grouping`, `--concat-row`, `--transfer-model-from` and product selection reuse.
+- **Consequences:** the record is written last, after consolidation, so an interrupted pass 1
+  leaves a scratch that is refused rather than half-reused. The scratch's own flag exists
+  because the `.dt` and the scratch share a basename: re-imaging into the same output needs
+  `--overwrite`, and when that also rebuilt a mismatched scratch (the first version of this
+  decision) the per-field refusal could only fire for a new or deleted `.dt`, so a typo in a
+  pass-1 option silently cost a pass-1 rerun. A reuse skips `scan_ms`, the
+  baseline-group masks, the wizards and pass 1; the R bound and, for a cube-capped axis, the
+  beam reach are still checked against the record before Ray starts. Measured on ESO137-006
+  (com08, production command): a full run 1:14:31, a reuse at the same settings 40:18 and a
+  reuse at another robustness 41:22. Set-up fell from 648 s to 14 s and pass 1 (1406 s)
+  was skipped, the counts reduction and pass 2 (about 300 s and 2000 s) are unchanged, and
+  the driver peak fell from 8.2 to 3.4 GB. The reused products equal the full run's (MODEL,
+  BEAM, WSUM identical; DIRTY, PSF ≤ 1e-11, RESIDUAL ≤ 6e-11 of the peak). A changed pass-1
+  input was refused in 28 s, before the MS was read, with the scratch kept.
+- **Source:** #354; `src/pfb_imaging/core/imager.py` (`SCRATCH_SCHEMA`,
+  `read_scratch_record`, `record_diffs`, `pass1_inputs`, `image_geometry`, `scan_ms`);
+  `tests/test_imager_reuse.py`.
+
 ## Known debt
+
+- **Dense counts grids are twice the size they need to be.** `_accumulate_counts` folds
+  every sample to `v ≥ 0`, so half of each `(ncorr, counts_nx, counts_ny)` grid is always
+  empty: the pass-1 transient, the driver's group accumulator and the pass-2 read and copy.
+  It mattered little on the padded image grid; under `--no-weight-on-image-grid` these are the
+  largest grids in the run (D66). **Follow-up:** store and reduce a half plane, and give pass
+  2 the Briggs denominator (`write_group_counts` already forms it) instead of the counts, so
+  it needs no copy. Raised in the review of #354.
 
 - **`hci` has no antenna-dependent gain test.** Both end-to-end gain tests give every
   antenna the same gain, so the phase cancels on each baseline: a swapped ant1/ant2, a

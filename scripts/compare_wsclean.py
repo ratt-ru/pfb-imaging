@@ -33,7 +33,7 @@ that have to be handled explicitly:
    ``-weighting-rank-filter`` -- which is **active out of the box** at level 3.0,
    window 16 -- is set to 0.
 5. **Matching the uv grid size.**  ``psf_oversize`` does *not* size pfb's density
-   grid: ``core/imager.py`` hardcodes ``min_padding = 1.7`` for the COUNTS grid and
+   grid: ``pfb imager --min-padding`` (default 1.7) sizes the COUNTS grid and
    rounds up to an even number, while wsclean uses the padded image size rounded
    up to a multiple of 4.  For ``nx=462`` that is 786 vs 788, and they cannot be
    made equal by choosing ``-padding``.  Since different grid sizes mean different
@@ -305,9 +305,9 @@ def prefixes(a):
     return pfb, wsc
 
 
-# core/imager.py hardcodes the COUNTS uv-grid padding: it is NOT psf_oversize,
-# which only sizes the PSF image.  Kept in sync manually; the actual COUNTS shape
-# read back from the .scratch store is checked against it.
+# The COUNTS uv-grid padding, passed to pfb imager as --min-padding: it is NOT
+# psf_oversize, which only sizes the PSF image.  The actual COUNTS shape read
+# back from the .scratch store is checked against it.
 PFB_MIN_PADDING = 1.7
 
 
@@ -484,6 +484,8 @@ def pfb_cmd(a, prefix):
         repr(a.epsilon),
         "--psf-oversize",
         repr(a.psf_oversize),
+        "--min-padding",
+        repr(PFB_MIN_PADDING),
         "--double-accum" if a.double_accum else "--no-double-accum",
         "--overwrite",
         # the reduced counts grid only ever lives in the driver's memory, so the

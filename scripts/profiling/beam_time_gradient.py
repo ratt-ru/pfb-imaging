@@ -96,7 +96,9 @@ def gradient(args):
         model[(0, *np.unravel_index(np.argmax(bds.DIRTY.values[0]), (ny, nx)))] = 1.0
     robustness = bds.attrs.get("robustness")
     counts = scratch[counts_path(scratch, args.band)].ds.COUNTS.values if robustness is not None else None
-    nx_pad, ny_pad = (counts.shape[1], counts.shape[2]) if counts is not None else (None, None)
+    counts_nx, counts_ny = (counts.shape[1], counts.shape[2]) if counts is not None else (None, None)
+    # the image cell unless --no-weight-on-image-grid put the counts on their own grid
+    counts_cell = float(dt.attrs.get("counts_cell", cell_rad))
     groups = band_pieces(scratch, args.band)
     grid = np.array([bds.attrs["ra"], bds.attrs["dec"]])
     # the offset pass 2 placed and gridded at (--target); a moving target is not supported here
@@ -140,8 +142,9 @@ def gradient(args):
                 None,
                 cell_rad,
                 robustness=robustness,
-                nx_pad=nx_pad,
-                ny_pad=ny_pad,
+                counts_nx=counts_nx,
+                counts_ny=counts_ny,
+                counts_cell=counts_cell,
                 l0=l0,
                 m0=m0,
                 nthreads=args.nthreads,

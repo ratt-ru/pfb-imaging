@@ -103,7 +103,16 @@ def test_grid_partition_robust_reweights():
         vsign=1.0,
     )
     out = grid_partition(
-        part, counts, nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=-2.0, nx_pad=nx_pad, ny_pad=ny_pad
+        part,
+        counts,
+        nx=16,
+        ny=16,
+        nx_psf=32,
+        ny_psf=32,
+        cell_rad=1.0e-6,
+        robustness=-2.0,
+        counts_nx=nx_pad,
+        counts_ny=ny_pad,
     )
     assert out["WEIGHT"].shape == part.WEIGHT.shape
     # robust/uniform weighting downweights dense cells -> never exceeds the natural max
@@ -376,7 +385,9 @@ def test_grid_partition_can_overwrite_the_weights_it_owns(robustness):
         usign=-1.0,
         vsign=1.0,
     )
-    kw = dict(nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=robustness, nx_pad=nx_pad, ny_pad=ny_pad)
+    kw = dict(
+        nx=16, ny=16, nx_psf=32, ny_psf=32, cell_rad=1.0e-6, robustness=robustness, counts_nx=nx_pad, counts_ny=ny_pad
+    )
     natural = part.WEIGHT.values.copy()
     ref = grid_partition(part, counts, **kw)
     np.testing.assert_array_equal(part.WEIGHT.values, natural)  # the default never touches the input
@@ -490,8 +501,8 @@ def test_pass2_residual_matches_the_image_space_residual(l0, m0):
         ny_psf=2 * ny,
         cell_rad=cell,
         robustness=0.0,
-        nx_pad=nx_pad,
-        ny_pad=ny_pad,
+        counts_nx=nx_pad,
+        counts_ny=ny_pad,
         l0=l0,
         m0=m0,
         epsilon=1e-10,
@@ -510,3 +521,71 @@ def test_pass2_residual_matches_the_image_space_residual(l0, m0):
     ref = residual_from_partitions(plain["DIRTY"], [stored], model, cell, epsilon=1e-10)
     assert np.abs(ref).max() > 0 and np.abs(plain["DIRTY"] - ref).max() > 1e-3 * np.abs(ref).max()
     np.testing.assert_allclose(out["RESIDUAL"], ref, rtol=0, atol=1e-8 * np.abs(ref).max())
+
+
+def test_counts_grid_cell_and_reach():
+    """The uv cell is 1/(min_padding*sqrt(2)*R) and the grid reaches past the longest baseline (#354)."""
+    from scipy.constants import c as lightspeed
+
+    from pfb_imaging.core.imager import counts_grid
+
+    r = np.deg2rad(2.0)
+    n, ny, cell = counts_grid(8000.0, 1.7e9, r, 1.7)
+    assert n == ny and n % 2 == 0
+    np.testing.assert_allclose(1.0 / (n * cell), 1.0 / (1.7 * np.sqrt(2.0) * r), rtol=1e-12)
+    umax = 8000.0 * 1.7e9 / lightspeed
+    # the kernels' grid spans |u| < 1 / (2 cell); one spare cell beyond umax
+    assert umax < 1.0 / (2 * cell) - 1.0 / (n * cell) * (1 - 1e-9)
+
+
+def test_weights_on_the_max_fov_grid_match_the_image_grid_of_the_largest_image():
+    """An image of side sqrt(2)*R gets the same robust weights from either counts grid (#354)."""
+    from pfb_imaging.core.imager import counts_grid
+
+    part = _synth_partition(nrow=2000)
+    nx = ny = 64
+    cell = 1.0e-4
+    nx_pad = int(np.ceil(1.7 * nx))
+    nx_pad += nx_pad % 2
+    uvw, freq, mask, wgt = part.UVW.values, part.FREQ.values, part.MASK.values, part.WEIGHT.values
+    max_uvw = float(np.linalg.norm(uvw, axis=-1).max())
+
+    def weights(cnx, cny, ccell):
+        counts = _compute_counts(uvw, freq, mask, wgt, cnx, cny, ccell, ccell, wgt.dtype, usign=-1.0, vsign=1.0)
+        kw = dict(nx=nx, ny=ny, nx_psf=2 * nx, ny_psf=2 * ny, cell_rad=cell, robustness=0.0, do_psf=False)
+        return grid_partition(part, counts, counts_nx=cnx, counts_ny=cny, counts_cell=ccell, **kw)
+
+    on_image = weights(nx_pad, nx_pad, cell)
+    r = nx_pad * cell / (1.7 * np.sqrt(2.0))
+    cnx, cny, ccell = counts_grid(max_uvw, float(freq.max()), r, 1.7)
+    assert cnx < nx_pad  # a different extent, the same cell edges
+    on_fov = weights(cnx, cny, ccell)
+    # the reference must actually reweight, else equality says nothing
+    assert not np.allclose(on_image["WEIGHT"], wgt)
+    np.testing.assert_allclose(on_fov["WEIGHT"], on_image["WEIGHT"], rtol=1e-12)
+    np.testing.assert_allclose(on_fov["DIRTY"], on_image["DIRTY"], rtol=1e-12, atol=0)
+
+    # a larger R makes the cells finer, so the weights move towards natural
+    finer = weights(*counts_grid(max_uvw, float(freq.max()), 2 * r, 1.7))
+    assert not np.allclose(finer["WEIGHT"], on_image["WEIGHT"])
+
+
+def test_counts_grid_holds_every_rephased_baseline():
+    """Rephasing rotates uvw, so the grid is sized on |uvw|: no rotated sample lands off it (#354)."""
+    from scipy.constants import c as lightspeed
+    from scipy.spatial.transform import Rotation
+
+    from pfb_imaging.core.imager import counts_grid
+
+    rng = np.random.default_rng(3)
+    uvw = rng.standard_normal((5000, 3)) * np.array([4000.0, 4000.0, 2000.0])
+    freq = 1.7e9
+    n, _, cell = counts_grid(float(np.linalg.norm(uvw, axis=-1).max()), freq, np.deg2rad(3.0), 1.7)
+    half = 1.0 / (2 * cell) - 1.0 / (n * cell)  # one cell inside the edge
+    for rot in Rotation.random(20, random_state=4):
+        uv = rot.apply(uvw)[:, :2] * freq / lightspeed
+        assert np.abs(uv).max() < half
+    # the 2D length alone would not have held them
+    n2, _, cell2 = counts_grid(float(np.hypot(uvw[:, 0], uvw[:, 1]).max()), freq, np.deg2rad(3.0), 1.7)
+    worst = max(np.abs(rot.apply(uvw)[:, :2]).max() for rot in Rotation.random(20, random_state=4))
+    assert worst * freq / lightspeed > 1.0 / (2 * cell2)

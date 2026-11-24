@@ -1,6 +1,8 @@
 import gc
+import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +15,7 @@ from meerkat_beams.utils import BeamWizard
 from pfb_model_spec.utils.degrid import model_geometry, model_sampling, render_model_region
 from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
+from scipy.constants import c as lightspeed
 
 from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
@@ -425,8 +428,9 @@ def _grid_image_body(
     freq_nominal,
     meta,
     robustness=None,
-    nx_pad=None,
-    ny_pad=None,
+    counts_nx=None,
+    counts_ny=None,
+    counts_cell=None,
     nthreads=1,
     epsilon=1e-5,
     do_wgridding=True,
@@ -555,8 +559,9 @@ def _grid_image_body(
             ny_psf,
             cell_rad,
             robustness=robustness,
-            nx_pad=nx_pad,
-            ny_pad=ny_pad,
+            counts_nx=counts_nx,
+            counts_ny=counts_ny,
+            counts_cell=counts_cell,
             l0=meta.get("l0", 0.0),
             m0=meta.get("m0", 0.0),
             nthreads=nthreads,
@@ -728,34 +733,346 @@ def _grid_image_body(
     }
 
 
-def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq):
-    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365).
+def scan_ms(
+    ms,
+    *,
+    partition_columns,
+    data_group,
+    field_names,
+    spw_names,
+    scan_names,
+    freq_min,
+    freq_max,
+    check_telescope,
+    phase_dir,
+    channels_per_image,
+):
+    """Read what set-up needs from the MSs: the extent of the data and the bands.
 
-    It reaches the farthest image pixel from any pointing, at the cell
-    ``utils.beam.beam_grid`` sets for the bilinear placement tolerance. An image
-    reaching past the beam cube is refused: the rotation average turns the field
-    with parallactic angle, so only the cube's largest centred disk is covered at
-    every angle, and beyond it the placement error does not converge with the
-    cell (wiki D64). The check counts the bilinear nodes the farthest pixel
-    reads (up to one diagonal cell further out) and keeps two cube pixels clear
-    of the edge, where the cube's cubic spline is pulled towards its zero fill.
+    This is the expensive part of set-up (it loads every selected node's UVW),
+    and what a reused scratch skips: ``derived`` is stored in its record.
+
+    Returns:
+        ``(derived, selected, all_freqs, vis_col, wgt_col)``: ``derived`` is
+        JSON-serialisable (``max_blength``, ``max_uvw``, ``max_freq``,
+        ``min_chan_width``, ``band_centres``, ``field_centres``, ``radec_new``,
+        ``times``); ``selected`` caches each node for the pass-1 dispatch;
+        ``all_freqs`` every selected channel (the wizards' frequency check);
+        ``vis_col``/``wgt_col`` the data group's column names.
+    """
+    all_freqs = []
+    all_chan_widths = []
+    max_blength = 0.0
+    # 3D: bounds |uv| after any rephasing, which max_blength (uv only) does not
+    max_uvw = 0.0
+    vis_col = wgt_col = None
+    selected = []  # cached (ims, node, freqs_node, times_node, chan0, field_radec) for the dispatch loop
+    for ims, ms_name in enumerate(ms):
+        dt_kwargs = get_engine(ms_name, partition_columns)
+        if "file://" in ms_name:
+            ms_name = ms_name.replace("file://", "")
+        # the only open of this MS in the driver: the --baseline-groups telescope
+        # check reads the same tree (#365)
+        dt = xr.open_datatree(ms_name, **dt_kwargs)
+        if check_telescope:
+            check_group_telescope(dt, ms_name)
+        # Name-based selection, the frequency window and the chan0 offset all
+        # come from utils/msv4.select_vis_nodes, shared with degrid so the
+        # two front ends cannot drift. It selects channels by matching index
+        # rather than by label slice, which is correct for a descending
+        # spectral window and gives each node a chan0 on its own axis.
+        for sel in select_vis_nodes(
+            dt,
+            data_group=data_group,
+            field_names=field_names,
+            spw_names=spw_names,
+            scan_names=scan_names,
+            freq_min=freq_min,
+            freq_max=freq_max,
+        ):
+            node = dt[sel.path]
+            if vis_col is None:
+                vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
+            if wgt_col is None:
+                wgt_col = node.ds.attrs["data_groups"][data_group]["weight"]
+            # chan0 indexes the *unsliced* node, which is also what the dispatch
+            # loop applies its isel to
+            ds = node.ds.isel(frequency=slice(sel.chan0, sel.chan0 + sel.nchan))
+            freqs_node = ds.frequency.load().values
+            all_freqs.append(freqs_node)
+            all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
+            # xarray-ms establishes a regular grid over irregular or missing data,
+            # inserting nans (xarray reads them as missing data)
+            uvw = ds.UVW.load().values
+            uvw_mask = np.isnan(uvw).all(axis=-1)
+            # this forces a reshape (t, bl, 3) -> (row, 3)
+            uvw = uvw[~uvw_mask]
+            if uvw.size:
+                max_blength = max(max_blength, float(np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max()))
+                max_uvw = max(max_uvw, float(np.linalg.norm(uvw, axis=-1).max()))
+            selected.append((ims, node, freqs_node, ds.time.load().values, sel.chan0, sel.field_radec))
+
+    if not selected:
+        log.error_and_raise("Selection matched no data", ValueError)
+
+    # resolve the common phase centre (mosaic tangent point): explicit
+    # phase_dir wins; multiple distinct field centres default to their
+    # barycentre; a single field keeps its own centre (no rephasing)
+    field_centres = np.unique(np.array([np.round(fc, 12) for *_, fc in selected]), axis=0)
+    if phase_dir is not None:
+        radec_new = parse_sky_coords(phase_dir)
+        log.info("Rephasing all data to phase_dir")
+    elif field_centres.shape[0] > 1:
+        radec_new = radec_barycentre(field_centres)
+        log.info("Multiple fields selected; rephasing to their barycentre")
+    else:
+        radec_new = None
+
+    # guard against irregular channel widths
+    cw = np.asarray(all_chan_widths)
+    cw = cw[np.isfinite(cw)]
+    if cw.size == 0:
+        log.error_and_raise("No SPW has a usable channel_width", ValueError)
+    min_chan_width = float(np.min(cw))
+    if channels_per_image in (0, None, -1):
+        nband = len(np.unique([f.tobytes() for f in all_freqs]))  # one per spw
+    else:
+        flat_freqs = np.concatenate(all_freqs)
+        nband = int(np.ceil((flat_freqs.max() - flat_freqs.min()) / (min_chan_width * channels_per_image)))
+        nband = max(nband, 1)
+    all_freqs = np.unique(np.concatenate(all_freqs))
+    band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
+    # Band-edge midpoints. These define which channels belong to which band and
+    # nothing else -- the band's reported frequency is the effective (weighted)
+    # one reduced in pass 2 (issue #296, wiki D28).
+    band_centres = band_edges[:-1] + (band_edges[1] - band_edges[0]) / 2
+
+    # a --target is resolved at the ends and middle of the track: a named body moves
+    times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
+    times = times[np.isfinite(times)]
+    derived = {
+        "max_blength": max_blength,
+        "max_uvw": max_uvw,
+        "max_freq": float(all_freqs.max()),
+        "min_chan_width": min_chan_width,
+        "band_centres": band_centres.tolist(),
+        "field_centres": field_centres.tolist(),
+        "radec_new": None if radec_new is None else [float(v) for v in radec_new],
+        "times": [float(times.min()), float(times.mean()), float(times.max())],
+    }
+    return derived, selected, all_freqs, vis_col, wgt_col
+
+
+def pointing_reach(field_centres, grid_radec, max_fov_rad):
+    """How far from a pointing centre the scratch must describe the sky (deg).
+
+    Every image the scratch can serve lies within ``--max-field-of-view`` (a
+    radius ``R`` about the image tangent point, the same radius BDA bounds its
+    decorrelation over), so a field's beam is needed out to ``R`` plus that
+    field's distance from the tangent point. Neither depends on the image grid
+    (#354).
 
     Args:
-        wizards: Baseline group (None when ungrouped) -> BeamWizard.
         field_centres: ``(nfield, 2)`` pointing centres (rad).
         grid_radec: The image tangent point (rad).
-        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        max_fov_rad: ``R`` (rad).
+
+    Returns:
+        The largest such distance over the fields (deg).
+    """
+    dist = max(float(np.hypot(*radec_to_lm(np.asarray(fc), grid_radec))) for fc in field_centres)
+    return float(np.rad2deg(dist + max_fov_rad))
+
+
+def check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad):
+    """Refuse an image reaching past ``--max-field-of-view`` from the tangent point.
+
+    Args:
         nx: Image pixels along x.
         ny: Image pixels along y.
         cell_rad: Image cell (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        max_fov_rad: ``R`` (rad).
+
+    Returns:
+        The distance of the farthest image pixel from the tangent point (deg).
+
+    Raises:
+        ValueError: If that distance exceeds ``R``.
+    """
+    half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
+    reach = max(float(np.hypot(l0, m0)) for l0, m0 in offsets) + half_diag
+    if reach > max_fov_rad * (1 + 1e-12):
+        raise ValueError(
+            f"the image reaches {np.rad2deg(reach):.3f} deg from the phase centre, beyond "
+            f"--max-field-of-view {np.rad2deg(max_fov_rad):.3f} deg (a radius). Reduce the image "
+            f"(--field-of-view, --nx/--ny, --cell-size) or the --target offset, or raise --max-field-of-view."
+        )
+    return float(np.rad2deg(reach))
+
+
+# Bump when what pass 1 writes changes, so older scratches are refused (#354).
+SCRATCH_SCHEMA = 1
+
+
+def read_scratch_record(scratch_url: str) -> dict | None:
+    """The validity record pass 1 left in a scratch's root attrs, or None.
+
+    None means the scratch was written by a pfb-imaging without records, or
+    pass 1 did not finish: the record is written last.
+    """
+    try:
+        raw = zarr.open_group(scratch_url, mode="r").attrs.get("pass1")
+        return None if raw is None else json.loads(raw)
+    except (FileNotFoundError, KeyError, ValueError, zarr.errors.GroupNotFoundError):
+        # ValueError covers a truncated or corrupt record (json.JSONDecodeError)
+        return None
+
+
+def record_diffs(record: dict | None, inputs: dict, counts: dict | None = None) -> list[str]:
+    """Why a scratch cannot serve this run: one line per differing field.
+
+    Args:
+        record: :func:`read_scratch_record`'s result.
+        inputs: This run's pass-1 inputs (:func:`pass1_inputs`).
+        counts: This run's counts grid, compared once the inputs match.
+
+    Returns:
+        Empty when the scratch can be reused.
+    """
+    if record is None:
+        return ["it has no validity record (written by an older pfb-imaging, or pass 1 did not finish)"]
+    if record.get("schema") != SCRATCH_SCHEMA:
+        return [f"its schema is {record.get('schema')}, this pfb-imaging writes {SCRATCH_SCHEMA}"]
+    old = record["inputs"]
+    diffs = [f"{k}: {old.get(k)!r} -> {v!r}" for k, v in inputs.items() if old.get(k) != v]
+    diffs += [f"{k}: {old[k]!r} (no longer an input)" for k in old if k not in inputs]
+    if not diffs and counts is not None and record["counts"] != counts:
+        diffs.append(
+            f"counts grid: {record['counts']} -> {counts} (under --weight-on-image-grid it follows the image: "
+            f"--field-of-view, --cell-size, --nx/--ny, --super-resolution-factor, --min-padding)"
+        )
+    return diffs
+
+
+def pass1_inputs(**kwargs) -> dict:
+    """Canonical, JSON-comparable values of everything pass 1's output depends on.
+
+    Sequences become lists and MS paths are absolute. A beam model given as an
+    object (tests pass BeamWizards) cannot be compared: it gets a fresh uuid, so
+    it never matches (an ``id`` can be reused after garbage collection).
+    """
+    out = {}
+    for k, v in kwargs.items():
+        if isinstance(v, (tuple, list)):
+            v = [str(x) if k == "ms" else x for x in v]
+        elif isinstance(v, np.generic):
+            v = v.item()
+        out[k] = v
+    beam_model = out.get("beam_model")
+    if beam_model is not None and not isinstance(beam_model, str):
+        out["beam_model"] = f"<{type(beam_model).__name__} object {uuid.uuid4().hex}>"
+    return json.loads(json.dumps(out))
+
+
+def image_geometry(
+    max_blength,
+    max_uvw,
+    max_freq,
+    *,
+    field_of_view,
+    super_resolution_factor,
+    cell_size,
+    nx,
+    ny,
+    psf_oversize,
+    min_padding,
+    weight_on_image_grid,
+    max_fov_rad,
+):
+    """The image grid and the counts grid, from the data's extent and the CLI.
+
+    Returns:
+        dict: ``nx``, ``ny``, ``nx_psf``, ``ny_psf``, ``cell_n``, ``cell_rad``,
+        ``cell_deg``, ``nx_pad``, ``ny_pad`` and ``counts`` (``{"nx", "ny",
+        "cell"}``, the grid pass 1 grids the counts on).
+    """
+    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
+        max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
+    )
+    # the padded uv grid of the image; ideally the wgridder's own padding,
+    # which it chooses internally (consider adding that to radiomesh)
+    nx_pad = int(np.ceil(min_padding * nx))
+    nx_pad += nx_pad % 2
+    ny_pad = int(np.ceil(min_padding * ny))
+    ny_pad += ny_pad % 2
+    if weight_on_image_grid:
+        cnx, cny, ccell = nx_pad, ny_pad, cell_rad
+    else:
+        cnx, cny, ccell = counts_grid(max_uvw, max_freq, max_fov_rad, min_padding)
+    return {
+        "nx": nx,
+        "ny": ny,
+        "nx_psf": nx_psf,
+        "ny_psf": ny_psf,
+        "cell_n": cell_n,
+        "cell_rad": cell_rad,
+        "cell_deg": cell_deg,
+        "nx_pad": nx_pad,
+        "ny_pad": ny_pad,
+        "counts": {"nx": int(cnx), "ny": int(cny), "cell": float(ccell)},
+    }
+
+
+def counts_grid(max_uvw, max_freq, max_fov_rad, min_padding):
+    """The counts grid that serves every image within ``--max-field-of-view`` (#354).
+
+    Its uv cell, ``1 / (min_padding * sqrt(2) * R)``, is the padded image-grid
+    cell of the largest square image within ``R`` (side ``sqrt(2) * R``), and
+    it reaches one cell past the longest baseline at the highest frequency,
+    measured in 3D: rephasing (``--phase-dir``, a mosaic barycentre) rotates
+    ``uvw``, so only ``|uvw|`` bounds the ``uv`` pass 1 grids. It
+    is returned as the padded uv grid of a virtual image, the form the counts
+    kernels take: an even ``n`` puts every cell edge on a multiple of the uv
+    cell, so a grid with the same cell bins identically whatever its extent.
+
+    Args:
+        max_uvw: Longest baseline, ``max |uvw|`` (m).
+        max_freq: Highest frequency gridded (Hz).
+        max_fov_rad: ``R`` (rad).
+        min_padding: ``--min-padding``.
+
+    Returns:
+        ``(n, n, cell)``: grid size and the virtual image cell (rad).
+    """
+    du = 1.0 / (min_padding * np.sqrt(2.0) * max_fov_rad)
+    umax = max_uvw * max_freq / lightspeed
+    n = 2 * (int(np.ceil(umax / du)) + 1)
+    return n, n, 1.0 / (n * du)
+
+
+def field_beam_axis(wizards, reach_deg, max_freq):
+    """The field-centred beam axis every pass-1 piece evaluates its beam on (#365, #354).
+
+    It reaches ``reach_deg`` from the pointing (:func:`pointing_reach`), at the
+    cell ``utils.beam.beam_grid`` sets for the bilinear placement tolerance, but
+    no further than the beam cube covers. The rotation average turns the field
+    with parallactic angle, so only the cube's largest centred disk is covered
+    at every angle, and beyond it the placement error does not converge with the
+    cell (wiki D64). The farthest pixel reads bilinear nodes up to one diagonal
+    cell further out, and two cube pixels at the edge are kept clear, where the
+    cube's cubic spline is pulled towards its zero fill. An image reaching past
+    the returned axis is refused by :func:`check_beam_reach`.
+
+    Args:
+        wizards: Baseline group (None when ungrouped) -> BeamWizard.
+        reach_deg: Distance from a pointing the beam is wanted out to (deg).
         max_freq: Highest frequency gridded (Hz).
 
     Returns:
-        ``(beam_lm, radius_deg, limit_deg)``: the axis (deg), the distance it
-        must reach, and the radius the cube covers less the edge margin.
-
-    Raises:
-        ValueError: If the image reaches beyond that radius.
+        ``(beam_lm, axis_deg, limit_deg)``: the axis (deg), the distance from
+        the pointing it serves, and the radius the cube covers less the edge
+        margin.
     """
     limit_deg = np.inf
     for wizard in wizards.values():
@@ -764,6 +1081,32 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         cover = float(np.abs([xy.min(), xy.max()]).min())
         dx = float(max(np.abs(np.diff(x)).max(), np.abs(np.diff(y)).max()))
         limit_deg = min(limit_deg, cover - 2.0 * dx)
+    # the largest dish any of these beams describes bounds the error for all of them
+    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
+    cell = float(np.diff(beam_grid(max_freq, dish, 0.0))[0])
+    axis_deg = min(reach_deg, limit_deg - np.sqrt(2.0) * cell)
+    return beam_grid(max_freq, dish, axis_deg), axis_deg, limit_deg
+
+
+def check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_deg, limit_deg):
+    """Refuse an image reaching past the beam axis from any pointing (wiki D64).
+
+    Only binds when the beam cube capped the axis (:func:`field_beam_axis`);
+    otherwise :func:`check_image_extent` already keeps every image inside it.
+
+    Args:
+        field_centres: ``(nfield, 2)`` pointing centres (rad).
+        grid_radec: The image tangent point (rad).
+        offsets: ``(l0, m0)`` image-centre offsets to cover (rad).
+        nx: Image pixels along x.
+        ny: Image pixels along y.
+        cell_rad: Image cell (rad).
+        axis_deg: Distance from a pointing the beam axis serves (deg).
+        limit_deg: Radius the beam cube covers less its edge margin (deg).
+
+    Raises:
+        ValueError: If the image reaches beyond ``axis_deg`` from a pointing.
+    """
     half_diag = 0.5 * np.hypot(nx, ny) * cell_rad
     radius = 0.0
     for fc in field_centres:
@@ -771,17 +1114,13 @@ def field_beam_axis(wizards, field_centres, grid_radec, offsets, nx, ny, cell_ra
         for l0, m0 in offsets:
             radius = max(radius, float(np.hypot(l0 - lf, m0 - mf)) + half_diag)
     radius_deg = float(np.rad2deg(radius))
-    # the largest dish any of these beams describes bounds the error for all of them
-    dish = max(BEAM_DISH_DIAMETER.get(g, BEAM_DISH_DIAMETER["MPMP"]) for g in wizards)
-    beam_lm = beam_grid(max_freq, dish, radius_deg)
-    reach_deg = radius_deg + np.sqrt(2.0) * float(beam_lm[1] - beam_lm[0])
-    if reach_deg > limit_deg:
+    if radius_deg > axis_deg * (1 + 1e-12):
         raise ValueError(
-            f"the image reaches {radius_deg:.2f} deg from a pointing centre, beyond the {limit_deg:.2f} deg "
-            f"the beam cube covers at every parallactic angle (less a two-pixel margin at its edge). "
+            f"the image reaches {radius_deg:.3f} deg from a pointing centre, beyond the {axis_deg:.3f} deg "
+            f"the beam can be placed out to: the beam cube covers {limit_deg:.2f} deg at every parallactic "
+            f"angle (less a two-pixel margin at its edge). "
             f"Reduce --field-of-view or the pointing offset, or image without --beam-model."
         )
-    return beam_lm, radius_deg, limit_deg
 
 
 @pfb_logging.log_exceptions
@@ -793,6 +1132,7 @@ def imager(
     field_names: list[str] | None = None,
     freq_range: str | None = None,
     overwrite: bool = False,
+    rebuild_scratch: bool = False,
     data_column: str = "DATA",
     data_group: str = "base",
     partition_columns: list[str] | None = None,
@@ -827,6 +1167,8 @@ def imager(
     nx: int | None = None,
     ny: int | None = None,
     psf_oversize: float = 1.4,
+    min_padding: float = 1.7,
+    weight_on_image_grid: bool = True,
     filter_counts_level: float = 5.0,
     npix_super: int = 0,
     epsilon: float = 1e-5,
@@ -873,6 +1215,13 @@ def imager(
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
+
+    # africanus' BDA refuses the same range, but only inside pass 1
+    if not 0.0 < max_field_of_view <= 90.0:
+        log.error_and_raise(f"--max-field-of-view must lie in (0, 90] deg, got {max_field_of_view}", ValueError)
+    max_fov_rad = float(np.deg2rad(max_field_of_view))
+    if min_padding < 1.0:
+        log.error_and_raise(f"--min-padding must be at least 1, got {min_padding}", ValueError)
 
     # Before init_ray and before pass 1: ducc only refuses an unreachable
     # epsilon when it is handed data, which in the imager is pass 2 -- after the
@@ -950,18 +1299,10 @@ def imager(
 
     basename = f"{output_filename}"
 
-    # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
-    scratch_fs, scratch_url = uri_and_fs(f"{basename}.scratch")
-    if scratch_fs.exists(scratch_url):
-        if overwrite:
-            log.info(f"Overwriting {basename}.scratch")
-            scratch_fs.rm(scratch_url, recursive=True)
-        else:
-            log.error_and_raise(f"{basename}.scratch exists. Set overwrite to overwrite it. ", RuntimeError)
-
-    scratch_fs.makedirs(scratch_url, exist_ok=True)
-
-    log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
+    # refused here rather than after pass 1 (#354): a run must not fail halfway
+    dt_fs, dt_url = uri_and_fs(f"{basename}.dt")
+    if dt_fs.exists(dt_url) and not overwrite:
+        log.error_and_raise(f"{basename}.dt exists. Set overwrite to overwrite it.", RuntimeError)
 
     if freq_range is not None and len(freq_range):
         fmin, fmax = freq_range.strip(" ").split(":")
@@ -977,6 +1318,84 @@ def imager(
         freq_min = -np.inf
         freq_max = np.inf
 
+    # Everything pass 1's output depends on (#354). A scratch whose record
+    # matches is reused and pass 1 is skipped; the image grid enters through
+    # the counts grid, compared below once the record's data extent is known.
+    inputs = pass1_inputs(
+        ms=ms,
+        # selection is by membership, so the order names are given in is irrelevant
+        field_names=None if field_names is None else sorted(field_names),
+        spw_names=None if spw_names is None else sorted(spw_names),
+        scan_names=None if scan_names is None else sorted(scan_names),
+        # parsed, so "1.4e9:" and "1400000000:" agree; None for an open end
+        freq_range=[None if np.isinf(f) else float(f) for f in (freq_min, freq_max)],
+        data_column=data_column,
+        data_group=data_group,
+        partition_columns=partition_columns,
+        weight_column=weight_column,
+        sigma_column=sigma_column,
+        integrations_per_image=integrations_per_image,
+        channels_per_image=channels_per_image,
+        product=product,
+        precision=precision,
+        chan_average=chan_average,
+        bda_decorr=bda_decorr,
+        max_field_of_view=max_field_of_view,
+        beam_model=beam_model,
+        baseline_groups=baseline_groups,
+        antenna_groups=antenna_groups,
+        phase_dir=phase_dir,
+        target=target,
+        wgt_mode=wgt_mode,
+        double_accum=double_accum,
+        weight_on_image_grid=weight_on_image_grid,
+    )
+    geom_kw = dict(
+        field_of_view=field_of_view,
+        super_resolution_factor=super_resolution_factor,
+        cell_size=cell_size,
+        nx=nx,
+        ny=ny,
+        psf_oversize=psf_oversize,
+        min_padding=min_padding,
+        weight_on_image_grid=weight_on_image_grid,
+        max_fov_rad=max_fov_rad,
+    )
+
+    # pass-1 fine averaged Stokes pieces are written into a .scratch DataTree
+    scratch_fs, scratch_url = uri_and_fs(f"{basename}.scratch")
+    reuse = False
+    record = None
+    if scratch_fs.exists(scratch_url):
+        record = read_scratch_record(scratch_url)
+        diffs = record_diffs(record, inputs)
+        if not diffs:
+            d = record["derived"]
+            counts = image_geometry(d["max_blength"], d["max_uvw"], d["max_freq"], **geom_kw)["counts"]
+            diffs = record_diffs(record, inputs, counts)
+        why = "".join(f"\n  {d}" for d in diffs)
+        if rebuild_scratch:
+            # removed only once every set-up refusal has passed, just before pass 1
+            log.info(
+                f"Scratch {scratch_url} will be rebuilt (--rebuild-scratch)" + (f", and differs:{why}" if diffs else "")
+            )
+        elif not diffs:
+            reuse = True
+            log.info(
+                f"Reusing scratch {scratch_url}: its pass-1 inputs match this run, so pass 1 is skipped. "
+                f"Run with --rebuild-scratch to run pass 1 again."
+            )
+            if record.get("pfb-imaging-version") != pfb_version:
+                log.warning(
+                    f"The scratch was written by pfb-imaging {record.get('pfb-imaging-version')}, this is "
+                    f"{pfb_version}. A fix to pass 1 between them is not in it: run with --rebuild-scratch."
+                )
+        else:
+            log.error_and_raise(
+                f"{scratch_url} exists but cannot serve this run, because:{why}\n"
+                f"Run with --rebuild-scratch to run pass 1 again, or change the options back.",
+                RuntimeError,
+            )
     # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
@@ -998,85 +1417,43 @@ def imager(
     # same for the weight column: "WEIGHT_SPECTRUM" is exposed as "WEIGHT" in the datatree
     wgt_col = None
 
-    # figure out where band edges are
-    # note mapping currently maps partitions to the band it has most overlap with
-    # partitions are not sub-divided
-    all_freqs = []
-    all_chan_widths = []
-    max_blength = 0
-    selected = []  # cached (ims, node, freqs_node, times_node, chan0) for the dispatch loop
-    for ims, ms_name in enumerate(ms):
-        dt_kwargs = get_engine(ms_name, partition_columns)
-        if "file://" in ms_name:
-            ms_name = ms_name.replace("file://", "")
-        # the only open of this MS in the driver: the --baseline-groups telescope
-        # check reads the same tree (#365)
-        dt = xr.open_datatree(
-            ms_name,
-            **dt_kwargs,
-        )
-        if baseline_groups and beam_model is not None:
-            check_group_telescope(dt, ms_name)
-        # Name-based selection, the frequency window and the chan0 offset all
-        # come from utils/msv4.select_vis_nodes, shared with degrid so the
-        # two front ends cannot drift. It selects channels by matching index
-        # rather than by label slice, which is correct for a descending
-        # spectral window and gives each node a chan0 on its own axis.
-        for sel in select_vis_nodes(
-            dt,
+    # ---- the MS metadata, or a reused scratch's record of it ----
+    if reuse:
+        derived = record["derived"]
+        selected = all_freqs = None
+    else:
+        derived, selected, all_freqs, vis_col, wgt_col = scan_ms(
+            ms,
+            partition_columns=partition_columns,
             data_group=data_group,
             field_names=field_names,
             spw_names=spw_names,
             scan_names=scan_names,
             freq_min=freq_min,
             freq_max=freq_max,
-        ):
-            node = dt[sel.path]
-            if vis_col is None:
-                vis_col = node.ds.attrs["data_groups"][data_group]["correlated_data"]
-            if wgt_col is None:
-                wgt_col = node.ds.attrs["data_groups"][data_group]["weight"]
-            # chan0 indexes the *unsliced* node, which is also what the dispatch
-            # loop below applies its isel to
-            ds = node.ds.isel(frequency=slice(sel.chan0, sel.chan0 + sel.nchan))
-            freqs_node = ds.frequency.load().values
-            all_freqs.append(freqs_node)
-            all_chan_widths.append(ds.frequency.attrs["channel_width"]["data"])
-            # xarray-ms establishes a regular grid over irregular or missing data.
-            # Nans are inserted in these cases, mostly because xarray interprets nans as missing data.
-            # This is different from xarray-kat which inherits katdal's missing data behaviour
-            # (zeroed visibilities and weights).
-            uvw = ds.UVW.load().values
-            uvw_mask = np.isnan(uvw).all(axis=-1)
-            # this forces a reshape (t, bl, 3) -> (row, 3)
-            uvw = uvw[~uvw_mask]
-            if uvw.size:
-                max_blength = max(max_blength, np.sqrt(uvw[:, 0] ** 2 + uvw[:, 1] ** 2).max())
-            # cache the selected node and its loaded coords so the dispatch loop
-            # below does not have to re-open and re-filter the datatree
-            selected.append((ims, node, freqs_node, ds.time.load().values, sel.chan0, sel.field_radec))
-
-    if not selected:
-        log.error_and_raise("Selection matched no data", ValueError)
-
-    # resolve the common phase centre (mosaic tangent point): explicit
-    # phase_dir wins; multiple distinct field centres default to their
-    # barycentre; a single field keeps its own centre (no rephasing)
-    field_centres = np.unique(np.array([np.round(fc, 12) for *_, fc in selected]), axis=0)
-    if phase_dir is not None:
-        radec_new = parse_sky_coords(phase_dir)
-        log.info(
-            f"Rephasing all data to phase_dir "
-            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
+            check_telescope=bool(baseline_groups and beam_model is not None),
+            phase_dir=phase_dir,
+            channels_per_image=channels_per_image,
         )
-    elif field_centres.shape[0] > 1:
-        radec_new = radec_barycentre(field_centres)
-        log.info(
-            f"Multiple fields selected; rephasing to their barycentre "
-            f"ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg"
-        )
-    else:
-        radec_new = None
+        # map the "DATA" sentinel to the data group's correlated_data variable
+        if dc1 == "DATA":
+            dc1 = vis_col
+        if dc2 == "DATA":
+            dc2 = vis_col
+        # map the "WEIGHT_SPECTRUM" sentinel to the data group's weight variable
+        if weight_column is not None and weight_column == "WEIGHT_SPECTRUM":
+            weight_column = wgt_col
+    max_blength = float(derived["max_blength"])
+    max_uvw = float(derived["max_uvw"])
+    max_freq = float(derived["max_freq"])
+    min_chan_width = float(derived["min_chan_width"])
+    band_centres = np.asarray(derived["band_centres"])
+    nband = band_centres.size
+    field_centres = np.asarray(derived["field_centres"])
+    radec_new = None if derived["radec_new"] is None else np.asarray(derived["radec_new"])
+    if radec_new is not None:
+        log.info(f"Rephasing to ra={np.rad2deg(radec_new[0]):.8f} deg dec={np.rad2deg(radec_new[1]):.8f} deg")
+    log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
     # tangent point of the output image grid
     grid_radec = radec_new if radec_new is not None else field_centres[0]
 
@@ -1095,52 +1472,32 @@ def imager(
         ell, emm = radec_to_lm(tradec, grid_radec)
         return float(ell), float(emm)
 
-    # map the "DATA" sentinel to the data group's correlated_data variable
-    if vis_col is not None:
-        if dc1 == "DATA":
-            dc1 = vis_col
-        if dc2 == "DATA":
-            dc2 = vis_col
-
-    # map the "WEIGHT_SPECTRUM" sentinel to the data group's weight variable
-    if weight_column is not None and weight_column == "WEIGHT_SPECTRUM":
-        weight_column = wgt_col
-
-    # guard against irregular channel widths
-    cw = np.asarray(all_chan_widths)
-    cw = cw[np.isfinite(cw)]
-    if cw.size == 0:
-        log.error_and_raise("No SPW has a usable channel_width", ValueError)
-    min_chan_width = np.min(cw)
-    if channels_per_image in (0, None, -1):
-        nband = len(np.unique([f.tobytes() for f in all_freqs]))  # one per spw
-    else:
-        flat_freqs = np.concatenate(all_freqs)
-        nband = int(np.ceil((flat_freqs.max() - flat_freqs.min()) / (min_chan_width * channels_per_image)))
-        nband = max(nband, 1)
-    all_freqs = np.unique(np.concatenate(all_freqs))
-    log.info(f"Number of output bands determined to be {nband} based on channel width and freq range")
-    band_edges = np.linspace(all_freqs.min() - min_chan_width / 2, all_freqs.max() + min_chan_width / 2, nband + 1)
-    half_band_width = (band_edges[1] - band_edges[0]) / 2
-    # Band-edge midpoints. These define which channels belong to which band and
-    # nothing else -- the band's reported frequency is the effective (weighted)
-    # one reduced in pass 2 (issue #296, wiki D28).
-    band_centres = band_edges[0:-1] + half_band_width
-
-    # shared imaging geometry (also fixes the padded uv-grid used for COUNTS)
-    max_freq = float(all_freqs.max())
-    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
-        max_blength, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
-    )
-    # TODO - this is currently hard-coded to 1.7 because we don't know what padding the
-    # wgridder will choose. It could be exposed as a parameter but ideally should be
-    # determined by the gridder (consider adding functionality to radiomesh)
-    min_padding = 1.7
-    nx_pad = int(np.ceil(min_padding * nx))
-    nx_pad += nx_pad % 2
-    ny_pad = int(np.ceil(min_padding * ny))
-    ny_pad += ny_pad % 2
+    # shared imaging geometry, and the grid pass 1 grids the counts on
+    geom = image_geometry(max_blength, max_uvw, max_freq, **geom_kw)
+    nx, ny, nx_psf, ny_psf = geom["nx"], geom["ny"], geom["nx_psf"], geom["ny_psf"]
+    cell_rad, nx_pad = geom["cell_rad"], geom["nx_pad"]
+    counts_nx, counts_ny, counts_cell = geom["counts"]["nx"], geom["counts"]["ny"], geom["counts"]["cell"]
     log.info(f"Image size (nx={nx}, ny={ny}), cell={np.rad2deg(cell_rad) * 3600:.4e} arcsec")
+    if not weight_on_image_grid:
+        # < 1: finer than the image's own uv cell, so robust weights lean towards natural
+        ratio = (nx_pad * cell_rad) / (counts_nx * counts_cell)
+        log.info(
+            f"Counts grid {counts_nx}^2 set by --max-field-of-view: its uv cell is {ratio:.2f} times the image's "
+            f"(--weight-on-image-grid matches them)"
+        )
+
+    # a --target is resolved at the ends and middle of the track: a named body moves
+    offsets = {target_offset(t) for t in derived["times"]}
+    # before anything is computed: a scratch serves every image within --max-field-of-view
+    try:
+        image_reach_deg = check_image_extent(nx, ny, cell_rad, offsets, max_fov_rad)
+    except ValueError as e:
+        log.error_and_raise(str(e), ValueError)
+    beam_reach_deg = pointing_reach(field_centres, grid_radec, max_fov_rad)
+    log.info(
+        f"The image reaches {image_reach_deg:.3f} deg of the {max_field_of_view:.3f} deg --max-field-of-view; "
+        f"beams are described out to {beam_reach_deg:.3f} deg from a pointing"
+    )
 
     if transfer_ds is not None:
         try:
@@ -1158,86 +1515,103 @@ def imager(
         # pass-2 workers load their own copy through a Multiton; the driver holds none
         del transfer_ds
 
-    # Baseline-group masks, one dict per selected node. Computed here rather
-    # than inside the dispatch loop so the set of groups that actually exist is
-    # known before any BeamWizard is built -- an eager wizard for an absent
-    # group would stage MdV-2026 products for a beam no task consumes.
-    # Still strictly per node: different scans/SPWs can carry different antenna
-    # subsets, so baseline_id indices are only valid for their own node.
-    node_masks_list = []
-    for _ims, node, _f, _t, _c, _r in selected:
-        if not baseline_groups:
-            node_masks_list.append({"all": None})
-            continue
-        try:
-            node_masks_list.append(node_baseline_groups(node, antenna_group_override)[0])
-        except ValueError as e:
-            log.error_and_raise(str(e), ValueError)
-    if baseline_groups:
-        present_groups = sorted({g for m in node_masks_list for g in m}, key=GROUP_LABELS.index)
-        log.info("Baseline groups present: " + ", ".join(present_groups))
-        if beam_model is not None and not isinstance(beam_model, BeamWizard):
-            # may repoint MBEAMS_CACHE_DIR, so before the workers inherit it
-            missing = resolve_group_beam_cache(str(beam_model).upper(), present_groups)
-            if missing:
-                log.error_and_raise(missing, RuntimeError)
-            env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
-
-    # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
-    # same convention as hci); "katbeam"/None pass through to stokes_vis as is
-    beam_refs = None
-    beam_lm = None
-    wizards = {}
-    if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
-        # Each wizard is built once here, single process and before Ray, so a
-        # staging error or a beam that cannot cover the data stops the run
-        # before a cluster exists, and concurrent first downloads cannot race.
-        # The tasks then get a Multiton recipe rather than the wizard: a worker
-        # builds its own once from the warmed cache and keeps it across tasks,
-        # and with it the spline prefilters, which a wizard shipped by value
-        # arrives without -- ~0.8 s per correlation per task to rebuild (degrid
-        # does the same, D38). No image_name: detached mode, pass 1 supplies
-        # explicit l/m/times/freq.
-        groups = present_groups if baseline_groups else [None]
-        if baseline_groups:
-            log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
-        else:
-            log.info("Assuming MeerKAT data and initialising BeamWizard")
-        kwargs = {
-            g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION} | ({} if g is None else {"group": g})
-            for g in groups
-        }
-        wizards = {}
-        for g, kw in kwargs.items():
-            wizards[g] = BeamWizard(**kw)
-            # a piece's beam frequency is a weighted mean of its own channels,
-            # so every selected channel bounds what a worker can ask for (D59)
+    beam_axis = None  # (axis_deg, limit_deg) of a cube-capped wizard axis
+    if not reuse:
+        # Baseline-group masks, one dict per selected node. Computed here rather
+        # than inside the dispatch loop so the set of groups that actually exist is
+        # known before any BeamWizard is built -- an eager wizard for an absent
+        # group would stage MdV-2026 products for a beam no task consumes.
+        # Still strictly per node: different scans/SPWs can carry different antenna
+        # subsets, so baseline_id indices are only valid for their own node.
+        node_masks_list = []
+        for _ims, node, _f, _t, _c, _r in selected:
+            if not baseline_groups:
+                node_masks_list.append({"all": None})
+                continue
             try:
-                wizards[g].check_freqs(all_freqs)
+                node_masks_list.append(node_baseline_groups(node, antenna_group_override)[0])
             except ValueError as e:
-                log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
+                log.error_and_raise(str(e), ValueError)
         if baseline_groups:
-            beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
-        else:
-            beam_model = Multiton(BeamWizard, **kwargs[None])
-    elif isinstance(beam_model, BeamWizard):
-        wizards = {getattr(beam_model, "group", None): beam_model}
-    if wizards:
-        # a --target is resolved at the ends and middle of the track: a named body moves
-        times = np.concatenate([np.ravel(t) for *_, t, _, _ in selected])
-        times = times[np.isfinite(times)]
-        offsets = {target_offset(float(t)) for t in (times.min(), times.mean(), times.max())}
-        try:
-            beam_lm, radius_deg, limit_deg = field_beam_axis(
-                wizards, field_centres, grid_radec, offsets, nx, ny, cell_rad, max_freq
+            present_groups = sorted({g for m in node_masks_list for g in m}, key=GROUP_LABELS.index)
+            log.info("Baseline groups present: " + ", ".join(present_groups))
+            if beam_model is not None and not isinstance(beam_model, BeamWizard):
+                # may repoint MBEAMS_CACHE_DIR, so before the workers inherit it
+                missing = resolve_group_beam_cache(str(beam_model).upper(), present_groups)
+                if missing:
+                    log.error_and_raise(missing, RuntimeError)
+                env_vars["MBEAMS_CACHE_DIR"] = os.environ["MBEAMS_CACHE_DIR"]
+
+        # MeerKAT band name -> BeamWizard from the meerkat-beams band cache (the
+        # same convention as hci); "katbeam"/None pass through to stokes_vis as is
+        beam_refs = None
+        beam_lm = None
+        wizards = {}
+        if beam_model is not None and not isinstance(beam_model, BeamWizard) and beam_model.lower() != "katbeam":
+            # Each wizard is built once here, single process and before Ray, so a
+            # staging error or a beam that cannot cover the data stops the run
+            # before a cluster exists, and concurrent first downloads cannot race.
+            # The tasks then get a Multiton recipe rather than the wizard: a worker
+            # builds its own once from the warmed cache and keeps it across tasks,
+            # and with it the spline prefilters, which a wizard shipped by value
+            # arrives without -- ~0.8 s per correlation per task to rebuild (degrid
+            # does the same, D38). No image_name: detached mode, pass 1 supplies
+            # explicit l/m/times/freq.
+            groups = present_groups if baseline_groups else [None]
+            if baseline_groups:
+                log.info(f"Initialising a BeamWizard for each of {', '.join(present_groups)}")
+            else:
+                log.info("Assuming MeerKAT data and initialising BeamWizard")
+            kwargs = {
+                g: {"band": beam_model, "freq_extrapolation": BEAM_FREQ_EXTRAPOLATION}
+                | ({} if g is None else {"group": g})
+                for g in groups
+            }
+            wizards = {}
+            for g, kw in kwargs.items():
+                wizards[g] = BeamWizard(**kw)
+                # a piece's beam frequency is a weighted mean of its own channels,
+                # so every selected channel bounds what a worker can ask for (D59)
+                try:
+                    wizards[g].check_freqs(all_freqs)
+                except ValueError as e:
+                    log.error_and_raise(f"beam {g or beam_model}: {e}", ValueError)
+            if baseline_groups:
+                beam_refs = {g: Multiton(BeamWizard, **kw) for g, kw in kwargs.items()}
+            else:
+                beam_model = Multiton(BeamWizard, **kwargs[None])
+        elif isinstance(beam_model, BeamWizard):
+            wizards = {getattr(beam_model, "group", None): beam_model}
+        if wizards:
+            beam_lm, axis_deg, limit_deg = field_beam_axis(wizards, beam_reach_deg, max_freq)
+            # a reuse checks later images against the same axis
+            beam_axis = [float(axis_deg), float(limit_deg)]
+            if axis_deg < beam_reach_deg:
+                # routine under --baseline-groups (1.81 deg group cubes against the default R)
+                log.info(
+                    f"The beam cube covers {limit_deg:.2f} deg, less than the {beam_reach_deg:.2f} deg "
+                    f"--max-field-of-view and the pointing offsets ask for: images reaching past "
+                    f"{axis_deg:.2f} deg from a pointing are refused"
+                )
+            try:
+                check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, axis_deg, limit_deg)
+            except ValueError as e:
+                log.error_and_raise(str(e), ValueError)
+            log.info(
+                f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
+                f"out to {axis_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
             )
+            del wizards
+        elif isinstance(beam_model, str) and beam_model.lower() == "katbeam":
+            # analytic, so no cube limits it (D66)
+            beam_lm = beam_grid(max_freq, BEAM_DISH_DIAMETER[None], beam_reach_deg)
+            log.info(f"katbeam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec")
+    elif record.get("beam_axis") is not None:
+        # the reused scratch's beams reach only as far as its axis did
+        try:
+            check_beam_reach(field_centres, grid_radec, offsets, nx, ny, cell_rad, *record["beam_axis"])
         except ValueError as e:
             log.error_and_raise(str(e), ValueError)
-        log.info(
-            f"Beam grid {beam_lm.size}^2 at {(beam_lm[1] - beam_lm[0]) * 3600:.1f} arcsec, "
-            f"out to {radius_deg:.2f} deg (the beam cube allows {limit_deg:.2f} deg)"
-        )
-        del wizards
 
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
@@ -1252,132 +1626,157 @@ def imager(
     )
 
     phases.lap("Setup")
-    tasks = []
-    scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
-    next_tid = 0
-    # Pre-create the band/time parent groups single-threaded so concurrent
-    # pass-1 workers only ever create their own distinct leaf piece group. This
-    # avoids a check-then-create race (ContainsGroupError) on the shared parent;
-    # combined with consolidated=False on the worker writes (consolidation is
-    # done once below, in the driver), it removes all shared-mutable-state races
-    # on the scratch store. See utils/stokes2vis.stokes_vis.
-    scratch_root = zarr.open_group(scratch_url, mode="a")
-    created_parents = set()
-    # bandid -> [lo, hi]: outer channel edges of every block assigned to the band
-    band_extent = {}
-    for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
-        scan_name = np.unique(node.ds.scan_name.load().values).item()
-        nchan_node = freqs_node.size
-        ntimes_node = times_node.size
-        if integrations_per_image in (0, None, -1):
-            ipi_node = ntimes_node
-        else:
-            ipi_node = integrations_per_image
-        if channels_per_image in (0, None, -1):
-            cpi_node = nchan_node
-        else:
-            cpi_node = channels_per_image
-        for tlow in range(0, ntimes_node, ipi_node):
-            thigh = min(tlow + ipi_node, ntimes_node)
-            t_index = slice(tlow, thigh)
-            key = (scan_name, tlow // ipi_node)
-            if key not in scan_block_to_tid:
-                scan_block_to_tid[key] = next_tid
-                next_tid += 1
-            timeid = scan_block_to_tid[key]
-            for flow in range(0, nchan_node, cpi_node):
-                fhigh = min(flow + cpi_node, nchan_node)
-                # flow/fhigh index the freq-range-trimmed axis; isel below acts
-                # on the unsliced node, so shift by the selection offset chan0
-                nu_index = slice(chan0 + flow, chan0 + fhigh)
-                bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
-                lo = float(freqs_node[flow:fhigh].min()) - min_chan_width / 2
-                hi = float(freqs_node[flow:fhigh].max()) + min_chan_width / 2
-                extent = band_extent.setdefault(bandid, [lo, hi])
-                extent[:] = [min(extent[0], lo), max(extent[1], hi)]
+    if reuse:
+        # JSON keys are strings
+        band_extent = {int(b): ext for b, ext in record["band_extent"].items()}
+        # the previous run's applied counts groups; this run writes its own
+        if scratch_fs.exists(f"{scratch_url}/counts"):
+            scratch_fs.rm(f"{scratch_url}/counts", recursive=True)
+        zarr.consolidate_metadata(scratch_url)
+    else:
+        # Only now, with every set-up refusal behind it: a refused run must
+        # neither delete a scratch nor leave an empty one behind (#354)
+        if scratch_fs.exists(scratch_url):
+            scratch_fs.rm(scratch_url, recursive=True)
+        scratch_fs.makedirs(scratch_url, exist_ok=True)
+        log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
+        tasks = []
+        scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
+        next_tid = 0
+        # Pre-create the band/time parent groups single-threaded so concurrent
+        # pass-1 workers only ever create their own distinct leaf piece group. This
+        # avoids a check-then-create race (ContainsGroupError) on the shared parent;
+        # combined with consolidated=False on the worker writes (consolidation is
+        # done once below, in the driver), it removes all shared-mutable-state races
+        # on the scratch store. See utils/stokes2vis.stokes_vis.
+        scratch_root = zarr.open_group(scratch_url, mode="a")
+        created_parents = set()
+        # bandid -> [lo, hi]: outer channel edges of every block assigned to the band
+        band_extent = {}
+        for (ims, node, freqs_node, times_node, chan0, _field_radec), node_masks in zip(selected, node_masks_list):
+            scan_name = np.unique(node.ds.scan_name.load().values).item()
+            nchan_node = freqs_node.size
+            ntimes_node = times_node.size
+            if integrations_per_image in (0, None, -1):
+                ipi_node = ntimes_node
+            else:
+                ipi_node = integrations_per_image
+            if channels_per_image in (0, None, -1):
+                cpi_node = nchan_node
+            else:
+                cpi_node = channels_per_image
+            for tlow in range(0, ntimes_node, ipi_node):
+                thigh = min(tlow + ipi_node, ntimes_node)
+                t_index = slice(tlow, thigh)
+                key = (scan_name, tlow // ipi_node)
+                if key not in scan_block_to_tid:
+                    scan_block_to_tid[key] = next_tid
+                    next_tid += 1
+                timeid = scan_block_to_tid[key]
+                for flow in range(0, nchan_node, cpi_node):
+                    fhigh = min(flow + cpi_node, nchan_node)
+                    # flow/fhigh index the freq-range-trimmed axis; isel below acts
+                    # on the unsliced node, so shift by the selection offset chan0
+                    nu_index = slice(chan0 + flow, chan0 + fhigh)
+                    bandid = int(np.argmin(np.abs(band_centres - freqs_node[flow:fhigh].mean())))
+                    lo = float(freqs_node[flow:fhigh].min()) - min_chan_width / 2
+                    hi = float(freqs_node[flow:fhigh].max()) + min_chan_width / 2
+                    extent = band_extent.setdefault(bandid, [lo, hi])
+                    extent[:] = [min(extent[0], lo), max(extent[1], hi)]
 
-                # slice out subset of node
-                subdt = node.isel(time=t_index, frequency=nu_index)
+                    # slice out subset of node
+                    subdt = node.isel(time=t_index, frequency=nu_index)
 
-                # ensure the shared parent group exists before any worker
-                # writes a leaf under it (single-threaded → no creation race)
-                parent = f"band{bandid:04d}_time{timeid:04d}"
-                if parent not in created_parents:
-                    scratch_root.require_group(parent)
-                    created_parents.add(parent)
+                    # ensure the shared parent group exists before any worker
+                    # writes a leaf under it (single-threaded → no creation race)
+                    parent = f"band{bandid:04d}_time{timeid:04d}"
+                    if parent not in created_parents:
+                        scratch_root.require_group(parent)
+                        created_parents.add(parent)
 
-                for bg, bl_idx in node_masks.items():
-                    subdt_bg = subdt if bl_idx is None else subdt.isel(baseline_id=bl_idx)
-                    fut = safe_stokes_vis.remote(
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        node_dt=subdt_bg,
-                        scratch_store=scratch_url,
-                        bandid=bandid,
-                        timeid=timeid,
-                        msid=ims,
-                        freq_nominal=band_centres[bandid],
-                        precision=precision,
-                        sigma_column=sigma_column,
-                        weight_column=weight_column,
-                        product=product,
-                        chan_average=chan_average,
-                        bda_decorr=bda_decorr,
-                        max_field_of_view=max_field_of_view,
-                        beam_model=beam_model if beam_refs is None else beam_refs[bg],
-                        wgt_mode=wgt_mode,
-                        max_blength=max_blength,
-                        max_freq=max_freq,
-                        nx_pad=nx_pad,
-                        ny_pad=ny_pad,
-                        cell_rad=cell_rad,
-                        baseline_group=bg,
-                        data_group=data_group,
-                        radec_new=radec_new,
-                        target=target,
-                        beam_lm=beam_lm,
-                        nthreads=nthreads,
-                        # only robust weighting reads the counts (see counts_sources)
-                        compute_counts=robustness is not None,
-                        double_accum=double_accum,
-                    )
-                    tasks.append(fut)
+                    for bg, bl_idx in node_masks.items():
+                        subdt_bg = subdt if bl_idx is None else subdt.isel(baseline_id=bl_idx)
+                        fut = safe_stokes_vis.remote(
+                            dc1=dc1,
+                            dc2=dc2,
+                            operator=operator,
+                            node_dt=subdt_bg,
+                            scratch_store=scratch_url,
+                            bandid=bandid,
+                            timeid=timeid,
+                            msid=ims,
+                            freq_nominal=band_centres[bandid],
+                            precision=precision,
+                            sigma_column=sigma_column,
+                            weight_column=weight_column,
+                            product=product,
+                            chan_average=chan_average,
+                            bda_decorr=bda_decorr,
+                            max_field_of_view=max_field_of_view,
+                            beam_model=beam_model if beam_refs is None else beam_refs[bg],
+                            wgt_mode=wgt_mode,
+                            max_blength=max_blength,
+                            max_freq=max_freq,
+                            counts_nx=counts_nx,
+                            counts_ny=counts_ny,
+                            counts_cell=counts_cell,
+                            baseline_group=bg,
+                            data_group=data_group,
+                            radec_new=radec_new,
+                            target=target,
+                            beam_lm=beam_lm,
+                            nthreads=nthreads,
+                            double_accum=double_accum,
+                        )
+                        tasks.append(fut)
 
-    # submission pickles every task's datatree node, so it is timed on its own
-    phases.lap("Pass 1 submission")
-    nds = len(tasks)
-    ncomplete = 0
-    remaining_tasks = tasks.copy()
-    bandids_out = []
-    timeids_out = []
-    while remaining_tasks:
-        # Wait for at least 1 task to complete
-        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+        # submission pickles every task's datatree node, so it is timed on its own
+        phases.lap("Pass 1 submission")
+        nds = len(tasks)
+        ncomplete = 0
+        remaining_tasks = tasks.copy()
+        bandids_out = []
+        timeids_out = []
+        while remaining_tasks:
+            # Wait for at least 1 task to complete
+            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
 
-        # Process the completed task
-        for task in ready:
-            result, mem = ray.get(task)
-            if result is not None:
-                bandids_out.append(result[0])
-                timeids_out.append(result[1])
-            ncomplete += 1
-            if progressbar:
-                # post-gc rss ratcheting up for a pid across tasks indicates
-                # retention below Python (C-level caches/arenas); peak is the
-                # worker's lifetime high-water mark
-                log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
+            # Process the completed task
+            for task in ready:
+                result, mem = ray.get(task)
+                if result is not None:
+                    bandids_out.append(result[0])
+                    timeids_out.append(result[1])
+                ncomplete += 1
+                if progressbar:
+                    # post-gc rss ratcheting up for a pid across tasks indicates
+                    # retention below Python (C-level caches/arenas); peak is the
+                    # worker's lifetime high-water mark
+                    log.info(f"Completed: {ncomplete} / {nds} [{format_memory(mem)}]", extra=pfb_logging.NO_MARKUP)
 
-    ntime = len(set(timeids_out))
-    nband_out = len(set(bandids_out))
+        ntime = len(set(timeids_out))
+        nband_out = len(set(bandids_out))
 
-    log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_url}")
-    phases.lap("Pass 1")
+        log.info(f"Pass 1 wrote fine pieces for {nband_out} bands and {ntime} time chunks to {scratch_url}")
+        phases.lap("Pass 1")
 
-    # consolidate the scratch metadata once, single-threaded, now that all
-    # workers have finished (workers wrote with consolidated=False to avoid
-    # racing on the shared root .zmetadata; see stokes_vis)
-    zarr.consolidate_metadata(scratch_url)
+        # consolidate the scratch metadata once, single-threaded, now that all
+        # workers have finished (workers wrote with consolidated=False to avoid
+        # racing on the shared root .zmetadata; see stokes_vis)
+        zarr.consolidate_metadata(scratch_url)
+        # written last, so a scratch whose pass 1 did not finish has no record
+        zarr.open_group(scratch_url, mode="a").attrs["pass1"] = json.dumps(
+            {
+                "schema": SCRATCH_SCHEMA,
+                "inputs": inputs,
+                "derived": derived,
+                "counts": geom["counts"],
+                "band_extent": {str(b): ext for b, ext in band_extent.items()},
+                "beam_axis": beam_axis,
+                "pfb-imaging-version": pfb_version,
+            }
+        )
+        zarr.consolidate_metadata(scratch_url)
 
     # ---- between passes: stream per-piece counts into the applied grouping ----
     # effective grouping first: time-resolved groupings contradict a
@@ -1530,6 +1929,10 @@ def imager(
         "cell_rad": float(cell_rad),
         "max_blength": float(max_blength),
         "max_freq": float(max_freq),
+        # the uv grid the imaging weights were computed on (D66)
+        "counts_nx": int(counts_nx),
+        "counts_ny": int(counts_ny),
+        "counts_cell": float(counts_cell),
     }
     xr.Dataset(attrs=root_attrs).to_zarr(dt_url, mode="w")
     log.info(f"Imaging products will be written to {dt_url}")
@@ -1564,8 +1967,9 @@ def imager(
             band_centres[meta["bandid"]],
             meta,
             robustness=robustness,
-            nx_pad=nx_pad,
-            ny_pad=ny_pad,
+            counts_nx=counts_nx,
+            counts_ny=counts_ny,
+            counts_cell=counts_cell,
             nthreads=nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,

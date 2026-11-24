@@ -117,7 +117,16 @@ def imager(
     overwrite: Annotated[
         bool,
         typer.Option(
-            help="Allow overwrite of output xds",
+            help="Replace an existing .dt. "
+            "It has no effect on the .scratch, which is reused when its pass-1 inputs match this run.",
+            rich_help_panel="Control",
+        ),
+    ] = False,
+    rebuild_scratch: Annotated[
+        bool,
+        typer.Option(
+            help="Run pass 1 again and replace an existing .scratch. "
+            "Needed when its pass-1 inputs differ from this run, and forces pass 1 even when they match.",
             rich_help_panel="Control",
         ),
     ] = False,
@@ -231,8 +240,10 @@ def imager(
     max_field_of_view: Annotated[
         float,
         typer.Option(
-            help="The maximum field of view that will be considered. Used to compute decorrelation due to BDA.",
-            rich_help_panel="Averaging",
+            help="Radius in degrees about the phase centre within which every image must lie. "
+            "It bounds the decorrelation BDA allows and how far from each pointing the beam is described. "
+            "An image reaching further is refused before any compute.",
+            rich_help_panel="Imaging",
         ),
     ] = 3.0,
     beam_model: Annotated[
@@ -392,6 +403,22 @@ def imager(
             rich_help_panel="Imaging",
         ),
     ] = 1.4,
+    min_padding: Annotated[
+        float,
+        typer.Option(
+            help="Padding factor of the uv grid the counts for imaging weights are computed on.",
+            rich_help_panel="Weighting",
+        ),
+    ] = 1.7,
+    weight_on_image_grid: Annotated[
+        bool,
+        typer.Option(
+            help="Compute the counts for imaging weights on the padded image grid. "
+            "Otherwise they are computed on a grid set by max-field-of-view. "
+            "That grid lets a reused scratch serve any image.",
+            rich_help_panel="Weighting",
+        ),
+    ] = True,
     filter_counts_level: Annotated[
         float,
         typer.Option(
@@ -430,7 +457,8 @@ def imager(
     keep_scratch: Annotated[
         bool,
         typer.Option(
-            help="Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.",
+            help="Keep the .scratch store of pass-1 averaged data. "
+            "A later run whose pass-1 inputs match reuses it and skips reading the MS.",
             rich_help_panel="Control",
         ),
     ] = True,
@@ -540,6 +568,7 @@ def imager(
                     field_names=field_names,
                     freq_range=freq_range,
                     overwrite=overwrite,
+                    rebuild_scratch=rebuild_scratch,
                     data_column=data_column,
                     data_group=data_group,
                     partition_columns=partition_columns,
@@ -574,6 +603,8 @@ def imager(
                     nx=nx,
                     ny=ny,
                     psf_oversize=psf_oversize,
+                    min_padding=min_padding,
+                    weight_on_image_grid=weight_on_image_grid,
                     filter_counts_level=filter_counts_level,
                     npix_super=npix_super,
                     epsilon=epsilon,
@@ -602,6 +633,7 @@ def imager(
                 field_names=field_names,
                 freq_range=freq_range,
                 overwrite=overwrite,
+                rebuild_scratch=rebuild_scratch,
                 data_column=data_column,
                 data_group=data_group,
                 partition_columns=partition_columns,
@@ -636,6 +668,8 @@ def imager(
                 nx=nx,
                 ny=ny,
                 psf_oversize=psf_oversize,
+                min_padding=min_padding,
+                weight_on_image_grid=weight_on_image_grid,
                 filter_counts_level=filter_counts_level,
                 npix_super=npix_super,
                 epsilon=epsilon,
@@ -673,6 +707,7 @@ def imager(
             field_names=field_names,
             freq_range=freq_range,
             overwrite=overwrite,
+            rebuild_scratch=rebuild_scratch,
             data_column=data_column,
             data_group=data_group,
             partition_columns=partition_columns,
@@ -707,6 +742,8 @@ def imager(
             nx=nx,
             ny=ny,
             psf_oversize=psf_oversize,
+            min_padding=min_padding,
+            weight_on_image_grid=weight_on_image_grid,
             filter_counts_level=filter_counts_level,
             npix_super=npix_super,
             epsilon=epsilon,

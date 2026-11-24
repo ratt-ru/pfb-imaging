@@ -60,7 +60,16 @@ cabs:
           rich_help_panel: Data Selection
       overwrite:
         info:
-          Allow overwrite of output xds
+          Replace an existing .dt.
+          It has no effect on the .scratch, which is reused when its pass-1 inputs match this run.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: Control
+      rebuild-scratch:
+        info:
+          Run pass 1 again and replace an existing .scratch.
+          Needed when its pass-1 inputs differ from this run, and forces pass 1 even when they match.
         dtype: bool
         default: false
         metadata:
@@ -169,12 +178,13 @@ cabs:
           rich_help_panel: Averaging
       max-field-of-view:
         info:
-          The maximum field of view that will be considered.
-          Used to compute decorrelation due to BDA.
+          Radius in degrees about the phase centre within which every image must lie.
+          It bounds the decorrelation BDA allows and how far from each pointing the beam is described.
+          An image reaching further is refused before any compute.
         dtype: float
         default: 3.0
         metadata:
-          rich_help_panel: Averaging
+          rich_help_panel: Imaging
       beam-model:
         info:
           Beam model to use.
@@ -335,6 +345,22 @@ cabs:
         default: 1.4
         metadata:
           rich_help_panel: Imaging
+      min-padding:
+        info:
+          Padding factor of the uv grid the counts for imaging weights are computed on.
+        dtype: float
+        default: 1.7
+        metadata:
+          rich_help_panel: Weighting
+      weight-on-image-grid:
+        info:
+          Compute the counts for imaging weights on the padded image grid.
+          Otherwise they are computed on a grid set by max-field-of-view.
+          That grid lets a reused scratch serve any image.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Weighting
       filter-counts-level:
         info:
           Replace uv cells with counts below median/level to avoid upweighting near-empty cells.
@@ -374,7 +400,8 @@ cabs:
           rich_help_panel: Imaging
       keep-scratch:
         info:
-          Keep the .scratch store of pass-1 averaged data for re-gridding without re-reading the MS.
+          Keep the .scratch store of pass-1 averaged data.
+          A later run whose pass-1 inputs match reuses it and skips reading the MS.
         dtype: bool
         default: true
         metadata:
