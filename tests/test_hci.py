@@ -5,6 +5,8 @@ so even a four-image run costs ~4 s warm: the end-to-end tests are slow (D45).
 """
 
 import shutil
+import subprocess
+import sys
 
 import arcae
 import numpy as np
@@ -571,3 +573,20 @@ def test_hci_accepts_a_moving_target_in_a_single_image(ms_name, ms_meta, tmp_pat
     hdr = dict(ds.attrs["fits_header"])
     assert_allclose(hdr["CRVAL1"], np.rad2deg(ra_sun), atol=1e-9)
     assert_allclose(hdr["CRVAL2"], np.rad2deg(dec_sun), atol=1e-9)
+
+
+@pytest.mark.parametrize("module", ["pfb_imaging.core.hci", "pfb_imaging.utils.hci_actors"])
+def test_hci_modules_silence_xarray_ms_warnings(module):
+    """Importing either module installs the filters, so the driver, the spawned
+    planning processes and the Ray actors all keep the log readable."""
+    script = f"""
+import warnings
+import {module}  # noqa: F401
+from xarray_ms.errors import ColumnShapeImputationWarning, FrameConversionWarning, ImputedMetadataWarning
+with warnings.catch_warnings(record=True) as caught:
+    for category in (ColumnShapeImputationWarning, FrameConversionWarning, ImputedMetadataWarning):
+        warnings.warn("noise", category, stacklevel=1)
+    warnings.warn("signal", UserWarning, stacklevel=1)
+assert [w.category for w in caught] == [UserWarning], [w.category for w in caught]
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
