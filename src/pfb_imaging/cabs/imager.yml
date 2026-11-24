@@ -184,7 +184,7 @@ cabs:
         dtype: float
         default: 3.0
         metadata:
-          rich_help_panel: Averaging
+          rich_help_panel: Imaging
       beam-model:
         info:
           Beam model to use.

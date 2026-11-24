@@ -243,7 +243,7 @@ def imager(
             help="Radius in degrees about the phase centre within which every image must lie. "
             "It bounds the decorrelation BDA allows and how far from each pointing the beam is described. "
             "An image reaching further is refused before any compute.",
-            rich_help_panel="Averaging",
+            rich_help_panel="Imaging",
         ),
     ] = 3.0,
     beam_model: Annotated[
