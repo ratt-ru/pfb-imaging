@@ -209,7 +209,15 @@ def raise_open_file_limit() -> int:
     return target
 
 
-def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None, memory=None):
+def init_ray(
+    nworkers,
+    ray_address="local",
+    runtime_env=None,
+    object_store_memory=None,
+    log=None,
+    memory=None,
+    reap_idle_workers=False,
+):
     """Initialise Ray for a pfb-imaging sub-command.
 
     With ray_address="local" (the default) a fresh private Ray instance is
@@ -221,6 +229,13 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
     ``memory`` sets the local cluster's Ray ``memory`` resource, which tasks
     claim with ``.options(memory=...)``; the imager uses it as its memory budget
     (#399). None leaves Ray's default.
+
+    ``reap_idle_workers`` sets Ray's worker soft limit to 0, so a worker is
+    killed about a second after it goes idle. Otherwise Ray keeps idle workers up
+    to ``num_cpus`` of them, and the imager's pass-1 workers sat out pass 2 with
+    their retained memory, which no task's memory claim counts: 359 GB between
+    the passes on ESO137 (#399). A worker with queued tasks never idles long
+    enough to be reaped, so pass 1 does not churn.
     """
     # deferred: optional heavy runtime (ray)
     import ray
@@ -236,6 +251,8 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
         # _memory is ray.init's (underscored) way to size the memory resource;
         # tests/test_memplan.py pins that it still exists
         extra = {} if memory is None else {"_memory": int(memory)}
+        if reap_idle_workers:
+            extra["_system_config"] = {"num_workers_soft_limit": 0}
         ray.init(
             address="local",
             num_cpus=nworkers,

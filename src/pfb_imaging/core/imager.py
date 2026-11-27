@@ -1652,6 +1652,8 @@ def imager(
         },
         log=log,
         memory=mem_budget,
+        # pass-1 workers would otherwise idle through pass 2 with their memory
+        reap_idle_workers=True,
     )
     # What the cluster has free is the budget: an existing cluster (or a test
     # session's) has its own size, and other work may hold some of it -- deconv's

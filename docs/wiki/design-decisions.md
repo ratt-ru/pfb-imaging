@@ -2522,8 +2522,9 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   `_memory=budget`, so Ray itself keeps each pass within both budgets, per node. The budgets
   are what the cluster has *free* at the start of the run. No claim exceeds the largest
   node's CPUs. Pass 2 is submitted with its own `runtime_env` (its thread counts), so Ray
-  starts fresh workers for it rather than reusing pass 1's, and reaps the idle ones. The
-  cluster is never rescaled between the passes.
+  starts fresh workers for it rather than reusing pass 1's. The local cluster runs with Ray's
+  `num_workers_soft_limit` at 0 (`init_ray(reap_idle_workers=True)`), so each worker is killed
+  about a second after it goes idle. The cluster is never rescaled between the passes.
 - **Rationale:** measured on com08 (48 cores, 96 logical; ESO137 production command):
 
   | | pass 1 | pass 2 |
@@ -2568,6 +2569,12 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   - Pass-1 tasks heavier than the ones measured (much longer time blocks) are covered only
     by the margin.
   - At one thread per task the outputs are byte-identical to the old options.
+  - Idle workers are reaped because no memory claim counts them. Ray's default soft limit
+    is `num_cpus`, so it kept pass 1's 48 workers through pass 2 (63 workers < 96). On
+    ESO137 they held 359 GB between the passes with nothing running, and the machine
+    peaked at 561 GB against a 594 GiB budget. A worker with queued tasks never idles long
+    enough to be reaped, so pass 1 does not churn (checked: same distinct workers, same
+    time). Under `--ray-address` the cluster's own setting applies.
 - **Source:** #399; PR #423 (pass 2 one partition at a time); `utils/memplan.py`,
   `tests/test_memplan.py`; measurements on com08 (ESO137-006), 2026-11-26/27.
 
