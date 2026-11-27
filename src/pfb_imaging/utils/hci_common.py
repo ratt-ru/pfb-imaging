@@ -529,7 +529,31 @@ def write_transient_spectra(inject_transients: str, all_times: np.ndarray, all_f
     transient_ds.to_zarr(f"{transient_baseoname}zarr", mode="a")
 
 
-def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq):
+def _set_wizard_centre(beam_model, centre):
+    """Point a BeamWizard at centre for one calculation; return a function that restores it."""
+    attrs = vars(beam_model)
+    for name in ("_pointing_centre", "_centre", "centre", "_center", "center"):
+        if name in attrs:
+            old = attrs[name]
+            setattr(beam_model, name, centre)
+            return lambda: setattr(beam_model, name, old)
+    if hasattr(beam_model, "set_field_centre"):
+        import logging
+        old = beam_model.centre
+        quiet = logging.getLogger("meerkat_beams")
+        level = quiet.level
+        quiet.setLevel(logging.WARNING)
+        beam_model.set_field_centre(centre)
+
+        def restore():
+            beam_model.set_field_centre(old)
+            quiet.setLevel(level)
+
+        return restore
+    raise AttributeError("cannot set the pointing of this BeamWizard; attributes: " + ", ".join(sorted(attrs)))
+
+
+def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq, pointing=None):
     """Return the Stokes power beam at a fixed sky position on the (row, chan) grid.
 
     Used to attenuate injected transients by the primary beam in the original
@@ -551,14 +575,24 @@ def beam_gain_for_source(beam_model, ra_deg, dec_deg, product, utime, time, freq
     assert isinstance(beam_model, BeamWizard), "Only BeamWizard instances currently supported as beam_model."
     prod = sorted(set(product))[0]
     # returns (nchan, ntime) on this chunk's own grid, so no interpolation is needed
-    gain = beam_model.get_time_variable_beamgain(
-        SkyCoord(ra_deg * units.deg, dec_deg * units.deg, frame="fk5"),
-        times=Time(utime / (24 * 3600), format="mjd"),
-        freq=freq,
-        var="nstokes",
-        i=prod,
-        j=prod,
-    )
+    restore = None
+    if pointing is not None:
+        # evaluate the beam about this chunk's own pointing (OTF: one per snapshot)
+        restore = _set_wizard_centre(
+            beam_model, SkyCoord(pointing[0] * units.rad, pointing[1] * units.rad, frame="fk5")
+        )
+    try:
+        gain = beam_model.get_time_variable_beamgain(
+            SkyCoord(ra_deg * units.deg, dec_deg * units.deg, frame="fk5"),
+            times=Time(utime / (24 * 3600), format="mjd"),
+            freq=freq,
+            var="nstokes",
+            i=prod,
+            j=prod,
+        )
+    finally:
+        if restore is not None:
+            restore()
     # rows are grouped by time so expand the unique time axis onto rows
     return gain.T[np.searchsorted(utime, time)]
 
