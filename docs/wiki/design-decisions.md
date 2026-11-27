@@ -2500,6 +2500,77 @@ image checks are split in two. The cell, the cube limit and its margin are uncha
   `read_scratch_record`, `record_diffs`, `pass1_inputs`, `image_geometry`, `scan_ms`);
   `tests/test_imager_reuse.py`.
 
+### D68 — The imager shares one core budget and one memory budget between its passes
+
+- **Context:** `--nworkers` and `--nthreads` applied to both passes, but the passes want
+  opposite shapes. Pass 1 is many small tasks that mostly read the MS (on ESO137, 51% of a
+  task in xarray-ms reads and 32% waiting on their threads), so it wants many tasks with
+  few threads. Pass 2 is one task per output image and mostly gridding (74% in ducc), so it
+  wants few tasks with many threads. The two options also multiplied: `--nthreads` defaulted
+  to half the logical cores *per worker*, so `--nworkers 8` oversubscribed eightfold. With
+  `--nworkers` gone, nothing would bound pass 2's memory, which grows with `nband` (~24-34
+  GiB per 8748² image here).
+- **Decision:** `pfb imager` takes `--ncpu` (the core budget, by default every logical core)
+  and `--mem-limit` (GiB, by default 80% of the memory available at start-up), and drops
+  `--nworkers`/`--nthreads`. `deconv`, `degrid` and `hci` keep theirs. Each pass shares the
+  budgets out afresh (`utils/memplan.plan_pass`):
+  - pass 1 runs `P1_THREADS = 2` threads per task and `ncpu // 2` tasks at once;
+  - pass 2 runs at most `nband` images at once, with `ncpu // n` threads each.
+
+  Every task claims its threads as Ray CPUs and its estimated peak RSS as Ray `memory`
+  (`.options(num_cpus=..., memory=...)`). The local cluster is started with
+  `_memory=budget`, so Ray itself keeps each pass within both budgets, per node. The budgets
+  are what the cluster has *free* at the start of the run. No claim exceeds the largest
+  node's CPUs. Pass 2 is submitted with its own `runtime_env` (its thread counts), so Ray
+  starts fresh workers for it rather than reusing pass 1's, and reaps the idle ones. The
+  cluster is never rescaled between the passes.
+- **Rationale:** measured on com08 (48 cores, 96 logical; ESO137 production command):
+
+  | | pass 1 | pass 2 |
+  |---|---|---|
+  | 8 tasks × 8 threads (the old setting) | 1519 s | 1985 s |
+  | 48 × 1 | 982 s | |
+  | 24 × 2 | 1074 s | |
+  | **48 × 2** | **796 s** | |
+  | 16 × 3 | | 2246 s |
+  | **16 × 6** | | **1789 s** |
+
+  Pass 1 gains from running more tasks at once, and the second thread uses each core's
+  hyperthread. ducc's CPU per image is nearly constant in its thread count, so pass 2 wants
+  every logical core busy. 16 × 3 left half of them idle and lost.
+
+  Rescaling the cluster between passes would break `keep_ray_alive` (the test sessions)
+  and is impossible under `--ray-address`; changing the per-task claim does the same job
+  without either problem. A task-level `runtime_env` keeps the job's env and its
+  `worker_process_setup_hook` (checked), which is what lets pass 2 start fresh workers.
+
+  The estimates (`pass1_task_bytes`, `pass2_image_bytes`) are computed from shapes alone,
+  from terms that follow the allocations alive at each task's peak, with constants
+  measured with memray. These are pass 1's loaded bytes (×3.49), its dense counts
+  accumulator counted whole, and a 1.6 GiB worker baseline; and, for pass 2, which holds one
+  partition at a time (PR #423), the larger of its concatenate and PSF-grid phases, with
+  ducc's grid at 45 B per PSF pixel, the dense counts grid, 1.07 × the transferred model
+  (cached per worker) and a 1.9 GiB baseline. `MARGIN = 1.12` covers every task measured
+  (the ESO137 run plus five 2-scan configurations: baseline groups and beam on and off, a
+  model or none, three image sizes).
+- **Consequences:**
+  - Too small a `--mem-limit` is refused before pass 1 if even an empty image cannot fit,
+    and before pass 2 against the measured piece sizes.
+  - `--mem-limit` is refused with `--ray-address`: the cluster's own memory resource (`ray
+    start --memory`) is the budget there.
+  - The estimates are bounds, not predictions. The median overestimate is 1.00-1.41 in pass
+    2 and 1.16-1.79 in pass 1, where the counts accumulator is counted whole because a task
+    touches as much of it as its uv coverage reaches. A pass whose concurrency the memory
+    budget caps therefore runs a little below what it could.
+  - The constants are tied to the code: a change to what `stokes_vis` or `_grid_image_body`
+    holds at its peak must re-measure them (`tests/test_memplan.py` pins the production
+    peaks), and #416's sparse counts would shrink the counts terms.
+  - Pass-1 tasks heavier than the ones measured (much longer time blocks) are covered only
+    by the margin.
+  - At one thread per task the outputs are byte-identical to the old options.
+- **Source:** #399; PR #423 (pass 2 one partition at a time); `utils/memplan.py`,
+  `tests/test_memplan.py`; measurements on com08 (ESO137-006), 2026-11-26/27.
+
 ## Known debt
 
 - **Dense counts grids are twice the size they need to be.** `_accumulate_counts` folds

@@ -2,9 +2,9 @@
 type: Glossary
 title: Domain glossary
 description: The canonical names for the imaging and deconvolution concepts, with the synonyms to avoid.
-tags: [glossary, imager, deconv, datatree]
-timestamp: 2026-11-16T16:30:00Z
-last_verified_commit: 1836fbc
+tags: [glossary, imager, deconv, datatree, parallelism]
+timestamp: 2026-11-27T21:00:00Z
+last_verified_commit: 076879d
 ---
 
 # Domain glossary
@@ -37,3 +37,25 @@ _Avoid_: time chunk, timeid (that is the output image's time index)
 One term of the approximate Hessian: the image-space PSF and beam of the partitions that share
 a field, spw and baseline group, summed over their time blocks.
 _Avoid_: partition (a Hessian term is coarser), Hessian partition
+
+## Parallelism
+
+**Worker**:
+One node of the cluster a run executes on. Reserved for multi-node runs (#399); it is never
+a process, a thread or a concurrent task.
+_Avoid_: worker for a Ray worker process or a task slot
+
+**Core budget**:
+The logical CPU cores a run may use across its cluster (`--ncpu`), shared out afresh by each
+pass of the imager.
+_Avoid_: nworkers, nthreads
+
+**Memory budget**:
+The memory a run may use across its cluster (`--mem-limit`), shared out afresh by each pass
+of the imager against each task's estimated peak.
+_Avoid_: mem limit per worker
+
+**Concurrent tasks**:
+How many tasks of one pass run at once: as many as both the core budget and the memory
+budget allow.
+_Avoid_: workers, nworkers
