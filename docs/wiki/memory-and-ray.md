@@ -3,8 +3,8 @@ type: Engineering Notes
 title: Memory retention and Ray discipline (MSv4 imager + deconv)
 description: The three memory-retention layers on the Ray + MSv4 path, the telemetry that separates them, the scheduling/memory rules the imager and deconv band workers must not regress, and the cleanup runbook for interrupted runs.
 tags: [ray, memory, xarray, arcae, imager, deconv, telemetry, profiling, runbook]
-timestamp: 2026-11-19T12:25:00Z
-last_verified_commit: 2c2db1b
+timestamp: 2026-11-27T19:30:00Z
+last_verified_commit: 7aa2028
 ---
 
 # Memory retention and Ray discipline (MSv4 imager + deconv)
@@ -32,8 +32,9 @@ and raylet OOM kills late in the run (at task 72/80 — lateness is the tell
 for accumulation vs per-task footprint).
 
 **Fix:** `gc.collect()` at every Ray-task boundary — `try/finally` in
-`safe_stokes_vis` and `_BandWorkerImpl.load_band`; end-of-task in
-`_grid_image_body` (not exception-safe there; wrap it if you touch that code).
+`safe_stokes_vis` and `_BandWorkerImpl.load_band`; after every partition and
+at the end of the task in `_grid_image_body` (not exception-safe there; wrap
+it if you touch that code).
 
 ### Layer 2 — Over-reading and pinned eager inputs
 
@@ -298,6 +299,55 @@ peak is essential per-image state (counts grid, PSF + PSFHAT, the band sums)
 plus zarr encode copies of whatever `to_zarr` is writing (~2.7x the arrays);
 for `part####` writes that includes VIS/WEIGHT, so on real data it scales
 with the visibilities -- the next thing to measure.
+
+### Pass 2 holds one partition at a time (2026-11, #399)
+
+`_grid_image_body` used to load **every** scratch piece of its output image
+before gridding the first partition. It also kept each partition's products
+and visibilities (`prod`, and `part_vars`, which shares `part`'s buffers)
+alive through the next partition's gridding, because they were only rebound
+once `grid_partition` returned. So a task's peak held the whole image's
+visibilities plus two partitions' products. Where that peak fell depended on
+how many partitions the image had and in what order, which made it hard to
+predict.
+
+Now the partitions are grouped from the pieces' attrs alone, a partition's
+pieces are loaded only when it is gridded, and each partition is released,
+with a `gc.collect()`, before the next one loads. Outputs are byte-identical
+with single-threaded gridding: all 96 variables of a 13-node tree, from two
+random-data copies of the test MS. With threads, main differs from itself by
+~1e-13 relative, as above.
+
+Measured on the ESO137 production command on com08 (1024 channels in 16
+bands, 8748² image, PSF ×1.4, `--baseline-groups`, so 3 partitions per image,
+`--transfer-model-from`, 24 workers × 4 threads, memray with
+`PFB_MEMRAY_NATIVE=0`):
+
+| | before | after |
+|---|---|---|
+| per-image peak RSS | 30.2-33.9 GiB | 23.6-24.5 GiB |
+| per-image heap peak | 28.6-32.2 GiB | 21.6-24.0 GiB |
+| saved per image | | 6.6-9.4 GiB (median 8.7): the image's piece volume |
+| whole machine, used, peak | 516 GB | 386 GB |
+| pass 2 (memray) | 3749 s | 3742 s |
+
+Wall time is unchanged: the change reads the same bytes in another order, plus
+one `gc.collect()` per partition. Pass 2 alternated main/change twice on an idle
+laptop, test MS ×2, 2048², 2 workers × 4 threads: 8.2/8.2 s and 7.9/8.5 s. An
+unprofiled com08 comparison at 8 × 8 is void: another user's jobs held the load
+average at ~105-115 through it (3 when the series started), cutting each task to
+3.3-4.8 cores from 5.0-5.8.
+
+What is left at a pass-2 peak is the larger of two phases. **Concatenating a
+partition** holds two copies of its data (the pieces and their concat). **Gridding
+its PSF** holds one copy of the partition, the image-space sums and the
+partition's products, and ducc's grid. Both phases also hold the dense applied
+counts grid (`COUNTS`), the transferred model if there is one (cached per
+worker, and the largest fixed term on this run, 4.2 GiB), and the worker's
+baseline (~1.9 GiB). ducc's grid costs ~26-50 B per pixel of the grid it is
+gridding (the PSF's, at the peak), rising with the visibility count. At
+these densities it is ~45 B, against 64 B for a complex128 grid at σ = 2
+(`ducc0.wgridder` picks its oversampling per call).
 
 ## The deconv band workers
 
