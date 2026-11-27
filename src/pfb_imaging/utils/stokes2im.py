@@ -449,7 +449,7 @@ def image_item(
 
             # apply beam in original frame
             if beam_model_given:
-                dspec *= beam_gain_for_source(beam_model, ra, dec, product, utime, time, freq)
+                dspec *= beam_gain_for_source(beam_model, ra, dec, product, utime, time, freq, pointing=radec)
 
             if phase_dir is not None:
                 phase = -w_diff
