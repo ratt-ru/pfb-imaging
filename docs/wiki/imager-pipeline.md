@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: MSv4 DataTree imager pipeline
 description: Why the imager writes a DataTree, the two-pass data flow, the .dt layout, counts/weight-grouping and concat_row semantics, and the operator split that downstream deconvolution relies on.
 tags: [imager, msv4, datatree, weighting, gridding, mosaic]
-timestamp: 2026-11-20T16:00:00Z
-last_verified_commit: c23a68f
+timestamp: 2026-11-27T21:00:00Z
+last_verified_commit: 076879d
 ---
 
 # MSv4 DataTree imager pipeline
@@ -158,8 +158,8 @@ without it.
    imaging (#354, D66). They go on the padded image grid by default (`--weight-on-image-grid`);
    `--no-weight-on-image-grid` puts them on `core/imager.counts_grid`, whose uv cell is the
    padded cell of the largest square image within `--max-field-of-view` and which reaches the
-   longest baseline. The beam is meerkat-beams' rotation average, run on the task's `--nthreads`
-   with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
+   longest baseline. The beam is meerkat-beams' rotation average, run on the task's threads
+   (2 per pass-1 task, D68) with parallactic angles merged to `BEAM_PA_TOLERANCE_DEG` (0.1°); single-threaded and
    unmerged it was 90% of pass-1 task time (landmanbester/meerkat-beams#39). The driver
    builds each wizard once (staging, validation) but ships pass 1 a `Multiton` recipe,
    so each worker builds its own once and keeps it, spline prefilters included, across
@@ -226,7 +226,8 @@ without it.
    `tests/test_imager.py::test_baseline_groups_sum_to_the_ungrouped_image`,
    which agrees to within the wgridder's own `epsilon=1e-7`).
 3. **Pass 2** (`core/imager._grid_image`, one Ray task per output image): group scratch
-   pieces by partition key, reduce each group with `_concat_pieces` (rows concatenated
+   pieces by partition key from their attrs, then one partition at a time load its pieces
+   and reduce them with `_concat_pieces` (rows concatenated
    along `row`; `BEAM_SMALL` and `freq_out` combined as means weighted by each piece's
    predicted imaging wsum, `wsum_img` (D65) — pieces may
    differ in both, so piece 0's beam is *not* representative, D28), place each partition's
@@ -238,8 +239,16 @@ without it.
    each partition with
    `operators/gridder.grid_partition`, sum image-space products into the band node
    (including the band's `freq_out` as the imaging-wsum-weighted mean of the partition
-   frequencies, which must match the driver's prediction, D65), write the `.dt`. Each `(band, part)` is an independent zarr group path,
+   frequencies, which must match the driver's prediction, D65), write the `.dt`, and release
+   the partition before the next loads (memory-and-ray.md, "Pass 2 holds one partition at a
+   time"). Each `(band, part)` is an independent zarr group path,
    so workers write concurrently without contention.
+
+**How many tasks run at once** is decided per pass from `--ncpu` and `--mem-limit` (D68). Pass
+1 runs 2 threads per task and `ncpu // 2` tasks. Pass 2 runs at most `nband` images, sharing the
+cores between them, with fresh workers (its own `runtime_env`). Both are capped by what each
+task's estimated peak (`utils/memplan`) leaves room for in the memory budget, which Ray enforces
+through the tasks' `memory` claims.
 
 ## `concat_row` semantics
 
@@ -294,8 +303,9 @@ linear in rows, so the two must agree to gridder precision).
 ## Known risks / accepted costs
 
 - **Concurrent zarr group writes:** distinct group paths with `mode="a"` and no
-  consolidated metadata are safe on a local filesystem; the e2e test runs `nworkers=1`,
-  so higher worker counts are the less-exercised path.
+  consolidated metadata are safe on a local filesystem; the e2e tests run on the test
+  session's 2-CPU cluster, so at most two tasks write at once, and production
+  concurrency is the less-exercised path.
 - **`PSFHAT` footprint:** every partition stores its own `PSFHAT` + vis-space arrays —
   more disk than the legacy single-PSF-per-band layout, required by the operator split;
   no opt-out flag.

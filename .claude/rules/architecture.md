@@ -171,6 +171,14 @@ Two Ray-distributed passes over MSv4 data into a single `xarray.DataTree` (`.dt`
   * Read the per-task post-gc telemetry in the progress lines before theorising:
     ratcheting post-gc `anon` per pid = below-Python retention; ratcheting `shm` = arrays
     shipped through the object store; flat with a high peak = per-task transients.
+* **Imager concurrency is two budgets, claimed per task (D68).** `--ncpu` and `--mem-limit` are
+  shared out afresh by each pass (`utils/memplan.plan_pass`). Every imager Ray task claims its
+  threads as `num_cpus` and its estimated peak (`pass1_task_bytes`/`pass2_image_bytes`) as
+  `memory`. These are real claims, unlike the deconv actors' nominal ones (D8), and they stay
+  within what the cluster had *free* at start-up. Anything that changes what `stokes_vis` or
+  `_grid_image_body` holds at its peak must update those estimates and re-measure them with
+  memray; `tests/test_memplan.py` pins the measured production peaks. Never rescale the cluster
+  between passes: change the claims.
 * **Deconvolution operators.** `HessianTree` is PSF-convolution only;
   `gridder.residual_from_partitions` owns deconv's exact degrid/grid path and **never recomputes
   the PSF** (the imager's transfer residual is gridded from residual visibilities in pass 2
