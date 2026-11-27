@@ -444,7 +444,8 @@ def _grid_image_body(
     """Pass-2 worker for one output image.
 
     Groups the image's fine scratch pieces into partitions ``(msid, field, spw,
-    baseline_group)``, concatenates scans along ``row``, grids each partition with
+    baseline_group)`` and processes them one at a time: loads a partition's
+    pieces, concatenates scans along ``row``, grids it with
     :func:`grid_partition`, sums the image-space products into the band node, and
     writes the band node + ``part####`` children into the ``.dt`` store. Returns a
     light summary (``timeid``/``wsum``/telemetry); the band PSF goes to the ``.dt``
@@ -459,22 +460,26 @@ def _grid_image_body(
     # which outlives the task in a reference cycle until the next gc (#339).
     # Pieces are detached from the tree by _load_piece for the same reason.
     dt = xr.open_datatree(scratch_store, engine="zarr", chunks=None, cache=False)
+    # partition key -> its pieces' node paths, from the pieces' attrs alone: a
+    # piece is loaded only when its partition is gridded, so the task holds one
+    # partition's visibilities at a time, not the whole image's
     groups = {}
     # each partition's imaging wsum as the driver predicted it (write_group_counts)
     wsum_pred = {}
     for sn in src_names:
         for cname, child in dt[sn].children.items():
-            ds = _load_piece(child)
-            ds.attrs["wsum_img"] = meta["wsum_img"][f"{sn}/{cname}"]
-            key = (ds.attrs["msid"], ds.attrs["field_name"], ds.attrs["spw_name"], ds.attrs["baseline_group"])
-            groups.setdefault(key, []).append(ds)
-            wsum_pred[key] = wsum_pred.get(key, 0.0) + ds.attrs["wsum_img"]
+            a = child.ds.attrs  # lazy: nothing is read
+            key = (a["msid"], a["field_name"], a["spw_name"], a["baseline_group"])
+            path = f"{sn}/{cname}"
+            groups.setdefault(key, []).append(path)
+            wsum_pred[key] = wsum_pred.get(key, 0.0) + meta["wsum_img"][path]
 
     # the applied (filtered, box-summed) group counts, written once by the driver
     # (write_group_counts); grid_partition copies before use
     counts = dt[counts_group].ds.COUNTS.values if robustness is not None else None
 
-    first = next(iter(groups.values()))[0]
+    # a lazy piece, for the correlations and the dtype: reading nothing else
+    first = dt[next(iter(groups.values()))[0]].ds
     corr = first.corr.values
     ncorr = corr.size
     bpar = ["BMAJ", "BMIN", "BPA"]
@@ -482,13 +487,8 @@ def _grid_image_body(
     # scratch pieces, grid_partition's ducc buffers follow the vis dtype (ducc
     # templates every array on one type), and the accumulation below must not
     # upcast it back to f8 (--double-accum is a wgridder-internal control only).
-    real_type = first.VIS.values.real.dtype
-    # Neither may outlive this point: `first` is a piece, and for a one-piece
-    # partition _concat_pieces returns it as the partition itself, so holding
-    # it pins that partition's VIS/WEIGHT/UVW/MASK/BEAM through the transfer
-    # sweep; `ds` is the loop's last piece. `first` existing means the loop
-    # bound `ds` (next() raises on an empty `groups`).
-    del first, ds
+    real_type = np.empty(0, dtype=first.VIS.dtype).real.dtype
+    del first
     model = None
     if transfer_model is not None:
         # Render at the image's effective frequency, which the driver predicted
@@ -528,7 +528,13 @@ def _grid_image_body(
     freq_sum = np.zeros(ncorr, dtype=np.float64)
 
     for pid, key in enumerate(list(sorted(groups))):
-        plist = groups.pop(key)
+        plist = []
+        for path in groups.pop(key):
+            piece = _load_piece(dt[path])
+            piece.attrs["wsum_img"] = meta["wsum_img"][path]
+            plist.append(piece)
+        # for a one-piece partition _concat_pieces returns the piece itself
+        del piece
         part = _concat_pieces(plist)
         # release the pre-concat originals before gridding (concat copied them)
         del plist
@@ -647,9 +653,13 @@ def _grid_image_body(
         wsum_sum += prod["WSUM"]
         wsum_check += prod["WSUM"]
         freq_sum += prod["WSUM"].astype(np.float64) * float(part.attrs["freq_out"])
-    # release the last partition's vis-space data before the band products are
-    # assembled (#339); part_vars holds the same VIS/WEIGHT/MASK/UVW buffers
-    del part, part_vars, part_out, prod
+        # Release this partition before the next one loads, and the last one before
+        # the band products are assembled (#339). part_vars and part_out hold the
+        # same VIS/WEIGHT/MASK/UVW buffers as part; prod holds its image products,
+        # which would otherwise live on through the next partition's gridding.
+        # The collect: loaded xarray objects sit in reference cycles (see safe_stokes_vis).
+        del part, part_vars, part_out, prod
+        gc.collect()
 
     # Level-2 reduction: the band product is the wsum-weighted sum of its
     # partitions, so its effective frequency is the wsum-weighted mean of the
