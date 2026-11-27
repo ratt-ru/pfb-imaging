@@ -89,3 +89,14 @@ def test_pass2_estimate_follows_the_largest_partition():
     large = pass2_image_bytes([GIB, 8 * GIB], 4096**2, 0, 1, 4, 0)
     # concatenating the largest partition holds two copies of it
     assert large - small >= 2 * 7 * GIB
+
+
+def test_ray_init_still_sizes_the_memory_resource():
+    # init_ray passes the memory budget as ray.init's underscored _memory, which
+    # is not in its signature: a Ray upgrade that drops it must fail here, not
+    # leave the budget silently unenforced
+    import inspect
+
+    import ray
+
+    assert "_memory" in inspect.getsource(ray.init)

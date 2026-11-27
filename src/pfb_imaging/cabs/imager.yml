@@ -255,20 +255,21 @@ cabs:
         default: local
         metadata:
           rich_help_panel: Performance
-      nworkers:
+      ncpu:
         info:
-          Number of worker processes.
-          Use with distributed scheduler.
-        dtype: int
-        default: 1
+          Number of CPU cores the imager may use.
+          Each pass shares them out between its tasks and their threads.
+          Defaults to all logical cores, or the cluster's CPUs with --ray-address.
+        dtype: Optional[int]
         metadata:
           rich_help_panel: Performance
-      nthreads:
+      mem-limit:
         info:
-          Number of threads used to scale vertically (for FFTs and gridding).
-          Each dask thread can in principle spawn this many threads.
-          Will attempt to use half the available threads by default.
-        dtype: Optional[int]
+          Memory budget in GiB.
+          Each pass runs only as many tasks at once as their estimated peaks fit in.
+          Defaults to 80% of the memory available at start-up.
+          Refused with --ray-address, where the cluster's own memory resource is the budget.
+        dtype: Optional[float]
         metadata:
           rich_help_panel: Performance
       wgt-mode:

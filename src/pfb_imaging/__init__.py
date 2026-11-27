@@ -123,20 +123,39 @@ if "fsspec" in sys.modules:
     sys.modules["fsspec"].config.conf.setdefault("file", {}).setdefault("auto_mkdir", _auto_mkdir)
 
 
+def thread_env(nthreads, ncpu=None):
+    """The thread-count environment variables for ``nthreads`` threads, as strings.
+
+    One list for the job's ``runtime_env`` (``set_envs``) and for a task that
+    overrides it: the imager gives pass 2 its own thread counts (#399).
+
+    Args:
+        nthreads: threads per process.
+        ncpu: physical cores, which cap numexpr's threads; None for no cap.
+
+    Returns:
+        Variable name -> value.
+    """
+    ne_threads = nthreads if ncpu is None else min(ncpu, nthreads)
+    return {
+        "OMP_NUM_THREADS": str(nthreads),
+        "OPENBLAS_NUM_THREADS": str(nthreads),
+        "MKL_NUM_THREADS": str(nthreads),
+        "VECLIB_MAXIMUM_THREADS": str(nthreads),
+        "NPY_NUM_THREADS": str(nthreads),
+        "NUMEXPR_NUM_THREADS": str(ne_threads),
+    }
+
+
 def set_envs(nthreads, ncpu, log=None):
     # these seem to have more sensible defaults
     # Note - do not set NUMBA_NUM_THREADS here.
     # It should be initialised to the maximum and then we use numba.set_num_threads()
     # in the worker processes to set it to the number of threads per worker.
-    os.environ["OMP_NUM_THREADS"] = str(nthreads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
-    os.environ["MKL_NUM_THREADS"] = str(nthreads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(nthreads)
-    os.environ["NPY_NUM_THREADS"] = str(nthreads)
+    threads = thread_env(nthreads, ncpu)
+    os.environ.update(threads)
     os.environ["JAX_ENABLE_X64"] = "True"
     os.environ["JAX_LOGGING_LEVEL"] = "INFO"  # for th emain process
-    ne_threads = min(ncpu, nthreads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     threading_layer = _default_threading_layer()
     os.environ["NUMBA_THREADING_LAYER"] = threading_layer
@@ -152,14 +171,9 @@ def set_envs(nthreads, ncpu, log=None):
 
     # these get passed to child processes
     env_vars = {
-        "OMP_NUM_THREADS": str(nthreads),
-        "OPENBLAS_NUM_THREADS": str(nthreads),
-        "MKL_NUM_THREADS": str(nthreads),
-        "VECLIB_MAXIMUM_THREADS": str(nthreads),
-        "NPY_NUM_THREADS": str(nthreads),
+        **threads,
         "JAX_ENABLE_X64": "True",
         "JAX_LOGGING_LEVEL": "ERROR",  # for the workers
-        "NUMEXPR_NUM_THREADS": str(ne_threads),
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": threading_layer,
         "NUMBA_CACHE_DIR": os.environ["NUMBA_CACHE_DIR"],
@@ -195,14 +209,18 @@ def raise_open_file_limit() -> int:
     return target
 
 
-def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None):
+def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memory=None, log=None, memory=None):
     """Initialise Ray for a pfb-imaging sub-command.
 
     With ray_address="local" (the default) a fresh private Ray instance is
     started even if another cluster is running on the node. Any other value
     is treated as the address of an existing cluster to connect to, in which
-    case cluster properties (num_cpus, object_store_memory) must not be
+    case cluster properties (num_cpus, object_store_memory, memory) must not be
     passed to ray.init and are therefore dropped.
+
+    ``memory`` sets the local cluster's Ray ``memory`` resource, which tasks
+    claim with ``.options(memory=...)``; the imager uses it as its memory budget
+    (#399). None leaves Ray's default.
     """
     # deferred: optional heavy runtime (ray)
     import ray
@@ -215,10 +233,14 @@ def init_ray(nworkers, ray_address="local", runtime_env=None, object_store_memor
         return
 
     if ray_address == "local":
+        # _memory is ray.init's (underscored) way to size the memory resource;
+        # tests/test_memplan.py pins that it still exists
+        extra = {} if memory is None else {"_memory": int(memory)}
         ray.init(
             address="local",
             num_cpus=nworkers,
             object_store_memory=object_store_memory,
+            **extra,
             logging_level="INFO",
             runtime_env=runtime_env,
         )

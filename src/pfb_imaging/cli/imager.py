@@ -319,19 +319,22 @@ def imager(
             rich_help_panel="Performance",
         ),
     ] = "local",
-    nworkers: Annotated[
-        int,
-        typer.Option(
-            help="Number of worker processes. Use with distributed scheduler.",
-            rich_help_panel="Performance",
-        ),
-    ] = 1,
-    nthreads: Annotated[
+    ncpu: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (for FFTs and gridding). "
-            "Each dask thread can in principle spawn this many threads. "
-            "Will attempt to use half the available threads by default.",
+            help="Number of CPU cores the imager may use. "
+            "Each pass shares them out between its tasks and their threads. "
+            "Defaults to all logical cores, or the cluster's CPUs with --ray-address.",
+            rich_help_panel="Performance",
+        ),
+    ] = None,
+    mem_limit: Annotated[
+        float | None,
+        typer.Option(
+            help="Memory budget in GiB. "
+            "Each pass runs only as many tasks at once as their estimated peaks fit in. "
+            "Defaults to 80% of the memory available at start-up. "
+            "Refused with --ray-address, where the cluster's own memory resource is the budget.",
             rich_help_panel="Performance",
         ),
     ] = None,
@@ -592,8 +595,8 @@ def imager(
                     progressbar=progressbar,
                     product=product,
                     ray_address=ray_address,
-                    nworkers=nworkers,
-                    nthreads=nthreads,
+                    ncpu=ncpu,
+                    mem_limit=mem_limit,
                     wgt_mode=wgt_mode,
                     weight_grouping=weight_grouping,
                     robustness=robustness,
@@ -657,8 +660,8 @@ def imager(
                 progressbar=progressbar,
                 product=product,
                 ray_address=ray_address,
-                nworkers=nworkers,
-                nthreads=nthreads,
+                ncpu=ncpu,
+                mem_limit=mem_limit,
                 wgt_mode=wgt_mode,
                 weight_grouping=weight_grouping,
                 robustness=robustness,
@@ -731,8 +734,8 @@ def imager(
             progressbar=progressbar,
             product=product,
             ray_address=ray_address,
-            nworkers=nworkers,
-            nthreads=nthreads,
+            ncpu=ncpu,
+            mem_limit=mem_limit,
             wgt_mode=wgt_mode,
             weight_grouping=weight_grouping,
             robustness=robustness,

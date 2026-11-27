@@ -17,7 +17,7 @@ from pfb_model_spec.utils.spec import open_mds
 from rarg_python_patterns.multiton import Multiton
 from scipy.constants import c as lightspeed
 
-from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker
+from pfb_imaging import init_ray, pfb_version, set_envs, setup_ray_worker, thread_env
 from pfb_imaging.operators.gridder import grid_partition, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.baselines import (
@@ -30,6 +30,7 @@ from pfb_imaging.utils.baselines import (
 from pfb_imaging.utils.beam import BEAM_DISH_DIAMETER, BEAM_FREQ_EXTRAPOLATION, beam_grid
 from pfb_imaging.utils.degrid import check_stokes_subset
 from pfb_imaging.utils.fits import rdt2fits, save_fits, set_wcs
+from pfb_imaging.utils.memplan import GIB, P1_THREADS, pass1_task_bytes, pass2_image_bytes, plan_pass
 from pfb_imaging.utils.memprof import PhaseClock, dump_timeline, format_memory, profile_env, profile_task, task_memory
 from pfb_imaging.utils.misc import (
     check_gridder_epsilon,
@@ -48,7 +49,7 @@ from pfb_imaging.utils.msv4 import (
     wrapped_angle_diff,
 )
 from pfb_imaging.utils.naming import glob_uris, set_output_names, uri_and_fs
-from pfb_imaging.utils.stokes2vis import partition_beam, safe_stokes_vis
+from pfb_imaging.utils.stokes2vis import needed_variables, partition_beam, safe_stokes_vis
 from pfb_imaging.utils.weighting import write_group_counts
 
 ignore_xarray_ms_warnings()
@@ -1166,8 +1167,8 @@ def imager(
     progressbar: bool = True,
     log_directory: str | None = None,
     product: str = "I",
-    nworkers: int = 1,
-    nthreads: int | None = None,
+    ncpu: int | None = None,
+    mem_limit: float | None = None,
     wgt_mode: str = "l2",
     weight_grouping: str = "per-band-time",
     robustness: float | None = None,
@@ -1216,11 +1217,25 @@ def imager(
     logname = f"{str(log_directory)}/imager_{timestamp}.log"
     pfb_logging.log_to_file(logname)
 
-    ncpu = psutil.cpu_count(logical=False)
-    if nthreads is None:
-        nthreads = psutil.cpu_count(logical=True) // 2
-        ncpu = ncpu // 2
-    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
+    # One core budget and one memory budget, shared out afresh by each pass
+    # (utils/memplan, D68). Locally they size the cluster; on an existing
+    # cluster they are its own CPU and memory resources.
+    if ncpu is not None and ncpu < 1:
+        log.error_and_raise(f"--ncpu must be at least 1, got {ncpu}", ValueError)
+    if mem_limit is not None and mem_limit <= 0:
+        log.error_and_raise(f"--mem-limit must be positive, got {mem_limit}", ValueError)
+    if ray_address == "local":
+        ncpu = ncpu or psutil.cpu_count(logical=True)
+        # page cache counts as available: the kernel gives it up
+        mem_budget = int(mem_limit * GIB) if mem_limit else int(0.8 * psutil.virtual_memory().available)
+    elif mem_limit is not None:
+        log.error_and_raise(
+            "--mem-limit sizes a local cluster; on an existing one (--ray-address) the cluster's own "
+            "memory resource is the budget. Set it with `ray start --memory`, or drop --mem-limit.",
+            ValueError,
+        )
+    else:
+        mem_budget = None
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -1282,6 +1297,7 @@ def imager(
         )
 
     transfer_ds = None
+    model_bytes = 0
     if transfer_model_from is not None:
         # absolute before any Ray worker (with its own cwd) sees it
         transfer_model_from = str(Path(transfer_model_from).resolve())
@@ -1304,8 +1320,8 @@ def imager(
 
     log.log_options_dict(opts_dict, title="IMAGER options")
 
-    resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu, log=log)
+    # the job env carries pass 1's threads; pass 2 overrides them per task
+    env_vars = set_envs(P1_THREADS, psutil.cpu_count(logical=False), log=log)
 
     basename = f"{output_filename}"
 
@@ -1522,6 +1538,8 @@ def imager(
             )
         # checked after pass 2, against the frequencies the model is rendered at
         transfer_coverage = transfer_freq_coverage(transfer_ds)
+        # each pass-2 worker caches its own copy, so its size enters their estimate
+        model_bytes = int(transfer_ds.nbytes)
         # pass-2 workers load their own copy through a Multiton; the driver holds none
         del transfer_ds
 
@@ -1626,14 +1644,44 @@ def imager(
     # only now: every refusal above, the transfer geometry included, needs the
     # MS metadata but no cluster
     init_ray(
-        nworkers,
+        ncpu,
         ray_address=ray_address,
         runtime_env={
             "env_vars": {**env_vars, **profile_env()},
             "worker_process_setup_hook": setup_ray_worker,
         },
         log=log,
+        memory=mem_budget,
     )
+    # What the cluster has free is the budget: an existing cluster (or a test
+    # session's) has its own size, and other work may hold some of it -- deconv's
+    # band actors claim nominal CPUs (D8). A claim beyond what is free waits forever.
+    free = ray.available_resources()
+    free_cpus = max(1, int(free.get("CPU", 1)))
+    ncpu = min(ncpu or free_cpus, free_cpus)
+    mem_budget = min(mem_budget or int(free["memory"]), int(free["memory"]))
+    node_cpus = int(max(n["Resources"].get("CPU", 0) for n in ray.nodes() if n["Alive"]))
+    resize_thread_pool(ncpu)
+    log.info(f"Core budget {ncpu} CPUs (largest node {node_cpus}), memory budget {mem_budget / GIB:.1f} GiB")
+    # pass 2's per-image terms, fixed before pass 1 writes any data
+    itemsize = 4 if precision.lower() == "single" else 8
+    p2_geometry = dict(
+        npix=nx * ny,
+        npsf=nx_psf * ny_psf if psf else 0,
+        ncorr=len(set(product.upper())),
+        itemsize=itemsize,
+        counts_cells=counts_nx * counts_ny if robustness is not None else 0,
+        model_bytes=model_bytes,
+    )
+    p2_floor = pass2_image_bytes([0], **p2_geometry)
+    if p2_floor > mem_budget:
+        # refused before pass 1, which would otherwise run only for pass 2 to fail (#340)
+        log.error_and_raise(
+            f"One pass-2 image needs an estimated {p2_floor / GIB:.1f} GiB before any of its data, "
+            f"more than the memory budget of {mem_budget / GIB:.1f} GiB. Raise --mem-limit, or make the "
+            f"image (--field-of-view, --super-resolution-factor) or the PSF (--psf-oversize) smaller.",
+            ValueError,
+        )
 
     phases.lap("Setup")
     if reuse:
@@ -1651,6 +1699,9 @@ def imager(
         scratch_fs.makedirs(scratch_url, exist_ok=True)
         log.info(f"Pass-1 scratch products will be stored in {scratch_url}")
         tasks = []
+        # (kwargs, estimated peak) per pass-1 task: planned once all are known
+        p1_tasks = []
+        accum_itemsize = 8 if double_accum or precision.lower() == "double" else 4
         scan_block_to_tid = {}  # (scan_name, block_idx) -> tid
         next_tid = 0
         # Pre-create the band/time parent groups single-threaded so concurrent
@@ -1706,39 +1757,66 @@ def imager(
 
                     for bg, bl_idx in node_masks.items():
                         subdt_bg = subdt if bl_idx is None else subdt.isel(baseline_id=bl_idx)
-                        fut = safe_stokes_vis.remote(
-                            dc1=dc1,
-                            dc2=dc2,
-                            operator=operator,
-                            node_dt=subdt_bg,
-                            scratch_store=scratch_url,
-                            bandid=bandid,
-                            timeid=timeid,
-                            msid=ims,
-                            freq_nominal=band_centres[bandid],
-                            precision=precision,
-                            sigma_column=sigma_column,
-                            weight_column=weight_column,
-                            product=product,
-                            chan_average=chan_average,
-                            bda_decorr=bda_decorr,
-                            max_field_of_view=max_field_of_view,
-                            beam_model=beam_model if beam_refs is None else beam_refs[bg],
-                            wgt_mode=wgt_mode,
-                            max_blength=max_blength,
-                            max_freq=max_freq,
-                            counts_nx=counts_nx,
-                            counts_ny=counts_ny,
-                            counts_cell=counts_cell,
-                            baseline_group=bg,
-                            data_group=data_group,
-                            radec_new=radec_new,
-                            target=target,
-                            beam_lm=beam_lm,
-                            nthreads=nthreads,
-                            double_accum=double_accum,
+                        # lazy: nbytes comes from shapes and dtypes, nothing is read
+                        p1_vars = needed_variables(subdt_bg.ds, dc1, dc2, sigma_column, weight_column)
+                        p1_bytes = pass1_task_bytes(
+                            int(subdt_bg.ds[p1_vars].nbytes), counts_nx * counts_ny, accum_itemsize
                         )
-                        tasks.append(fut)
+                        p1_tasks.append(
+                            (
+                                dict(
+                                    dc1=dc1,
+                                    dc2=dc2,
+                                    operator=operator,
+                                    node_dt=subdt_bg,
+                                    scratch_store=scratch_url,
+                                    bandid=bandid,
+                                    timeid=timeid,
+                                    msid=ims,
+                                    freq_nominal=band_centres[bandid],
+                                    precision=precision,
+                                    sigma_column=sigma_column,
+                                    weight_column=weight_column,
+                                    product=product,
+                                    chan_average=chan_average,
+                                    bda_decorr=bda_decorr,
+                                    max_field_of_view=max_field_of_view,
+                                    beam_model=beam_model if beam_refs is None else beam_refs[bg],
+                                    wgt_mode=wgt_mode,
+                                    max_blength=max_blength,
+                                    max_freq=max_freq,
+                                    counts_nx=counts_nx,
+                                    counts_ny=counts_ny,
+                                    counts_cell=counts_cell,
+                                    baseline_group=bg,
+                                    data_group=data_group,
+                                    radec_new=radec_new,
+                                    target=target,
+                                    beam_lm=beam_lm,
+                                    double_accum=double_accum,
+                                ),
+                                p1_bytes,
+                            )
+                        )
+
+        if p1_tasks:
+            try:
+                p1_plan = plan_pass(
+                    len(p1_tasks), ncpu, node_cpus, [b for _, b in p1_tasks], mem_budget, nthreads=P1_THREADS
+                )
+            except ValueError as e:
+                log.error_and_raise(f"Pass 1: {e}. Raise --mem-limit.", ValueError)
+            log.info(
+                f"Pass 1: {len(p1_tasks)} tasks, up to {p1_plan.nconcurrent} at once with {p1_plan.nthreads} "
+                f"threads each (largest estimate {max(b for _, b in p1_tasks) / GIB:.1f} GiB)"
+            )
+            for kwargs, p1_bytes in p1_tasks:
+                tasks.append(
+                    safe_stokes_vis.options(num_cpus=p1_plan.task_cpus, memory=p1_bytes).remote(
+                        **kwargs, nthreads=p1_plan.nthreads
+                    )
+                )
+        del p1_tasks
 
         # submission pickles every task's datatree node, so it is timed on its own
         phases.lap("Pass 1 submission")
@@ -1822,6 +1900,7 @@ def imager(
     # piece node path -> (wsum_nat, freq_out), for the effective frequency
     # computed below before pass 2; scratch node -> its piece paths
     piece_info = {}
+    piece_mem = {}
     node_pieces = {}
     for name in scratch_dt.children:
         if not name.startswith("band"):
@@ -1838,6 +1917,11 @@ def imager(
         for c, ds in zip(children, pieces):
             a = ds.attrs
             piece_info[f"{name}/{c}"] = (float(a["wsum_nat"]), float(a["freq_out"]))
+            # partition and in-memory size (as _load_piece loads it), for pass 2's estimate
+            piece_mem[f"{name}/{c}"] = (
+                (a["msid"], a["field_name"], a["spw_name"], a["baseline_group"]),
+                int(ds.drop_vars(["COUNTS_INDEX", "COUNTS_VALUE"], errors="ignore").nbytes),
+            )
             node_pieces.setdefault(name, []).append(f"{name}/{c}")
         node_info[name] = {
             "bandid": bandid,
@@ -1959,9 +2043,30 @@ def imager(
     # per-worker cached model: one load per process, not per task (degrid's pattern)
     transfer = Multiton(_load_transfer_model, transfer_model_from) if transfer_model_from else None
     phases.lap("Counts and .dt set-up")
+    p2_bytes = []
+    for _, src_names, _ in work:
+        part_bytes = {}
+        for sn in src_names:
+            for path in node_pieces[sn]:
+                key, nbytes = piece_mem[path]
+                part_bytes[key] = part_bytes.get(key, 0) + nbytes
+        p2_bytes.append(pass2_image_bytes(list(part_bytes.values()), **p2_geometry))
+    del piece_mem
+    try:
+        p2_plan = plan_pass(len(work), ncpu, node_cpus, p2_bytes, mem_budget, max_concurrent=nband)
+    except ValueError as e:
+        log.error_and_raise(f"Pass 2: {e}. Raise --mem-limit, or image fewer channels per image.", ValueError)
+    log.info(
+        f"Pass 2: {len(work)} images, up to {p2_plan.nconcurrent} at once with {p2_plan.nthreads} threads "
+        f"each (largest estimate {max(p2_bytes) / GIB:.1f} GiB)"
+    )
+    # Its own runtime_env: Ray starts fresh workers for pass 2 instead of reusing
+    # pass 1's, whose retained memory they would carry, and reaps the idle pass-1
+    # ones. The job's env and setup hook still apply; the thread counts are pass 2's.
+    p2_env = {"env_vars": thread_env(p2_plan.nthreads)}
     tasks = []
-    for out_name, src_names, meta in work:
-        fut = _grid_image.remote(
+    for (out_name, src_names, meta), image_bytes in zip(work, p2_bytes):
+        fut = _grid_image.options(num_cpus=p2_plan.task_cpus, memory=image_bytes, runtime_env=p2_env).remote(
             scratch_url,
             dt_url,
             src_names,
@@ -1980,7 +2085,7 @@ def imager(
             counts_nx=counts_nx,
             counts_ny=counts_ny,
             counts_cell=counts_cell,
-            nthreads=nthreads,
+            nthreads=p2_plan.nthreads,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             double_accum=double_accum,
@@ -2056,7 +2161,7 @@ def imager(
         log.info(f"Writing fits files to {fits_oname}")
         base_kwargs = dict(
             norm_wsum=True,
-            nthreads=nthreads,
+            nthreads=p2_plan.nthreads,
             do_mfs=fits_mfs,
             do_cube=fits_cubes,
             psfpars_mfs=psfparsn if psf else None,

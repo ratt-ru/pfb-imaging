@@ -24,6 +24,36 @@ from pfb_imaging.utils.msv4 import load_detached
 from pfb_imaging.utils.weighting import as_contiguous_readonly_view, compute_sparse_counts, weight_data
 
 
+def needed_variables(ds: xr.Dataset, dc1: str, dc2: str | None, sigma_column: str | None, weight_column: str | None):
+    """The MS variables a pass-1 task loads, in load order.
+
+    The single list :func:`stokes_vis` reads and the imager driver sizes each
+    task's memory estimate from (#399), so the two cannot drift.
+
+    Args:
+        ds: the task's (lazy) MSv4 node dataset.
+        dc1: the data column.
+        dc2: the second data column of ``dc1 +/- dc2``, or None.
+        sigma_column: the sigma column, or None.
+        weight_column: the weight column, used when there is no sigma column.
+
+    Returns:
+        Variable names, without duplicates.
+    """
+    needed = [dc1]
+    if dc2 is not None:
+        needed.append(dc2)
+    if sigma_column is not None:
+        needed.append(sigma_column)
+    elif weight_column is not None:
+        needed.append(weight_column)
+    needed += ["FLAG", "UVW"]
+    for name in ("EFFECTIVE_INTEGRATION_TIME", "INTEGRATION_TIME", "CHANNEL_WIDTH"):
+        if name in ds.data_vars:
+            needed.append(name)
+    return list(dict.fromkeys(needed))
+
+
 # wrapper to facilitate calling stokes_vis without ray
 @ray.remote
 def safe_stokes_vis(*args, **kwargs):
@@ -300,19 +330,7 @@ def stokes_vis(
     # from disk and holds them in memory even though only the selected
     # data/weight/flag columns are used. The small antenna_xds/field_and_source
     # subtables are loaded lazily on access below.
-    needed = [dc1]
-    if dc2 is not None:
-        needed.append(dc2)
-    if sigma_column is not None:
-        needed.append(sigma_column)
-    elif weight_column is not None:
-        needed.append(weight_column)
-    needed += ["FLAG", "UVW"]
-    for name in ("EFFECTIVE_INTEGRATION_TIME", "INTEGRATION_TIME", "CHANNEL_WIDTH"):
-        if name in node_dt.ds.data_vars:
-            needed.append(name)
-    needed = list(dict.fromkeys(needed))
-    ds = load_detached(node_dt.ds[needed])
+    ds = load_detached(node_dt.ds[needed_variables(node_dt.ds, dc1, dc2, sigma_column, weight_column)])
     field_name = np.unique(ds.field_name.values).item()
     spw_name = ds.frequency.attrs["spectral_window_name"]
     scan_name = np.unique(ds.scan_name.values).item()
